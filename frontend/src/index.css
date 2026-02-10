@@ -1,0 +1,244 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Manrope:wght@300;400;500;600;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Hide Emergent watermark badge */
+#emergent-badge,
+a[href*="emergent.sh"],
+[id*="emergent"],
+div[style*="Made with Emergent"] {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+@layer base {
+  /* Dark Mode (default) */
+  :root {
+    --background: 222 47% 11%;
+    --foreground: 210 40% 98%;
+    --card: 217 33% 17%;
+    --card-foreground: 210 40% 98%;
+    --popover: 217 33% 17%;
+    --popover-foreground: 210 40% 98%;
+    --primary: 160 84% 39%;
+    --primary-foreground: 160 84% 10%;
+    --secondary: 215 25% 27%;
+    --secondary-foreground: 210 40% 98%;
+    --muted: 215 25% 27%;
+    --muted-foreground: 215 20% 65%;
+    --accent: 258 90% 66%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 215 25% 27%;
+    --input: 215 25% 27%;
+    --ring: 160 84% 39%;
+    --chart-1: 160 84% 39%;
+    --chart-2: 258 90% 66%;
+    --chart-3: 217 91% 60%;
+    --chart-4: 38 92% 50%;
+    --chart-5: 0 84% 60%;
+    --radius: 0.75rem;
+  }
+
+  /* Light Mode - Purple Theme */
+  .light {
+    --background: 270 30% 98%;
+    --foreground: 270 50% 10%;
+    --card: 0 0% 100%;
+    --card-foreground: 270 50% 10%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 270 50% 10%;
+    --primary: 270 70% 50%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 270 20% 94%;
+    --secondary-foreground: 270 50% 10%;
+    --muted: 270 15% 92%;
+    --muted-foreground: 270 20% 45%;
+    --accent: 270 80% 60%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 270 20% 88%;
+    --input: 270 20% 88%;
+    --ring: 270 70% 50%;
+    --chart-1: 270 70% 50%;
+    --chart-2: 280 80% 55%;
+    --chart-3: 260 70% 60%;
+    --chart-4: 290 60% 50%;
+    --chart-5: 0 84% 60%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: 'Inter', sans-serif;
+  }
+  
+  h1, h2, h3, h4, h5, h6 {
+    font-family: 'Manrope', sans-serif;
+  }
+  
+  .font-mono, code, .mono-text {
+    font-family: 'JetBrains Mono', monospace;
+  }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: hsl(var(--background));
+}
+
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--muted));
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground));
+}
+
+/* Glass morphism */
+.glass {
+  @apply backdrop-blur-xl bg-card/60 border border-border;
+}
+
+.glass-heavy {
+  @apply backdrop-blur-2xl bg-background/80 border-b border-border;
+}
+
+/* Stat card glow effect */
+.stat-card {
+  @apply bg-gradient-to-br from-card to-background border border-border rounded-xl p-6 relative overflow-hidden;
+}
+
+.stat-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, hsl(var(--primary) / 0.5), transparent);
+}
+
+/* Table styles */
+.data-table {
+  @apply rounded-xl border border-border overflow-hidden bg-card/30 backdrop-blur-sm;
+}
+
+.data-table th {
+  @apply bg-muted/50 text-muted-foreground font-medium text-xs uppercase tracking-wider py-3 px-4;
+}
+
+.data-table td {
+  @apply py-3 px-4 border-b border-border;
+}
+
+.data-table tr:last-child td {
+  @apply border-0;
+}
+
+.data-table tr:hover td {
+  @apply bg-muted/30;
+}
+
+/* Input styles */
+input[type="text"],
+input[type="email"],
+input[type="password"],
+input[type="number"],
+input[type="tel"],
+input[type="date"],
+textarea,
+select {
+  @apply bg-background/50 border-input focus:border-primary focus:ring-1 focus:ring-primary/50 rounded-lg transition-all placeholder:text-muted-foreground/50;
+}
+
+/* Button hover animations */
+.btn-primary {
+  @apply bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-6 rounded-lg font-medium transition-all active:scale-95 shadow-lg shadow-primary/20;
+}
+
+.btn-secondary {
+  @apply bg-secondary text-secondary-foreground hover:bg-secondary/80 h-10 px-6 rounded-lg font-medium transition-all active:scale-95;
+}
+
+.btn-ghost {
+  @apply hover:bg-accent/10 hover:text-accent h-10 px-4 rounded-lg font-medium transition-colors;
+}
+
+.btn-destructive {
+  @apply bg-destructive text-destructive-foreground hover:bg-destructive/90 h-10 px-6 rounded-lg font-medium shadow-lg shadow-destructive/20;
+}
+
+/* Alert styles */
+.alert-warning {
+  @apply border-l-4 border-yellow-500 bg-yellow-500/10 p-4 rounded-r-lg;
+}
+
+.alert-danger {
+  @apply border-l-4 border-destructive bg-destructive/10 p-4 rounded-r-lg;
+}
+
+.alert-success {
+  @apply border-l-4 border-primary bg-primary/10 p-4 rounded-r-lg;
+}
+
+/* Sidebar styles */
+.sidebar-link {
+  @apply flex items-center gap-3 px-4 py-3 rounded-lg text-muted-foreground hover:text-foreground hover:bg-white/5 transition-colors;
+}
+
+.sidebar-link.active {
+  @apply text-primary bg-primary/10;
+}
+
+/* Dashboard grid */
+.dashboard-grid {
+  @apply grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6;
+}
+
+/* Currency styling */
+.currency {
+  font-family: 'JetBrains Mono', monospace;
+  @apply tabular-nums;
+}
+
+/* Animations */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.3s ease-out forwards;
+}
+
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4); }
+  50% { box-shadow: 0 0 20px 5px rgba(16, 185, 129, 0.2); }
+}
+
+.pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+/* Debug wrapper */
+[data-debug-wrapper="true"] {
+  display: contents !important;
+}

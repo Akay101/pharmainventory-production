@@ -1,0 +1,3056 @@
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, UploadFile, File, Form, Query
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from dotenv import load_dotenv
+from starlette.middleware.cors import CORSMiddleware
+from motor.motor_asyncio import AsyncIOMotorClient
+import os
+import logging
+from pathlib import Path
+from pydantic import BaseModel, Field, EmailStr
+from typing import List, Optional, Dict, Any
+import uuid
+from datetime import datetime, timezone, timedelta
+import jwt
+import bcrypt
+import random
+import string
+import boto3
+from botocore.config import Config
+import sib_api_v3_sdk
+from sib_api_v3_sdk.rest import ApiException
+from io import BytesIO, StringIO
+from reportlab.lib.pagesizes import A4
+from reportlab.lib import colors
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import inch, cm
+import aiofiles
+import asyncio
+import csv
+import json
+import httpx
+import base64
+from emergentintegrations.llm.chat import LlmChat, UserMessage, ImageContent
+
+ROOT_DIR = Path(__file__).parent
+load_dotenv(ROOT_DIR / '.env')
+
+# Emergent LLM Key for AI features
+EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY', '')
+
+# MongoDB connection
+mongo_url = os.environ['MONGO_URL']
+client = AsyncIOMotorClient(mongo_url)
+db = client[os.environ['DB_NAME']]
+
+# JWT Config - Required for security
+JWT_SECRET = os.environ.get('JWT_SECRET')
+if not JWT_SECRET:
+    raise ValueError("JWT_SECRET environment variable is required")
+JWT_ALGORITHM = os.environ.get('JWT_ALGORITHM', 'HS256')
+
+# R2 Config
+r2_client = boto3.client(
+    's3',
+    endpoint_url=f"https://{os.environ.get('R2_ACCOUNT_ID')}.r2.cloudflarestorage.com",
+    aws_access_key_id=os.environ.get('R2_ACCESS_KEY_ID'),
+    aws_secret_access_key=os.environ.get('R2_SECRET_ACCESS_KEY'),
+    config=Config(signature_version='s3v4'),
+    region_name='auto'
+)
+R2_BUCKET = os.environ.get('R2_BUCKET', 'pharmalogy-bills')
+R2_PUBLIC_URL = os.environ.get('R2_PUBLIC_URL', '')
+
+# Brevo API Config
+brevo_config = sib_api_v3_sdk.Configuration()
+brevo_config.api_key['api-key'] = os.environ.get('BREVO_API_KEY', '')
+brevo_api = sib_api_v3_sdk.TransactionalEmailsApi(sib_api_v3_sdk.ApiClient(brevo_config))
+BREVO_SENDER_EMAIL = os.environ.get('MAIL_USER', 'no-reply@pharmalogy.co.in')
+BREVO_SMTP_LOGIN = os.environ.get('BREVO_SMTP_LOGIN', '')
+BREVO_SMTP_KEY = os.environ.get('BREVO_SMTP_KEY', '')
+
+# Create the main app
+app = FastAPI(title="Pharmalogy API", version="1.0.0")
+api_router = APIRouter(prefix="/api")
+security = HTTPBearer()
+
+# ==================== PYDANTIC MODELS ====================
+
+class PharmacyCreate(BaseModel):
+    name: str
+    location: str
+    license_no: Optional[str] = None
+    years_old: Optional[int] = None
+
+class UserRegister(BaseModel):
+    name: str
+    email: EmailStr
+    mobile: str
+    password: str
+    pharmacy: PharmacyCreate
+
+class UserLogin(BaseModel):
+    email: EmailStr
+    password: str
+
+class OTPVerify(BaseModel):
+    email: EmailStr
+    otp: str
+
+class UserCreate(BaseModel):
+    name: str
+    email: EmailStr
+    mobile: str
+    password: str
+    role: str = "PHARMACIST"
+
+class SupplierCreate(BaseModel):
+    name: str
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    address: Optional[str] = None
+    gst_no: Optional[str] = None
+
+class ProductCreate(BaseModel):
+    name: str
+    category: str = "medicine"
+    hsn_no: Optional[str] = None
+    description: Optional[str] = None
+    low_stock_threshold: int = 10
+    image_url: Optional[str] = None
+
+class PurchaseItemCreate(BaseModel):
+    product_id: str
+    product_name: str
+    batch_no: str
+    expiry_date: str
+    # New enhanced fields
+    manufacturer: Optional[str] = None  # Manufacturer name
+    salt_composition: Optional[str] = None  # Salt/composition
+    pack_type: str = "Strip"  # Strip, Bottle, Tube, Packet, Box, Unit
+    # Support both old and new format
+    quantity: Optional[int] = None  # Old format: simple quantity
+    pack_quantity: Optional[int] = None  # New format: packs (renamed to Quantity in UI)
+    units_per_pack: int = 1  # Units in each pack (renamed to Units in UI)
+    purchase_price: Optional[float] = None  # Old format: price per unit
+    pack_price: Optional[float] = None  # New format: price per pack (Rate Pack in UI)
+    mrp: Optional[float] = None  # Old format: MRP
+    mrp_per_unit: Optional[float] = None  # New format: MRP per unit
+    hsn_no: Optional[str] = None
+
+class PurchaseItemUpdate(BaseModel):
+    product_name: Optional[str] = None
+    batch_no: Optional[str] = None
+    expiry_date: Optional[str] = None
+    manufacturer: Optional[str] = None
+    salt_composition: Optional[str] = None
+    pack_type: Optional[str] = None
+    quantity: Optional[int] = None
+    pack_quantity: Optional[int] = None
+    units_per_pack: Optional[int] = None
+    purchase_price: Optional[float] = None
+    pack_price: Optional[float] = None
+    mrp: Optional[float] = None
+    mrp_per_unit: Optional[float] = None
+    hsn_no: Optional[str] = None
+
+class PurchaseCreate(BaseModel):
+    supplier_id: str
+    supplier_name: str
+    items: List[PurchaseItemCreate]
+    invoice_no: Optional[str] = None
+    notes: Optional[str] = None
+
+class PurchaseUpdate(BaseModel):
+    supplier_id: Optional[str] = None
+    supplier_name: Optional[str] = None
+    invoice_no: Optional[str] = None
+    notes: Optional[str] = None
+    items: Optional[List[PurchaseItemCreate]] = None
+
+class CustomerCreate(BaseModel):
+    name: str
+    mobile: str
+    email: Optional[str] = None
+    address: Optional[str] = None
+
+class BillItemCreate(BaseModel):
+    inventory_id: Optional[str] = None  # Optional for negative billing
+    product_name: str
+    batch_no: Optional[str] = None
+    hsn_no: Optional[str] = None
+    expiry_date: Optional[str] = None
+    quantity: int
+    unit_price: float
+    purchase_price: Optional[float] = None  # For negative billing profit calc
+    discount_percent: float = 0
+    is_manual: bool = False  # True for negative billing items
+
+class BillCreate(BaseModel):
+    customer_id: Optional[str] = None
+    customer_name: str
+    customer_mobile: str
+    customer_email: Optional[str] = None
+    items: List[BillItemCreate]
+    discount_percent: float = 0
+    is_paid: bool = True
+    due_date: Optional[str] = None
+    notes: Optional[str] = None
+
+class DataMigrationMapping(BaseModel):
+    source_field: str
+    target_field: str
+
+class DataMigrationRequest(BaseModel):
+    data_type: str  # 'purchases', 'bills', 'customers', 'suppliers', 'products'
+    data: List[Dict[str, Any]]
+    field_mappings: Optional[List[DataMigrationMapping]] = None
+
+class CSVPurchaseMapping(BaseModel):
+    product_name: str
+    batch_no: str
+    expiry_date: str
+    quantity: str
+    purchase_price: str
+    mrp: str
+    hsn_no: Optional[str] = None
+
+class UserResponse(BaseModel):
+    id: str
+    name: str
+    email: str
+    mobile: str
+    role: str
+    pharmacy_id: str
+    image_url: Optional[str] = None
+    created_at: str
+
+class PharmacyResponse(BaseModel):
+    id: str
+    name: str
+    location: str
+    license_no: Optional[str] = None
+    years_old: Optional[int] = None
+    logo_url: Optional[str] = None
+    created_at: str
+
+# ==================== HELPER FUNCTIONS ====================
+
+def generate_otp():
+    return ''.join(random.choices(string.digits, k=6))
+
+def hash_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+
+def verify_password(password: str, hashed: str) -> bool:
+    return bcrypt.checkpw(password.encode(), hashed.encode())
+
+def create_token(user_id: str, pharmacy_id: str, role: str) -> str:
+    payload = {
+        "user_id": user_id,
+        "pharmacy_id": pharmacy_id,
+        "role": role,
+        "exp": datetime.now(timezone.utc) + timedelta(days=7)
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+def decode_token(token: str) -> dict:
+    try:
+        return jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    token_data = decode_token(credentials.credentials)
+    user = await db.users.find_one({"id": token_data["user_id"]}, {"_id": 0})
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+    return user
+
+async def send_otp_email(email: str, otp: str, name: str = "User"):
+    """Send OTP email using SMTP (primary) or Brevo API (fallback)"""
+    html_content = f"""
+    <html>
+    <body style="font-family: Arial, sans-serif; background-color: #0F172A; color: #F8FAFC; padding: 40px;">
+        <div style="max-width: 500px; margin: 0 auto; background: #1E293B; border-radius: 16px; padding: 40px;">
+            <h1 style="color: #10B981; margin-bottom: 20px;">Pharmalogy</h1>
+            <h2 style="color: #F8FAFC;">Email Verification</h2>
+            <p style="color: #F8FAFC;">Hello {name},</p>
+            <p style="color: #F8FAFC;">Your OTP for verification is:</p>
+            <div style="background: #10B981; color: #022C22; font-size: 32px; font-weight: bold; padding: 20px; text-align: center; border-radius: 8px; margin: 20px 0;">
+                {otp}
+            </div>
+            <p style="color: #F8FAFC;">This OTP is valid for 10 minutes.</p>
+            <p style="color: #94A3B8; font-size: 14px;">If you didn't request this, please ignore this email.</p>
+        </div>
+    </body>
+    </html>
+    """
+    
+    # Try SMTP first (more reliable, bypasses IP restrictions)
+    if BREVO_SMTP_LOGIN and BREVO_SMTP_KEY:
+        try:
+            import smtplib
+            from email.mime.text import MIMEText
+            from email.mime.multipart import MIMEMultipart
+            
+            msg = MIMEMultipart('alternative')
+            msg['Subject'] = "Pharmalogy - Verify Your Email"
+            msg['From'] = f"Pharmalogy <{BREVO_SMTP_LOGIN}>"
+            msg['To'] = email
+            msg.attach(MIMEText(html_content, 'html'))
+            
+            with smtplib.SMTP('smtp-relay.brevo.com', 587) as server:
+                server.starttls()
+                server.login(BREVO_SMTP_LOGIN, BREVO_SMTP_KEY)
+                server.sendmail(BREVO_SMTP_LOGIN, email, msg.as_string())
+            
+            logging.info(f"OTP email sent via SMTP to {email}")
+            return True
+        except Exception as e:
+            logging.error(f"SMTP error: {e}")
+    
+    # Fallback to Brevo API
+    try:
+        sender = {"name": "Pharmalogy", "email": BREVO_SENDER_EMAIL}
+        to = [{"email": email, "name": name}]
+        send_smtp_email = sib_api_v3_sdk.SendSmtpEmail(
+            to=to, sender=sender, subject="Pharmalogy - Verify Your Email", html_content=html_content
+        )
+        brevo_api.send_transac_email(send_smtp_email)
+        logging.info(f"OTP email sent via API to {email}")
+        return True
+    except ApiException as e:
+        logging.error(f"Brevo API error: {e}")
+        return False
+
+async def upload_to_r2(file_data: bytes, file_name: str, content_type: str = "application/octet-stream") -> str:
+    try:
+        r2_client.put_object(
+            Bucket=R2_BUCKET,
+            Key=file_name,
+            Body=file_data,
+            ContentType=content_type
+        )
+        return f"{R2_PUBLIC_URL}/{file_name}"
+    except Exception as e:
+        logging.error(f"R2 upload error: {e}")
+        raise HTTPException(status_code=500, detail="File upload failed")
+
+# ==================== AUTH ROUTES ====================
+
+@api_router.post("/auth/register")
+async def register_user(data: UserRegister):
+    # Check if user exists
+    existing = await db.users.find_one({"email": data.email})
+    if existing:
+        raise HTTPException(status_code=400, detail="Email already registered")
+    
+    # Generate OTP and store pending registration
+    otp = generate_otp()
+    pending_id = str(uuid.uuid4())
+    
+    await db.pending_registrations.delete_many({"email": data.email})
+    await db.pending_registrations.insert_one({
+        "id": pending_id,
+        "name": data.name,
+        "email": data.email,
+        "mobile": data.mobile,
+        "password_hash": hash_password(data.password),
+        "pharmacy": data.pharmacy.model_dump(),
+        "otp": otp,
+        "otp_expires": (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat(),
+        "created_at": datetime.now(timezone.utc).isoformat()
+    })
+    
+    # Send OTP email
+    email_sent = await send_otp_email(data.email, otp, data.name)
+    
+    # Return OTP in response if email fails (for development/testing)
+    response = {"message": "OTP sent to email", "email": data.email}
+    if not email_sent:
+        response["warning"] = "Email delivery failed - please whitelist IP 34.16.56.64 in Brevo"
+        response["otp"] = otp  # Include OTP in response when email fails
+    
+    return response
+
+@api_router.post("/auth/verify-otp")
+async def verify_otp(data: OTPVerify):
+    pending = await db.pending_registrations.find_one({"email": data.email}, {"_id": 0})
+    if not pending:
+        raise HTTPException(status_code=400, detail="No pending registration found")
+    
+    if pending["otp"] != data.otp:
+        raise HTTPException(status_code=400, detail="Invalid OTP")
+    
+    if datetime.fromisoformat(pending["otp_expires"]) < datetime.now(timezone.utc):
+        raise HTTPException(status_code=400, detail="OTP expired")
+    
+    # Create pharmacy
+    pharmacy_id = str(uuid.uuid4())
+    pharmacy_data = {
+        "id": pharmacy_id,
+        "name": pending["pharmacy"]["name"],
+        "location": pending["pharmacy"]["location"],
+        "license_no": pending["pharmacy"].get("license_no"),
+        "years_old": pending["pharmacy"].get("years_old"),
+        "logo_url": None,
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    await db.pharmacies.insert_one(pharmacy_data)
+    
+    # Create user
+    user_id = str(uuid.uuid4())
+    user_data = {
+        "id": user_id,
+        "name": pending["name"],
+        "email": pending["email"],
+        "mobile": pending["mobile"],
+        "password_hash": pending["password_hash"],
+        "role": "ADMIN",
+        "pharmacy_id": pharmacy_id,
+        "image_url": None,
+        "is_primary_admin": True,
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    await db.users.insert_one(user_data)
+    
+    # Clean up
+    await db.pending_registrations.delete_one({"email": data.email})
+    
+    # Create token
+    token = create_token(user_id, pharmacy_id, "ADMIN")
+    
+    return {
+        "message": "Registration successful",
+        "token": token,
+        "user": {
+            "id": user_id,
+            "name": pending["name"],
+            "email": pending["email"],
+            "role": "ADMIN",
+            "pharmacy_id": pharmacy_id
+        }
+    }
+
+@api_router.post("/auth/resend-otp")
+async def resend_otp(email: EmailStr = Form(...)):
+    pending = await db.pending_registrations.find_one({"email": email}, {"_id": 0})
+    if not pending:
+        raise HTTPException(status_code=400, detail="No pending registration found")
+    
+    otp = generate_otp()
+    await db.pending_registrations.update_one(
+        {"email": email},
+        {"$set": {"otp": otp, "otp_expires": (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()}}
+    )
+    
+    email_sent = await send_otp_email(email, otp, pending["name"])
+    
+    response = {"message": "OTP resent successfully"}
+    if not email_sent:
+        response["warning"] = "Email delivery failed - please whitelist IP 34.16.56.64 in Brevo"
+        response["otp"] = otp
+    
+    return response
+
+@api_router.post("/auth/login")
+async def login_user(data: UserLogin):
+    user = await db.users.find_one({"email": data.email}, {"_id": 0})
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    
+    if not verify_password(data.password, user["password_hash"]):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    
+    token = create_token(user["id"], user["pharmacy_id"], user["role"])
+    
+    return {
+        "token": token,
+        "user": {
+            "id": user["id"],
+            "name": user["name"],
+            "email": user["email"],
+            "mobile": user["mobile"],
+            "role": user["role"],
+            "pharmacy_id": user["pharmacy_id"],
+            "image_url": user.get("image_url")
+        }
+    }
+
+@api_router.get("/auth/me")
+async def get_me(current_user: dict = Depends(get_current_user)):
+    pharmacy = await db.pharmacies.find_one({"id": current_user["pharmacy_id"]}, {"_id": 0})
+    return {
+        "user": {
+            "id": current_user["id"],
+            "name": current_user["name"],
+            "email": current_user["email"],
+            "mobile": current_user["mobile"],
+            "role": current_user["role"],
+            "image_url": current_user.get("image_url")
+        },
+        "pharmacy": pharmacy
+    }
+
+# ==================== USER MANAGEMENT ROUTES ====================
+
+@api_router.post("/users")
+async def create_user(data: UserCreate, current_user: dict = Depends(get_current_user)):
+    if current_user["role"] != "ADMIN":
+        raise HTTPException(status_code=403, detail="Only admins can create users")
+    
+    existing = await db.users.find_one({"email": data.email})
+    if existing:
+        raise HTTPException(status_code=400, detail="Email already exists")
+    
+    # Get primary admin for OTP notification
+    primary_admin = await db.users.find_one(
+        {"pharmacy_id": current_user["pharmacy_id"], "is_primary_admin": True},
+        {"_id": 0}
+    )
+    
+    # Generate OTP and send to primary admin
+    otp = generate_otp()
+    pending_id = str(uuid.uuid4())
+    
+    await db.pending_users.insert_one({
+        "id": pending_id,
+        "name": data.name,
+        "email": data.email,
+        "mobile": data.mobile,
+        "password_hash": hash_password(data.password),
+        "role": data.role,
+        "pharmacy_id": current_user["pharmacy_id"],
+        "otp": otp,
+        "otp_expires": (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat(),
+        "created_by": current_user["id"],
+        "created_at": datetime.now(timezone.utc).isoformat()
+    })
+    
+    if primary_admin:
+        await send_otp_email(primary_admin["email"], otp, primary_admin["name"])
+    
+    return {"message": "OTP sent to primary admin for verification", "pending_id": pending_id}
+
+@api_router.post("/users/verify")
+async def verify_new_user(pending_id: str = Form(...), otp: str = Form(...), current_user: dict = Depends(get_current_user)):
+    if current_user["role"] != "ADMIN":
+        raise HTTPException(status_code=403, detail="Only admins can verify users")
+    
+    pending = await db.pending_users.find_one({"id": pending_id}, {"_id": 0})
+    if not pending:
+        raise HTTPException(status_code=400, detail="Pending user not found")
+    
+    if pending["otp"] != otp:
+        raise HTTPException(status_code=400, detail="Invalid OTP")
+    
+    if datetime.fromisoformat(pending["otp_expires"]) < datetime.now(timezone.utc):
+        raise HTTPException(status_code=400, detail="OTP expired")
+    
+    user_id = str(uuid.uuid4())
+    user_data = {
+        "id": user_id,
+        "name": pending["name"],
+        "email": pending["email"],
+        "mobile": pending["mobile"],
+        "password_hash": pending["password_hash"],
+        "role": pending["role"],
+        "pharmacy_id": pending["pharmacy_id"],
+        "image_url": None,
+        "is_primary_admin": False,
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    await db.users.insert_one(user_data)
+    await db.pending_users.delete_one({"id": pending_id})
+    
+    return {"message": "User created successfully", "user_id": user_id}
+
+@api_router.get("/users")
+async def get_users(current_user: dict = Depends(get_current_user)):
+    users = await db.users.find(
+        {"pharmacy_id": current_user["pharmacy_id"]},
+        {"_id": 0, "password_hash": 0}
+    ).to_list(100)
+    return {"users": users}
+
+@api_router.delete("/users/{user_id}")
+async def delete_user(user_id: str, current_user: dict = Depends(get_current_user)):
+    if current_user["role"] != "ADMIN":
+        raise HTTPException(status_code=403, detail="Only admins can delete users")
+    
+    user = await db.users.find_one({"id": user_id, "pharmacy_id": current_user["pharmacy_id"]})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    if user.get("is_primary_admin"):
+        raise HTTPException(status_code=400, detail="Cannot delete primary admin")
+    
+    await db.users.delete_one({"id": user_id})
+    return {"message": "User deleted successfully"}
+
+# ==================== PHARMACY ROUTES ====================
+
+@api_router.put("/pharmacy")
+async def update_pharmacy(
+    name: str = Form(None),
+    location: str = Form(None),
+    license_no: str = Form(None),
+    years_old: int = Form(None),
+    current_user: dict = Depends(get_current_user)
+):
+    update_data = {}
+    if name: update_data["name"] = name
+    if location: update_data["location"] = location
+    if license_no: update_data["license_no"] = license_no
+    if years_old: update_data["years_old"] = years_old
+    
+    if update_data:
+        await db.pharmacies.update_one(
+            {"id": current_user["pharmacy_id"]},
+            {"$set": update_data}
+        )
+    
+    pharmacy = await db.pharmacies.find_one({"id": current_user["pharmacy_id"]}, {"_id": 0})
+    return {"pharmacy": pharmacy}
+
+@api_router.post("/pharmacy/logo")
+async def upload_pharmacy_logo(
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user)
+):
+    if current_user["role"] != "ADMIN":
+        raise HTTPException(status_code=403, detail="Only admins can update logo")
+    
+    content = await file.read()
+    file_ext = file.filename.split(".")[-1] if file.filename else "png"
+    file_name = f"logos/{current_user['pharmacy_id']}.{file_ext}"
+    
+    url = await upload_to_r2(content, file_name, file.content_type or "image/png")
+    
+    await db.pharmacies.update_one(
+        {"id": current_user["pharmacy_id"]},
+        {"$set": {"logo_url": url}}
+    )
+    
+    return {"logo_url": url}
+
+@api_router.post("/users/avatar")
+async def upload_user_avatar(
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user)
+):
+    content = await file.read()
+    file_ext = file.filename.split(".")[-1] if file.filename else "png"
+    file_name = f"avatars/{current_user['id']}.{file_ext}"
+    
+    url = await upload_to_r2(content, file_name, file.content_type or "image/png")
+    
+    await db.users.update_one(
+        {"id": current_user["id"]},
+        {"$set": {"image_url": url}}
+    )
+    
+    return {"image_url": url}
+
+class UserProfileUpdate(BaseModel):
+    name: Optional[str] = None
+    phone: Optional[str] = None
+
+class UserProfileUpdateWithOTP(BaseModel):
+    otp: str
+    name: Optional[str] = None
+    phone: Optional[str] = None
+
+@api_router.post("/users/request-profile-update")
+async def request_profile_update(
+    data: UserProfileUpdate,
+    current_user: dict = Depends(get_current_user)
+):
+    """Request OTP to update user profile"""
+    otp = generate_otp()
+    
+    # Store pending update
+    await db.pending_updates.delete_many({"user_id": current_user["id"]})
+    await db.pending_updates.insert_one({
+        "user_id": current_user["id"],
+        "otp": otp,
+        "new_name": data.name,
+        "new_phone": data.phone,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()
+    })
+    
+    # Try to send OTP email
+    email_sent = False
+    try:
+        email_sent = await send_otp_email(current_user["email"], otp, current_user.get("name", "User"))
+    except Exception as e:
+        print(f"Failed to send profile update OTP: {e}")
+    
+    return {
+        "message": "OTP sent to your email" if email_sent else "OTP generated (check below - email failed)",
+        "email_sent": email_sent,
+        "otp": None if email_sent else otp  # Only show OTP if email failed
+    }
+
+@api_router.post("/users/verify-profile-update")
+async def verify_profile_update(
+    data: UserProfileUpdateWithOTP,
+    current_user: dict = Depends(get_current_user)
+):
+    """Verify OTP and update user profile"""
+    pending = await db.pending_updates.find_one({
+        "user_id": current_user["id"],
+        "otp": data.otp
+    })
+    
+    if not pending:
+        raise HTTPException(status_code=400, detail="Invalid OTP")
+    
+    if pending.get("expires_at", "") < datetime.now(timezone.utc).isoformat():
+        await db.pending_updates.delete_one({"user_id": current_user["id"]})
+        raise HTTPException(status_code=400, detail="OTP expired")
+    
+    # Update user
+    update_data = {}
+    if pending.get("new_name"):
+        update_data["name"] = pending["new_name"]
+    if pending.get("new_phone"):
+        update_data["phone"] = pending["new_phone"]
+    
+    # Allow overriding with request data if provided
+    if data.name:
+        update_data["name"] = data.name
+    if data.phone:
+        update_data["phone"] = data.phone
+    
+    if update_data:
+        update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
+        await db.users.update_one({"id": current_user["id"]}, {"$set": update_data})
+    
+    # Clean up pending update
+    await db.pending_updates.delete_one({"user_id": current_user["id"]})
+    
+    # Get updated user
+    updated_user = await db.users.find_one({"id": current_user["id"]}, {"_id": 0, "password": 0})
+    
+    return {"user": updated_user, "message": "Profile updated successfully"}
+
+# ==================== SUPPLIER ROUTES ====================
+
+@api_router.post("/suppliers")
+async def create_supplier(data: SupplierCreate, current_user: dict = Depends(get_current_user)):
+    supplier_id = str(uuid.uuid4())
+    supplier_data = {
+        "id": supplier_id,
+        "pharmacy_id": current_user["pharmacy_id"],
+        "name": data.name,
+        "phone": data.phone,
+        "email": data.email,
+        "address": data.address,
+        "gst_no": data.gst_no,
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    await db.suppliers.insert_one(supplier_data)
+    return {"supplier": {k: v for k, v in supplier_data.items() if k != "_id"}}
+
+@api_router.get("/suppliers")
+async def get_suppliers(
+    search: str = Query(None),
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=100),
+    sort_by: str = Query("created_at"),
+    sort_order: str = Query("desc"),
+    current_user: dict = Depends(get_current_user)
+):
+    query = {"pharmacy_id": current_user["pharmacy_id"]}
+    if search:
+        query["$or"] = [
+            {"name": {"$regex": search, "$options": "i"}},
+            {"phone": {"$regex": search, "$options": "i"}},
+            {"email": {"$regex": search, "$options": "i"}}
+        ]
+    
+    # Count total
+    total = await db.suppliers.count_documents(query)
+    
+    # Sort direction
+    sort_dir = -1 if sort_order == "desc" else 1
+    
+    # Paginate
+    skip = (page - 1) * limit
+    suppliers = await db.suppliers.find(query, {"_id": 0}).sort(sort_by, sort_dir).skip(skip).limit(limit).to_list(limit)
+    
+    return {
+        "suppliers": suppliers,
+        "pagination": {
+            "page": page,
+            "limit": limit,
+            "total": total,
+            "total_pages": (total + limit - 1) // limit
+        }
+    }
+
+@api_router.get("/suppliers/{supplier_id}")
+async def get_supplier(supplier_id: str, current_user: dict = Depends(get_current_user)):
+    supplier = await db.suppliers.find_one(
+        {"id": supplier_id, "pharmacy_id": current_user["pharmacy_id"]},
+        {"_id": 0}
+    )
+    if not supplier:
+        raise HTTPException(status_code=404, detail="Supplier not found")
+    return {"supplier": supplier}
+
+@api_router.put("/suppliers/{supplier_id}")
+async def update_supplier(
+    supplier_id: str,
+    data: SupplierCreate,
+    current_user: dict = Depends(get_current_user)
+):
+    result = await db.suppliers.update_one(
+        {"id": supplier_id, "pharmacy_id": current_user["pharmacy_id"]},
+        {"$set": data.model_dump()}
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Supplier not found")
+    
+    supplier = await db.suppliers.find_one({"id": supplier_id}, {"_id": 0})
+    return {"supplier": supplier}
+
+@api_router.delete("/suppliers/{supplier_id}")
+async def delete_supplier(supplier_id: str, current_user: dict = Depends(get_current_user)):
+    result = await db.suppliers.delete_one(
+        {"id": supplier_id, "pharmacy_id": current_user["pharmacy_id"]}
+    )
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Supplier not found")
+    return {"message": "Supplier deleted successfully"}
+
+# ==================== PRODUCT ROUTES ====================
+
+@api_router.post("/products")
+async def create_product(data: ProductCreate, current_user: dict = Depends(get_current_user)):
+    product_id = str(uuid.uuid4())
+    product_data = {
+        "id": product_id,
+        "pharmacy_id": current_user["pharmacy_id"],
+        "name": data.name,
+        "category": data.category,
+        "hsn_no": data.hsn_no,
+        "description": data.description,
+        "low_stock_threshold": data.low_stock_threshold,
+        "image_url": data.image_url,
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    await db.products.insert_one(product_data)
+    return {"product": {k: v for k, v in product_data.items() if k != "_id"}}
+
+@api_router.get("/products")
+async def get_products(
+    search: str = Query(None),
+    category: str = Query(None),
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=100),
+    sort_by: str = Query("created_at"),
+    sort_order: str = Query("desc"),
+    current_user: dict = Depends(get_current_user)
+):
+    query = {"pharmacy_id": current_user["pharmacy_id"]}
+    if search:
+        query["name"] = {"$regex": search, "$options": "i"}
+    if category:
+        query["category"] = category
+    
+    # Count total
+    total = await db.products.count_documents(query)
+    
+    # Sort direction
+    sort_dir = -1 if sort_order == "desc" else 1
+    
+    # Paginate
+    skip = (page - 1) * limit
+    products = await db.products.find(query, {"_id": 0}).sort(sort_by, sort_dir).skip(skip).limit(limit).to_list(limit)
+    
+    return {
+        "products": products,
+        "pagination": {
+            "page": page,
+            "limit": limit,
+            "total": total,
+            "total_pages": (total + limit - 1) // limit
+        }
+    }
+
+@api_router.post("/products/{product_id}/image")
+async def upload_product_image(
+    product_id: str,
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user)
+):
+    content = await file.read()
+    file_ext = file.filename.split(".")[-1] if file.filename else "png"
+    file_name = f"products/{product_id}.{file_ext}"
+    
+    url = await upload_to_r2(content, file_name, file.content_type or "image/png")
+    
+    await db.products.update_one(
+        {"id": product_id, "pharmacy_id": current_user["pharmacy_id"]},
+        {"$set": {"image_url": url}}
+    )
+    
+    return {"image_url": url}
+
+# ==================== PURCHASE ROUTES ====================
+
+@api_router.post("/purchases")
+async def create_purchase(data: PurchaseCreate, current_user: dict = Depends(get_current_user)):
+    purchase_id = str(uuid.uuid4())
+    
+    # Process items - support both old format (quantity/purchase_price) and new format (pack_quantity/pack_price)
+    processed_items = []
+    total_amount = 0
+    
+    for item in data.items:
+        # Determine which format is being used
+        # New format: pack_quantity, units_per_pack, pack_price
+        # Old format: quantity, purchase_price
+        
+        if item.pack_quantity is not None and item.pack_price is not None:
+            # New unit-based format
+            pack_qty = item.pack_quantity
+            units_per_pack = item.units_per_pack or 1
+            pack_price = item.pack_price
+            mrp_per_unit = item.mrp_per_unit or item.mrp or 0
+            
+            total_units = pack_qty * units_per_pack
+            price_per_unit = pack_price / units_per_pack if units_per_pack > 0 else pack_price
+            item_total = pack_qty * pack_price
+        else:
+            # Old format - treat quantity as total units, purchase_price as price per unit
+            quantity = item.quantity or 1
+            purchase_price = item.purchase_price or 0
+            mrp = item.mrp or 0
+            
+            # For backwards compatibility
+            pack_qty = quantity
+            units_per_pack = 1
+            pack_price = purchase_price
+            total_units = quantity
+            price_per_unit = purchase_price
+            mrp_per_unit = mrp
+            item_total = quantity * purchase_price
+        
+        total_amount += item_total
+        
+        processed_item = {
+            "product_id": item.product_id,
+            "product_name": item.product_name,
+            "batch_no": item.batch_no,
+            "expiry_date": item.expiry_date,
+            # New enhanced fields
+            "manufacturer": item.manufacturer,
+            "salt_composition": item.salt_composition,
+            "pack_type": item.pack_type or "Strip",
+            # Store both formats for compatibility
+            "quantity": total_units,  # Total units (old format)
+            "pack_quantity": pack_qty,
+            "units_per_pack": units_per_pack,
+            "total_units": total_units,
+            "purchase_price": round(price_per_unit, 2),  # Per unit (old format)
+            "pack_price": pack_price,
+            "price_per_unit": round(price_per_unit, 2),
+            "mrp": mrp_per_unit,  # Old format
+            "mrp_per_unit": mrp_per_unit,
+            "mrp_pack": round(mrp_per_unit * units_per_pack, 2) if mrp_per_unit else None,  # MRP per pack
+            "hsn_no": item.hsn_no,
+            "item_total": item_total
+        }
+        processed_items.append(processed_item)
+    
+    purchase_data = {
+        "id": purchase_id,
+        "pharmacy_id": current_user["pharmacy_id"],
+        "supplier_id": data.supplier_id,
+        "supplier_name": data.supplier_name,
+        "invoice_no": data.invoice_no,
+        "items": processed_items,
+        "total_amount": total_amount,
+        "notes": data.notes,
+        "created_by": current_user["id"],
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    await db.purchases.insert_one(purchase_data)
+    
+    # Add items to inventory with deduplication
+    for item in processed_items:
+        # Check if same product with same batch and supplier exists
+        existing_inventory = await db.inventory.find_one({
+            "pharmacy_id": current_user["pharmacy_id"],
+            "product_name": item["product_name"],
+            "batch_no": item["batch_no"],
+            "supplier_id": data.supplier_id
+        })
+        
+        if existing_inventory:
+            # Update existing inventory - increase UNITS
+            await db.inventory.update_one(
+                {"id": existing_inventory["id"]},
+                {
+                    "$inc": {
+                        "quantity": item["total_units"],
+                        "available_quantity": item["total_units"]
+                    },
+                    "$set": {
+                        "purchase_price": item["price_per_unit"],  # Cost per unit
+                        "mrp": item["mrp_per_unit"],  # Selling price per unit
+                        "units_per_pack": item["units_per_pack"],
+                        "pack_type": item.get("pack_type", "Strip"),
+                        "manufacturer": item.get("manufacturer"),
+                        "salt_composition": item.get("salt_composition"),
+                        "pack_price": item.get("pack_price"),
+                        "mrp_pack": item.get("mrp_pack"),
+                        "expiry_date": item["expiry_date"]
+                    }
+                }
+            )
+        else:
+            # Create new inventory entry - store in UNITS
+            inventory_id = str(uuid.uuid4())
+            inventory_data = {
+                "id": inventory_id,
+                "pharmacy_id": current_user["pharmacy_id"],
+                "product_id": item["product_id"],
+                "product_name": item["product_name"],
+                "batch_no": item["batch_no"],
+                "hsn_no": item.get("hsn_no"),
+                "expiry_date": item["expiry_date"],
+                # New enhanced fields
+                "manufacturer": item.get("manufacturer"),
+                "salt_composition": item.get("salt_composition"),
+                "pack_type": item.get("pack_type", "Strip"),
+                # Unit-based tracking
+                "quantity": item["total_units"],  # Total units purchased
+                "available_quantity": item["total_units"],  # Available units for sale
+                "pack_quantity": item["pack_quantity"],  # Original packs purchased
+                "units_per_pack": item["units_per_pack"],  # For reference
+                "purchase_price": item["price_per_unit"],  # Cost per unit
+                "mrp": item["mrp_per_unit"],  # Selling price per unit
+                "pack_price": item.get("pack_price"),  # Original pack price for reference
+                "mrp_pack": item.get("mrp_pack"),  # MRP per pack
+                "purchase_id": purchase_id,
+                "supplier_id": data.supplier_id,
+                "created_at": datetime.now(timezone.utc).isoformat()
+            }
+            await db.inventory.insert_one(inventory_data)
+    
+    return {"purchase": {k: v for k, v in purchase_data.items() if k != "_id"}}
+
+@api_router.get("/purchases")
+async def get_purchases(
+    search: str = Query(None),
+    supplier_id: str = Query(None),
+    start_date: str = Query(None),
+    end_date: str = Query(None),
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=100),
+    sort_by: str = Query("created_at"),
+    sort_order: str = Query("desc"),
+    current_user: dict = Depends(get_current_user)
+):
+    query = {"pharmacy_id": current_user["pharmacy_id"]}
+    if supplier_id:
+        query["supplier_id"] = supplier_id
+    if start_date:
+        query["created_at"] = {"$gte": start_date}
+    if end_date:
+        query.setdefault("created_at", {})["$lte"] = end_date
+    if search:
+        query["$or"] = [
+            {"supplier_name": {"$regex": search, "$options": "i"}},
+            {"invoice_no": {"$regex": search, "$options": "i"}}
+        ]
+    
+    # Count total
+    total = await db.purchases.count_documents(query)
+    
+    # Sort direction
+    sort_dir = -1 if sort_order == "desc" else 1
+    
+    # Paginate
+    skip = (page - 1) * limit
+    purchases = await db.purchases.find(query, {"_id": 0}).sort(sort_by, sort_dir).skip(skip).limit(limit).to_list(limit)
+    
+    return {
+        "purchases": purchases,
+        "pagination": {
+            "page": page,
+            "limit": limit,
+            "total": total,
+            "total_pages": (total + limit - 1) // limit
+        }
+    }
+
+@api_router.put("/purchases/{purchase_id}")
+async def update_purchase(
+    purchase_id: str,
+    data: PurchaseUpdate,
+    update_inventory: bool = Query(False),
+    current_user: dict = Depends(get_current_user)
+):
+    """Update a purchase and optionally sync with inventory"""
+    # Get existing purchase
+    existing = await db.purchases.find_one({
+        "id": purchase_id,
+        "pharmacy_id": current_user["pharmacy_id"]
+    }, {"_id": 0})
+    
+    if not existing:
+        raise HTTPException(status_code=404, detail="Purchase not found")
+    
+    update_data = {}
+    if data.supplier_id:
+        update_data["supplier_id"] = data.supplier_id
+    if data.supplier_name:
+        update_data["supplier_name"] = data.supplier_name
+    if data.invoice_no is not None:
+        update_data["invoice_no"] = data.invoice_no
+    if data.notes is not None:
+        update_data["notes"] = data.notes
+    
+    # Handle items update
+    if data.items:
+        processed_items = []
+        total_amount = 0
+        
+        for item in data.items:
+            # Support both old and new format
+            if item.pack_quantity is not None and item.pack_price is not None:
+                pack_qty = item.pack_quantity
+                units_per_pack = item.units_per_pack or 1
+                pack_price = item.pack_price
+                mrp_per_unit = item.mrp_per_unit or item.mrp or 0
+                
+                total_units = pack_qty * units_per_pack
+                price_per_unit = pack_price / units_per_pack if units_per_pack > 0 else pack_price
+                item_total = pack_qty * pack_price
+            else:
+                quantity = item.quantity or 1
+                purchase_price = item.purchase_price or 0
+                mrp = item.mrp or 0
+                
+                pack_qty = quantity
+                units_per_pack = 1
+                pack_price = purchase_price
+                total_units = quantity
+                price_per_unit = purchase_price
+                mrp_per_unit = mrp
+                item_total = quantity * purchase_price
+            
+            total_amount += item_total
+            
+            processed_item = {
+                "product_id": item.product_id,
+                "product_name": item.product_name,
+                "batch_no": item.batch_no,
+                "expiry_date": item.expiry_date,
+                "quantity": total_units,
+                "pack_quantity": pack_qty,
+                "units_per_pack": units_per_pack,
+                "total_units": total_units,
+                "purchase_price": round(price_per_unit, 2),
+                "pack_price": pack_price,
+                "price_per_unit": round(price_per_unit, 2),
+                "mrp": mrp_per_unit,
+                "mrp_per_unit": mrp_per_unit,
+                "hsn_no": item.hsn_no,
+                "item_total": item_total
+            }
+            processed_items.append(processed_item)
+        
+        update_data["items"] = processed_items
+        update_data["total_amount"] = total_amount
+        
+        # Update inventory if requested
+        if update_inventory:
+            # Remove old inventory entries for this purchase
+            await db.inventory.delete_many({
+                "pharmacy_id": current_user["pharmacy_id"],
+                "purchase_id": purchase_id
+            })
+            
+            # Add new inventory entries
+            supplier_id = data.supplier_id or existing.get("supplier_id")
+            for item in processed_items:
+                inventory_id = str(uuid.uuid4())
+                inventory_data = {
+                    "id": inventory_id,
+                    "pharmacy_id": current_user["pharmacy_id"],
+                    "product_id": item["product_id"],
+                    "product_name": item["product_name"],
+                    "batch_no": item["batch_no"],
+                    "hsn_no": item.get("hsn_no"),
+                    "expiry_date": item["expiry_date"],
+                    "quantity": item["quantity"],
+                    "available_quantity": item["quantity"],
+                    "purchase_price": item["purchase_price"],
+                    "mrp": item["mrp"],
+                    "purchase_id": purchase_id,
+                    "supplier_id": supplier_id,
+                    "created_at": datetime.now(timezone.utc).isoformat()
+                }
+                await db.inventory.insert_one(inventory_data)
+    
+    update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
+    
+    await db.purchases.update_one(
+        {"id": purchase_id},
+        {"$set": update_data}
+    )
+    
+    updated = await db.purchases.find_one({"id": purchase_id}, {"_id": 0})
+    return {"purchase": updated, "inventory_updated": update_inventory}
+
+@api_router.delete("/purchases/{purchase_id}")
+async def delete_purchase(
+    purchase_id: str,
+    delete_inventory: bool = Query(False),
+    current_user: dict = Depends(get_current_user)
+):
+    """Delete a purchase and optionally remove associated inventory items"""
+    # Get purchase first
+    purchase = await db.purchases.find_one({
+        "id": purchase_id,
+        "pharmacy_id": current_user["pharmacy_id"]
+    }, {"_id": 0})
+    
+    if not purchase:
+        raise HTTPException(status_code=404, detail="Purchase not found")
+    
+    # If delete_inventory is True, remove inventory items from this purchase
+    deleted_inventory_count = 0
+    if delete_inventory and purchase.get("items"):
+        for item in purchase["items"]:
+            result = await db.inventory.delete_one({
+                "pharmacy_id": current_user["pharmacy_id"],
+                "product_name": item["product_name"],
+                "batch_no": item["batch_no"]
+            })
+            deleted_inventory_count += result.deleted_count
+    
+    # Delete the purchase
+    await db.purchases.delete_one({"id": purchase_id})
+    
+    return {
+        "message": "Purchase deleted successfully",
+        "deleted_inventory_items": deleted_inventory_count
+    }
+
+# ==================== INVENTORY ROUTES ====================
+
+@api_router.get("/inventory")
+async def get_inventory(
+    search: str = Query(None),
+    low_stock: bool = Query(False),
+    expiring_soon: bool = Query(False),
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=100),
+    sort_by: str = Query("created_at"),
+    sort_order: str = Query("desc"),
+    current_user: dict = Depends(get_current_user)
+):
+    query = {"pharmacy_id": current_user["pharmacy_id"], "available_quantity": {"$gt": 0}}
+    if search:
+        query["$or"] = [
+            {"product_name": {"$regex": search, "$options": "i"}},
+            {"batch_no": {"$regex": search, "$options": "i"}},
+            {"salt_composition": {"$regex": search, "$options": "i"}}
+        ]
+    
+    # Sort direction
+    sort_dir = -1 if sort_order == "desc" else 1
+    
+    # Get all inventory first for filtering (low_stock and expiring_soon need client-side filtering)
+    all_inventory = await db.inventory.find(query, {"_id": 0}).sort(sort_by, sort_dir).to_list(5000)
+    
+    # Filter for low stock
+    if low_stock:
+        products = await db.products.find({"pharmacy_id": current_user["pharmacy_id"]}, {"_id": 0}).to_list(500)
+        thresholds = {p["id"]: p.get("low_stock_threshold", 10) for p in products}
+        
+        # Aggregate by product
+        product_stock = {}
+        for item in all_inventory:
+            pid = item.get("product_id", "")
+            if pid not in product_stock:
+                product_stock[pid] = 0
+            product_stock[pid] += item["available_quantity"]
+        
+        low_stock_products = [pid for pid, qty in product_stock.items() if qty <= thresholds.get(pid, 10)]
+        all_inventory = [i for i in all_inventory if i.get("product_id") in low_stock_products]
+    
+    # Filter for expiring soon (within 90 days)
+    if expiring_soon:
+        cutoff = (datetime.now(timezone.utc) + timedelta(days=90)).strftime("%Y-%m-%d")
+        all_inventory = [i for i in all_inventory if i.get("expiry_date", "9999-12-31") <= cutoff]
+    
+    # Calculate total after filtering
+    total = len(all_inventory)
+    
+    # Paginate
+    skip = (page - 1) * limit
+    inventory = all_inventory[skip:skip + limit]
+    
+    return {
+        "inventory": inventory,
+        "pagination": {
+            "page": page,
+            "limit": limit,
+            "total": total,
+            "total_pages": (total + limit - 1) // limit if total > 0 else 1
+        }
+    }
+
+@api_router.get("/inventory/search")
+async def search_inventory(
+    q: str = Query(..., min_length=1),
+    limit: int = Query(15, ge=1, le=50),
+    current_user: dict = Depends(get_current_user)
+):
+    """Fast search endpoint for inventory items - searches name, batch, and salt composition"""
+    query = {
+        "pharmacy_id": current_user["pharmacy_id"],
+        "available_quantity": {"$gt": 0},
+        "$or": [
+            {"product_name": {"$regex": q, "$options": "i"}},
+            {"batch_no": {"$regex": q, "$options": "i"}},
+            {"salt_composition": {"$regex": q, "$options": "i"}}
+        ]
+    }
+    
+    inventory = await db.inventory.find(query, {"_id": 0}).limit(limit * 2).to_list(limit * 2)
+    
+    # Rank results: exact match > starts with > contains
+    search_lower = q.lower()
+    
+    def rank_item(item):
+        name = (item.get("product_name") or "").lower()
+        salt = (item.get("salt_composition") or "").lower()
+        
+        # Exact match
+        if name == search_lower:
+            return 0
+        # Starts with (name)
+        if name.startswith(search_lower):
+            return 1
+        # Starts with (salt)
+        if salt.startswith(search_lower):
+            return 2
+        # Contains (name)
+        if search_lower in name:
+            return 3
+        # Contains (salt)
+        if search_lower in salt:
+            return 4
+        return 5
+    
+    inventory.sort(key=rank_item)
+    
+    return {"inventory": inventory[:limit], "count": min(len(inventory), limit)}
+
+@api_router.delete("/inventory/{inventory_id}")
+async def delete_inventory_item(
+    inventory_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """Delete an inventory item"""
+    result = await db.inventory.delete_one({
+        "id": inventory_id,
+        "pharmacy_id": current_user["pharmacy_id"]
+    })
+    
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Inventory item not found")
+    
+    return {"message": "Inventory item deleted successfully"}
+
+@api_router.delete("/products/{product_id}")
+async def delete_product(
+    product_id: str,
+    delete_inventory: bool = Query(False),
+    current_user: dict = Depends(get_current_user)
+):
+    """Delete a product and optionally its inventory items"""
+    product = await db.products.find_one({
+        "id": product_id,
+        "pharmacy_id": current_user["pharmacy_id"]
+    }, {"_id": 0})
+    
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    
+    deleted_inventory_count = 0
+    if delete_inventory:
+        result = await db.inventory.delete_many({
+            "pharmacy_id": current_user["pharmacy_id"],
+            "product_id": product_id
+        })
+        deleted_inventory_count = result.deleted_count
+    
+    await db.products.delete_one({"id": product_id})
+    
+    return {
+        "message": "Product deleted successfully",
+        "deleted_inventory_items": deleted_inventory_count
+    }
+
+@api_router.get("/inventory/alerts")
+async def get_inventory_alerts(current_user: dict = Depends(get_current_user)):
+    # Optimized query - fetch required fields including id and batch_no for expiry alerts
+    inventory = await db.inventory.find(
+        {"pharmacy_id": current_user["pharmacy_id"], "available_quantity": {"$gt": 0}},
+        {"_id": 0, "id": 1, "product_id": 1, "product_name": 1, "batch_no": 1, "available_quantity": 1, "expiry_date": 1}
+    ).to_list(1000)
+    
+    # Optimized query - only fetch id and threshold
+    products = await db.products.find(
+        {"pharmacy_id": current_user["pharmacy_id"]}, 
+        {"_id": 0, "id": 1, "low_stock_threshold": 1}
+    ).to_list(500)
+    thresholds = {p["id"]: p.get("low_stock_threshold", 10) for p in products}
+    
+    # Calculate low stock
+    product_stock = {}
+    for item in inventory:
+        pid = item.get("product_id", "")
+        if pid not in product_stock:
+            product_stock[pid] = {"name": item.get("product_name", "Unknown"), "quantity": 0, "threshold": thresholds.get(pid, 10)}
+        product_stock[pid]["quantity"] += item.get("available_quantity", 0)
+    
+    low_stock_alerts = [
+        {"product_id": pid, "product_name": data["name"], "quantity": data["quantity"], "threshold": data["threshold"]}
+        for pid, data in product_stock.items() if data["quantity"] <= data["threshold"]
+    ]
+    
+    # Calculate expiring soon (within 90 days)
+    cutoff = (datetime.now(timezone.utc) + timedelta(days=90)).strftime("%Y-%m-%d")
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    
+    expiry_alerts = [
+        {
+            "inventory_id": i.get("id", ""),
+            "product_name": i.get("product_name", "Unknown"),
+            "batch_no": i.get("batch_no", "N/A"),
+            "expiry_date": i.get("expiry_date", ""),
+            "quantity": i.get("available_quantity", 0),
+            "is_expired": i.get("expiry_date", "9999-12-31") < today
+        }
+        for i in inventory if i.get("expiry_date", "9999-12-31") <= cutoff
+    ]
+    
+    return {
+        "low_stock_alerts": low_stock_alerts,
+        "expiry_alerts": expiry_alerts
+    }
+
+# ==================== CUSTOMER ROUTES ====================
+
+@api_router.post("/customers")
+async def create_customer(data: CustomerCreate, current_user: dict = Depends(get_current_user)):
+    # Check if customer exists with same mobile
+    existing = await db.customers.find_one({
+        "pharmacy_id": current_user["pharmacy_id"],
+        "mobile": data.mobile
+    })
+    if existing:
+        return {"customer": {k: v for k, v in existing.items() if k != "_id"}, "existing": True}
+    
+    customer_id = str(uuid.uuid4())
+    customer_data = {
+        "id": customer_id,
+        "pharmacy_id": current_user["pharmacy_id"],
+        "name": data.name,
+        "mobile": data.mobile,
+        "email": data.email,
+        "address": data.address,
+        "total_purchases": 0,
+        "total_debt": 0,
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    await db.customers.insert_one(customer_data)
+    return {"customer": {k: v for k, v in customer_data.items() if k != "_id"}, "existing": False}
+
+@api_router.get("/customers")
+async def get_customers(
+    search: str = Query(None),
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=100),
+    sort_by: str = Query("created_at"),
+    sort_order: str = Query("desc"),
+    current_user: dict = Depends(get_current_user)
+):
+    query = {"pharmacy_id": current_user["pharmacy_id"]}
+    if search:
+        query["$or"] = [
+            {"name": {"$regex": search, "$options": "i"}},
+            {"mobile": {"$regex": search, "$options": "i"}}
+        ]
+    
+    # Count total
+    total = await db.customers.count_documents(query)
+    
+    # Sort direction
+    sort_dir = -1 if sort_order == "desc" else 1
+    
+    # Paginate
+    skip = (page - 1) * limit
+    customers = await db.customers.find(query, {"_id": 0}).sort(sort_by, sort_dir).skip(skip).limit(limit).to_list(limit)
+    
+    return {
+        "customers": customers,
+        "pagination": {
+            "page": page,
+            "limit": limit,
+            "total": total,
+            "total_pages": (total + limit - 1) // limit
+        }
+    }
+
+@api_router.get("/customers/{customer_id}")
+async def get_customer(customer_id: str, current_user: dict = Depends(get_current_user)):
+    customer = await db.customers.find_one(
+        {"id": customer_id, "pharmacy_id": current_user["pharmacy_id"]},
+        {"_id": 0}
+    )
+    if not customer:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    
+    # Get customer's bills
+    bills = await db.bills.find(
+        {"customer_id": customer_id},
+        {"_id": 0}
+    ).sort("created_at", -1).to_list(50)
+    
+    return {"customer": customer, "bills": bills}
+
+@api_router.post("/customers/{customer_id}/clear-debt")
+async def clear_customer_debt(
+    customer_id: str, 
+    amount: float = Query(None, description="Amount to clear. If not provided, clears all debt."),
+    current_user: dict = Depends(get_current_user)
+):
+    """Clear customer debt - either full debt or partial amount"""
+    customer = await db.customers.find_one(
+        {"id": customer_id, "pharmacy_id": current_user["pharmacy_id"]},
+        {"_id": 0}
+    )
+    if not customer:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    
+    current_debt = customer.get("total_debt", 0)
+    
+    if current_debt <= 0:
+        return {"message": "Customer has no debt", "cleared_amount": 0}
+    
+    # Determine amount to clear
+    clear_amount = amount if amount is not None else current_debt
+    clear_amount = min(clear_amount, current_debt)  # Can't clear more than debt
+    
+    # Update customer debt
+    await db.customers.update_one(
+        {"id": customer_id},
+        {"$inc": {"total_debt": -clear_amount}}
+    )
+    
+    # Mark unpaid bills as paid (oldest first) until clear_amount is covered
+    remaining = clear_amount
+    unpaid_bills = await db.bills.find(
+        {"customer_id": customer_id, "is_paid": False, "pharmacy_id": current_user["pharmacy_id"]},
+        {"_id": 0}
+    ).sort("created_at", 1).to_list(100)
+    
+    bills_marked_paid = 0
+    for bill in unpaid_bills:
+        if remaining <= 0:
+            break
+        bill_amount = bill.get("grand_total", 0)
+        if bill_amount <= remaining:
+            # Mark this bill as paid
+            await db.bills.update_one(
+                {"id": bill["id"]},
+                {"$set": {"is_paid": True, "payment_date": datetime.now(timezone.utc).isoformat()}}
+            )
+            remaining -= bill_amount
+            bills_marked_paid += 1
+    
+    new_debt = current_debt - clear_amount
+    
+    return {
+        "message": f"Cleared Rs. {clear_amount:.2f} debt",
+        "cleared_amount": clear_amount,
+        "previous_debt": current_debt,
+        "remaining_debt": new_debt,
+        "bills_marked_paid": bills_marked_paid
+    }
+
+# ==================== BILLING ROUTES ====================
+
+@api_router.post("/bills/preview")
+async def preview_bill(data: BillCreate, current_user: dict = Depends(get_current_user)):
+    subtotal = 0
+    total_profit = 0
+    items_detail = []
+    
+    for item in data.items:
+        # Handle negative billing (manual items without inventory)
+        if item.is_manual or not item.inventory_id:
+            item_total = item.quantity * item.unit_price
+            item_discount = item_total * (item.discount_percent / 100)
+            item_net = item_total - item_discount
+            purchase_price = item.purchase_price or (item.unit_price * 0.7)  # Estimate 30% margin if not provided
+            item_profit = item_net - (item.quantity * purchase_price)
+            
+            subtotal += item_net
+            total_profit += item_profit
+            
+            items_detail.append({
+                "product_name": item.product_name,
+                "batch_no": item.batch_no or "MANUAL",
+                "quantity": item.quantity,
+                "unit_price": item.unit_price,
+                "discount_percent": item.discount_percent,
+                "total": item_net,
+                "purchase_price": purchase_price,
+                "profit": item_profit,
+                "is_manual": True
+            })
+        else:
+            # Regular inventory item
+            inv = await db.inventory.find_one({"id": item.inventory_id}, {"_id": 0})
+            if not inv:
+                raise HTTPException(status_code=400, detail=f"Inventory item {item.inventory_id} not found")
+            
+            if inv["available_quantity"] < item.quantity:
+                raise HTTPException(status_code=400, detail=f"Insufficient stock for {item.product_name}")
+            
+            item_total = item.quantity * item.unit_price
+            item_discount = item_total * (item.discount_percent / 100)
+            item_net = item_total - item_discount
+            item_profit = item_net - (item.quantity * inv["purchase_price"])
+            
+            subtotal += item_net
+            total_profit += item_profit
+            
+            items_detail.append({
+                "product_name": item.product_name,
+                "batch_no": item.batch_no or inv["batch_no"],
+                "quantity": item.quantity,
+                "unit_price": item.unit_price,
+                "discount_percent": item.discount_percent,
+                "total": item_net,
+                "purchase_price": inv["purchase_price"],
+                "profit": item_profit,
+                "is_manual": False
+            })
+    
+    bill_discount = subtotal * (data.discount_percent / 100)
+    grand_total = subtotal - bill_discount
+    
+    return {
+        "items": items_detail,
+        "subtotal": round(subtotal, 2),
+        "discount": round(bill_discount, 2),
+        "grand_total": round(grand_total, 2),
+        "total_profit": round(total_profit - bill_discount, 2)
+    }
+
+@api_router.post("/bills")
+async def create_bill(data: BillCreate, current_user: dict = Depends(get_current_user)):
+    bill_id = str(uuid.uuid4())
+    bill_no = f"BILL-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
+    
+    subtotal = 0
+    total_cost = 0
+    items_detail = []
+    
+    # Validate and process items
+    for item in data.items:
+        # Handle negative billing (manual items without inventory)
+        if item.is_manual or not item.inventory_id:
+            item_total = item.quantity * item.unit_price
+            item_discount = item_total * (item.discount_percent / 100)
+            item_net = item_total - item_discount
+            purchase_price = item.purchase_price or (item.unit_price * 0.7)
+            item_cost = item.quantity * purchase_price
+            
+            subtotal += item_net
+            total_cost += item_cost
+            
+            items_detail.append({
+                "inventory_id": None,
+                "product_name": item.product_name,
+                "batch_no": item.batch_no or "MANUAL",
+                "hsn_no": item.hsn_no,
+                "expiry_date": item.expiry_date,
+                "quantity": item.quantity,
+                "unit_price": item.unit_price,
+                "discount_percent": item.discount_percent,
+                "total": item_net,
+                "cost": item_cost,
+                "is_manual": True
+            })
+        else:
+            # Regular inventory item
+            inv = await db.inventory.find_one({"id": item.inventory_id}, {"_id": 0})
+            if not inv:
+                raise HTTPException(status_code=400, detail=f"Inventory item not found")
+            
+            if inv["available_quantity"] < item.quantity:
+                raise HTTPException(status_code=400, detail=f"Insufficient stock for {item.product_name}")
+            
+            item_total = item.quantity * item.unit_price
+            item_discount = item_total * (item.discount_percent / 100)
+            item_net = item_total - item_discount
+            item_cost = item.quantity * inv["purchase_price"]
+            
+            subtotal += item_net
+            total_cost += item_cost
+            
+            items_detail.append({
+                "inventory_id": item.inventory_id,
+                "product_name": item.product_name,
+                "batch_no": item.batch_no or inv["batch_no"],
+                "hsn_no": inv.get("hsn_no"),
+                "expiry_date": inv.get("expiry_date"),
+                "quantity": item.quantity,
+                "unit_price": item.unit_price,
+                "discount_percent": item.discount_percent,
+                "total": item_net,
+                "cost": item_cost,
+                "is_manual": False
+            })
+            
+            # Deduct from inventory (only for non-manual items)
+            await db.inventory.update_one(
+                {"id": item.inventory_id},
+                {"$inc": {"available_quantity": -item.quantity}}
+            )
+    
+    bill_discount = subtotal * (data.discount_percent / 100)
+    grand_total = subtotal - bill_discount
+    profit = grand_total - total_cost
+    
+    # Handle customer
+    customer_id = data.customer_id
+    if not customer_id and data.customer_mobile:
+        customer_result = await create_customer(
+            CustomerCreate(name=data.customer_name, mobile=data.customer_mobile, email=data.customer_email),
+            current_user
+        )
+        customer_id = customer_result["customer"]["id"]
+    
+    bill_data = {
+        "id": bill_id,
+        "bill_no": bill_no,
+        "pharmacy_id": current_user["pharmacy_id"],
+        "customer_id": customer_id,
+        "customer_name": data.customer_name,
+        "customer_mobile": data.customer_mobile,
+        "customer_email": data.customer_email,
+        "items": items_detail,
+        "subtotal": round(subtotal, 2),
+        "discount_percent": data.discount_percent,
+        "discount_amount": round(bill_discount, 2),
+        "grand_total": round(grand_total, 2),
+        "total_cost": round(total_cost, 2),
+        "profit": round(profit, 2),
+        "is_paid": data.is_paid,
+        "due_date": data.due_date,
+        "payment_date": datetime.now(timezone.utc).isoformat() if data.is_paid else None,
+        "notes": data.notes,
+        "pdf_url": None,
+        "created_by": current_user["id"],
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    await db.bills.insert_one(bill_data)
+    
+    # Update customer stats
+    if customer_id:
+        debt_change = 0 if data.is_paid else grand_total
+        await db.customers.update_one(
+            {"id": customer_id},
+            {"$inc": {"total_purchases": grand_total, "total_debt": debt_change}}
+        )
+    
+    return {"bill": {k: v for k, v in bill_data.items() if k != "_id"}}
+
+@api_router.get("/bills")
+async def get_bills(
+    search: str = Query(None),
+    customer_id: str = Query(None),
+    is_paid: bool = Query(None),
+    start_date: str = Query(None),
+    end_date: str = Query(None),
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=100),
+    sort_by: str = Query("created_at"),
+    sort_order: str = Query("desc"),
+    current_user: dict = Depends(get_current_user)
+):
+    query = {"pharmacy_id": current_user["pharmacy_id"]}
+    if customer_id:
+        query["customer_id"] = customer_id
+    if is_paid is not None:
+        query["is_paid"] = is_paid
+    if start_date:
+        query["created_at"] = {"$gte": start_date}
+    if end_date:
+        query.setdefault("created_at", {})["$lte"] = end_date
+    if search:
+        query["$or"] = [
+            {"customer_name": {"$regex": search, "$options": "i"}},
+            {"bill_no": {"$regex": search, "$options": "i"}}
+        ]
+    
+    # Count total
+    total = await db.bills.count_documents(query)
+    
+    # Sort direction
+    sort_dir = -1 if sort_order == "desc" else 1
+    
+    # Paginate
+    skip = (page - 1) * limit
+    bills = await db.bills.find(query, {"_id": 0}).sort(sort_by, sort_dir).skip(skip).limit(limit).to_list(limit)
+    
+    return {
+        "bills": bills,
+        "pagination": {
+            "page": page,
+            "limit": limit,
+            "total": total,
+            "total_pages": (total + limit - 1) // limit
+        }
+    }
+
+@api_router.get("/bills/{bill_id}")
+async def get_bill(bill_id: str, current_user: dict = Depends(get_current_user)):
+    bill = await db.bills.find_one(
+        {"id": bill_id, "pharmacy_id": current_user["pharmacy_id"]},
+        {"_id": 0}
+    )
+    if not bill:
+        raise HTTPException(status_code=404, detail="Bill not found")
+    return {"bill": bill}
+
+@api_router.post("/bills/{bill_id}/mark-paid")
+async def mark_bill_paid(bill_id: str, current_user: dict = Depends(get_current_user)):
+    bill = await db.bills.find_one(
+        {"id": bill_id, "pharmacy_id": current_user["pharmacy_id"]},
+        {"_id": 0}
+    )
+    if not bill:
+        raise HTTPException(status_code=404, detail="Bill not found")
+    
+    if bill["is_paid"]:
+        raise HTTPException(status_code=400, detail="Bill already paid")
+    
+    await db.bills.update_one(
+        {"id": bill_id},
+        {"$set": {"is_paid": True, "payment_date": datetime.now(timezone.utc).isoformat()}}
+    )
+    
+    # Update customer debt
+    if bill.get("customer_id"):
+        await db.customers.update_one(
+            {"id": bill["customer_id"]},
+            {"$inc": {"total_debt": -bill["grand_total"]}}
+        )
+    
+    return {"message": "Bill marked as paid"}
+
+class BillUpdateModel(BaseModel):
+    customer_name: Optional[str] = None
+    customer_mobile: Optional[str] = None
+    customer_email: Optional[str] = None
+    discount_percent: Optional[float] = None
+    is_paid: Optional[bool] = None
+    notes: Optional[str] = None
+
+@api_router.put("/bills/{bill_id}")
+async def update_bill(
+    bill_id: str,
+    data: BillUpdateModel,
+    current_user: dict = Depends(get_current_user)
+):
+    """Update bill details (customer info, discount, payment status)"""
+    bill = await db.bills.find_one(
+        {"id": bill_id, "pharmacy_id": current_user["pharmacy_id"]},
+        {"_id": 0}
+    )
+    if not bill:
+        raise HTTPException(status_code=404, detail="Bill not found")
+    
+    update_data = {}
+    
+    if data.customer_name is not None:
+        update_data["customer_name"] = data.customer_name
+    if data.customer_mobile is not None:
+        update_data["customer_mobile"] = data.customer_mobile
+    if data.customer_email is not None:
+        update_data["customer_email"] = data.customer_email
+    if data.discount_percent is not None:
+        # Recalculate totals
+        subtotal = bill.get("subtotal", bill.get("grand_total", 0))
+        new_discount = subtotal * (data.discount_percent / 100)
+        new_total = subtotal - new_discount
+        update_data["discount_percent"] = data.discount_percent
+        update_data["discount_amount"] = new_discount
+        update_data["grand_total"] = new_total
+    if data.notes is not None:
+        update_data["notes"] = data.notes
+    
+    # Handle payment status change
+    if data.is_paid is not None and data.is_paid != bill.get("is_paid"):
+        update_data["is_paid"] = data.is_paid
+        if data.is_paid:
+            update_data["payment_date"] = datetime.now(timezone.utc).isoformat()
+            # Reduce customer debt
+            if bill.get("customer_id"):
+                await db.customers.update_one(
+                    {"id": bill["customer_id"]},
+                    {"$inc": {"total_debt": -bill["grand_total"]}}
+                )
+        else:
+            update_data["payment_date"] = None
+            # Increase customer debt
+            if bill.get("customer_id"):
+                await db.customers.update_one(
+                    {"id": bill["customer_id"]},
+                    {"$inc": {"total_debt": bill["grand_total"]}}
+                )
+    
+    if update_data:
+        update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
+        await db.bills.update_one({"id": bill_id}, {"$set": update_data})
+    
+    updated_bill = await db.bills.find_one({"id": bill_id}, {"_id": 0})
+    return {"bill": updated_bill, "message": "Bill updated successfully"}
+
+@api_router.delete("/bills/{bill_id}")
+async def delete_bill(
+    bill_id: str, 
+    restore_inventory: bool = Query(False),
+    current_user: dict = Depends(get_current_user)
+):
+    """Delete a bill and optionally restore inventory quantities"""
+    bill = await db.bills.find_one(
+        {"id": bill_id, "pharmacy_id": current_user["pharmacy_id"]},
+        {"_id": 0}
+    )
+    if not bill:
+        raise HTTPException(status_code=404, detail="Bill not found")
+    
+    # Restore inventory if requested
+    restored_items = 0
+    if restore_inventory:
+        for item in bill.get("items", []):
+            if item.get("inventory_id"):
+                result = await db.inventory.update_one(
+                    {"id": item["inventory_id"]},
+                    {"$inc": {"available_quantity": item["quantity"]}}
+                )
+                if result.modified_count > 0:
+                    restored_items += 1
+    
+    # Update customer stats if there was a customer
+    if bill.get("customer_id"):
+        debt_adjustment = 0 if bill.get("is_paid") else -bill.get("grand_total", 0)
+        await db.customers.update_one(
+            {"id": bill["customer_id"]},
+            {"$inc": {
+                "total_purchases": -bill.get("grand_total", 0),
+                "total_debt": debt_adjustment
+            }}
+        )
+    
+    # Delete the bill
+    await db.bills.delete_one({"id": bill_id})
+    
+    return {
+        "message": "Bill deleted successfully",
+        "restored_inventory_items": restored_items
+    }
+
+@api_router.post("/bills/{bill_id}/generate-pdf")
+async def generate_bill_pdf(bill_id: str, current_user: dict = Depends(get_current_user)):
+    bill = await db.bills.find_one(
+        {"id": bill_id, "pharmacy_id": current_user["pharmacy_id"]},
+        {"_id": 0}
+    )
+    if not bill:
+        raise HTTPException(status_code=404, detail="Bill not found")
+    
+    pharmacy = await db.pharmacies.find_one({"id": current_user["pharmacy_id"]}, {"_id": 0})
+    
+    # Generate PDF
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, 
+        pagesize=A4, 
+        topMargin=1*cm, 
+        bottomMargin=1*cm,
+        leftMargin=1.5*cm,
+        rightMargin=1.5*cm
+    )
+    styles = getSampleStyleSheet()
+    elements = []
+    
+    # Custom styles
+    header_style = ParagraphStyle(
+        'Header', 
+        parent=styles['Heading1'], 
+        fontSize=22, 
+        textColor=colors.HexColor('#1a1a2e'),
+        spaceAfter=2
+    )
+    subheader_style = ParagraphStyle(
+        'SubHeader', 
+        parent=styles['Normal'], 
+        fontSize=10, 
+        textColor=colors.HexColor('#4a4a4a'),
+        spaceAfter=1
+    )
+    
+    # Header with Logo
+    header_data = []
+    
+    # Try to add logo if available
+    if pharmacy.get("logo_url"):
+        try:
+            async with httpx.AsyncClient() as client:
+                logo_response = await client.get(pharmacy["logo_url"])
+                if logo_response.status_code == 200:
+                    logo_buffer = BytesIO(logo_response.content)
+                    logo_img = Image(logo_buffer, width=1.5*cm, height=1.5*cm)
+                    header_data.append([logo_img, ""])
+        except:
+            pass
+    
+    # Pharmacy Header
+    elements.append(Paragraph(pharmacy.get("name", "Pharmalogy"), header_style))
+    elements.append(Paragraph(pharmacy.get("location", ""), subheader_style))
+    if pharmacy.get("license_no"):
+        elements.append(Paragraph(f"License No: {pharmacy['license_no']}", subheader_style))
+    elements.append(Spacer(1, 0.3*cm))
+    
+    # Divider line
+    elements.append(Table([[""]], colWidths=[18*cm], rowHeights=[1]))
+    elements[-1].setStyle(TableStyle([
+        ('LINEABOVE', (0, 0), (-1, 0), 2, colors.HexColor('#10B981')),
+    ]))
+    elements.append(Spacer(1, 0.3*cm))
+    
+    # Bill Info Section - Two columns
+    bill_info_style = ParagraphStyle('BillInfo', parent=styles['Normal'], fontSize=10)
+    bill_date = bill['created_at'][:10] if bill.get('created_at') else datetime.now().strftime('%Y-%m-%d')
+    
+    info_table = Table([
+        [
+            Paragraph(f"<b>Bill No:</b> {bill['bill_no']}", bill_info_style),
+            Paragraph(f"<b>Date:</b> {bill_date}", bill_info_style)
+        ],
+        [
+            Paragraph(f"<b>Customer:</b> {bill['customer_name']}", bill_info_style),
+            Paragraph(f"<b>Mobile:</b> {bill['customer_mobile']}", bill_info_style)
+        ]
+    ], colWidths=[9*cm, 9*cm])
+    info_table.setStyle(TableStyle([
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+    ]))
+    elements.append(info_table)
+    elements.append(Spacer(1, 0.5*cm))
+    
+    # Items Table - Use "Rs." for PDF compatibility
+    table_header = ['S.No', 'Item Description', 'HSN', 'Batch', 'Qty', 'Rate (Rs.)', 'Disc%', 'Amount (Rs.)']
+    table_data = [table_header]
+    
+    for idx, item in enumerate(bill['items'], 1):
+        table_data.append([
+            str(idx),
+            item['product_name'][:30],
+            item.get('hsn_no', '-') or '-',
+            item.get('batch_no', '-') or '-',
+            str(item['quantity']),
+            f"{item['unit_price']:.2f}",
+            f"{item['discount_percent']:.1f}%",
+            f"{item['total']:.2f}"
+        ])
+    
+    col_widths = [0.8*cm, 5*cm, 1.5*cm, 2*cm, 1*cm, 1.8*cm, 1.2*cm, 2*cm]
+    table = Table(table_data, colWidths=col_widths)
+    table.setStyle(TableStyle([
+        # Header
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#10B981')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, 0), 9),
+        ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+        ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+        ('TOPPADDING', (0, 0), (-1, 0), 8),
+        # Body
+        ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+        ('FONTSIZE', (0, 1), (-1, -1), 8),
+        ('ALIGN', (0, 1), (0, -1), 'CENTER'),  # S.No
+        ('ALIGN', (2, 1), (-1, -1), 'CENTER'),  # HSN onwards
+        ('ALIGN', (-1, 1), (-1, -1), 'RIGHT'),  # Amount
+        ('BOTTOMPADDING', (0, 1), (-1, -1), 6),
+        ('TOPPADDING', (0, 1), (-1, -1), 6),
+        # Grid
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#e0e0e0')),
+        ('LINEBELOW', (0, 0), (-1, 0), 1, colors.HexColor('#0d8a6a')),
+        # Alternate row colors
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f8f9fa')]),
+    ]))
+    elements.append(table)
+    elements.append(Spacer(1, 0.5*cm))
+    
+    # Totals Section
+    totals_style = ParagraphStyle('Totals', parent=styles['Normal'], fontSize=10, alignment=2)  # Right aligned
+    totals_bold = ParagraphStyle('TotalsBold', parent=styles['Normal'], fontSize=12, alignment=2)
+    
+    totals_data = [
+        ['', 'Subtotal:', f"Rs. {bill['subtotal']:.2f}"],
+        ['', f"Discount ({bill['discount_percent']}%):", f"-Rs. {bill['discount_amount']:.2f}"],
+    ]
+    
+    totals_table = Table(totals_data, colWidths=[10*cm, 4*cm, 4*cm])
+    totals_table.setStyle(TableStyle([
+        ('ALIGN', (1, 0), (-1, -1), 'RIGHT'),
+        ('FONTSIZE', (0, 0), (-1, -1), 10),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+    ]))
+    elements.append(totals_table)
+    
+    # Grand Total with highlight
+    grand_total_table = Table(
+        [['', 'GRAND TOTAL:', f"Rs. {bill['grand_total']:.2f}"]],
+        colWidths=[10*cm, 4*cm, 4*cm]
+    )
+    grand_total_table.setStyle(TableStyle([
+        ('ALIGN', (1, 0), (-1, -1), 'RIGHT'),
+        ('FONTNAME', (1, 0), (-1, -1), 'Helvetica-Bold'),
+        ('FONTSIZE', (1, 0), (-1, -1), 12),
+        ('TEXTCOLOR', (1, 0), (-1, -1), colors.HexColor('#10B981')),
+        ('BACKGROUND', (1, 0), (-1, -1), colors.HexColor('#f0fdf4')),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+        ('TOPPADDING', (0, 0), (-1, -1), 8),
+    ]))
+    elements.append(grand_total_table)
+    elements.append(Spacer(1, 0.3*cm))
+    
+    # Payment Status
+    status = "PAID" if bill['is_paid'] else "UNPAID"
+    status_color = '#10B981' if bill['is_paid'] else '#dc2626'
+    status_bg = '#f0fdf4' if bill['is_paid'] else '#fef2f2'
+    
+    status_table = Table(
+        [[f"Payment Status: {status}"]],
+        colWidths=[6*cm]
+    )
+    status_table.setStyle(TableStyle([
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('FONTNAME', (0, 0), (-1, -1), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, -1), 11),
+        ('TEXTCOLOR', (0, 0), (-1, -1), colors.HexColor(status_color)),
+        ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor(status_bg)),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+        ('TOPPADDING', (0, 0), (-1, -1), 6),
+        ('BOX', (0, 0), (-1, -1), 1, colors.HexColor(status_color)),
+    ]))
+    elements.append(status_table)
+    elements.append(Spacer(1, 1*cm))
+    
+    # Footer
+    footer_style = ParagraphStyle('Footer', parent=styles['Normal'], fontSize=8, textColor=colors.HexColor('#666666'), alignment=1)
+    elements.append(Paragraph("Thank you for your purchase!", footer_style))
+    elements.append(Paragraph(f"Generated by Pharmalogy | {pharmacy.get('name', '')}", footer_style))
+    
+    doc.build(elements)
+    
+    # Upload to R2
+    pdf_data = buffer.getvalue()
+    file_name = f"bills/{bill['bill_no']}.pdf"
+    pdf_url = await upload_to_r2(pdf_data, file_name, "application/pdf")
+    
+    # Update bill
+    await db.bills.update_one({"id": bill_id}, {"$set": {"pdf_url": pdf_url}})
+    
+    # Send email if customer email exists
+    if bill.get("customer_email"):
+        try:
+            sender = {"name": pharmacy.get("name", "Pharmalogy"), "email": BREVO_SENDER_EMAIL}
+            to = [{"email": bill["customer_email"], "name": bill["customer_name"]}]
+            subject = f"Your Bill from {pharmacy.get('name', 'Pharmalogy')} - {bill['bill_no']}"
+            html_content = f"""
+            <html>
+            <body style="font-family: Arial, sans-serif;">
+                <h2>Thank you for your purchase!</h2>
+                <p>Dear {bill['customer_name']},</p>
+                <p>Your bill <b>{bill['bill_no']}</b> has been generated.</p>
+                <p><b>Total Amount:</b> ₹{bill['grand_total']:.2f}</p>
+                <p><b>Status:</b> {status}</p>
+                <p>You can download your bill from: <a href="{pdf_url}">Download Bill</a></p>
+                <p>Thank you for choosing {pharmacy.get('name', 'Pharmalogy')}!</p>
+            </body>
+            </html>
+            """
+            send_smtp_email = sib_api_v3_sdk.SendSmtpEmail(
+                to=to, sender=sender, subject=subject, html_content=html_content
+            )
+            brevo_api.send_transac_email(send_smtp_email)
+            logging.info(f"Bill email sent to {bill['customer_email']}")
+        except Exception as e:
+            logging.error(f"Email send error: {e}")
+    
+    return {"pdf_url": pdf_url}
+
+# ==================== DASHBOARD & ANALYTICS ROUTES ====================
+
+@api_router.get("/dashboard/stats")
+async def get_dashboard_stats(current_user: dict = Depends(get_current_user)):
+    pharmacy_id = current_user["pharmacy_id"]
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    month_start = datetime.now(timezone.utc).replace(day=1).strftime("%Y-%m-%d")
+    
+    # Today's stats
+    today_bills = await db.bills.find({
+        "pharmacy_id": pharmacy_id,
+        "created_at": {"$gte": today}
+    }, {"_id": 0}).to_list(1000)
+    
+    today_revenue = sum(b["grand_total"] for b in today_bills)
+    today_profit = sum(b["profit"] for b in today_bills)
+    today_orders = len(today_bills)
+    
+    # Monthly stats
+    month_bills = await db.bills.find({
+        "pharmacy_id": pharmacy_id,
+        "created_at": {"$gte": month_start}
+    }, {"_id": 0}).to_list(1000)
+    
+    month_revenue = sum(b["grand_total"] for b in month_bills)
+    month_profit = sum(b["profit"] for b in month_bills)
+    month_orders = len(month_bills)
+    
+    # Inventory counts
+    inventory = await db.inventory.find({
+        "pharmacy_id": pharmacy_id,
+        "available_quantity": {"$gt": 0}
+    }, {"_id": 0}).to_list(1000)
+    
+    total_items = len(inventory)
+    total_stock_value = sum(i["available_quantity"] * i["purchase_price"] for i in inventory)
+    
+    # Pending payments
+    unpaid_bills = await db.bills.find({
+        "pharmacy_id": pharmacy_id,
+        "is_paid": False
+    }, {"_id": 0}).to_list(1000)
+    
+    pending_amount = sum(b["grand_total"] for b in unpaid_bills)
+    pending_count = len(unpaid_bills)
+    
+    return {
+        "today": {
+            "revenue": round(today_revenue, 2),
+            "profit": round(today_profit, 2),
+            "orders": today_orders
+        },
+        "month": {
+            "revenue": round(month_revenue, 2),
+            "profit": round(month_profit, 2),
+            "orders": month_orders
+        },
+        "inventory": {
+            "total_items": total_items,
+            "stock_value": round(total_stock_value, 2)
+        },
+        "pending": {
+            "amount": round(pending_amount, 2),
+            "count": pending_count
+        }
+    }
+
+@api_router.get("/dashboard/sales-trend")
+async def get_sales_trend(
+    days: int = Query(30),
+    current_user: dict = Depends(get_current_user)
+):
+    pharmacy_id = current_user["pharmacy_id"]
+    start_date = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
+    
+    bills = await db.bills.find({
+        "pharmacy_id": pharmacy_id,
+        "created_at": {"$gte": start_date}
+    }, {"_id": 0}).to_list(1000)
+    
+    # Group by date
+    daily_data = {}
+    for bill in bills:
+        date = bill["created_at"][:10]
+        if date not in daily_data:
+            daily_data[date] = {"revenue": 0, "profit": 0, "orders": 0}
+        daily_data[date]["revenue"] += bill["grand_total"]
+        daily_data[date]["profit"] += bill["profit"]
+        daily_data[date]["orders"] += 1
+    
+    trend = [
+        {"date": date, **data}
+        for date, data in sorted(daily_data.items())
+    ]
+    
+    return {"trend": trend}
+
+@api_router.get("/dashboard/top-products")
+async def get_top_products(
+    limit: int = Query(10),
+    current_user: dict = Depends(get_current_user)
+):
+    pharmacy_id = current_user["pharmacy_id"]
+    month_start = datetime.now(timezone.utc).replace(day=1).strftime("%Y-%m-%d")
+    
+    bills = await db.bills.find({
+        "pharmacy_id": pharmacy_id,
+        "created_at": {"$gte": month_start}
+    }, {"_id": 0}).to_list(1000)
+    
+    product_sales = {}
+    for bill in bills:
+        for item in bill["items"]:
+            name = item["product_name"]
+            if name not in product_sales:
+                product_sales[name] = {"quantity": 0, "revenue": 0}
+            product_sales[name]["quantity"] += item["quantity"]
+            product_sales[name]["revenue"] += item["total"]
+    
+    top_products = sorted(
+        [{"name": name, **data} for name, data in product_sales.items()],
+        key=lambda x: x["revenue"],
+        reverse=True
+    )[:limit]
+    
+    return {"top_products": top_products}
+
+@api_router.get("/dashboard/supplier-analysis")
+async def get_supplier_analysis(current_user: dict = Depends(get_current_user)):
+    pharmacy_id = current_user["pharmacy_id"]
+    month_start = datetime.now(timezone.utc).replace(day=1).strftime("%Y-%m-%d")
+    
+    purchases = await db.purchases.find({
+        "pharmacy_id": pharmacy_id,
+        "created_at": {"$gte": month_start}
+    }, {"_id": 0}).to_list(1000)
+    
+    supplier_data = {}
+    for purchase in purchases:
+        name = purchase["supplier_name"]
+        if name not in supplier_data:
+            supplier_data[name] = {"purchases": 0, "amount": 0}
+        supplier_data[name]["purchases"] += 1
+        supplier_data[name]["amount"] += purchase["total_amount"]
+    
+    analysis = sorted(
+        [{"name": name, **data} for name, data in supplier_data.items()],
+        key=lambda x: x["amount"],
+        reverse=True
+    )
+    
+    return {"supplier_analysis": analysis}
+
+@api_router.get("/dashboard/debt-summary")
+async def get_debt_summary(current_user: dict = Depends(get_current_user)):
+    pharmacy_id = current_user["pharmacy_id"]
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    
+    unpaid_bills = await db.bills.find({
+        "pharmacy_id": pharmacy_id,
+        "is_paid": False
+    }, {"_id": 0}).to_list(1000)
+    
+    total_debt = sum(b["grand_total"] for b in unpaid_bills)
+    overdue = [b for b in unpaid_bills if b.get("due_date") and b["due_date"] < today]
+    overdue_amount = sum(b["grand_total"] for b in overdue)
+    
+    # Group by customer
+    customer_debts = {}
+    for bill in unpaid_bills:
+        cid = bill.get("customer_id", "unknown")
+        cname = bill["customer_name"]
+        if cid not in customer_debts:
+            customer_debts[cid] = {"name": cname, "amount": 0, "bills": 0}
+        customer_debts[cid]["amount"] += bill["grand_total"]
+        customer_debts[cid]["bills"] += 1
+    
+    top_debtors = sorted(
+        [{"customer_id": cid, **data} for cid, data in customer_debts.items()],
+        key=lambda x: x["amount"],
+        reverse=True
+    )[:10]
+    
+    return {
+        "total_debt": round(total_debt, 2),
+        "overdue_amount": round(overdue_amount, 2),
+        "overdue_count": len(overdue),
+        "total_unpaid_bills": len(unpaid_bills),
+        "top_debtors": top_debtors
+    }
+
+# ==================== AI TIPS ROUTE ====================
+
+@api_router.get("/dashboard/ai-tips")
+async def get_ai_tips(current_user: dict = Depends(get_current_user)):
+    try:
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
+        
+        # Gather business data
+        stats = await get_dashboard_stats(current_user)
+        alerts = await get_inventory_alerts(current_user)
+        debt = await get_debt_summary(current_user)
+        
+        context = f"""
+        Pharmacy Business Data:
+        - Today's Revenue: ₹{stats['today']['revenue']}
+        - Today's Profit: ₹{stats['today']['profit']}
+        - Monthly Revenue: ₹{stats['month']['revenue']}
+        - Monthly Profit: ₹{stats['month']['profit']}
+        - Inventory Items: {stats['inventory']['total_items']}
+        - Stock Value: ₹{stats['inventory']['stock_value']}
+        - Pending Payments: ₹{stats['pending']['amount']} ({stats['pending']['count']} bills)
+        - Low Stock Items: {len(alerts['low_stock_alerts'])}
+        - Expiring Soon Items: {len(alerts['expiry_alerts'])}
+        - Total Debt Owed: ₹{debt['total_debt']}
+        - Overdue Amount: ₹{debt['overdue_amount']}
+        """
+        
+        chat = LlmChat(
+            api_key=os.environ.get('EMERGENT_LLM_KEY'),
+            session_id=f"pharmalogy-tips-{current_user['pharmacy_id']}",
+            system_message="You are a pharmacy business advisor. Give 3-4 brief, actionable tips in bullet points based on the data. Focus on improving revenue, managing debt, and inventory optimization. Use Indian Rupees (₹). Keep each tip under 2 sentences."
+        ).with_model("openai", "gpt-5.2")
+        
+        response = await chat.send_message(UserMessage(text=context))
+        
+        return {"tips": response, "generated_at": datetime.now(timezone.utc).isoformat()}
+    except Exception as e:
+        logging.error(f"AI tips error: {e}")
+        # Fallback tips
+        return {
+            "tips": "• Monitor your low stock items and reorder before running out.\n• Follow up on pending payments to improve cash flow.\n• Check expiring products and consider promotions to clear them.",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "is_fallback": True
+        }
+
+# ==================== HEALTH CHECK ====================
+
+@api_router.get("/")
+async def root():
+    return {"message": "Pharmalogy API", "version": "1.0.0"}
+
+@api_router.get("/health")
+async def health_check():
+    return {"status": "healthy", "timestamp": datetime.now(timezone.utc).isoformat()}
+
+# ==================== MEDICINE SUGGESTIONS API ====================
+
+@api_router.get("/medicines/search")
+async def search_medicines(
+    q: str = Query(..., min_length=2),
+    limit: int = Query(20, max=50)
+):
+    """Search medicines from global database for suggestions - searches name and salt/composition"""
+    # Search both name and composition (salt)
+    medicines = await db.global_medicines.find(
+        {"$or": [
+            {"name": {"$regex": q, "$options": "i"}},
+            {"composition": {"$regex": q, "$options": "i"}}
+        ]},
+        {"_id": 0, "id": 1, "name": 1, "price(₹)": 1, "manufacturer": 1, "pack_size": 1, "composition": 1}
+    ).limit(limit * 2).to_list(limit * 2)  # Get more results for better ranking
+    
+    # Rank results: exact match > starts with > contains
+    search_lower = q.lower()
+    
+    def rank_medicine(med):
+        name = (med.get("name") or "").lower()
+        comp = (med.get("composition") or "").lower()
+        
+        # Exact match
+        if name == search_lower:
+            return 0
+        # Starts with (name)
+        if name.startswith(search_lower):
+            return 1
+        # Starts with (composition)
+        if comp.startswith(search_lower):
+            return 2
+        # Contains (name)
+        if search_lower in name:
+            return 3
+        # Contains (composition)
+        if search_lower in comp:
+            return 4
+        return 5
+    
+    medicines.sort(key=rank_medicine)
+    
+    return {"medicines": medicines[:limit]}
+
+@api_router.post("/medicines/import")
+async def import_medicines_database():
+    """Import medicine database from JSON URL (one-time setup)"""
+    try:
+        # Check if already imported
+        count = await db.global_medicines.count_documents({})
+        if count > 0:
+            return {"message": f"Database already has {count} medicines", "imported": False}
+        
+        # Fetch from URL
+        json_url = "https://customer-assets.emergentagent.com/job_pharminv-1/artifacts/orzvetj5_indian_medicine_data.json"
+        
+        async with httpx.AsyncClient(timeout=120) as client:
+            response = await client.get(json_url)
+            medicines = response.json()
+        
+        # Insert in batches
+        batch_size = 5000
+        total_imported = 0
+        
+        for i in range(0, len(medicines), batch_size):
+            batch = medicines[i:i+batch_size]
+            await db.global_medicines.insert_many(batch)
+            total_imported += len(batch)
+            logging.info(f"Imported {total_imported}/{len(medicines)} medicines")
+        
+        # Create index for faster search
+        await db.global_medicines.create_index([("name", "text")])
+        await db.global_medicines.create_index("name")
+        
+        return {"message": f"Successfully imported {total_imported} medicines", "imported": True}
+    except Exception as e:
+        logging.error(f"Medicine import error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ==================== DATA MIGRATION API ====================
+
+@api_router.post("/migrate/data")
+async def migrate_data(
+    data_type: str = Form(...),
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user)
+):
+    """Migrate data from JSON file - supports suppliers, customers, products, purchases, bills"""
+    if current_user["role"] != "ADMIN":
+        raise HTTPException(status_code=403, detail="Only admins can migrate data")
+    
+    try:
+        content = await file.read()
+        data = json.loads(content.decode('utf-8'))
+        
+        if not isinstance(data, list):
+            data = [data]
+        
+        pharmacy_id = current_user["pharmacy_id"]
+        imported = 0
+        errors = []
+        
+        for item in data:
+            try:
+                item_id = str(uuid.uuid4())
+                item["id"] = item_id
+                item["pharmacy_id"] = pharmacy_id
+                item["created_at"] = datetime.now(timezone.utc).isoformat()
+                item["migrated"] = True
+                
+                if data_type == "suppliers":
+                    await db.suppliers.insert_one(item)
+                elif data_type == "customers":
+                    await db.customers.insert_one(item)
+                elif data_type == "products":
+                    await db.products.insert_one(item)
+                elif data_type == "inventory":
+                    await db.inventory.insert_one(item)
+                elif data_type == "purchases":
+                    # Handle purchase items to inventory
+                    if "items" in item:
+                        for inv_item in item.get("items", []):
+                            inv_id = str(uuid.uuid4())
+                            inv_data = {
+                                "id": inv_id,
+                                "pharmacy_id": pharmacy_id,
+                                "product_name": inv_item.get("product_name"),
+                                "batch_no": inv_item.get("batch_no"),
+                                "expiry_date": inv_item.get("expiry_date"),
+                                "quantity": inv_item.get("quantity", 0),
+                                "available_quantity": inv_item.get("quantity", 0),
+                                "purchase_price": inv_item.get("purchase_price", 0),
+                                "mrp": inv_item.get("mrp", 0),
+                                "purchase_id": item_id,
+                                "supplier_id": item.get("supplier_id"),
+                                "created_at": datetime.now(timezone.utc).isoformat(),
+                                "migrated": True
+                            }
+                            await db.inventory.insert_one(inv_data)
+                    await db.purchases.insert_one(item)
+                elif data_type == "bills":
+                    await db.bills.insert_one(item)
+                else:
+                    errors.append(f"Unknown data type: {data_type}")
+                    continue
+                    
+                imported += 1
+            except Exception as e:
+                errors.append(f"Error importing item: {str(e)}")
+        
+        return {
+            "message": f"Migration complete",
+            "imported": imported,
+            "total": len(data),
+            "errors": errors[:10] if errors else []
+        }
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid JSON file")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.get("/migrate/template/{data_type}")
+async def get_migration_template(data_type: str):
+    """Get template structure for data migration"""
+    templates = {
+        "suppliers": {
+            "name": "Supplier Name (required)",
+            "phone": "Phone number",
+            "email": "Email address",
+            "address": "Full address",
+            "gst_no": "GST Number"
+        },
+        "customers": {
+            "name": "Customer Name (required)",
+            "mobile": "Mobile number (required)",
+            "email": "Email address",
+            "address": "Full address"
+        },
+        "products": {
+            "name": "Product Name (required)",
+            "category": "medicine/cosmetic/consumable/equipment/other",
+            "hsn_no": "HSN Code",
+            "description": "Product description",
+            "low_stock_threshold": 10
+        },
+        "inventory": {
+            "product_name": "Product Name (required)",
+            "batch_no": "Batch Number (required)",
+            "expiry_date": "YYYY-MM-DD (required)",
+            "quantity": "Total quantity",
+            "available_quantity": "Available quantity",
+            "purchase_price": "Purchase price per unit",
+            "mrp": "MRP per unit"
+        },
+        "purchases": {
+            "supplier_name": "Supplier Name",
+            "invoice_no": "Invoice Number",
+            "items": [
+                {
+                    "product_name": "Product Name",
+                    "batch_no": "Batch Number",
+                    "expiry_date": "YYYY-MM-DD",
+                    "quantity": 100,
+                    "purchase_price": 10.0,
+                    "mrp": 15.0
+                }
+            ],
+            "total_amount": 1000.0
+        },
+        "bills": {
+            "bill_no": "BILL-001",
+            "customer_name": "Customer Name",
+            "customer_mobile": "Mobile",
+            "items": [
+                {
+                    "product_name": "Product Name",
+                    "quantity": 10,
+                    "unit_price": 15.0,
+                    "total": 150.0
+                }
+            ],
+            "subtotal": 150.0,
+            "discount_percent": 0,
+            "grand_total": 150.0,
+            "is_paid": True
+        }
+    }
+    
+    if data_type not in templates:
+        raise HTTPException(status_code=400, detail=f"Unknown data type. Available: {list(templates.keys())}")
+    
+    return {"template": templates[data_type], "data_type": data_type}
+
+# ==================== CSV PURCHASE IMPORT ====================
+
+@api_router.post("/purchases/import-csv")
+async def import_purchases_from_csv(
+    file: UploadFile = File(...),
+    supplier_id: str = Form(...),
+    supplier_name: str = Form(...),
+    product_name_col: str = Form(...),
+    batch_no_col: str = Form(...),
+    expiry_date_col: str = Form(...),
+    quantity_col: str = Form(...),
+    purchase_price_col: str = Form(...),
+    mrp_col: str = Form(...),
+    hsn_col: str = Form(None),
+    current_user: dict = Depends(get_current_user)
+):
+    """Import purchases from CSV file with field mapping"""
+    try:
+        content = await file.read()
+        content_str = content.decode('utf-8')
+        
+        # Parse CSV
+        reader = csv.DictReader(StringIO(content_str))
+        items = []
+        errors = []
+        
+        for row_num, row in enumerate(reader, 2):
+            try:
+                item = {
+                    "product_id": str(uuid.uuid4()),
+                    "product_name": row.get(product_name_col, "").strip(),
+                    "batch_no": row.get(batch_no_col, "").strip(),
+                    "expiry_date": row.get(expiry_date_col, "").strip(),
+                    "quantity": int(float(row.get(quantity_col, 0) or 0)),
+                    "purchase_price": float(row.get(purchase_price_col, 0) or 0),
+                    "mrp": float(row.get(mrp_col, 0) or 0),
+                }
+                
+                if hsn_col and row.get(hsn_col):
+                    item["hsn_no"] = row.get(hsn_col, "").strip()
+                
+                if not item["product_name"]:
+                    errors.append(f"Row {row_num}: Missing product name")
+                    continue
+                
+                if item["quantity"] <= 0:
+                    errors.append(f"Row {row_num}: Invalid quantity")
+                    continue
+                    
+                items.append(item)
+            except Exception as e:
+                errors.append(f"Row {row_num}: {str(e)}")
+        
+        if not items:
+            raise HTTPException(status_code=400, detail="No valid items found in CSV")
+        
+        # Create purchase
+        purchase_id = str(uuid.uuid4())
+        total_amount = sum(item["quantity"] * item["purchase_price"] for item in items)
+        
+        purchase_data = {
+            "id": purchase_id,
+            "pharmacy_id": current_user["pharmacy_id"],
+            "supplier_id": supplier_id,
+            "supplier_name": supplier_name,
+            "invoice_no": f"CSV-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}",
+            "items": items,
+            "total_amount": total_amount,
+            "notes": f"Imported from CSV: {file.filename}",
+            "created_by": current_user["id"],
+            "created_at": datetime.now(timezone.utc).isoformat()
+        }
+        await db.purchases.insert_one(purchase_data)
+        
+        # Add to inventory with deduplication
+        for item in items:
+            existing = await db.inventory.find_one({
+                "pharmacy_id": current_user["pharmacy_id"],
+                "product_name": item["product_name"],
+                "batch_no": item["batch_no"],
+                "supplier_id": supplier_id
+            })
+            
+            if existing:
+                await db.inventory.update_one(
+                    {"id": existing["id"]},
+                    {
+                        "$inc": {"quantity": item["quantity"], "available_quantity": item["quantity"]},
+                        "$set": {"purchase_price": item["purchase_price"], "mrp": item["mrp"]}
+                    }
+                )
+            else:
+                inv_id = str(uuid.uuid4())
+                inv_data = {
+                    "id": inv_id,
+                    "pharmacy_id": current_user["pharmacy_id"],
+                    "product_id": item["product_id"],
+                    "product_name": item["product_name"],
+                    "batch_no": item["batch_no"],
+                    "hsn_no": item.get("hsn_no"),
+                    "expiry_date": item["expiry_date"],
+                    "quantity": item["quantity"],
+                    "available_quantity": item["quantity"],
+                    "purchase_price": item["purchase_price"],
+                    "mrp": item["mrp"],
+                    "purchase_id": purchase_id,
+                    "supplier_id": supplier_id,
+                    "created_at": datetime.now(timezone.utc).isoformat()
+                }
+                await db.inventory.insert_one(inv_data)
+        
+        return {
+            "message": "CSV import successful",
+            "purchase_id": purchase_id,
+            "items_imported": len(items),
+            "total_amount": total_amount,
+            "errors": errors[:10] if errors else []
+        }
+    except Exception as e:
+        logging.error(f"CSV import error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.post("/purchases/csv-columns")
+async def get_csv_columns(file: UploadFile = File(...)):
+    """Get column names from CSV for mapping"""
+    try:
+        content = await file.read()
+        content_str = content.decode('utf-8')
+        reader = csv.DictReader(StringIO(content_str))
+        columns = reader.fieldnames or []
+        
+        # Read first few rows as sample
+        sample_rows = []
+        for i, row in enumerate(reader):
+            if i >= 3:
+                break
+            sample_rows.append(row)
+        
+        return {"columns": columns, "sample_data": sample_rows}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Error reading CSV: {str(e)}")
+
+# ==================== AI IMAGE SCANNING ROUTES ====================
+
+class ScannedProduct(BaseModel):
+    product_name: str = ""
+    batch_no: str = ""
+    expiry_date: str = ""
+    mrp: float = 0
+    purchase_price: float = 0
+    quantity: int = 0
+    hsn_no: str = ""
+    manufacturer: str = ""
+    confidence: float = 0
+    raw_text: str = ""
+
+@api_router.post("/purchases/scan-image")
+async def scan_product_image(
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Scan a product image using AI to extract product details.
+    Returns detected fields that can be used to auto-fill purchase form.
+    """
+    if not EMERGENT_LLM_KEY:
+        raise HTTPException(status_code=500, detail="AI service not configured")
+    
+    # Validate file type
+    allowed_types = ["image/jpeg", "image/png", "image/webp", "image/jpg"]
+    if file.content_type not in allowed_types:
+        raise HTTPException(status_code=400, detail="Only JPEG, PNG, WEBP images are supported")
+    
+    try:
+        # Read and encode image
+        image_data = await file.read()
+        image_base64 = base64.b64encode(image_data).decode('utf-8')
+        
+        # Initialize LLM chat with Gemini Flash for speed
+        chat = LlmChat(
+            api_key=EMERGENT_LLM_KEY,
+            session_id=f"scan_{uuid.uuid4()}",
+            system_message="""You are a pharmaceutical product scanner AI. Your job is to analyze images of medicine/product packaging and extract all visible information accurately.
+
+IMPORTANT: 
+- Extract EXACTLY what you see, don't make up data
+- For dates, convert to YYYY-MM-DD format
+- For prices, extract numeric values only
+- If a field is not visible, leave it empty
+- Be precise with batch numbers and product names"""
+        ).with_model("gemini", "gemini-2.0-flash")
+        
+        # Create image content
+        image_content = ImageContent(image_base64=image_base64)
+        
+        # Send message with image
+        prompt = """Analyze this pharmaceutical/medicine product image and extract ALL visible information.
+
+Return a JSON object with these fields (leave empty string "" if not found):
+{
+    "product_name": "Full product name including strength/dosage",
+    "batch_no": "Batch/Lot number",
+    "expiry_date": "Expiry date in YYYY-MM-DD format",
+    "manufacturing_date": "Manufacturing date in YYYY-MM-DD format if visible",
+    "mrp": "Maximum Retail Price as number only (e.g., 125.50)",
+    "purchase_price": "Purchase/Trade price if visible as number only",
+    "hsn_no": "HSN code if visible",
+    "manufacturer": "Manufacturer/Company name",
+    "pack_size": "Pack size/quantity per pack",
+    "composition": "Active ingredients/composition if visible",
+    "schedule": "Drug schedule (H, H1, X, etc.) if visible",
+    "barcode": "Barcode number if visible",
+    "confidence": "Your confidence level 0-100 in the extraction accuracy",
+    "raw_text": "All readable text from the image"
+}
+
+ONLY return the JSON object, no other text."""
+        
+        user_message = UserMessage(
+            text=prompt,
+            file_contents=[image_content]
+        )
+        
+        response = await chat.send_message(user_message)
+        
+        # Parse AI response
+        try:
+            # Clean response - remove markdown code blocks if present
+            response_text = response.strip()
+            if response_text.startswith("```"):
+                response_text = response_text.split("```")[1]
+                if response_text.startswith("json"):
+                    response_text = response_text[4:]
+            response_text = response_text.strip()
+            
+            scanned_data = json.loads(response_text)
+        except json.JSONDecodeError:
+            # Try to extract JSON from response
+            import re
+            json_match = re.search(r'\{[^{}]*\}', response, re.DOTALL)
+            if json_match:
+                scanned_data = json.loads(json_match.group())
+            else:
+                scanned_data = {"raw_text": response, "confidence": 0}
+        
+        # Normalize data
+        result = {
+            "product_name": scanned_data.get("product_name", ""),
+            "batch_no": scanned_data.get("batch_no", ""),
+            "expiry_date": scanned_data.get("expiry_date", ""),
+            "manufacturing_date": scanned_data.get("manufacturing_date", ""),
+            "mrp": float(scanned_data.get("mrp", 0) or 0),
+            "purchase_price": float(scanned_data.get("purchase_price", 0) or 0),
+            "hsn_no": scanned_data.get("hsn_no", ""),
+            "manufacturer": scanned_data.get("manufacturer", ""),
+            "pack_size": scanned_data.get("pack_size", ""),
+            "composition": scanned_data.get("composition", ""),
+            "schedule": scanned_data.get("schedule", ""),
+            "barcode": scanned_data.get("barcode", ""),
+            "confidence": float(scanned_data.get("confidence", 0) or 0),
+            "raw_text": scanned_data.get("raw_text", "")
+        }
+        
+        return {"success": True, "scanned_product": result}
+        
+    except Exception as e:
+        logging.error(f"Image scan error: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to scan image: {str(e)}")
+
+@api_router.post("/purchases/scan-multiple")
+async def scan_multiple_images(
+    files: List[UploadFile] = File(...),
+    current_user: dict = Depends(get_current_user)
+):
+    """Scan multiple product images at once"""
+    results = []
+    errors = []
+    
+    for i, file in enumerate(files):
+        try:
+            # Reuse single scan logic
+            if file.content_type not in ["image/jpeg", "image/png", "image/webp", "image/jpg"]:
+                errors.append({"index": i, "filename": file.filename, "error": "Invalid file type"})
+                continue
+            
+            image_data = await file.read()
+            image_base64 = base64.b64encode(image_data).decode('utf-8')
+            
+            chat = LlmChat(
+                api_key=EMERGENT_LLM_KEY,
+                session_id=f"scan_multi_{uuid.uuid4()}_{i}",
+                system_message="You are a pharmaceutical product scanner AI. Extract product details accurately."
+            ).with_model("gemini", "gemini-2.0-flash")
+            
+            image_content = ImageContent(image_base64=image_base64)
+            
+            prompt = """Extract product info from this image as JSON:
+{
+    "product_name": "",
+    "batch_no": "",
+    "expiry_date": "YYYY-MM-DD",
+    "mrp": 0,
+    "purchase_price": 0,
+    "hsn_no": "",
+    "manufacturer": "",
+    "confidence": 0
+}
+Only return JSON."""
+            
+            user_message = UserMessage(text=prompt, image_contents=[image_content])
+            response = await chat.send_message(user_message)
+            
+            # Parse response
+            response_text = response.strip()
+            if response_text.startswith("```"):
+                response_text = response_text.split("```")[1]
+                if response_text.startswith("json"):
+                    response_text = response_text[4:]
+            
+            scanned_data = json.loads(response_text.strip())
+            results.append({
+                "index": i,
+                "filename": file.filename,
+                "data": scanned_data
+            })
+            
+        except Exception as e:
+            errors.append({"index": i, "filename": file.filename, "error": str(e)})
+    
+    return {"success": True, "results": results, "errors": errors}
+
+# Include router and middleware
+app.include_router(api_router)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_credentials=True,
+    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Root-level health check for Kubernetes probes
+@app.get("/health")
+async def root_health_check():
+    """Health check endpoint for Kubernetes liveness/readiness probes"""
+    return {"status": "healthy"}
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+@app.on_event("shutdown")
+async def shutdown_db_client():
+    client.close()
