@@ -1213,6 +1213,21 @@ export default function BillingPage() {
                                             <p className="font-medium text-sm">
                                               {invItem.product_name}
                                             </p>
+
+                                            {invItem.supplier_name && (
+                                              <p className="text-xs text-purple-500 font-medium">
+                                                Supplier:{" "}
+                                                {invItem.supplier_name.length >
+                                                18
+                                                  ? invItem.supplier_name
+                                                      .split(" ")
+                                                      .map((word) => word[0])
+                                                      .join("")
+                                                      .toUpperCase()
+                                                  : invItem.supplier_name}
+                                              </p>
+                                            )}
+
                                             {invItem.salt_composition && (
                                               <p className="text-xs text-primary/70">
                                                 {invItem.salt_composition.slice(
@@ -1222,22 +1237,33 @@ export default function BillingPage() {
                                                 ...
                                               </p>
                                             )}
+
                                             <p className="text-xs text-muted-foreground">
                                               Batch: {invItem.batch_no} | Exp:{" "}
                                               {invItem.expiry_date}
                                             </p>
                                           </div>
+
                                           <div className="text-right">
                                             <p className="font-mono text-primary text-sm">
                                               ₹
-                                              {invItem.mrp_per_unit ||
-                                                invItem.mrp}
+                                              {Number(
+                                                invItem.mrp_per_unit ||
+                                                  invItem.mrp
+                                              )
+                                                .toFixed(2)
+                                                .replace(/\.00$/, "")}
                                               /unit
                                             </p>
+
                                             <p className="text-xs text-muted-foreground font-medium">
                                               {invItem.available_quantity ||
                                                 invItem.available_units}{" "}
                                               units
+                                            </p>
+
+                                            <p className="text-xs text-blue-400 font-bold">
+                                              Rate : ₹{invItem.purchase_price}
                                             </p>
                                           </div>
                                         </div>
@@ -1646,6 +1672,7 @@ export default function BillingPage() {
               <TableHead>Customer</TableHead>
               <TableHead>Items</TableHead>
               <TableHead className="text-right">Amount</TableHead>
+              <TableHead className="text-right">Profit</TableHead>
               <TableHead>Status</TableHead>
               <TableHead className="text-center">Actions</TableHead>
             </TableRow>
@@ -1696,9 +1723,17 @@ export default function BillingPage() {
                       <TableCell className="text-sm">
                         {bill.items?.length || 0} items
                       </TableCell>
-                      <TableCell className="text-right font-mono text-primary font-semibold">
+                      <TableCell className="text-right font-mono text-blue-400 font-semibold">
                         ₹{billTotal.toFixed(2)}
                       </TableCell>
+                      <TableCell
+                        className={`text-right font-mono font-semibold ${
+                          bill.profit >= 0 ? "text-green-600" : "text-red-600"
+                        }`}
+                      >
+                        ₹{bill.profit.toFixed(2)}
+                      </TableCell>
+
                       <TableCell>
                         {bill.is_paid ? (
                           <Badge className="bg-primary/20 text-primary border-primary/50">
@@ -1760,7 +1795,7 @@ export default function BillingPage() {
                     {/* Expanded Items Row */}
                     {isExpanded && bill.items && bill.items.length > 0 && (
                       <TableRow className="bg-muted/30">
-                        <TableCell colSpan={8} className="p-0">
+                        <TableCell colSpan={12} className="p-0">
                           <div className="p-4 pl-12">
                             <p className="text-sm font-semibold mb-3 text-muted-foreground">
                               Items Sold:
@@ -1785,6 +1820,9 @@ export default function BillingPage() {
                                   </TableHead>
                                   <TableHead className="text-xs font-bold text-right">
                                     Total
+                                  </TableHead>
+                                  <TableHead className="text-xs font-bold text-right">
+                                    Profit
                                   </TableHead>
                                 </TableRow>
                               </TableHeader>
@@ -1827,6 +1865,15 @@ export default function BillingPage() {
                                       </TableCell>
                                       <TableCell className="text-sm text-right font-mono font-medium">
                                         ₹{itemTotal.toFixed(2)}
+                                      </TableCell>
+                                      <TableCell
+                                        className={`text-sm text-right font-mono font-medium ${
+                                          item.profit >= 0
+                                            ? "text-green-600"
+                                            : "text-red-600"
+                                        }`}
+                                      >
+                                        ₹{item.profit.toFixed(2)}
                                       </TableCell>
                                     </TableRow>
                                   );
