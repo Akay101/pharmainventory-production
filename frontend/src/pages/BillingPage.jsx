@@ -278,10 +278,13 @@ export default function BillingPage() {
     }
   };
 
+  const searchLower = (customerSearch || "").trim().toLowerCase();
+
   const filteredCustomers = customers.filter(
-    (c) =>
-      c.name.toLowerCase().includes(customerSearch.toLowerCase()) ||
-      c.mobile.includes(customerSearch)
+    (customer) =>
+      (customer.name ?? "").toLowerCase().includes(searchLower) ||
+      (customer.mobile ?? "").toLowerCase().includes(searchLower) ||
+      (customer.email ?? "").toLowerCase().includes(searchLower)
   );
 
   // ============ NEW BILL - INLINE TABLE ============
@@ -540,6 +543,20 @@ export default function BillingPage() {
 
   const handleRemoveItem = (itemId) => {
     setBillItems((prev) => prev.filter((item) => item.id !== itemId));
+  };
+
+  const handleFullPackToggle = (itemId, checked) => {
+    setBillItems((prevItems) =>
+      prevItems.map((item) => {
+        if (item.id !== itemId) return item;
+
+        return {
+          ...item,
+          quantity: checked ? item.units_per_pack : item.previousQuantity || 1,
+          previousQuantity: checked ? item.quantity : undefined,
+        };
+      })
+    );
   };
 
   // Handle Tab key for default values
@@ -1344,25 +1361,55 @@ export default function BillingPage() {
                             )}
                           </TableCell>
                           <TableCell>
-                            <Input
-                              ref={
-                                index === billItems.length - 1
-                                  ? quantityInputRef
-                                  : null
-                              }
-                              type="number"
-                              value={item.quantity || ""}
-                              onChange={(e) =>
-                                handleItemFieldChange(
-                                  item.id,
-                                  "quantity",
-                                  e.target.value
-                                )
-                              }
-                              min="1"
-                              placeholder="1"
-                              className={`h-8 text-xs text-center w-14 ${hasOverflow ? "border-yellow-500" : ""}`}
-                            />
+                            <div className="flex items-center gap-2">
+                              <Input
+                                ref={
+                                  index === billItems.length - 1
+                                    ? quantityInputRef
+                                    : null
+                                }
+                                type="number"
+                                value={item.quantity || ""}
+                                onChange={(e) =>
+                                  handleItemFieldChange(
+                                    item.id,
+                                    "quantity",
+                                    e.target.value
+                                  )
+                                }
+                                min="1"
+                                placeholder="1"
+                                className={`h-8 text-xs text-center w-14 ${
+                                  hasOverflow ? "border-yellow-500" : ""
+                                }`}
+                              />
+
+                              {/* Show only for inventory items */}
+                              {!item.isManual && item.units_per_pack && (
+                                <label className="flex items-center gap-2 cursor-pointer select-none text-[11px] font-medium text-gray-600">
+                                  <input
+                                    type="checkbox"
+                                    checked={
+                                      item.quantity === item.units_per_pack
+                                    }
+                                    onChange={(e) =>
+                                      handleFullPackToggle(
+                                        item.id,
+                                        e.target.checked
+                                      )
+                                    }
+                                    className="
+      h-4 w-4 rounded
+      border border-gray-300
+      text-primary
+      focus:ring-1 focus:ring-primary
+      cursor-pointer
+    "
+                                  />
+                                  Full Pack
+                                </label>
+                              )}
+                            </div>
                           </TableCell>
                           <TableCell>
                             {item.is_manual ? (

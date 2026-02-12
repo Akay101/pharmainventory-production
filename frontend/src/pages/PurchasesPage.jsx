@@ -1359,14 +1359,15 @@ export default function PurchasesPage() {
                       <TableHead className="w-[80px] text-center font-bold text-foreground">
                         Rate(Pack)*
                       </TableHead>
-                      <TableHead className="w-[80px] text-center font-bold text-foreground">
-                        Total *
-                      </TableHead>
+
                       <TableHead className="w-[80px] text-center font-bold text-foreground">
                         MRP(Pack)
                       </TableHead>
                       <TableHead className="w-[70px] text-center font-bold text-foreground">
                         MRP/Unit
+                      </TableHead>
+                      <TableHead className="w-[80px] text-center font-bold text-foreground">
+                        Total *
                       </TableHead>
                       <TableHead className="w-[70px] text-center font-bold text-foreground">
                         Actions
@@ -1669,22 +1670,7 @@ export default function PurchasesPage() {
                               className="h-8 text-xs text-center w-16"
                             />
                           </TableCell>
-                          <TableCell>
-                            <Input
-                              type="number"
-                              step="0.01"
-                              value={item.total_amount || ""}
-                              onChange={(e) =>
-                                handleItemFieldChangeWithCalc(
-                                  item.id,
-                                  "total_amount",
-                                  e.target.value
-                                )
-                              }
-                              placeholder="₹"
-                              className="h-8 text-xs text-center w-16"
-                            />
-                          </TableCell>
+
                           <TableCell>
                             <Input
                               type="number"
@@ -1703,6 +1689,22 @@ export default function PurchasesPage() {
                           </TableCell>
                           <TableCell className="text-center font-mono text-xs text-muted-foreground">
                             {mrpPack && units ? `₹${mrpUnit.toFixed(2)}` : "-"}
+                          </TableCell>
+                          <TableCell>
+                            <Input
+                              type="number"
+                              step="0.01"
+                              value={item.total_amount || ""}
+                              onChange={(e) =>
+                                handleItemFieldChangeWithCalc(
+                                  item.id,
+                                  "total_amount",
+                                  e.target.value
+                                )
+                              }
+                              placeholder="₹"
+                              className="h-8 text-xs text-center w-16"
+                            />
                           </TableCell>
                           <TableCell>
                             <Button
