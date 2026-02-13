@@ -1707,282 +1707,293 @@ export default function BillingPage() {
           </DialogContent>
         </Dialog>
       )}
-
-      {/* Bills Table */}
-      <Card className="data-table">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead className="w-10"></TableHead>
-              <TableHead>Bill No</TableHead>
-              <TableHead>Date</TableHead>
-              <TableHead>Customer</TableHead>
-              <TableHead>Items</TableHead>
-              <TableHead className="text-right">Amount</TableHead>
-              <TableHead className="text-right">Profit</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead className="text-center">Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {bills.length === 0 ? (
+      {!showNewBill && (
+        <Card className="data-table">
+          <Table>
+            <TableHeader>
               <TableRow>
-                <TableCell
-                  colSpan={8}
-                  className="text-center py-8 text-muted-foreground"
-                >
-                  <Receipt className="w-10 h-10 mx-auto mb-2 opacity-50" />
-                  No bills yet
-                </TableCell>
+                <TableHead className="w-10"></TableHead>
+                <TableHead>Bill No</TableHead>
+                <TableHead>Date</TableHead>
+                <TableHead>Customer</TableHead>
+                <TableHead>Items</TableHead>
+                <TableHead className="text-right">Amount</TableHead>
+                <TableHead className="text-right">Profit</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead className="text-center">Actions</TableHead>
               </TableRow>
-            ) : (
-              bills.map((bill) => {
-                const isExpanded = expandedBills[bill.id];
-                const billTotal = bill.grand_total || bill.total_amount || 0;
-                return (
-                  <React.Fragment key={bill.id}>
-                    <TableRow
-                      data-testid={`bill-row-${bill.id}`}
-                      className="cursor-pointer hover:bg-muted/50"
-                      onClick={() => toggleBillExpand(bill.id)}
-                    >
-                      <TableCell className="w-10">
-                        <Button variant="ghost" size="icon" className="h-6 w-6">
-                          {isExpanded ? (
-                            <ChevronUp className="h-4 w-4" />
-                          ) : (
-                            <ChevronDown className="h-4 w-4" />
-                          )}
-                        </Button>
-                      </TableCell>
-                      <TableCell className="font-mono font-medium">
-                        {bill.bill_no}
-                      </TableCell>
-                      <TableCell className="text-sm">
-                        {bill.created_at?.slice(0, 10)}
-                      </TableCell>
-                      <TableCell>
-                        <p className="font-medium">{bill.customer_name}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {bill.customer_mobile}
-                        </p>
-                      </TableCell>
-                      <TableCell className="text-sm">
-                        {bill.items?.length || 0} items
-                      </TableCell>
-                      <TableCell className="text-right font-mono text-blue-400 font-semibold">
-                        ₹{billTotal.toFixed(2)}
-                      </TableCell>
-                      <TableCell
-                        className={`text-right font-mono font-semibold ${
-                          bill.profit >= 0 ? "text-green-600" : "text-red-600"
-                        }`}
+            </TableHeader>
+            <TableBody>
+              {bills.length === 0 ? (
+                <TableRow>
+                  <TableCell
+                    colSpan={8}
+                    className="text-center py-8 text-muted-foreground"
+                  >
+                    <Receipt className="w-10 h-10 mx-auto mb-2 opacity-50" />
+                    No bills yet
+                  </TableCell>
+                </TableRow>
+              ) : (
+                bills.map((bill) => {
+                  const isExpanded = expandedBills[bill.id];
+                  const billTotal = bill.grand_total || bill.total_amount || 0;
+                  return (
+                    <React.Fragment key={bill.id}>
+                      <TableRow
+                        data-testid={`bill-row-${bill.id}`}
+                        className="cursor-pointer hover:bg-muted/50"
+                        onClick={() => toggleBillExpand(bill.id)}
                       >
-                        ₹{bill.profit.toFixed(2)}
-                      </TableCell>
+                        <TableCell className="w-10">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6"
+                          >
+                            {isExpanded ? (
+                              <ChevronUp className="h-4 w-4" />
+                            ) : (
+                              <ChevronDown className="h-4 w-4" />
+                            )}
+                          </Button>
+                        </TableCell>
+                        <TableCell className="font-mono font-medium">
+                          {bill.bill_no}
+                        </TableCell>
+                        <TableCell className="text-sm">
+                          {bill.created_at?.slice(0, 10)}
+                        </TableCell>
+                        <TableCell>
+                          <p className="font-medium">{bill.customer_name}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {bill.customer_mobile}
+                          </p>
+                        </TableCell>
+                        <TableCell className="text-sm">
+                          {bill.items?.length || 0} items
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-blue-400 font-semibold">
+                          ₹{billTotal.toFixed(2)}
+                        </TableCell>
+                        <TableCell
+                          className={`text-right font-mono font-semibold ${
+                            bill.profit >= 0 ? "text-green-600" : "text-red-600"
+                          }`}
+                        >
+                          ₹{bill.profit.toFixed(2)}
+                        </TableCell>
 
-                      <TableCell>
-                        {bill.is_paid ? (
-                          <Badge className="bg-primary/20 text-primary border-primary/50">
-                            Paid
-                          </Badge>
-                        ) : (
-                          <Badge className="bg-yellow-500/20 text-yellow-500 border-yellow-500/50">
-                            Unpaid
-                          </Badge>
-                        )}
-                      </TableCell>
-                      <TableCell onClick={(e) => e.stopPropagation()}>
-                        <div className="flex justify-center gap-1">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => handleStartEditBill(bill)}
-                            title="Edit Bill"
-                            data-testid={`edit-bill-${bill.id}`}
-                          >
-                            <Edit2 className="w-4 h-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => handleGeneratePdf(bill.id)}
-                            title="Generate PDF"
-                            data-testid={`pdf-btn-${bill.id}`}
-                          >
-                            <FileText className="w-4 h-4" />
-                          </Button>
-                          {!bill.is_paid && (
+                        <TableCell>
+                          {bill.is_paid ? (
+                            <Badge className="bg-primary/20 text-primary border-primary/50">
+                              Paid
+                            </Badge>
+                          ) : (
+                            <Badge className="bg-yellow-500/20 text-yellow-500 border-yellow-500/50">
+                              Unpaid
+                            </Badge>
+                          )}
+                        </TableCell>
+                        <TableCell onClick={(e) => e.stopPropagation()}>
+                          <div className="flex justify-center gap-1">
                             <Button
                               variant="ghost"
                               size="icon"
-                              onClick={() => handleMarkPaid(bill.id)}
-                              title="Mark as Paid"
-                              className="text-primary"
-                              data-testid={`mark-paid-btn-${bill.id}`}
+                              onClick={() => handleStartEditBill(bill)}
+                              title="Edit Bill"
+                              data-testid={`edit-bill-${bill.id}`}
                             >
-                              <Receipt className="w-4 h-4" />
+                              <Edit2 className="w-4 h-4" />
                             </Button>
-                          )}
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() =>
-                              setDeleteDialog({ open: true, bill })
-                            }
-                            title="Delete Bill"
-                            className="text-destructive"
-                            data-testid={`delete-bill-btn-${bill.id}`}
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                    {/* Expanded Items Row */}
-                    {isExpanded && bill.items && bill.items.length > 0 && (
-                      <TableRow className="bg-muted/30">
-                        <TableCell colSpan={12} className="p-0">
-                          <div className="p-4 pl-12">
-                            <p className="text-sm font-semibold mb-3 text-muted-foreground">
-                              Items Sold:
-                            </p>
-                            <Table>
-                              <TableHeader>
-                                <TableRow className="bg-muted/50">
-                                  <TableHead className="text-xs font-bold">
-                                    Product
-                                  </TableHead>
-                                  <TableHead className="text-xs font-bold">
-                                    Batch
-                                  </TableHead>
-                                  <TableHead className="text-xs font-bold text-center">
-                                    Qty (Units)
-                                  </TableHead>
-                                  <TableHead className="text-xs font-bold text-right">
-                                    Rate/Unit
-                                  </TableHead>
-                                  <TableHead className="text-xs font-bold text-center">
-                                    Disc%
-                                  </TableHead>
-                                  <TableHead className="text-xs font-bold text-right">
-                                    Total
-                                  </TableHead>
-                                  <TableHead className="text-xs font-bold text-right">
-                                    Profit
-                                  </TableHead>
-                                </TableRow>
-                              </TableHeader>
-                              <TableBody>
-                                {bill.items.map((item, idx) => {
-                                  const unitPrice =
-                                    item.unit_price || item.mrp_per_unit || 0;
-                                  const qty =
-                                    item.quantity || item.sold_units || 1;
-                                  const discPercent =
-                                    item.discount_percent || 0;
-                                  const itemTotal =
-                                    item.total ||
-                                    item.item_total ||
-                                    qty * unitPrice * (1 - discPercent / 100);
-                                  return (
-                                    <TableRow
-                                      key={`${bill.id}-item-${idx}`}
-                                      className={`border-b border-border/50 ${item.is_manual ? "bg-yellow-500/5" : ""}`}
-                                    >
-                                      <TableCell className="text-sm font-medium">
-                                        {item.product_name}
-                                        {item.is_manual && (
-                                          <span className="ml-2 text-xs text-yellow-500">
-                                            (Manual)
-                                          </span>
-                                        )}
-                                      </TableCell>
-                                      <TableCell className="text-xs text-muted-foreground">
-                                        {item.batch_no || "-"}
-                                      </TableCell>
-                                      <TableCell className="text-sm text-center">
-                                        {qty}
-                                      </TableCell>
-                                      <TableCell className="text-sm text-right font-mono">
-                                        ₹{unitPrice.toFixed(2)}
-                                      </TableCell>
-                                      <TableCell className="text-sm text-center">
-                                        {discPercent}%
-                                      </TableCell>
-                                      <TableCell className="text-sm text-right font-mono font-medium">
-                                        ₹{itemTotal.toFixed(2)}
-                                      </TableCell>
-                                      <TableCell
-                                        className={`text-sm text-right font-mono font-medium ${
-                                          item.profit >= 0
-                                            ? "text-green-600"
-                                            : "text-red-600"
-                                        }`}
-                                      >
-                                        ₹{item.profit.toFixed(2)}
-                                      </TableCell>
-                                    </TableRow>
-                                  );
-                                })}
-                              </TableBody>
-                            </Table>
-                            <div className="mt-3 pt-3 border-t border-border/50 flex justify-between items-center text-sm">
-                              {/* Inventory vs Negative billing info */}
-                              <div>
-                                {(bill.negative_billed_qty > 0 ||
-                                  bill.items?.some((i) => i.is_manual)) && (
-                                  <span className="text-yellow-600 text-xs">
-                                    ⚠️{" "}
-                                    {bill.inventory_billed_qty ||
-                                      bill.items
-                                        ?.filter((i) => !i.is_manual)
-                                        .reduce((s, i) => s + i.quantity, 0) ||
-                                      0}{" "}
-                                    from inventory,{" "}
-                                    {bill.negative_billed_qty ||
-                                      bill.items
-                                        ?.filter((i) => i.is_manual)
-                                        .reduce((s, i) => s + i.quantity, 0) ||
-                                      0}{" "}
-                                    negatively billed
-                                  </span>
-                                )}
-                              </div>
-                              <div className="flex gap-6">
-                                <span className="text-muted-foreground">
-                                  Subtotal:{" "}
-                                  <span className="font-mono">
-                                    ₹{(bill.subtotal || billTotal).toFixed(2)}
-                                  </span>
-                                </span>
-                                {(bill.discount_amount || 0) > 0 && (
-                                  <span className="text-muted-foreground">
-                                    Discount:{" "}
-                                    <span className="font-mono text-red-500">
-                                      -₹{bill.discount_amount.toFixed(2)}
-                                    </span>
-                                  </span>
-                                )}
-                                <span className="font-semibold">
-                                  Grand Total:{" "}
-                                  <span className="font-mono text-primary">
-                                    ₹{billTotal.toFixed(2)}
-                                  </span>
-                                </span>
-                              </div>
-                            </div>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => handleGeneratePdf(bill.id)}
+                              title="Generate PDF"
+                              data-testid={`pdf-btn-${bill.id}`}
+                            >
+                              <FileText className="w-4 h-4" />
+                            </Button>
+                            {!bill.is_paid && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => handleMarkPaid(bill.id)}
+                                title="Mark as Paid"
+                                className="text-primary"
+                                data-testid={`mark-paid-btn-${bill.id}`}
+                              >
+                                <Receipt className="w-4 h-4" />
+                              </Button>
+                            )}
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() =>
+                                setDeleteDialog({ open: true, bill })
+                              }
+                              title="Delete Bill"
+                              className="text-destructive"
+                              data-testid={`delete-bill-btn-${bill.id}`}
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
                           </div>
                         </TableCell>
                       </TableRow>
-                    )}
-                  </React.Fragment>
-                );
-              })
-            )}
-          </TableBody>
-        </Table>
-      </Card>
+                      {/* Expanded Items Row */}
+                      {isExpanded && bill.items && bill.items.length > 0 && (
+                        <TableRow className="bg-muted/30">
+                          <TableCell colSpan={12} className="p-0">
+                            <div className="p-4 pl-12">
+                              <p className="text-sm font-semibold mb-3 text-muted-foreground">
+                                Items Sold:
+                              </p>
+                              <Table>
+                                <TableHeader>
+                                  <TableRow className="bg-muted/50">
+                                    <TableHead className="text-xs font-bold">
+                                      Product
+                                    </TableHead>
+                                    <TableHead className="text-xs font-bold">
+                                      Batch
+                                    </TableHead>
+                                    <TableHead className="text-xs font-bold text-center">
+                                      Qty (Units)
+                                    </TableHead>
+                                    <TableHead className="text-xs font-bold text-right">
+                                      Rate/Unit
+                                    </TableHead>
+                                    <TableHead className="text-xs font-bold text-center">
+                                      Disc%
+                                    </TableHead>
+                                    <TableHead className="text-xs font-bold text-right">
+                                      Total
+                                    </TableHead>
+                                    <TableHead className="text-xs font-bold text-right">
+                                      Profit
+                                    </TableHead>
+                                  </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                  {bill.items.map((item, idx) => {
+                                    const unitPrice =
+                                      item.unit_price || item.mrp_per_unit || 0;
+                                    const qty =
+                                      item.quantity || item.sold_units || 1;
+                                    const discPercent =
+                                      item.discount_percent || 0;
+                                    const itemTotal =
+                                      item.total ||
+                                      item.item_total ||
+                                      qty * unitPrice * (1 - discPercent / 100);
+                                    return (
+                                      <TableRow
+                                        key={`${bill.id}-item-${idx}`}
+                                        className={`border-b border-border/50 ${item.is_manual ? "bg-yellow-500/5" : ""}`}
+                                      >
+                                        <TableCell className="text-sm font-medium">
+                                          {item.product_name}
+                                          {item.is_manual && (
+                                            <span className="ml-2 text-xs text-yellow-500">
+                                              (Manual)
+                                            </span>
+                                          )}
+                                        </TableCell>
+                                        <TableCell className="text-xs text-muted-foreground">
+                                          {item.batch_no || "-"}
+                                        </TableCell>
+                                        <TableCell className="text-sm text-center">
+                                          {qty}
+                                        </TableCell>
+                                        <TableCell className="text-sm text-right font-mono">
+                                          ₹{unitPrice.toFixed(2)}
+                                        </TableCell>
+                                        <TableCell className="text-sm text-center">
+                                          {discPercent}%
+                                        </TableCell>
+                                        <TableCell className="text-sm text-right font-mono font-medium">
+                                          ₹{itemTotal.toFixed(2)}
+                                        </TableCell>
+                                        <TableCell
+                                          className={`text-sm text-right font-mono font-medium ${
+                                            item.profit >= 0
+                                              ? "text-green-600"
+                                              : "text-red-600"
+                                          }`}
+                                        >
+                                          ₹{item.profit.toFixed(2)}
+                                        </TableCell>
+                                      </TableRow>
+                                    );
+                                  })}
+                                </TableBody>
+                              </Table>
+                              <div className="mt-3 pt-3 border-t border-border/50 flex justify-between items-center text-sm">
+                                {/* Inventory vs Negative billing info */}
+                                <div>
+                                  {(bill.negative_billed_qty > 0 ||
+                                    bill.items?.some((i) => i.is_manual)) && (
+                                    <span className="text-yellow-600 text-xs">
+                                      ⚠️{" "}
+                                      {bill.inventory_billed_qty ||
+                                        bill.items
+                                          ?.filter((i) => !i.is_manual)
+                                          .reduce(
+                                            (s, i) => s + i.quantity,
+                                            0
+                                          ) ||
+                                        0}{" "}
+                                      from inventory,{" "}
+                                      {bill.negative_billed_qty ||
+                                        bill.items
+                                          ?.filter((i) => i.is_manual)
+                                          .reduce(
+                                            (s, i) => s + i.quantity,
+                                            0
+                                          ) ||
+                                        0}{" "}
+                                      negatively billed
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="flex gap-6">
+                                  <span className="text-muted-foreground">
+                                    Subtotal:{" "}
+                                    <span className="font-mono">
+                                      ₹{(bill.subtotal || billTotal).toFixed(2)}
+                                    </span>
+                                  </span>
+                                  {(bill.discount_amount || 0) > 0 && (
+                                    <span className="text-muted-foreground">
+                                      Discount:{" "}
+                                      <span className="font-mono text-red-500">
+                                        -₹{bill.discount_amount.toFixed(2)}
+                                      </span>
+                                    </span>
+                                  )}
+                                  <span className="font-semibold">
+                                    Grand Total:{" "}
+                                    <span className="font-mono text-primary">
+                                      ₹{billTotal.toFixed(2)}
+                                    </span>
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </React.Fragment>
+                  );
+                })
+              )}
+            </TableBody>
+          </Table>
+        </Card>
+      )}
+      {/* Bills Table */}
 
       {/* Delete Dialog */}
       <AlertDialog

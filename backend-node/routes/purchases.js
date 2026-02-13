@@ -8,6 +8,96 @@ const { auth } = require("../middleware/auth");
 
 const upload = multer({ storage: multer.memoryStorage() });
 
+// GET /api/purchases/price-history - Check historical prices for a product
+router.get("/price-history", auth, async (req, res, next) => {
+  try {
+    const db = mongoose.connection.db;
+    const { product_name, current_price } = req.query;
+
+    if (!product_name) {
+      return res.status(400).json({ detail: "product_name is required" });
+    }
+
+    const currentPriceNum = parseFloat(current_price) || 0;
+
+    // Find all purchases containing this product (case-insensitive match)
+    const purchases = await db
+      .collection("purchases")
+      .find(
+        {
+          pharmacy_id: req.user.pharmacy_id,
+          "items.product_name": {
+            $regex: new RegExp(
+              `^${product_name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
+              "i"
+            ),
+          },
+        },
+        { projection: { _id: 0 } }
+      )
+      .toArray();
+
+    // Extract unique supplier prices for this product
+    const supplierPrices = [];
+    const seenSuppliers = new Set();
+
+    for (const purchase of purchases) {
+      for (const item of purchase.items || []) {
+        // Match product name (case-insensitive)
+        if (item.product_name?.toLowerCase() === product_name.toLowerCase()) {
+          const packPrice = item.pack_price || item.rate_pack || 0;
+          const key = `${purchase.supplier_id || purchase.supplier_name}-${packPrice}`;
+
+          if (!seenSuppliers.has(key) && packPrice > 0) {
+            seenSuppliers.add(key);
+            supplierPrices.push({
+              supplier_id: purchase.supplier_id,
+              supplier_name: purchase.supplier_name,
+              pack_price: packPrice,
+              units_per_pack: item.units_per_pack || 1,
+              price_per_unit: packPrice / (item.units_per_pack || 1),
+              purchase_date: purchase.created_at,
+              invoice_no: purchase.invoice_no,
+              batch_no: item.batch_no,
+            });
+          }
+        }
+      }
+    }
+
+    // Sort by pack price (cheapest first)
+    supplierPrices.sort((a, b) => a.pack_price - b.pack_price);
+
+    // Find cheaper options (only those with price < current price)
+    const cheaperOptions =
+      currentPriceNum > 0
+        ? supplierPrices.filter((sp) => sp.pack_price < currentPriceNum)
+        : [];
+
+    // Get the cheapest historical price
+    const cheapestPrice =
+      supplierPrices.length > 0 ? supplierPrices[0].pack_price : null;
+    const isHigherThanHistory =
+      currentPriceNum > 0 &&
+      cheapestPrice !== null &&
+      currentPriceNum > cheapestPrice;
+
+    res.json({
+      product_name,
+      current_price: currentPriceNum,
+      cheapest_historical_price: cheapestPrice,
+      is_higher_than_history: isHigherThanHistory,
+      price_difference: isHigherThanHistory
+        ? currentPriceNum - cheapestPrice
+        : 0,
+      cheaper_options: cheaperOptions,
+      all_historical_prices: supplierPrices,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 // GET /api/purchases
 router.get("/", auth, async (req, res, next) => {
   try {
@@ -34,9 +124,9 @@ router.get("/", auth, async (req, res, next) => {
     }
     if (supplier_id) query.supplier_id = supplier_id;
     if (start_date || end_date) {
-      query.created_at = {};
-      if (start_date) query.created_at.$gte = start_date;
-      if (end_date) query.created_at.$lte = end_date + "T23:59:59";
+      query.purchase_date = {};
+      if (start_date) query.purchase_date.$gte = start_date;
+      if (end_date) query.purchase_date.$lte = end_date;
     }
 
     const skip = (parseInt(page) - 1) * parseInt(limit);
@@ -69,7 +159,8 @@ router.get("/", auth, async (req, res, next) => {
 // POST /api/purchases
 router.post("/", auth, async (req, res, next) => {
   try {
-    const { supplier_id, supplier_name, invoice_no, items } = req.body;
+    const { supplier_id, supplier_name, invoice_no, purchase_date, items } =
+      req.body;
     const db = mongoose.connection.db;
 
     if (!items || items.length === 0) {
@@ -184,6 +275,7 @@ router.post("/", auth, async (req, res, next) => {
       supplier_id,
       supplier_name,
       invoice_no: invoice_no || null,
+      purchase_date: purchase_date || new Date().toISOString().slice(0, 10),
       items: processedItems,
       total_amount: totalAmount,
       created_by: req.user.id,
@@ -223,7 +315,7 @@ router.get("/:purchase_id", auth, async (req, res, next) => {
 // PUT /api/purchases/:purchase_id
 router.put("/:purchase_id", auth, async (req, res, next) => {
   try {
-    const { items } = req.body;
+    const { items, purchase_date } = req.body;
     const db = mongoose.connection.db;
 
     const purchase = await db.collection("purchases").findOne({
@@ -317,18 +409,17 @@ router.put("/:purchase_id", auth, async (req, res, next) => {
       }
     }
 
-    await db
-      .collection("purchases")
-      .updateOne(
-        { id: req.params.purchase_id },
-        {
-          $set: {
-            items: processedItems,
-            total_amount: totalAmount,
-            updated_at: new Date().toISOString(),
-          },
-        }
-      );
+    await db.collection("purchases").updateOne(
+      { id: req.params.purchase_id },
+      {
+        $set: {
+          items: processedItems,
+          total_amount: totalAmount,
+          purchase_date: purchase_date || purchase.purchase_date,
+          updated_at: new Date().toISOString(),
+        },
+      }
+    );
 
     const updated = await db
       .collection("purchases")
@@ -437,12 +528,10 @@ router.post(
           fs.unlinkSync(tempFile);
 
           if (!scanResult.success) {
-            return res
-              .status(400)
-              .json({
-                detail: scanResult.error || "Failed to scan image",
-                success: false,
-              });
+            return res.status(400).json({
+              detail: scanResult.error || "Failed to scan image",
+              success: false,
+            });
           }
 
           return res.json(scanResult);
@@ -452,14 +541,12 @@ router.post(
             fs.unlinkSync(tempFile);
           } catch (e) {}
           console.error("Scan helper error:", execError.message);
-          return res
-            .status(500)
-            .json({
-              detail:
-                "Failed to scan image: " +
-                (execError.stderr || execError.message),
-              success: false,
-            });
+          return res.status(500).json({
+            detail:
+              "Failed to scan image: " +
+              (execError.stderr || execError.message),
+            success: false,
+          });
         }
       }
 
@@ -471,12 +558,10 @@ router.post(
       });
     } catch (error) {
       console.error("Scan error:", error);
-      res
-        .status(500)
-        .json({
-          detail: "Failed to scan image: " + error.message,
-          success: false,
-        });
+      res.status(500).json({
+        detail: "Failed to scan image: " + error.message,
+        success: false,
+      });
     }
   }
 );

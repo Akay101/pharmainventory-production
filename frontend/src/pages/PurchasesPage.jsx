@@ -80,6 +80,9 @@ export default function PurchasesPage() {
   const [showNewPurchase, setShowNewPurchase] = useState(false);
   const [selectedSupplier, setSelectedSupplier] = useState("");
   const [invoiceNo, setInvoiceNo] = useState("");
+  const [purchaseDate, setPurchaseDate] = useState(
+    new Date().toISOString().slice(0, 10)
+  );
   const [purchaseItems, setPurchaseItems] = useState([]);
   const [newItemRow, setNewItemRow] = useState(null);
   const [searchMedicine, setSearchMedicine] = useState("");
@@ -104,6 +107,13 @@ export default function PurchasesPage() {
   const [showRestoreDialog, setShowRestoreDialog] = useState(false);
   const [draftData, setDraftData] = useState(null);
 
+  //show salt dialog
+  const [saltDialog, setSaltDialog] = useState({
+    open: false,
+    itemId: null,
+    value: "",
+  });
+
   // Refs for keyboard navigation
   const productInputRef = useRef(null);
 
@@ -111,6 +121,14 @@ export default function PurchasesPage() {
   const [highlightedSuggestionIndex, setHighlightedSuggestionIndex] =
     useState(-1);
   const [activeItemId, setActiveItemId] = useState(null); // Track which item's dropdown is active
+
+  // Price history comparison state
+  const [priceAlerts, setPriceAlerts] = useState({}); // { itemId: { productName, currentPrice, cheaperOptions, ... } }
+  const [priceHistoryDialog, setPriceHistoryDialog] = useState({
+    open: false,
+    itemId: null,
+    data: null,
+  });
 
   // CSV Import State
   const [csvDialog, setCsvDialog] = useState(false);
@@ -379,6 +397,7 @@ export default function PurchasesPage() {
     setPurchaseItems([defaultRow]);
     setSelectedSupplier("");
     setInvoiceNo("");
+    setPurchaseDate(new Date().toISOString().slice(0, 10));
     setNewItemRow(null);
   };
 
@@ -387,6 +406,7 @@ export default function PurchasesPage() {
     setPurchaseItems([]);
     setSelectedSupplier("");
     setInvoiceNo("");
+    setPurchaseDate(new Date().toISOString().slice(0, 10));
     setNewItemRow(null);
     setShowSuggestions(false);
     clearDraft();
@@ -667,6 +687,59 @@ export default function PurchasesPage() {
         return updated;
       })
     );
+
+    // Check price history when rate_pack is entered
+    if (field === "rate_pack" && value !== "") {
+      const item = purchaseItems.find((i) => i.id === itemId);
+      if (item?.product_name) {
+        checkPriceHistory(itemId, item.product_name, parseFloat(value) || 0);
+      }
+    }
+  };
+
+  // Check historical prices for a product
+  const checkPriceHistory = async (itemId, productName, currentPrice) => {
+    if (!productName || currentPrice <= 0) {
+      // Clear any existing alert for this item
+      setPriceAlerts((prev) => {
+        const updated = { ...prev };
+        delete updated[itemId];
+        return updated;
+      });
+      return;
+    }
+
+    try {
+      const token = localStorage.getItem("token");
+      const response = await axios.get(`${API}/purchases/price-history`, {
+        params: { product_name: productName, current_price: currentPrice },
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      const data = response.data;
+
+      if (data.is_higher_than_history && data.cheaper_options?.length > 0) {
+        setPriceAlerts((prev) => ({
+          ...prev,
+          [itemId]: {
+            productName,
+            currentPrice,
+            cheapestPrice: data.cheapest_historical_price,
+            priceDifference: data.price_difference,
+            cheaperOptions: data.cheaper_options,
+          },
+        }));
+      } else {
+        // Clear alert if price is good
+        setPriceAlerts((prev) => {
+          const updated = { ...prev };
+          delete updated[itemId];
+          return updated;
+        });
+      }
+    } catch (error) {
+      console.error("Price history check failed:", error);
+    }
   };
 
   const buildSaltComposition = (medicine) => {
@@ -733,6 +806,7 @@ export default function PurchasesPage() {
         supplier_id: selectedSupplier,
         supplier_name: supplier?.name || "Unknown",
         invoice_no: invoiceNo || null,
+        purchase_date: purchaseDate,
         items: validItems.map(
           ({
             _editing,
@@ -816,6 +890,7 @@ export default function PurchasesPage() {
           supplier_id: editingPurchase.supplier_id,
           supplier_name: editingPurchase.supplier_name,
           invoice_no: editingPurchase.invoice_no,
+          purchase_date: editingPurchase.purchase_date,
           items: editingPurchase.items.map(({ id, _editing, ...item }) => ({
             product_id: item.product_id || `prod-${Date.now()}`,
             product_name: item.product_name,
@@ -1268,7 +1343,7 @@ export default function PurchasesPage() {
           </CardHeader>
           <CardContent className="space-y-4">
             {/* Supplier & Invoice */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
               <div className="space-y-2">
                 <Label>Supplier *</Label>
                 <Select
@@ -1296,6 +1371,15 @@ export default function PurchasesPage() {
                   data-testid="invoice-no-input"
                 />
               </div>
+              <div className="space-y-2">
+                <Label>Purchase Date *</Label>
+                <Input
+                  type="date"
+                  value={purchaseDate}
+                  onChange={(e) => setPurchaseDate(e.target.value)}
+                />
+              </div>
+
               <div className="text-center p-2 rounded-lg bg-muted/50">
                 <span className="text-xs text-muted-foreground">
                   Total Units
@@ -1545,19 +1629,26 @@ export default function PurchasesPage() {
                             />
                           </TableCell>
                           <TableCell>
-                            <Input
-                              value={item.salt_composition || ""}
-                              onChange={(e) =>
-                                handleItemFieldChange(
-                                  item.id,
-                                  "salt_composition",
-                                  e.target.value
-                                )
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className="h-8 text-xs w-20 justify-start truncate"
+                              onClick={() =>
+                                setSaltDialog({
+                                  open: true,
+                                  itemId: item.id,
+                                  value: item.salt_composition || "",
+                                })
                               }
-                              placeholder="Salt"
-                              className="h-8 text-xs"
-                            />
+                            >
+                              {item.salt_composition
+                                ? item.salt_composition.length > 7
+                                  ? item.salt_composition.slice(0, 7) + "..."
+                                  : item.salt_composition
+                                : "Add Salt"}
+                            </Button>
                           </TableCell>
+
                           <TableCell>
                             <Select
                               value={item.pack_type || "Strip"}
@@ -1654,21 +1745,52 @@ export default function PurchasesPage() {
                           <TableCell className="text-center font-mono text-xs font-medium text-primary">
                             {totalUnits}
                           </TableCell>
-                          <TableCell>
-                            <Input
-                              type="number"
-                              step="0.01"
-                              value={item.rate_pack || item.pack_price || ""}
-                              onChange={(e) =>
-                                handleItemFieldChangeWithCalc(
-                                  item.id,
-                                  "rate_pack",
-                                  e.target.value
-                                )
-                              }
-                              placeholder="₹"
-                              className="h-8 text-xs text-center w-16"
-                            />
+                          <TableCell className="relative">
+                            <div className="relative flex items-center justify-center">
+                              <Input
+                                type="number"
+                                step="0.01"
+                                value={item.rate_pack || item.pack_price || ""}
+                                onChange={(e) =>
+                                  handleItemFieldChangeWithCalc(
+                                    item.id,
+                                    "rate_pack",
+                                    e.target.value
+                                  )
+                                }
+                                placeholder="₹"
+                                className={`h-8 text-xs text-center w-28 pr-6 ${
+                                  priceAlerts[item.id]
+                                    ? "border-yellow-500 bg-yellow-500/10"
+                                    : ""
+                                }`}
+                              />
+
+                              {priceAlerts[item.id] && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setPriceHistoryDialog({
+                                      open: true,
+                                      itemId: item.id,
+                                      data: priceAlerts[item.id],
+                                    })
+                                  }
+                                  className="absolute right-1 top-1/2 -translate-y-1/2"
+                                  title={`₹${priceAlerts[item.id].priceDifference.toFixed(2)} higher than best price!`}
+                                >
+                                  <span className="relative flex h-4 w-4">
+                                    {/* Ping Effect */}
+                                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-yellow-400 opacity-75"></span>
+
+                                    {/* Solid Center */}
+                                    <span className="relative inline-flex h-4 w-4 items-center justify-center rounded-full bg-yellow-500 text-[10px] font-bold text-yellow-950 hover:bg-yellow-400 transition">
+                                      !
+                                    </span>
+                                  </span>
+                                </button>
+                              )}
+                            </div>
                           </TableCell>
 
                           <TableCell>
@@ -1684,7 +1806,7 @@ export default function PurchasesPage() {
                                 )
                               }
                               placeholder="₹"
-                              className="h-8 text-xs text-center w-16"
+                              className="h-8 w-28 text-xs text-center"
                             />
                           </TableCell>
                           <TableCell className="text-center font-mono text-xs text-muted-foreground">
@@ -1703,7 +1825,7 @@ export default function PurchasesPage() {
                                 )
                               }
                               placeholder="₹"
-                              className="h-8 text-xs text-center w-16"
+                              className="h-8 w-28 text-xs text-center "
                             />
                           </TableCell>
                           <TableCell>
@@ -1798,7 +1920,7 @@ export default function PurchasesPage() {
               </DialogTitle>
             </DialogHeader>
             <div className="flex-1 overflow-y-auto space-y-4 pt-4">
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-3 gap-4">
                 <div className="space-y-2">
                   <Label>Supplier</Label>
                   <Select
@@ -1832,6 +1954,19 @@ export default function PurchasesPage() {
                       setEditingPurchase((prev) => ({
                         ...prev,
                         invoice_no: e.target.value,
+                      }))
+                    }
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Purchase Date</Label>
+                  <Input
+                    type="date"
+                    value={editingPurchase.purchase_date || ""}
+                    onChange={(e) =>
+                      setEditingPurchase((prev) => ({
+                        ...prev,
+                        purchase_date: e.target.value,
                       }))
                     }
                   />
@@ -2178,7 +2313,8 @@ export default function PurchasesPage() {
                     )}
                   </TableCell>
                   <TableCell className="text-sm">
-                    {purchase.created_at?.slice(0, 10)}
+                    {purchase.purchase_date ||
+                      purchase.created_at?.slice(0, 10)}
                   </TableCell>
                   <TableCell className="font-medium">
                     {purchase.supplier_name}
@@ -2348,6 +2484,55 @@ export default function PurchasesPage() {
         </div>
       )}
 
+      {/* salt dialog  */}
+      <Dialog
+        open={saltDialog.open}
+        onOpenChange={(open) => setSaltDialog((prev) => ({ ...prev, open }))}
+      >
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Edit Salt Composition</DialogTitle>
+          </DialogHeader>
+
+          <textarea
+            value={saltDialog.value}
+            onChange={(e) =>
+              setSaltDialog((prev) => ({
+                ...prev,
+                value: e.target.value,
+              }))
+            }
+            rows={6}
+            className="w-full border border-border rounded-md p-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary"
+            placeholder="Enter full salt composition..."
+          />
+
+          <div className="flex justify-end gap-2 mt-4">
+            <Button
+              variant="outline"
+              onClick={() =>
+                setSaltDialog({ open: false, itemId: null, value: "" })
+              }
+            >
+              Cancel
+            </Button>
+            <Button
+              className="btn-primary"
+              onClick={() => {
+                handleItemFieldChange(
+                  saltDialog.itemId,
+                  "salt_composition",
+                  saltDialog.value
+                );
+                setSaltDialog({ open: false, itemId: null, value: "" });
+              }}
+            >
+              Save
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* Delete Dialog */}
       <AlertDialog
         open={deleteDialog.open}
@@ -2383,6 +2568,165 @@ export default function PurchasesPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Price History Comparison Dialog */}
+      <Dialog
+        open={priceHistoryDialog.open}
+        onOpenChange={(open) =>
+          setPriceHistoryDialog({ open, itemId: null, data: null })
+        }
+      >
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-yellow-600">
+              <span className="bg-yellow-500 text-yellow-950 rounded-full w-6 h-6 flex items-center justify-center text-sm font-bold">
+                !
+              </span>
+              Higher Price Alert
+            </DialogTitle>
+            <DialogDescription>
+              You're paying more than your previous purchases for this product.
+            </DialogDescription>
+          </DialogHeader>
+
+          {priceHistoryDialog.data && (
+            <div className="space-y-4">
+              {/* Current vs Best Price Summary */}
+              <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-4">
+                <p className="text-sm text-muted-foreground mb-2">
+                  <strong className="text-foreground">
+                    {priceHistoryDialog.data.productName}
+                  </strong>
+                </p>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <p className="text-xs text-muted-foreground">
+                      Current Rate
+                    </p>
+                    <p className="text-lg font-bold text-yellow-600">
+                      ₹{priceHistoryDialog.data.currentPrice.toFixed(2)}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">
+                      Best Historical Price
+                    </p>
+                    <p className="text-lg font-bold text-primary">
+                      ₹{priceHistoryDialog.data.cheapestPrice.toFixed(2)}
+                    </p>
+                  </div>
+                </div>
+                <p className="text-sm text-yellow-600 mt-2 font-medium">
+                  You're paying ₹
+                  {priceHistoryDialog.data.priceDifference.toFixed(2)} more per
+                  pack!
+                </p>
+              </div>
+
+              {/* Cheaper Suppliers List */}
+              <div>
+                <h4 className="text-sm font-semibold mb-2">
+                  Cheaper Options (Ranked by Price)
+                </h4>
+                <div className="space-y-2 max-h-60 overflow-y-auto">
+                  {priceHistoryDialog.data.cheaperOptions.map((option, idx) => (
+                    <div
+                      key={idx}
+                      className={`flex items-center justify-between p-3 rounded-lg border ${
+                        idx === 0
+                          ? "bg-primary/10 border-primary/30"
+                          : "bg-muted/50 border-border"
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <span
+                          className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
+                            idx === 0
+                              ? "bg-primary text-primary-foreground"
+                              : "bg-muted-foreground/20 text-muted-foreground"
+                          }`}
+                        >
+                          {idx + 1}
+                        </span>
+                        <div>
+                          <p className="font-medium text-sm">
+                            {option.supplier_name}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            {option.purchase_date?.slice(0, 10)} •{" "}
+                            {option.invoice_no || "No Invoice"}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <p
+                          className={`font-bold ${idx === 0 ? "text-primary" : "text-foreground"}`}
+                        >
+                          ₹{option.pack_price.toFixed(2)}
+                        </p>
+                        <p className="text-xs text-green-600">
+                          Save ₹
+                          {(
+                            priceHistoryDialog.data.currentPrice -
+                            option.pack_price
+                          ).toFixed(2)}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex gap-2 pt-2">
+                <Button
+                  variant="outline"
+                  className="flex-1"
+                  onClick={() =>
+                    setPriceHistoryDialog({
+                      open: false,
+                      itemId: null,
+                      data: null,
+                    })
+                  }
+                >
+                  Keep Current Price
+                </Button>
+                <Button
+                  className="flex-1"
+                  onClick={() => {
+                    // Apply the cheapest price
+                    const cheapest = priceHistoryDialog.data.cheaperOptions[0];
+                    if (cheapest && priceHistoryDialog.itemId) {
+                      handleItemFieldChangeWithCalc(
+                        priceHistoryDialog.itemId,
+                        "rate_pack",
+                        cheapest.pack_price.toString()
+                      );
+                      // Clear the alert
+                      setPriceAlerts((prev) => {
+                        const updated = { ...prev };
+                        delete updated[priceHistoryDialog.itemId];
+                        return updated;
+                      });
+                    }
+                    setPriceHistoryDialog({
+                      open: false,
+                      itemId: null,
+                      data: null,
+                    });
+                    toast.success(
+                      `Applied best price: ₹${cheapest.pack_price.toFixed(2)}`
+                    );
+                  }}
+                >
+                  Apply Best Price
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
