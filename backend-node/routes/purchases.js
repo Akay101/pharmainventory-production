@@ -5,6 +5,7 @@ const { v4: uuidv4 } = require("uuid");
 const axios = require("axios");
 const multer = require("multer");
 const { auth } = require("../middleware/auth");
+const { normalizeName } = require("../utils/helpers");
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -20,18 +21,14 @@ router.get("/price-history", auth, async (req, res, next) => {
 
     const currentPriceNum = parseFloat(current_price) || 0;
 
-    // Find all purchases containing this product (case-insensitive match)
+    // Find all purchases containing this product (case-insensitive match, with normalized name)
+    const normalizedInput = normalizeName(product_name);
+
     const purchases = await db
       .collection("purchases")
       .find(
         {
           pharmacy_id: req.user.pharmacy_id,
-          "items.product_name": {
-            $regex: new RegExp(
-              `^${product_name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
-              "i"
-            ),
-          },
         },
         { projection: { _id: 0 } }
       )
@@ -40,11 +37,23 @@ router.get("/price-history", auth, async (req, res, next) => {
     // Extract unique supplier prices for this product
     const supplierPrices = [];
     const seenSuppliers = new Set();
+    let matchedProductName = null;
 
     for (const purchase of purchases) {
       for (const item of purchase.items || []) {
         // Match product name (case-insensitive)
-        if (item.product_name?.toLowerCase() === product_name.toLowerCase()) {
+        const normalizedStored = normalizeName(item.product_name);
+
+        if (
+          normalizedStored === normalizedInput ||
+          normalizedStored.includes(normalizedInput) ||
+          normalizedInput.includes(normalizedStored)
+        ) {
+          // Save first matched actual product name
+          if (!matchedProductName) {
+            matchedProductName = item.product_name;
+          }
+
           const packPrice = item.pack_price || item.rate_pack || 0;
           const key = `${purchase.supplier_id || purchase.supplier_name}-${packPrice}`;
 
@@ -83,7 +92,8 @@ router.get("/price-history", auth, async (req, res, next) => {
       currentPriceNum > cheapestPrice;
 
     res.json({
-      product_name,
+      searched_product_name: product_name,
+      matched_product_name: matchedProductName,
       current_price: currentPriceNum,
       cheapest_historical_price: cheapestPrice,
       is_higher_than_history: isHigherThanHistory,

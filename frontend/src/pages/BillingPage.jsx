@@ -58,6 +58,7 @@ import {
   ChevronUp,
 } from "lucide-react";
 import { toast } from "sonner";
+import { formatDate } from "./utils";
 
 const LOCAL_STORAGE_KEY_BILL = "pharmalogy_bill_draft";
 
@@ -79,6 +80,11 @@ export default function BillingPage() {
   });
   const [billDiscount, setBillDiscount] = useState(0);
   const [isPaid, setIsPaid] = useState(true);
+
+  //billing date
+  const [billingDate, setBillingDate] = useState(
+    new Date().toISOString().slice(0, 10)
+  );
 
   // New item row state
   const [newItemRow, setNewItemRow] = useState(null);
@@ -301,6 +307,7 @@ export default function BillingPage() {
       customer_email: "",
     });
     setBillDiscount(0);
+    setBillingDate(new Date().toISOString().slice(0, 10));
     setIsPaid(true);
     setNewItemRow(null);
   };
@@ -640,6 +647,7 @@ export default function BillingPage() {
         customer_name: customerInfo.customer_name,
         customer_mobile: customerInfo.customer_mobile,
         customer_email: customerInfo.customer_email || null,
+        billing_date: billingDate,
         items: validItems.map(
           ({
             id,
@@ -715,6 +723,7 @@ export default function BillingPage() {
         discount_percent: parseFloat(editingBill.discount_percent) || 0,
         is_paid: editingBill.is_paid,
         notes: editingBill.notes,
+        billing_date: editingBill.billing_date,
       });
 
       toast.success("Bill updated successfully");
@@ -972,7 +981,16 @@ export default function BillingPage() {
           </CardHeader>
           <CardContent className="space-y-4">
             {/* Customer Info */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+              <div className="space-y-2">
+                <Label>Billing Date *</Label>
+                <Input
+                  type="date"
+                  value={billingDate}
+                  onChange={(e) => setBillingDate(e.target.value)}
+                />
+              </div>
+
               <div className="space-y-2 relative">
                 <Label className="flex items-center gap-1">
                   <User className="w-3 h-3" /> Customer
@@ -1611,7 +1629,21 @@ export default function BillingPage() {
               <DialogTitle>Edit Bill - {editingBill.bill_no}</DialogTitle>
             </DialogHeader>
             <div className="space-y-4 pt-4">
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-3 gap-4">
+                <div className="space-y-2">
+                  <Label>Billing Date</Label>
+                  <Input
+                    type="date"
+                    value={editingBill.billing_date || ""}
+                    onChange={(e) =>
+                      setEditingBill({
+                        ...editingBill,
+                        billing_date: e.target.value,
+                      })
+                    }
+                  />
+                </div>
+
                 <div className="space-y-2">
                   <Label>Customer Name</Label>
                   <Input
@@ -1762,8 +1794,9 @@ export default function BillingPage() {
                           {bill.bill_no}
                         </TableCell>
                         <TableCell className="text-sm">
-                          {bill.created_at?.slice(0, 10)}
+                          {formatDate(bill.billing_date || bill.created_at)}
                         </TableCell>
+
                         <TableCell>
                           <p className="font-medium">{bill.customer_name}</p>
                           <p className="text-xs text-muted-foreground">

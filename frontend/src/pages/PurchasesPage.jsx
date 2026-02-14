@@ -62,8 +62,11 @@ import {
   Package,
   Keyboard,
   RotateCcw,
+  ArrowRight,
 } from "lucide-react";
 import { toast } from "sonner";
+import { formatDate } from "./utils";
+import CustomTooltip from "@/components/ui/CustomTooltip";
 
 const PACK_TYPES = ["Strip", "Bottle", "Tube", "Packet", "Box", "Unit"];
 const LOCAL_STORAGE_KEY = "pharmalogy_purchase_draft";
@@ -688,29 +691,25 @@ export default function PurchasesPage() {
       })
     );
 
-    // Check price history when rate_pack is entered
-    if (field === "rate_pack" && value !== "") {
-      const item = purchaseItems.find((i) => i.id === itemId);
-      if (item?.product_name) {
-        checkPriceHistory(itemId, item.product_name, parseFloat(value) || 0);
-      }
-    }
+    // // Check price history when rate_pack is entered
+    // if (field === "rate_pack" && value !== "") {
+    //   const item = purchaseItems.find((i) => i.id === itemId);
+    //   if (item?.product_name) {
+    //     checkPriceHistory(itemId, item.product_name, parseFloat(value) || 0);
+    //   }
+    // }
   };
 
   // Check historical prices for a product
   const checkPriceHistory = async (itemId, productName, currentPrice) => {
     if (!productName || currentPrice <= 0) {
-      // Clear any existing alert for this item
-      setPriceAlerts((prev) => {
-        const updated = { ...prev };
-        delete updated[itemId];
-        return updated;
-      });
+      toast.error("Invalid product or price");
       return;
     }
 
     try {
       const token = localStorage.getItem("token");
+
       const response = await axios.get(`${API}/purchases/price-history`, {
         params: { product_name: productName, current_price: currentPrice },
         headers: { Authorization: `Bearer ${token}` },
@@ -718,27 +717,52 @@ export default function PurchasesPage() {
 
       const data = response.data;
 
+      // CASE 1: Cheaper options exist
       if (data.is_higher_than_history && data.cheaper_options?.length > 0) {
-        setPriceAlerts((prev) => ({
-          ...prev,
-          [itemId]: {
-            productName,
-            currentPrice,
-            cheapestPrice: data.cheapest_historical_price,
-            priceDifference: data.price_difference,
-            cheaperOptions: data.cheaper_options,
+        setPriceHistoryDialog({
+          open: true,
+          itemId,
+          data: {
+            type: "higher",
+            searched_product_name: data.product_name,
+            matched_product_name: data.matched_product_name, // if you added it
+            currentPrice: data.current_price || 0,
+            cheapestPrice: data.cheapest_historical_price || 0,
+            priceDifference: data.price_difference || 0,
+            cheaperOptions: data.cheaper_options || [],
           },
-        }));
-      } else {
-        // Clear alert if price is good
-        setPriceAlerts((prev) => {
-          const updated = { ...prev };
-          delete updated[itemId];
-          return updated;
         });
+
+        return;
       }
+
+      // CASE 2: Current is cheapest
+      if (
+        data.cheapest_historical_price !== null &&
+        currentPrice <= data.cheapest_historical_price
+      ) {
+        setPriceHistoryDialog({
+          open: true,
+          itemId,
+          data: {
+            type: "cheapest",
+            ...data,
+          },
+        });
+        return;
+      }
+
+      // CASE 3: No history
+      setPriceHistoryDialog({
+        open: true,
+        itemId,
+        data: {
+          type: "no-history",
+          ...data,
+        },
+      });
     } catch (error) {
-      console.error("Price history check failed:", error);
+      toast.error("Failed to compare prices");
     }
   };
 
@@ -1766,28 +1790,35 @@ export default function PurchasesPage() {
                                 }`}
                               />
 
-                              {priceAlerts[item.id] && (
+                              {(item.rate_pack || item.pack_price) && (
                                 <button
                                   type="button"
-                                  onClick={() =>
-                                    setPriceHistoryDialog({
-                                      open: true,
-                                      itemId: item.id,
-                                      data: priceAlerts[item.id],
-                                    })
-                                  }
-                                  className="absolute right-1 top-1/2 -translate-y-1/2"
-                                  title={`₹${priceAlerts[item.id].priceDifference.toFixed(2)} higher than best price!`}
-                                >
-                                  <span className="relative flex h-4 w-4">
-                                    {/* Ping Effect */}
-                                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-yellow-400 opacity-75"></span>
+                                  onClick={() => {
+                                    const currentRate =
+                                      parseFloat(item.rate_pack) ||
+                                      parseFloat(item.pack_price) ||
+                                      0;
 
-                                    {/* Solid Center */}
-                                    <span className="relative inline-flex h-4 w-4 items-center justify-center rounded-full bg-yellow-500 text-[10px] font-bold text-yellow-950 hover:bg-yellow-400 transition">
-                                      !
-                                    </span>
-                                  </span>
+                                    if (!item.product_name) {
+                                      toast.error("Enter product name first");
+                                      return;
+                                    }
+
+                                    checkPriceHistory(
+                                      item.id,
+                                      item.product_name,
+                                      currentRate
+                                    );
+                                  }}
+                                  className="absolute right-1 top-1/2 -translate-y-1/2 text-primary hover:text-primary/70"
+                                  title="Compare with past rates"
+                                >
+                                  <CustomTooltip
+                                    position="top"
+                                    text="Compare with past rates"
+                                  >
+                                    <ArrowUpDown className="w-4 h-4" />
+                                  </CustomTooltip>
                                 </button>
                               )}
                             </div>
@@ -2313,8 +2344,10 @@ export default function PurchasesPage() {
                     )}
                   </TableCell>
                   <TableCell className="text-sm">
-                    {purchase.purchase_date ||
-                      purchase.created_at?.slice(0, 10)}
+                    {formatDate(
+                      purchase.purchase_date ||
+                        purchase.created_at?.slice(0, 10)
+                    )}
                   </TableCell>
                   <TableCell className="font-medium">
                     {purchase.supplier_name}
@@ -2577,152 +2610,196 @@ export default function PurchasesPage() {
         }
       >
         <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-yellow-600">
-              <span className="bg-yellow-500 text-yellow-950 rounded-full w-6 h-6 flex items-center justify-center text-sm font-bold">
-                !
-              </span>
-              Higher Price Alert
-            </DialogTitle>
-            <DialogDescription>
-              You're paying more than your previous purchases for this product.
-            </DialogDescription>
-          </DialogHeader>
+          {priceHistoryDialog?.data?.type === "higher" && (
+            <>
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2 text-yellow-600">
+                  <span className="bg-yellow-500 text-yellow-950 rounded-full w-6 h-6 flex items-center justify-center text-sm font-bold">
+                    !
+                  </span>
+                  Higher Price Alert
+                </DialogTitle>
+                <DialogDescription>
+                  You're paying more than your previous purchases for this
+                  product.
+                </DialogDescription>
+              </DialogHeader>
 
-          {priceHistoryDialog.data && (
-            <div className="space-y-4">
-              {/* Current vs Best Price Summary */}
-              <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-4">
-                <p className="text-sm text-muted-foreground mb-2">
-                  <strong className="text-foreground">
-                    {priceHistoryDialog.data.productName}
-                  </strong>
-                </p>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <p className="text-xs text-muted-foreground">
-                      Current Rate
-                    </p>
-                    <p className="text-lg font-bold text-yellow-600">
-                      ₹{priceHistoryDialog.data.currentPrice.toFixed(2)}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">
-                      Best Historical Price
-                    </p>
-                    <p className="text-lg font-bold text-primary">
-                      ₹{priceHistoryDialog.data.cheapestPrice.toFixed(2)}
-                    </p>
-                  </div>
-                </div>
-                <p className="text-sm text-yellow-600 mt-2 font-medium">
-                  You're paying ₹
-                  {priceHistoryDialog.data.priceDifference.toFixed(2)} more per
-                  pack!
-                </p>
-              </div>
-
-              {/* Cheaper Suppliers List */}
-              <div>
-                <h4 className="text-sm font-semibold mb-2">
-                  Cheaper Options (Ranked by Price)
-                </h4>
-                <div className="space-y-2 max-h-60 overflow-y-auto">
-                  {priceHistoryDialog.data.cheaperOptions.map((option, idx) => (
-                    <div
-                      key={idx}
-                      className={`flex items-center justify-between p-3 rounded-lg border ${
-                        idx === 0
-                          ? "bg-primary/10 border-primary/30"
-                          : "bg-muted/50 border-border"
-                      }`}
-                    >
-                      <div className="flex items-center gap-3">
-                        <span
-                          className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
-                            idx === 0
-                              ? "bg-primary text-primary-foreground"
-                              : "bg-muted-foreground/20 text-muted-foreground"
-                          }`}
-                        >
-                          {idx + 1}
-                        </span>
-                        <div>
-                          <p className="font-medium text-sm">
-                            {option.supplier_name}
-                          </p>
-                          <p className="text-xs text-muted-foreground">
-                            {option.purchase_date?.slice(0, 10)} •{" "}
-                            {option.invoice_no || "No Invoice"}
-                          </p>
-                        </div>
+              {priceHistoryDialog.data && (
+                <div className="space-y-4">
+                  {/* Current vs Best Price Summary */}
+                  <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-4">
+                    <p className="text-sm text-muted-foreground mb-2">
+                      <div className="flex items-center gap-2">
+                        <strong>
+                          {priceHistoryDialog.data.searched_product_name}
+                        </strong>
+                        <ArrowRight className="w-4 h-4 text-muted-foreground" />
+                        <strong>
+                          {priceHistoryDialog.data.matched_product_name}
+                        </strong>
                       </div>
-                      <div className="text-right">
-                        <p
-                          className={`font-bold ${idx === 0 ? "text-primary" : "text-foreground"}`}
-                        >
-                          ₹{option.pack_price.toFixed(2)}
+                    </p>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <p className="text-xs text-muted-foreground">
+                          Current Rate
                         </p>
-                        <p className="text-xs text-green-600">
-                          Save ₹
-                          {(
-                            priceHistoryDialog.data.currentPrice -
-                            option.pack_price
+                        <p className="text-lg font-bold text-yellow-600">
+                          ₹
+                          {Number(
+                            priceHistoryDialog?.data?.currentPrice || 0
+                          ).toFixed(2)}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-muted-foreground">
+                          Best Historical Price
+                        </p>
+                        <p className="text-lg font-bold text-primary">
+                          ₹
+                          {Number(
+                            priceHistoryDialog?.data?.cheapestPrice || 0
                           ).toFixed(2)}
                         </p>
                       </div>
                     </div>
-                  ))}
-                </div>
-              </div>
+                    <p className="text-sm text-yellow-600 mt-2 font-medium">
+                      You're paying ₹
+                      {Number(
+                        priceHistoryDialog?.data?.priceDifference || 0
+                      ).toFixed(2)}{" "}
+                      more per pack!
+                    </p>
+                  </div>
 
-              {/* Action Buttons */}
-              <div className="flex gap-2 pt-2">
-                <Button
-                  variant="outline"
-                  className="flex-1"
-                  onClick={() =>
-                    setPriceHistoryDialog({
-                      open: false,
-                      itemId: null,
-                      data: null,
-                    })
-                  }
-                >
-                  Keep Current Price
-                </Button>
-                <Button
-                  className="flex-1"
-                  onClick={() => {
-                    // Apply the cheapest price
-                    const cheapest = priceHistoryDialog.data.cheaperOptions[0];
-                    if (cheapest && priceHistoryDialog.itemId) {
-                      handleItemFieldChangeWithCalc(
-                        priceHistoryDialog.itemId,
-                        "rate_pack",
-                        cheapest.pack_price.toString()
-                      );
-                      // Clear the alert
-                      setPriceAlerts((prev) => {
-                        const updated = { ...prev };
-                        delete updated[priceHistoryDialog.itemId];
-                        return updated;
-                      });
-                    }
-                    setPriceHistoryDialog({
-                      open: false,
-                      itemId: null,
-                      data: null,
-                    });
-                    toast.success(
-                      `Applied best price: ₹${cheapest.pack_price.toFixed(2)}`
-                    );
-                  }}
-                >
-                  Apply Best Price
-                </Button>
-              </div>
+                  {/* Cheaper Suppliers List */}
+                  <div>
+                    <h4 className="text-sm font-semibold mb-2">
+                      Cheaper Options (Ranked by Price)
+                    </h4>
+                    <div className="space-y-2 max-h-60 overflow-y-auto">
+                      {priceHistoryDialog.data.cheaperOptions.map(
+                        (option, idx) => (
+                          <div
+                            key={idx}
+                            className={`flex items-center justify-between p-3 rounded-lg border ${
+                              idx === 0
+                                ? "bg-primary/10 border-primary/30"
+                                : "bg-muted/50 border-border"
+                            }`}
+                          >
+                            <div className="flex items-center gap-3">
+                              <span
+                                className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
+                                  idx === 0
+                                    ? "bg-primary text-primary-foreground"
+                                    : "bg-muted-foreground/20 text-muted-foreground"
+                                }`}
+                              >
+                                {idx + 1}
+                              </span>
+                              <div>
+                                <p className="font-medium text-sm">
+                                  {option.supplier_name}
+                                </p>
+                                <p className="text-xs text-muted-foreground">
+                                  {option.purchase_date?.slice(0, 10)} •{" "}
+                                  {option.invoice_no || "No Invoice"}
+                                </p>
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <p
+                                className={`font-bold ${idx === 0 ? "text-primary" : "text-foreground"}`}
+                              >
+                                ₹{option.pack_price.toFixed(2)}
+                              </p>
+                              <p className="text-xs text-green-600">
+                                Save ₹
+                                {(
+                                  priceHistoryDialog.data.currentPrice -
+                                  option.pack_price
+                                ).toFixed(2)}
+                              </p>
+                            </div>
+                          </div>
+                        )
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Action Buttons */}
+                  <div className="flex gap-2 pt-2">
+                    <Button
+                      variant="outline"
+                      className="flex-1"
+                      onClick={() =>
+                        setPriceHistoryDialog({
+                          open: false,
+                          itemId: null,
+                          data: null,
+                        })
+                      }
+                    >
+                      Keep Current Price
+                    </Button>
+                    <Button
+                      className="flex-1"
+                      onClick={() => {
+                        // Apply the cheapest price
+                        const cheapest =
+                          priceHistoryDialog.data.cheaperOptions[0];
+                        if (cheapest && priceHistoryDialog.itemId) {
+                          handleItemFieldChangeWithCalc(
+                            priceHistoryDialog.itemId,
+                            "rate_pack",
+                            cheapest.pack_price.toString()
+                          );
+                          // Clear the alert
+                          setPriceAlerts((prev) => {
+                            const updated = { ...prev };
+                            delete updated[priceHistoryDialog.itemId];
+                            return updated;
+                          });
+                        }
+                        setPriceHistoryDialog({
+                          open: false,
+                          itemId: null,
+                          data: null,
+                        });
+                        toast.success(
+                          `Applied best price: ₹${cheapest.pack_price.toFixed(2)}`
+                        );
+                      }}
+                    >
+                      Apply Best Price
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+          {priceHistoryDialog?.data?.type === "cheapest" && (
+            <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-4">
+              <p className="font-semibold text-green-600">
+                ✅ You are already at the best historical price!
+              </p>
+              <p className="text-sm text-muted-foreground mt-1">
+                Current Rate: ₹
+                {priceHistoryDialog.data.current_price.toFixed(2)}
+              </p>
+            </div>
+          )}
+
+          {priceHistoryDialog?.data?.type === "no-history" && (
+            <div className="bg-muted/40 border border-border rounded-lg p-4">
+              <p className="font-semibold text-muted-foreground">
+                No past price comparison available.
+              </p>
+              <p className="text-sm text-muted-foreground mt-1">
+                This product has no previous purchase history yet.
+              </p>
             </div>
           )}
         </DialogContent>

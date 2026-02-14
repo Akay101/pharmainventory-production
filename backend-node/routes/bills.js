@@ -38,9 +38,9 @@ router.get("/", auth, async (req, res, next) => {
     }
     if (is_paid !== undefined) query.is_paid = is_paid === "true";
     if (start_date || end_date) {
-      query.created_at = {};
-      if (start_date) query.created_at.$gte = start_date;
-      if (end_date) query.created_at.$lte = end_date + "T23:59:59";
+      query.billing_date = {};
+      if (start_date) query.billing_date.$gte = start_date;
+      if (end_date) query.billing_date.$lte = end_date;
     }
 
     const skip = (parseInt(page) - 1) * parseInt(limit);
@@ -90,6 +90,7 @@ router.post("/", auth, async (req, res, next) => {
       notes,
       is_paid = true,
       due_date,
+      billing_date,
     } = req.body;
     const db = mongoose.connection.db;
 
@@ -199,6 +200,7 @@ router.post("/", auth, async (req, res, next) => {
       customer_name: customer_name || "Walk-in",
       customer_mobile: customer_mobile || null,
       customer_email: customer_email || null,
+      billing_date: billing_date || new Date().toISOString().slice(0, 10),
       items: processedItems,
       subtotal,
       discount_percent,
@@ -262,7 +264,9 @@ router.put("/:bill_id", auth, async (req, res, next) => {
       notes,
       is_paid,
       due_date,
+      billing_date,
     } = req.body;
+
     const db = mongoose.connection.db;
 
     const bill = await db.collection("bills").findOne({
@@ -281,6 +285,7 @@ router.put("/:bill_id", auth, async (req, res, next) => {
     if (customer_email !== undefined) updates.customer_email = customer_email;
     if (notes !== undefined) updates.notes = notes;
     if (due_date !== undefined) updates.due_date = due_date;
+    if (billing_date !== undefined) updates.billing_date = billing_date;
 
     // Handle discount update
     if (
