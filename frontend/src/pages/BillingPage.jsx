@@ -121,6 +121,15 @@ export default function BillingPage() {
   const [activeDropdownIndex, setActiveDropdownIndex] = useState(-1);
   const [highlightedSuggestion, setHighlightedSuggestion] = useState(-1);
 
+  // Pagination
+  const [page, setPage] = useState(1);
+  const [limit] = useState(10);
+  const [totalPages, setTotalPages] = useState(1);
+
+  // Filters
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
+
   const emptyItem = {
     id: "",
     inventory_id: "",
@@ -235,6 +244,10 @@ export default function BillingPage() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [showNewBill, newItemRow]);
 
+  useEffect(() => {
+    fetchData();
+  }, [page, startDate, endDate]);
+
   // Server-side inventory search
   useEffect(() => {
     const searchInventory = async () => {
@@ -270,12 +283,21 @@ export default function BillingPage() {
 
   const fetchData = async () => {
     try {
-      const [billsRes, custRes] = await Promise.all([
-        axios.get(`${API}/bills`),
-        axios.get(`${API}/customers`),
-      ]);
+      setLoading(true);
+
+      const billsRes = await axios.get(`${API}/bills`, {
+        params: {
+          page,
+          limit,
+          start_date: startDate || undefined,
+          end_date: endDate || undefined,
+        },
+      });
 
       setBills(billsRes.data.bills);
+      setTotalPages(billsRes.data.pagination.total_pages);
+
+      const custRes = await axios.get(`${API}/customers`);
       setCustomers(custRes.data.customers);
     } catch (error) {
       toast.error("Failed to load data");
@@ -1739,6 +1761,45 @@ export default function BillingPage() {
           </DialogContent>
         </Dialog>
       )}
+      <Card className="p-4">
+        <div className="flex flex-wrap items-end gap-4">
+          <div>
+            <Label>From Date</Label>
+            <Input
+              type="date"
+              value={startDate}
+              onChange={(e) => {
+                setPage(1);
+                setStartDate(e.target.value);
+              }}
+            />
+          </div>
+
+          <div>
+            <Label>To Date</Label>
+            <Input
+              type="date"
+              value={endDate}
+              onChange={(e) => {
+                setPage(1);
+                setEndDate(e.target.value);
+              }}
+            />
+          </div>
+
+          <Button
+            variant="outline"
+            onClick={() => {
+              setStartDate("");
+              setEndDate("");
+              setPage(1);
+            }}
+          >
+            Clear
+          </Button>
+        </div>
+      </Card>
+
       {!showNewBill && (
         <Card className="data-table">
           <Table>
@@ -2024,6 +2085,29 @@ export default function BillingPage() {
               )}
             </TableBody>
           </Table>
+          <div className="flex justify-between items-center p-4 border-t">
+            <Button
+              variant="outline"
+              disabled={page === 1}
+              onClick={() => setPage((prev) => prev - 1)}
+            >
+              <ChevronLeft className="w-4 h-4 mr-1" />
+              Previous
+            </Button>
+
+            <span className="text-sm">
+              Page {page} of {totalPages}
+            </span>
+
+            <Button
+              variant="outline"
+              disabled={page === totalPages}
+              onClick={() => setPage((prev) => prev + 1)}
+            >
+              Next
+              <ChevronRight className="w-4 h-4 ml-1" />
+            </Button>
+          </div>
         </Card>
       )}
       {/* Bills Table */}

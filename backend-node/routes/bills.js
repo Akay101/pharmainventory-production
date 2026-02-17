@@ -17,6 +17,7 @@ const generateBillNo = () => {
 router.get("/", auth, async (req, res, next) => {
   try {
     const db = mongoose.connection.db;
+
     const {
       search,
       is_paid,
@@ -24,19 +25,26 @@ router.get("/", auth, async (req, res, next) => {
       end_date,
       page = 1,
       limit = 20,
-      sort_by = "created_at",
+      sort_by = "billing_date", // ✅ default changed
       sort_order = "desc",
     } = req.query;
 
     const query = { pharmacy_id: req.user.pharmacy_id };
 
+    // 🔍 Search filter
     if (search) {
       query.$or = [
         { bill_no: { $regex: search, $options: "i" } },
         { customer_name: { $regex: search, $options: "i" } },
       ];
     }
-    if (is_paid !== undefined) query.is_paid = is_paid === "true";
+
+    // 💰 Paid filter
+    if (is_paid !== undefined) {
+      query.is_paid = is_paid === "true";
+    }
+
+    // 📅 Date range filter (billing_date)
     if (start_date || end_date) {
       query.billing_date = {};
       if (start_date) query.billing_date.$gte = start_date;
@@ -46,22 +54,28 @@ router.get("/", auth, async (req, res, next) => {
     const skip = (parseInt(page) - 1) * parseInt(limit);
     const sortDir = sort_order === "asc" ? 1 : -1;
 
+    // 🧠 Smart sorting logic
+    const sortOptions =
+      sort_by === "billing_date"
+        ? { billing_date: sortDir, created_at: sortDir }
+        : { [sort_by]: sortDir };
+
     const bills = await db
       .collection("bills")
       .find(query, { projection: { _id: 0 } })
-      .sort({ [sort_by]: sortDir })
+      .sort(sortOptions)
       .skip(skip)
       .limit(parseInt(limit))
       .toArray();
 
-    // Ensure grand_total is always present for frontend
+    const total = await db.collection("bills").countDocuments(query);
+
+    // Ensure totals always exist
     const processedBills = bills.map((bill) => ({
       ...bill,
       grand_total: bill.grand_total || bill.total_amount || 0,
       total_amount: bill.total_amount || bill.grand_total || 0,
     }));
-
-    const total = await db.collection("bills").countDocuments(query);
 
     res.json({
       bills: processedBills,

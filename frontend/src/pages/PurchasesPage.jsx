@@ -159,7 +159,7 @@ export default function PurchasesPage() {
   const [filterSupplier, setFilterSupplier] = useState("all");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
-  const [sortBy, setSortBy] = useState("created_at");
+  const [sortBy, setSortBy] = useState("purchase_date");
   const [sortOrder, setSortOrder] = useState("desc");
 
   // Empty item template with enhanced fields
@@ -2275,14 +2275,13 @@ export default function PurchasesPage() {
                 <Button
                   variant="ghost"
                   onClick={() => {
-                    setSortBy("created_at");
+                    setSortBy("purchase_date");
                     setSortOrder(
-                      sortBy === "created_at" && sortOrder === "desc"
+                      sortBy === "purchase_date" && sortOrder === "desc"
                         ? "asc"
                         : "desc"
                     );
                   }}
-                  className="h-auto p-0 font-medium hover:bg-transparent"
                 >
                   Date <ArrowUpDown className="ml-2 h-4 w-4" />
                 </Button>

@@ -119,7 +119,7 @@ router.get("/", auth, async (req, res, next) => {
       end_date,
       page = 1,
       limit = 20,
-      sort_by = "created_at",
+      sort_by = "purchase_date",
       sort_order = "desc",
     } = req.query;
 
@@ -142,10 +142,15 @@ router.get("/", auth, async (req, res, next) => {
     const skip = (parseInt(page) - 1) * parseInt(limit);
     const sortDir = sort_order === "asc" ? 1 : -1;
 
+    const sortOptions =
+      sort_by === "purchase_date"
+        ? { purchase_date: sortDir, created_at: sortDir }
+        : { [sort_by]: sortDir };
+
     const purchases = await db
       .collection("purchases")
       .find(query, { projection: { _id: 0 } })
-      .sort({ [sort_by]: sortDir })
+      .sort(sortOptions)
       .skip(skip)
       .limit(parseInt(limit))
       .toArray();
