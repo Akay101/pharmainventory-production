@@ -97,6 +97,10 @@ export default function BillingPage() {
   const [customerSearch, setCustomerSearch] = useState("");
   const [showCustomerSuggestions, setShowCustomerSuggestions] = useState(false);
 
+  //grand total editing state
+  const [grandTotalInput, setGrandTotalInput] = useState("");
+  const [isEditingGrandTotal, setIsEditingGrandTotal] = useState(false);
+
   // Edit bill dialog
   const [editingBill, setEditingBill] = useState(null);
 
@@ -834,6 +838,12 @@ export default function BillingPage() {
   const discountAmount = subtotal * (billDiscount / 100);
   const grandTotal = subtotal - discountAmount;
 
+  useEffect(() => {
+    if (!isEditingGrandTotal) {
+      setGrandTotalInput(grandTotal.toFixed(2));
+    }
+  }, [grandTotal, isEditingGrandTotal]);
+
   // Calculate profit: (selling price - cost) for each item, then apply bill discount
   const itemProfitBeforeDiscount = validItems.reduce((sum, item) => {
     const qty = parseInt(item.quantity) || 0;
@@ -927,6 +937,7 @@ export default function BillingPage() {
             className="btn-primary"
             onClick={handleStartNewBill}
             data-testid="new-bill-btn"
+            disabled={showNewBill}
           >
             <Plus className="w-4 h-4 mr-2" />
             New Bill (Alt+N)
@@ -1320,7 +1331,10 @@ export default function BillingPage() {
                                             </p>
 
                                             <p className="text-xs text-blue-400 font-bold">
-                                              Rate : ₹{invItem.purchase_price}
+                                              Rate : ₹
+                                              {Number(
+                                                invItem.purchase_price
+                                              ).toFixed(2)}
                                             </p>
                                           </div>
                                         </div>
@@ -1486,7 +1500,7 @@ export default function BillingPage() {
                                 )
                               }
                               placeholder="MRP"
-                              className="h-8 text-xs text-center w-16"
+                              className="h-8 text-xs text-center w-28"
                             />
                           </TableCell>
                           <TableCell>
@@ -1503,7 +1517,7 @@ export default function BillingPage() {
                               min="0"
                               max="100"
                               placeholder="0"
-                              className="h-8 text-xs text-center w-14"
+                              className="h-8 text-xs text-center w-24"
                             />
                           </TableCell>
                           <TableCell className="text-right font-mono text-sm font-medium">
@@ -1604,14 +1618,57 @@ export default function BillingPage() {
                     Discount ({billDiscount}%): -₹{discountAmount.toFixed(2)}
                   </div>
                 )}
-                <div className="text-xl font-bold text-primary">
-                  Grand Total: ₹{grandTotal.toFixed(2)}
+                <div className="flex justify-end items-center gap-4">
+                  <Label className="text-lg font-semibold">Grand Total</Label>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    value={grandTotalInput}
+                    onFocus={() => setIsEditingGrandTotal(true)}
+                    onChange={(e) => setGrandTotalInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.target.blur();
+                      }
+                    }}
+                    onBlur={() => {
+                      setIsEditingGrandTotal(false);
+
+                      const newGrandTotal = parseFloat(grandTotalInput);
+
+                      if (!subtotal || subtotal <= 0) return;
+
+                      if (isNaN(newGrandTotal)) {
+                        setGrandTotalInput(grandTotal.toFixed(2));
+                        return;
+                      }
+
+                      if (newGrandTotal > subtotal) {
+                        setBillDiscount(0);
+                        return;
+                      }
+
+                      if (newGrandTotal < 0) {
+                        setGrandTotalInput(grandTotal.toFixed(2));
+                        return;
+                      }
+
+                      const discountPercent =
+                        ((subtotal - newGrandTotal) / subtotal) * 100;
+
+                      setBillDiscount(parseFloat(discountPercent.toFixed(2)));
+                    }}
+                    className="w-40 text-right text-lg font-bold text-primary"
+                  />
                 </div>
                 <div
                   className={`text-sm font-medium ${totalProfit >= 0 ? "text-green-500" : "text-red-500"}`}
                 >
                   Est. Profit: ₹{totalProfit.toFixed(2)}
                 </div>
+                <p className="text-xs text-muted-foreground text-right">
+                  Editing grand total adjusts bill discount automatically
+                </p>
               </div>
             </div>
 

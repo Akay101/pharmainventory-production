@@ -581,6 +581,55 @@ router.post(
   }
 );
 
+//POST /api/purchases/scan-product
+router.post("/scan-bill", auth, upload.single("file"), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ detail: "No image provided" });
+    }
+
+    const { execSync } = require("child_process");
+    const fs = require("fs");
+    const path = require("path");
+
+    const apiKey = process.env.EMERGENT_LLM_KEY || process.env.GEMINI_API_KEY;
+
+    if (!apiKey) {
+      return res.status(500).json({
+        detail: "No API key configured",
+        success: false,
+      });
+    }
+
+    const tempFile = path.join("/tmp", `bill_${Date.now()}.png`);
+
+    fs.writeFileSync(tempFile, req.file.buffer);
+
+    const helperPath = path.join(
+      __dirname,
+      "../services/scan_purchase_bill.py"
+    );
+
+    const result = execSync(
+      `python3 "${helperPath}" "${tempFile}" "${apiKey}"`,
+      {
+        timeout: 120000,
+        encoding: "utf-8",
+        maxBuffer: 10 * 1024 * 1024,
+      }
+    );
+
+    fs.unlinkSync(tempFile);
+
+    return res.json(JSON.parse(result));
+  } catch (error) {
+    return res.status(500).json({
+      detail: error.message,
+      success: false,
+    });
+  }
+});
+
 // POST /api/purchases/csv
 router.post("/csv", auth, upload.single("file"), async (req, res, next) => {
   try {

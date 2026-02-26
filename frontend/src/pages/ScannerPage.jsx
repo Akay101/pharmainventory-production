@@ -35,6 +35,7 @@ import { toast } from "sonner";
 export default function ScannerPage() {
   const navigate = useNavigate();
   const fileInputRef = useRef(null);
+  const billInputRef = useRef(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [scannedItems, setScannedItems] = useState([]);
@@ -44,6 +45,8 @@ export default function ScannerPage() {
   const [showSupplierSelect, setShowSupplierSelect] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [invoiceNo, setInvoiceNo] = useState("");
+
+  const [scanMode, setScanMode] = useState("product"); // "product" | "bill"
 
   useEffect(() => {
     const token = localStorage.getItem("pharmalogy_token");
@@ -60,6 +63,73 @@ export default function ScannerPage() {
     } catch (error) {
       console.error("Failed to fetch suppliers");
     }
+  };
+
+  //bill upload handler
+  const handleBillUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    setScanning(true);
+
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const response = await axios.post(
+        `${API}/purchases/scan-bill`,
+        formData,
+        {
+          headers: { "Content-Type": "multipart/form-data" },
+        }
+      );
+
+      if (response.data.success) {
+        const data = response.data.purchase_data;
+
+        // Auto set invoice
+        if (data.invoice_no) setInvoiceNo(data.invoice_no);
+
+        // Try auto match supplier by name
+        const matchedSupplier = suppliers.find((s) =>
+          s.name
+            .toLowerCase()
+            .includes((data.supplier_name || "").toLowerCase())
+        );
+
+        if (matchedSupplier) {
+          setSelectedSupplier(matchedSupplier.id);
+        }
+
+        // Map items to scannedItems format
+        const mappedItems = (data.items || []).map((item) => ({
+          id: Date.now() + Math.random(),
+          product_name: item.product_name || "",
+          manufacturer: "",
+          salt_composition: "",
+          pack_type: "Strip",
+          batch_no: item.batch_no || "",
+          hsn_no: item.hsn_no || "",
+          expiry_date: item.expiry_date || "",
+          pack_quantity: item.quantity || 1,
+          units_per_pack: 1,
+          rate_pack: item.rate_pack || 0,
+          mrp_pack: item.mrp || 0,
+          confidence: 85,
+        }));
+
+        setScannedItems(mappedItems);
+
+        toast.success(`Bill scanned: ${mappedItems.length} items detected`);
+      } else {
+        toast.error("Failed to scan bill");
+      }
+    } catch (error) {
+      toast.error(error.response?.data?.detail || "Failed to scan bill");
+    }
+
+    setScanning(false);
+    if (billInputRef.current) billInputRef.current.value = "";
   };
 
   const handleFileSelect = async (e) => {
@@ -260,6 +330,7 @@ export default function ScannerPage() {
         {/* Scan Button Area */}
         <Card className="bg-gradient-to-br from-primary/10 to-primary/5 border-primary/20">
           <CardContent className="p-6">
+            {/* Hidden Inputs */}
             <input
               type="file"
               ref={fileInputRef}
@@ -269,7 +340,34 @@ export default function ScannerPage() {
               className="hidden"
             />
 
+            <input
+              type="file"
+              ref={billInputRef}
+              onChange={handleBillUpload}
+              accept="image/jpeg,image/png,image/webp"
+              className="hidden"
+            />
+
             <div className="text-center space-y-4">
+              {/* Mode Toggle */}
+              <div className="flex justify-center gap-2 mb-4">
+                <Button
+                  variant={scanMode === "product" ? "default" : "outline"}
+                  onClick={() => setScanMode("product")}
+                  size="sm"
+                >
+                  Scan Products
+                </Button>
+
+                <Button
+                  variant={scanMode === "bill" ? "default" : "outline"}
+                  onClick={() => setScanMode("bill")}
+                  size="sm"
+                >
+                  Scan Purchase Bill
+                </Button>
+              </div>
+
               <div className="w-20 h-20 mx-auto rounded-full bg-primary/20 flex items-center justify-center">
                 {scanning ? (
                   <Loader2 className="w-10 h-10 text-primary animate-spin" />
@@ -278,34 +376,39 @@ export default function ScannerPage() {
                 )}
               </div>
 
-              <div>
-                <h2 className="text-xl font-bold mb-1">Scan Products</h2>
-                <p className="text-sm text-muted-foreground">
-                  Take photos of medicine packaging to auto-detect product
-                  details
-                </p>
-              </div>
+              {scanMode === "product" ? (
+                <>
+                  <h2 className="text-xl font-bold">Scan Products</h2>
+                  <p className="text-sm text-muted-foreground">
+                    Upload medicine packaging to auto-detect details
+                  </p>
 
-              <div className="flex gap-2 justify-center">
-                <Button
-                  className="btn-primary"
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={scanning}
-                  data-testid="scan-btn"
-                >
-                  {scanning ? (
-                    <>
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      Scanning...
-                    </>
-                  ) : (
-                    <>
-                      <Upload className="w-4 h-4 mr-2" />
-                      Upload Images
-                    </>
-                  )}
-                </Button>
-              </div>
+                  <Button
+                    className="btn-primary"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={scanning}
+                  >
+                    <Upload className="w-4 h-4 mr-2" />
+                    Upload Product Images
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <h2 className="text-xl font-bold">Scan Purchase Bill</h2>
+                  <p className="text-sm text-muted-foreground">
+                    Upload wholesale invoice to auto-create full purchase
+                  </p>
+
+                  <Button
+                    className="btn-primary"
+                    onClick={() => billInputRef.current?.click()}
+                    disabled={scanning}
+                  >
+                    <Upload className="w-4 h-4 mr-2" />
+                    Upload Bill Image
+                  </Button>
+                </>
+              )}
             </div>
           </CardContent>
         </Card>
