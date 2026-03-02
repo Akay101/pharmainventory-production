@@ -162,6 +162,8 @@ export default function PurchasesPage() {
   const [sortBy, setSortBy] = useState("purchase_date");
   const [sortOrder, setSortOrder] = useState("desc");
 
+  const [editingPurchaseId, setEditingPurchaseId] = useState(null);
+
   // Empty item template with enhanced fields
   const emptyItem = {
     id: "",
@@ -406,6 +408,7 @@ export default function PurchasesPage() {
 
   const handleCancelNewPurchase = () => {
     setShowNewPurchase(false);
+    setEditingPurchaseId(null);
     setPurchaseItems([]);
     setSelectedSupplier("");
     setInvoiceNo("");
@@ -826,52 +829,71 @@ export default function PurchasesPage() {
 
     setSubmitting(true);
     try {
-      await axios.post(`${API}/purchases`, {
-        supplier_id: selectedSupplier,
-        supplier_name: supplier?.name || "Unknown",
-        invoice_no: invoiceNo || null,
-        purchase_date: purchaseDate,
-        items: validItems.map(
-          ({
-            _editing,
-            id,
-            total_units,
-            rate_unit,
-            final_amount,
-            total_amount,
-            ...item
-          }) => {
-            const unitsPerPack =
-              parseInt(item.units) || parseInt(item.units_per_pack) || 1;
-            const mrpPack = parseFloat(item.mrp_pack) || 0;
-            // Calculate mrp_per_unit from mrp_pack if not directly available
-            const mrpPerUnit =
-              mrpPack > 0 && unitsPerPack > 0
-                ? mrpPack / unitsPerPack
-                : parseFloat(item.mrp_unit) ||
-                  parseFloat(item.mrp_per_unit) ||
-                  0;
+      const handleSubmitPurchase = async () => {
+        if (!selectedSupplier) {
+          toast.error("Please select a supplier");
+          return;
+        }
 
-            return {
-              product_id: item.product_id || `prod-${Date.now()}`,
+        const validItems = purchaseItems.filter(
+          (item) => item.product_name && item.product_name.trim() !== ""
+        );
+
+        if (validItems.length === 0) {
+          toast.error("Please add at least one item");
+          return;
+        }
+
+        const supplier = suppliers.find((s) => s.id === selectedSupplier);
+
+        setSubmitting(true);
+
+        try {
+          const payload = {
+            supplier_id: selectedSupplier,
+            supplier_name: supplier?.name || "Unknown",
+            invoice_no: invoiceNo || null,
+            purchase_date: purchaseDate,
+            items: validItems.map((item) => ({
+              product_id: item.product_id,
               product_name: item.product_name,
               batch_no: item.batch_no || null,
               expiry_date: item.expiry_date || null,
               manufacturer: item.manufacturer || null,
               salt_composition: item.salt_composition || null,
               pack_type: item.pack_type || "Strip",
-              pack_quantity:
-                parseInt(item.quantity) || parseInt(item.pack_quantity) || 1,
-              units_per_pack: unitsPerPack,
-              pack_price:
-                parseFloat(item.rate_pack) || parseFloat(item.pack_price) || 0,
-              mrp_per_unit: mrpPerUnit,
-              mrp_pack: mrpPack,
+              pack_quantity: parseInt(item.quantity) || 1,
+              units_per_pack: parseInt(item.units) || 1,
+              pack_price: parseFloat(item.rate_pack) || 0,
+              mrp_per_unit:
+                (parseFloat(item.mrp_pack) || 0) / (parseInt(item.units) || 1),
               hsn_no: item.hsn_no || null,
-            };
+            })),
+          };
+
+          if (editingPurchaseId) {
+            await axios.put(
+              `${API}/purchases/${editingPurchaseId}?update_inventory=true`,
+              payload
+            );
+            toast.success("Purchase updated successfully");
+          } else {
+            await axios.post(`${API}/purchases`, payload);
+            toast.success("Purchase recorded successfully");
           }
-        ),
-      });
+
+          setEditingPurchaseId(null);
+          clearDraft();
+          handleCancelNewPurchase();
+          await fetchPurchases(pagination.page);
+        } catch (error) {
+          toast.error(
+            error.response?.data?.detail || "Failed to save purchase"
+          );
+        } finally {
+          setSubmitting(false);
+        }
+      };
 
       toast.success("Purchase recorded! Items added to inventory (in units)");
       clearDraft();
@@ -886,21 +908,54 @@ export default function PurchasesPage() {
 
   // ============ EDIT EXISTING PURCHASE ============
 
+  // const handleStartEditPurchase = (purchase) => {
+  //   setEditingPurchase({
+  //     ...purchase,
+  //     items: purchase.items.map((item, idx) => ({
+  //       ...item,
+  //       id: item.id || `existing-${idx}`,
+  //       pack_quantity: item.pack_quantity || item.quantity || 1,
+  //       units_per_pack: item.units_per_pack || 1,
+  //       pack_price:
+  //         item.pack_price ||
+  //         item.purchase_price * (item.units_per_pack || 1) ||
+  //         0,
+  //       mrp_per_unit: item.mrp_per_unit || item.mrp || 0,
+  //     })),
+  //   });
+  // };
+
   const handleStartEditPurchase = (purchase) => {
-    setEditingPurchase({
-      ...purchase,
-      items: purchase.items.map((item, idx) => ({
-        ...item,
-        id: item.id || `existing-${idx}`,
-        pack_quantity: item.pack_quantity || item.quantity || 1,
-        units_per_pack: item.units_per_pack || 1,
-        pack_price:
-          item.pack_price ||
-          item.purchase_price * (item.units_per_pack || 1) ||
-          0,
-        mrp_per_unit: item.mrp_per_unit || item.mrp || 0,
-      })),
-    });
+    setShowNewPurchase(true);
+    setEditingPurchaseId(purchase.id);
+
+    setSelectedSupplier(purchase.supplier_id);
+    setInvoiceNo(purchase.invoice_no || "");
+    setPurchaseDate(
+      purchase.purchase_date ||
+        purchase.created_at?.slice(0, 10) ||
+        new Date().toISOString().slice(0, 10)
+    );
+
+    const mappedItems = purchase.items.map((item, idx) => ({
+      id: item.id || `edit-${idx}`,
+      product_id: item.product_id,
+      product_name: item.product_name,
+      manufacturer: item.manufacturer || "",
+      salt_composition: item.salt_composition || "",
+      pack_type: item.pack_type || "Strip",
+      batch_no: item.batch_no || "",
+      hsn_no: item.hsn_no || "",
+      expiry_date: item.expiry_date || "",
+      quantity: item.pack_quantity || item.quantity || 1,
+      units: item.units_per_pack || 1,
+      rate_pack: item.pack_price || 0,
+      mrp_pack:
+        item.mrp_pack || (item.mrp_per_unit || 0) * (item.units_per_pack || 1),
+      total_amount: (item.pack_quantity || 1) * (item.pack_price || 0),
+    }));
+
+    setPurchaseItems(mappedItems);
   };
 
   const handleSaveEditPurchase = async () => {
@@ -1927,7 +1982,7 @@ export default function PurchasesPage() {
                   ) : (
                     <>
                       <Save className="w-4 h-4 mr-2" />
-                      Save Purchase
+                      {editingPurchaseId ? "Update Purchase" : "Save Purchase"}
                     </>
                   )}
                 </Button>
@@ -1938,7 +1993,7 @@ export default function PurchasesPage() {
       )}
 
       {/* Edit Existing Purchase Modal */}
-      {editingPurchase && (
+      {/* {editingPurchase && (
         <Dialog
           open={!!editingPurchase}
           onOpenChange={() => setEditingPurchase(null)}
@@ -2201,7 +2256,7 @@ export default function PurchasesPage() {
             </div>
           </DialogContent>
         </Dialog>
-      )}
+      )} */}
 
       {/* Search and Filters */}
       <Card className="p-4">

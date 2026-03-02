@@ -90,23 +90,26 @@ async function getDashboardStats(pharmacyId) {
 
   return {
     today: {
-      sales: todaySales,
+      revenue: todaySales,
       profit: todayProfit,
       bills: todayBills.length,
     },
-    monthly: {
-      sales: monthlySales,
+    month: {
+      revenue: monthlySales,
       profit: monthlyProfit,
       bills: monthBills.length,
     },
     total: {
-      sales: totalSales,
+      revenue: totalSales,
       profit: totalProfit,
       bills: bills.length,
     },
-    inventory_value: totalInventoryValue,
-    total_debt: totalDebt,
-    total_revenue: totalSales, // For backward compatibility with frontend
+    inventory: {
+      stock_value: totalInventoryValue,
+    },
+    pending: {
+      amount: totalDebt,
+    },
     counts: {
       customers: customerCount,
       suppliers: supplierCount,
@@ -262,7 +265,10 @@ router.get("/sales-chart", auth, async (req, res, next) => {
     bills.forEach((bill) => {
       const dateStr = bill.created_at.split("T")[0];
       if (salesByDate[dateStr]) {
-        salesByDate[dateStr].sales += bill.total_amount;
+        const getBillTotal = (bill) =>
+          bill.grand_total || bill.total_amount || 0;
+
+        salesByDate[dateStr].sales += getBillTotal(bill);
         salesByDate[dateStr].profit += bill.profit || 0;
         salesByDate[dateStr].bills += 1;
       }
@@ -316,14 +322,24 @@ router.get("/top-products", auth, async (req, res, next) => {
 // GET /api/dashboard/ai-tips
 router.get("/ai-tips", auth, async (req, res, next) => {
   try {
-    const OpenAI = require("openai");
-    const openai = new OpenAI({
-      apiKey: process.env.EMERGENT_LLM_KEY || process.env.OPENAI_API_KEY,
+    const { GoogleGenerativeAI } = require("@google/generative-ai");
+
+    const apiKey = process.env.EMERGENT_LLM_KEY || process.env.GEMINI_API_KEY;
+
+    if (!apiKey) {
+      return res.json({
+        tips: "AI service not configured. Please set GEMINI_API_KEY.",
+      });
+    }
+
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({
+      model: "gemini-2.0-flash",
     });
 
     const db = mongoose.connection.db;
 
-    // Get some stats for context
+    // Get stats
     const bills = await db
       .collection("bills")
       .find({ pharmacy_id: req.user.pharmacy_id })
@@ -334,10 +350,12 @@ router.get("/ai-tips", auth, async (req, res, next) => {
 
     const recentSales = bills
       .slice(0, 7)
-      .reduce((sum, b) => sum + b.total_amount, 0);
+      .reduce((sum, b) => sum + (b.total_amount || 0), 0);
+
     const avgBillValue =
       bills.length > 0
-        ? bills.reduce((sum, b) => sum + b.total_amount, 0) / bills.length
+        ? bills.reduce((sum, b) => sum + (b.total_amount || 0), 0) /
+          bills.length
         : 0;
 
     const inventory = await db
@@ -346,11 +364,14 @@ router.get("/ai-tips", auth, async (req, res, next) => {
         pharmacy_id: req.user.pharmacy_id,
         available_quantity: { $gt: 0 },
       })
-      .limit(100)
+      .limit(200)
       .project({ _id: 0 })
       .toArray();
 
-    const lowStock = inventory.filter((i) => i.available_quantity < 10).length;
+    const lowStock = inventory.filter(
+      (i) => (i.available_quantity || 0) < 10
+    ).length;
+
     const expiringSoon = inventory.filter((i) => {
       if (!i.expiry_date) return false;
       const expiry = new Date(i.expiry_date);
@@ -358,27 +379,31 @@ router.get("/ai-tips", auth, async (req, res, next) => {
       return days < 90 && days > 0;
     }).length;
 
-    const prompt = `As a pharmacy business advisor, provide 3 brief, actionable tips based on:
-    - Recent 7-day sales: Rs.${recentSales.toFixed(0)}
-    - Average bill value: Rs.${avgBillValue.toFixed(0)}
-    - Low stock items: ${lowStock}
-    - Items expiring in 90 days: ${expiringSoon}
-    
-    Keep tips specific, practical, and under 50 words each. Format as a simple numbered list.`;
+    const prompt = `You are a pharmacy business advisor.
 
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o",
-      messages: [{ role: "user", content: prompt }],
-      max_tokens: 300,
-    });
+Provide 3 brief, practical, actionable business tips based on:
 
-    const tips = response.choices[0].message.content;
+Recent 7-day sales: Rs.${recentSales.toFixed(0)}
+Average bill value: Rs.${avgBillValue.toFixed(0)}
+Low stock items: ${lowStock}
+Items expiring in 90 days: ${expiringSoon}
+
+Rules:
+- Keep each tip under 50 words
+- Be specific and actionable
+- Format as a simple numbered list
+- Do NOT add extra explanation`;
+
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const tips = response.text();
 
     res.json({ tips });
   } catch (error) {
-    console.error("AI tips error:", error);
+    console.error("Gemini AI tips error:", error);
+
     res.json({
-      tips: "Unable to generate tips at this time. Please check your inventory alerts manually.",
+      tips: "Unable to generate AI tips at this time. Please check inventory alerts manually.",
     });
   }
 });
