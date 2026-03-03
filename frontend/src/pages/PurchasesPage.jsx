@@ -815,97 +815,63 @@ export default function PurchasesPage() {
       return;
     }
 
-    // Filter out empty rows (rows without product_name)
     const validItems = purchaseItems.filter(
       (item) => item.product_name && item.product_name.trim() !== ""
     );
 
     if (validItems.length === 0) {
-      toast.error("Please add at least one item with a product name");
+      toast.error("Please add at least one item");
       return;
     }
 
     const supplier = suppliers.find((s) => s.id === selectedSupplier);
 
     setSubmitting(true);
+
     try {
-      const handleSubmitPurchase = async () => {
-        if (!selectedSupplier) {
-          toast.error("Please select a supplier");
-          return;
-        }
-
-        const validItems = purchaseItems.filter(
-          (item) => item.product_name && item.product_name.trim() !== ""
-        );
-
-        if (validItems.length === 0) {
-          toast.error("Please add at least one item");
-          return;
-        }
-
-        const supplier = suppliers.find((s) => s.id === selectedSupplier);
-
-        setSubmitting(true);
-
-        try {
-          const payload = {
-            supplier_id: selectedSupplier,
-            supplier_name: supplier?.name || "Unknown",
-            invoice_no: invoiceNo || null,
-            purchase_date: purchaseDate,
-            items: validItems.map((item) => ({
-              product_id: item.product_id,
-              product_name: item.product_name,
-              batch_no: item.batch_no || null,
-              expiry_date: item.expiry_date || null,
-              manufacturer: item.manufacturer || null,
-              salt_composition: item.salt_composition || null,
-              pack_type: item.pack_type || "Strip",
-              pack_quantity: parseInt(item.quantity) || 1,
-              units_per_pack: parseInt(item.units) || 1,
-              pack_price: parseFloat(item.rate_pack) || 0,
-              mrp_per_unit:
-                (parseFloat(item.mrp_pack) || 0) / (parseInt(item.units) || 1),
-              hsn_no: item.hsn_no || null,
-            })),
-          };
-
-          if (editingPurchaseId) {
-            await axios.put(
-              `${API}/purchases/${editingPurchaseId}?update_inventory=true`,
-              payload
-            );
-            toast.success("Purchase updated successfully");
-          } else {
-            await axios.post(`${API}/purchases`, payload);
-            toast.success("Purchase recorded successfully");
-          }
-
-          setEditingPurchaseId(null);
-          clearDraft();
-          handleCancelNewPurchase();
-          await fetchPurchases(pagination.page);
-        } catch (error) {
-          toast.error(
-            error.response?.data?.detail || "Failed to save purchase"
-          );
-        } finally {
-          setSubmitting(false);
-        }
+      const payload = {
+        supplier_id: selectedSupplier,
+        supplier_name: supplier?.name || "Unknown",
+        invoice_no: invoiceNo || null,
+        purchase_date: purchaseDate,
+        items: validItems.map((item) => ({
+          product_id: item.product_id,
+          product_name: item.product_name,
+          batch_no: item.batch_no || null,
+          expiry_date: item.expiry_date || null,
+          manufacturer: item.manufacturer || null,
+          salt_composition: item.salt_composition || null,
+          pack_type: item.pack_type || "Strip",
+          pack_quantity: parseInt(item.quantity) || 1,
+          units_per_pack: parseInt(item.units) || 1,
+          pack_price: parseFloat(item.rate_pack) || 0,
+          mrp_per_unit:
+            (parseFloat(item.mrp_pack) || 0) / (parseInt(item.units) || 1),
+          hsn_no: item.hsn_no || null,
+        })),
       };
 
-      toast.success("Purchase recorded! Items added to inventory (in units)");
+      if (editingPurchaseId) {
+        await axios.put(
+          `${API}/purchases/${editingPurchaseId}?update_inventory=true`,
+          payload
+        );
+        toast.success("Purchase updated successfully");
+      } else {
+        await axios.post(`${API}/purchases`, payload);
+        toast.success("Purchase recorded successfully");
+      }
+
+      setEditingPurchaseId(null);
       clearDraft();
       handleCancelNewPurchase();
       await fetchPurchases(pagination.page);
     } catch (error) {
-      toast.error(error.response?.data?.detail || "Failed to record purchase");
+      toast.error(error.response?.data?.detail || "Failed to save purchase");
     } finally {
       setSubmitting(false);
     }
   };
-
   // ============ EDIT EXISTING PURCHASE ============
 
   // const handleStartEditPurchase = (purchase) => {
