@@ -2252,325 +2252,337 @@ export default function PurchasesPage() {
       )} */}
 
       {/* Search and Filters */}
-      <Card className="p-4">
-        <div className="flex flex-col md:flex-row gap-4">
-          <div className="flex-1">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <Input
-                placeholder="Search purchases by supplier, invoice..."
-                className="pl-10"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-              />
-            </div>
-          </div>
-          <div className="flex gap-2 flex-wrap">
-            <Select value={filterSupplier} onValueChange={setFilterSupplier}>
-              <SelectTrigger className="w-48">
-                <SelectValue placeholder="Filter by supplier" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Suppliers</SelectItem>
-                {suppliers.map((supplier) => (
-                  <SelectItem key={supplier.id} value={supplier.id}>
-                    {supplier.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Input
-              type="date"
-              placeholder="Start date"
-              value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
-              className="w-40"
-            />
-            <Input
-              type="date"
-              placeholder="End date"
-              value={endDate}
-              onChange={(e) => setEndDate(e.target.value)}
-              className="w-40"
-            />
-            {(searchQuery ||
-              (filterSupplier && filterSupplier !== "all") ||
-              startDate ||
-              endDate) && (
-              <Button
-                variant="outline"
-                onClick={() => {
-                  setSearchQuery("");
-                  setFilterSupplier("all");
-                  setStartDate("");
-                  setEndDate("");
-                }}
-              >
-                Clear
-              </Button>
-            )}
-          </div>
-        </div>
-      </Card>
-
-      {/* Purchases Table */}
-      <Card className="data-table">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead className="w-[40px]"></TableHead>
-              <TableHead>
-                <Button
-                  variant="ghost"
-                  onClick={() => {
-                    setSortBy("purchase_date");
-                    setSortOrder(
-                      sortBy === "purchase_date" && sortOrder === "desc"
-                        ? "asc"
-                        : "desc"
-                    );
-                  }}
+      {editingPurchaseId === null && (
+        <>
+          <Card className="p-4">
+            <div className="flex flex-col md:flex-row gap-4">
+              <div className="flex-1">
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                  <Input
+                    placeholder="Search purchases by supplier, invoice..."
+                    className="pl-10"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                  />
+                </div>
+              </div>
+              <div className="flex gap-2 flex-wrap">
+                <Select
+                  value={filterSupplier}
+                  onValueChange={setFilterSupplier}
                 >
-                  Date <ArrowUpDown className="ml-2 h-4 w-4" />
-                </Button>
-              </TableHead>
-              <TableHead>
-                <Button
-                  variant="ghost"
-                  onClick={() => {
-                    setSortBy("supplier_name");
-                    setSortOrder(
-                      sortBy === "supplier_name" && sortOrder === "desc"
-                        ? "asc"
-                        : "desc"
-                    );
-                  }}
-                  className="h-auto p-0 font-medium hover:bg-transparent"
-                >
-                  Supplier <ArrowUpDown className="ml-2 h-4 w-4" />
-                </Button>
-              </TableHead>
-              <TableHead>Invoice</TableHead>
-              <TableHead>Items</TableHead>
-              <TableHead className="text-right">
-                <Button
-                  variant="ghost"
-                  onClick={() => {
-                    setSortBy("total_amount");
-                    setSortOrder(
-                      sortBy === "total_amount" && sortOrder === "desc"
-                        ? "asc"
-                        : "desc"
-                    );
-                  }}
-                  className="h-auto p-0 font-medium hover:bg-transparent"
-                >
-                  Amount <ArrowUpDown className="ml-2 h-4 w-4" />
-                </Button>
-              </TableHead>
-              <TableHead className="text-center">Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {purchases.map((purchase) => (
-              <>
-                <TableRow
-                  key={purchase.id}
-                  className="cursor-pointer"
-                  onClick={() =>
-                    setExpandedPurchase(
-                      expandedPurchase === purchase.id ? null : purchase.id
-                    )
-                  }
-                >
-                  <TableCell>
-                    {expandedPurchase === purchase.id ? (
-                      <ChevronUp className="w-4 h-4" />
-                    ) : (
-                      <ChevronDown className="w-4 h-4" />
-                    )}
-                  </TableCell>
-                  <TableCell className="text-sm">
-                    {formatDate(
-                      purchase.purchase_date ||
-                        purchase.created_at?.slice(0, 10)
-                    )}
-                  </TableCell>
-                  <TableCell className="font-medium">
-                    {purchase.supplier_name}
-                  </TableCell>
-                  <TableCell className="text-sm text-muted-foreground">
-                    {purchase.invoice_no || "-"}
-                  </TableCell>
-                  <TableCell className="text-sm">
-                    {purchase.items?.length || 0} items
-                  </TableCell>
-                  <TableCell className="text-right font-mono text-primary">
-                    ₹{purchase.total_amount?.toFixed(2)}
-                  </TableCell>
-                  <TableCell
-                    className="text-center"
-                    onClick={(e) => e.stopPropagation()}
+                  <SelectTrigger className="w-48">
+                    <SelectValue placeholder="Filter by supplier" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Suppliers</SelectItem>
+                    {suppliers.map((supplier) => (
+                      <SelectItem key={supplier.id} value={supplier.id}>
+                        {supplier.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Input
+                  type="date"
+                  placeholder="Start date"
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                  className="w-40"
+                />
+                <Input
+                  type="date"
+                  placeholder="End date"
+                  value={endDate}
+                  onChange={(e) => setEndDate(e.target.value)}
+                  className="w-40"
+                />
+                {(searchQuery ||
+                  (filterSupplier && filterSupplier !== "all") ||
+                  startDate ||
+                  endDate) && (
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setSearchQuery("");
+                      setFilterSupplier("all");
+                      setStartDate("");
+                      setEndDate("");
+                    }}
                   >
-                    <div className="flex justify-center gap-1">
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        className="h-7 w-7 text-primary"
-                        onClick={() => handleGeneratePurchasePdf(purchase.id)}
-                        data-testid={`pdf-purchase-${purchase.id}`}
-                      >
-                        <FileText className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        className="h-7 w-7"
-                        onClick={() => handleStartEditPurchase(purchase)}
-                        data-testid={`edit-purchase-${purchase.id}`}
-                      >
-                        <Edit2 className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        className="h-7 w-7 text-destructive"
-                        onClick={() =>
-                          setDeleteDialog({ open: true, purchase })
-                        }
-                        data-testid={`delete-purchase-${purchase.id}`}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-                {expandedPurchase === purchase.id && (
-                  <TableRow className="bg-muted/30">
-                    <TableCell colSpan={7} className="p-4">
-                      <div className="rounded-lg border border-border overflow-hidden">
-                        <Table>
-                          <TableHeader>
-                            <TableRow>
-                              <TableHead>Product</TableHead>
-                              <TableHead>Batch</TableHead>
-                              <TableHead>Expiry</TableHead>
-                              <TableHead className="text-center">
-                                Packs
-                              </TableHead>
-                              <TableHead className="text-center">
-                                Units/Pack
-                              </TableHead>
-                              <TableHead className="text-center">
-                                Total Units
-                              </TableHead>
-                              <TableHead className="text-center">
-                                Cost/Unit
-                              </TableHead>
-                              <TableHead className="text-center">
-                                MRP/Unit
-                              </TableHead>
-                              <TableHead className="text-right">
-                                Total
-                              </TableHead>
-                            </TableRow>
-                          </TableHeader>
-                          <TableBody>
-                            {purchase.items?.map((item, idx) => {
-                              const packQty =
-                                item.pack_quantity || item.quantity || 1;
-                              const unitsPerPack = item.units_per_pack || 1;
-                              const totalUnits =
-                                item.total_units || packQty * unitsPerPack;
-                              const costPerUnit =
-                                item.price_per_unit || item.purchase_price || 0;
-                              const mrpPerUnit =
-                                item.mrp_per_unit || item.mrp || 0;
-                              const packPrice =
-                                item.pack_price || costPerUnit * unitsPerPack;
-                              const total =
-                                item.item_total || packQty * packPrice;
+                    Clear
+                  </Button>
+                )}
+              </div>
+            </div>
+          </Card>
 
-                              return (
-                                <TableRow key={idx}>
-                                  <TableCell className="font-medium">
-                                    {item.product_name}
-                                  </TableCell>
-                                  <TableCell>{item.batch_no}</TableCell>
-                                  <TableCell>{item.expiry_date}</TableCell>
-                                  <TableCell className="text-center">
-                                    {packQty}
-                                  </TableCell>
-                                  <TableCell className="text-center">
-                                    {unitsPerPack}
-                                  </TableCell>
-                                  <TableCell className="text-center font-medium text-primary">
-                                    {totalUnits}
-                                  </TableCell>
-                                  <TableCell className="text-center">
-                                    ₹{costPerUnit.toFixed(2)}
-                                  </TableCell>
-                                  <TableCell className="text-center">
-                                    ₹{mrpPerUnit.toFixed(2)}
-                                  </TableCell>
-                                  <TableCell className="text-right font-mono">
-                                    ₹{total.toFixed(2)}
-                                  </TableCell>
+          {/* Purchases Table */}
+          <Card className="data-table">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-[40px]"></TableHead>
+                  <TableHead>
+                    <Button
+                      variant="ghost"
+                      onClick={() => {
+                        setSortBy("purchase_date");
+                        setSortOrder(
+                          sortBy === "purchase_date" && sortOrder === "desc"
+                            ? "asc"
+                            : "desc"
+                        );
+                      }}
+                    >
+                      Date <ArrowUpDown className="ml-2 h-4 w-4" />
+                    </Button>
+                  </TableHead>
+                  <TableHead>
+                    <Button
+                      variant="ghost"
+                      onClick={() => {
+                        setSortBy("supplier_name");
+                        setSortOrder(
+                          sortBy === "supplier_name" && sortOrder === "desc"
+                            ? "asc"
+                            : "desc"
+                        );
+                      }}
+                      className="h-auto p-0 font-medium hover:bg-transparent"
+                    >
+                      Supplier <ArrowUpDown className="ml-2 h-4 w-4" />
+                    </Button>
+                  </TableHead>
+                  <TableHead>Invoice</TableHead>
+                  <TableHead>Items</TableHead>
+                  <TableHead className="text-right">
+                    <Button
+                      variant="ghost"
+                      onClick={() => {
+                        setSortBy("total_amount");
+                        setSortOrder(
+                          sortBy === "total_amount" && sortOrder === "desc"
+                            ? "asc"
+                            : "desc"
+                        );
+                      }}
+                      className="h-auto p-0 font-medium hover:bg-transparent"
+                    >
+                      Amount <ArrowUpDown className="ml-2 h-4 w-4" />
+                    </Button>
+                  </TableHead>
+                  <TableHead className="text-center">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {purchases.map((purchase) => (
+                  <>
+                    <TableRow
+                      key={purchase.id}
+                      className="cursor-pointer"
+                      onClick={() =>
+                        setExpandedPurchase(
+                          expandedPurchase === purchase.id ? null : purchase.id
+                        )
+                      }
+                    >
+                      <TableCell>
+                        {expandedPurchase === purchase.id ? (
+                          <ChevronUp className="w-4 h-4" />
+                        ) : (
+                          <ChevronDown className="w-4 h-4" />
+                        )}
+                      </TableCell>
+                      <TableCell className="text-sm">
+                        {formatDate(
+                          purchase.purchase_date ||
+                            purchase.created_at?.slice(0, 10)
+                        )}
+                      </TableCell>
+                      <TableCell className="font-medium">
+                        {purchase.supplier_name}
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground">
+                        {purchase.invoice_no || "-"}
+                      </TableCell>
+                      <TableCell className="text-sm">
+                        {purchase.items?.length || 0} items
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-primary">
+                        ₹{purchase.total_amount?.toFixed(2)}
+                      </TableCell>
+                      <TableCell
+                        className="text-center"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <div className="flex justify-center gap-1">
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-7 w-7 text-primary"
+                            onClick={() =>
+                              handleGeneratePurchasePdf(purchase.id)
+                            }
+                            data-testid={`pdf-purchase-${purchase.id}`}
+                          >
+                            <FileText className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-7 w-7"
+                            onClick={() => handleStartEditPurchase(purchase)}
+                            data-testid={`edit-purchase-${purchase.id}`}
+                          >
+                            <Edit2 className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-7 w-7 text-destructive"
+                            onClick={() =>
+                              setDeleteDialog({ open: true, purchase })
+                            }
+                            data-testid={`delete-purchase-${purchase.id}`}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                    {expandedPurchase === purchase.id && (
+                      <TableRow className="bg-muted/30">
+                        <TableCell colSpan={7} className="p-4">
+                          <div className="rounded-lg border border-border overflow-hidden">
+                            <Table>
+                              <TableHeader>
+                                <TableRow>
+                                  <TableHead>Product</TableHead>
+                                  <TableHead>Batch</TableHead>
+                                  <TableHead>Expiry</TableHead>
+                                  <TableHead className="text-center">
+                                    Packs
+                                  </TableHead>
+                                  <TableHead className="text-center">
+                                    Units/Pack
+                                  </TableHead>
+                                  <TableHead className="text-center">
+                                    Total Units
+                                  </TableHead>
+                                  <TableHead className="text-center">
+                                    Cost/Unit
+                                  </TableHead>
+                                  <TableHead className="text-center">
+                                    MRP/Unit
+                                  </TableHead>
+                                  <TableHead className="text-right">
+                                    Total
+                                  </TableHead>
                                 </TableRow>
-                              );
-                            })}
-                          </TableBody>
-                        </Table>
-                      </div>
+                              </TableHeader>
+                              <TableBody>
+                                {purchase.items?.map((item, idx) => {
+                                  const packQty =
+                                    item.pack_quantity || item.quantity || 1;
+                                  const unitsPerPack = item.units_per_pack || 1;
+                                  const totalUnits =
+                                    item.total_units || packQty * unitsPerPack;
+                                  const costPerUnit =
+                                    item.price_per_unit ||
+                                    item.purchase_price ||
+                                    0;
+                                  const mrpPerUnit =
+                                    item.mrp_per_unit || item.mrp || 0;
+                                  const packPrice =
+                                    item.pack_price ||
+                                    costPerUnit * unitsPerPack;
+                                  const total =
+                                    item.item_total || packQty * packPrice;
+
+                                  return (
+                                    <TableRow key={idx}>
+                                      <TableCell className="font-medium">
+                                        {item.product_name}
+                                      </TableCell>
+                                      <TableCell>{item.batch_no}</TableCell>
+                                      <TableCell>{item.expiry_date}</TableCell>
+                                      <TableCell className="text-center">
+                                        {packQty}
+                                      </TableCell>
+                                      <TableCell className="text-center">
+                                        {unitsPerPack}
+                                      </TableCell>
+                                      <TableCell className="text-center font-medium text-primary">
+                                        {totalUnits}
+                                      </TableCell>
+                                      <TableCell className="text-center">
+                                        ₹{costPerUnit.toFixed(2)}
+                                      </TableCell>
+                                      <TableCell className="text-center">
+                                        ₹{mrpPerUnit.toFixed(2)}
+                                      </TableCell>
+                                      <TableCell className="text-right font-mono">
+                                        ₹{total.toFixed(2)}
+                                      </TableCell>
+                                    </TableRow>
+                                  );
+                                })}
+                              </TableBody>
+                            </Table>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </>
+                ))}
+                {purchases.length === 0 && (
+                  <TableRow>
+                    <TableCell
+                      colSpan={7}
+                      className="text-center py-8 text-muted-foreground"
+                    >
+                      No purchases found
                     </TableCell>
                   </TableRow>
                 )}
-              </>
-            ))}
-            {purchases.length === 0 && (
-              <TableRow>
-                <TableCell
-                  colSpan={7}
-                  className="text-center py-8 text-muted-foreground"
-                >
-                  No purchases found
-                </TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
-      </Card>
+              </TableBody>
+            </Table>
+          </Card>
 
-      {/* Pagination */}
-      {pagination.total_pages > 1 && (
-        <div className="flex items-center justify-between">
-          <p className="text-sm text-muted-foreground">
-            Showing {(pagination.page - 1) * pagination.limit + 1} to{" "}
-            {Math.min(pagination.page * pagination.limit, pagination.total)} of{" "}
-            {pagination.total} purchases
-          </p>
-          <div className="flex gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => fetchPurchases(pagination.page - 1)}
-              disabled={pagination.page <= 1}
-            >
-              <ChevronLeft className="w-4 h-4" />
-            </Button>
-            <span className="flex items-center px-3 text-sm">
-              Page {pagination.page} of {pagination.total_pages}
-            </span>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => fetchPurchases(pagination.page + 1)}
-              disabled={pagination.page >= pagination.total_pages}
-            >
-              <ChevronRight className="w-4 h-4" />
-            </Button>
-          </div>
-        </div>
+          {/* Pagination */}
+          {pagination.total_pages > 1 && (
+            <div className="flex items-center justify-between">
+              <p className="text-sm text-muted-foreground">
+                Showing {(pagination.page - 1) * pagination.limit + 1} to{" "}
+                {Math.min(pagination.page * pagination.limit, pagination.total)}{" "}
+                of {pagination.total} purchases
+              </p>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => fetchPurchases(pagination.page - 1)}
+                  disabled={pagination.page <= 1}
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </Button>
+                <span className="flex items-center px-3 text-sm">
+                  Page {pagination.page} of {pagination.total_pages}
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => fetchPurchases(pagination.page + 1)}
+                  disabled={pagination.page >= pagination.total_pages}
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </Button>
+              </div>
+            </div>
+          )}
+        </>
       )}
 
       {/* salt dialog  */}

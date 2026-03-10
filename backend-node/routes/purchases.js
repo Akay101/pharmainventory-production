@@ -332,7 +332,7 @@ router.get("/:purchase_id", auth, async (req, res, next) => {
 // PUT /api/purchases/:purchase_id
 router.put("/:purchase_id", auth, async (req, res, next) => {
   try {
-    const { items, purchase_date } = req.body;
+    const { items, purchase_date, invoice_no } = req.body;
     const db = mongoose.connection.db;
 
     const purchase = await db.collection("purchases").findOne({
@@ -433,6 +433,7 @@ router.put("/:purchase_id", auth, async (req, res, next) => {
           items: processedItems,
           total_amount: totalAmount,
           purchase_date: purchase_date || purchase.purchase_date,
+          invoice_no: invoice_no || purchase.invoice_no,
           updated_at: new Date().toISOString(),
         },
       }
