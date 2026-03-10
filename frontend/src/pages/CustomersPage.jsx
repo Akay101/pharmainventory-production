@@ -12,6 +12,16 @@ import {
   DialogTitle,
 } from "../components/ui/dialog";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "../components/ui/alert-dialog";
+import {
   Table,
   TableBody,
   TableCell,
@@ -19,7 +29,17 @@ import {
   TableHeader,
   TableRow,
 } from "../components/ui/table";
-import { Search, Users, Phone, Mail, Receipt, AlertCircle, ChevronLeft, ChevronRight, ArrowUpDown } from "lucide-react";
+import {
+  Search,
+  Users,
+  Phone,
+  Mail,
+  Receipt,
+  AlertCircle,
+  ChevronLeft,
+  ChevronRight,
+  ArrowUpDown,
+} from "lucide-react";
 import { toast } from "sonner";
 
 export default function CustomersPage() {
@@ -30,29 +50,49 @@ export default function CustomersPage() {
   const [customerBills, setCustomerBills] = useState([]);
   const [detailsOpen, setDetailsOpen] = useState(false);
 
+  //debt states
+  const [unpaidBills, setUnpaidBills] = useState([]);
+  const [unpaidTotal, setUnpaidTotal] = useState(0);
+  const [loadingUnpaid, setLoadingUnpaid] = useState(false);
+  const [payBillDialog, setPayBillDialog] = useState({
+    open: false,
+    bill: null,
+  });
+  const [processingPayment, setProcessingPayment] = useState(false);
+
   // Pagination State
-  const [pagination, setPagination] = useState({ page: 1, limit: 30, total: 0, total_pages: 1 });
+  const [pagination, setPagination] = useState({
+    page: 1,
+    limit: 30,
+    total: 0,
+    total_pages: 1,
+  });
   const [sortBy, setSortBy] = useState("created_at");
   const [sortOrder, setSortOrder] = useState("desc");
 
-  const fetchCustomers = useCallback(async (page = 1) => {
-    try {
-      const params = new URLSearchParams();
-      params.append("page", page);
-      params.append("limit", pagination.limit);
-      params.append("sort_by", sortBy);
-      params.append("sort_order", sortOrder);
-      if (search) params.append("search", search);
+  const fetchCustomers = useCallback(
+    async (page = 1) => {
+      try {
+        const params = new URLSearchParams();
+        params.append("page", page);
+        params.append("limit", pagination.limit);
+        params.append("sort_by", sortBy);
+        params.append("sort_order", sortOrder);
+        if (search) params.append("search", search);
 
-      const response = await axios.get(`${API}/customers?${params.toString()}`);
-      setCustomers(response.data.customers);
-      setPagination(response.data.pagination);
-    } catch (error) {
-      toast.error("Failed to load customers");
-    } finally {
-      setLoading(false);
-    }
-  }, [search, sortBy, sortOrder, pagination.limit]);
+        const response = await axios.get(
+          `${API}/customers?${params.toString()}`
+        );
+        setCustomers(response.data.customers);
+        setPagination(response.data.pagination);
+      } catch (error) {
+        toast.error("Failed to load customers");
+      } finally {
+        setLoading(false);
+      }
+    },
+    [search, sortBy, sortOrder, pagination.limit]
+  );
 
   useEffect(() => {
     fetchCustomers(1);
@@ -70,10 +110,64 @@ export default function CustomersPage() {
     setDetailsOpen(true);
 
     try {
-      const response = await axios.get(`${API}/customers/${customer.id}`);
-      setCustomerBills(response.data.bills || []);
+      const [billsRes, unpaidRes] = await Promise.all([
+        axios.get(`${API}/customers/${customer.id}`),
+        axios.get(`${API}/customers/${customer.id}/unpaid-bills`),
+      ]);
+
+      setCustomerBills(billsRes.data.bills || []);
+      setUnpaidBills(unpaidRes.data.unpaid_bills || []);
+      setUnpaidTotal(unpaidRes.data.total_debt || 0);
     } catch (error) {
       toast.error("Failed to load customer details");
+    }
+  };
+
+  const handlePayBill = (bill) => {
+    setPayBillDialog({
+      open: true,
+      bill,
+    });
+  };
+
+  const confirmPayBill = async () => {
+    if (!payBillDialog.bill) return;
+
+    try {
+      setProcessingPayment(true);
+
+      await axios.post(`${API}/bills/${payBillDialog.bill.id}/mark-paid`);
+
+      toast.success("Bill marked as paid");
+
+      // Refresh unpaid bills
+      const unpaidRes = await axios.get(
+        `${API}/customers/${selectedCustomer.id}/unpaid-bills`
+      );
+
+      setUnpaidBills(unpaidRes.data.unpaid_bills || []);
+      setUnpaidTotal(unpaidRes.data.total_debt || 0);
+
+      // Refresh purchase history
+      const billsRes = await axios.get(
+        `${API}/customers/${selectedCustomer.id}`
+      );
+      setCustomerBills(billsRes.data.bills || []);
+
+      // Update Outstanding Debt immediately
+      setSelectedCustomer((prev) => ({
+        ...prev,
+        total_debt: unpaidRes.data.total_debt || 0,
+      }));
+
+      // Refresh table
+      fetchCustomers(pagination.page);
+
+      setPayBillDialog({ open: false, bill: null });
+    } catch (error) {
+      toast.error(error.response?.data?.detail || "Failed to mark bill paid");
+    } finally {
+      setProcessingPayment(false);
     }
   };
 
@@ -84,13 +178,19 @@ export default function CustomersPage() {
   };
 
   const handleClearDebt = async (customerId, amount = null) => {
-    const amountStr = amount ? `Rs. ${amount.toFixed(2)}` : 'all';
-    if (!window.confirm(`Are you sure you want to clear ${amountStr} debt for this customer?`)) {
+    const amountStr = amount ? `Rs. ${amount.toFixed(2)}` : "all";
+    if (
+      !window.confirm(
+        `Are you sure you want to clear ${amountStr} debt for this customer?`
+      )
+    ) {
       return;
     }
     try {
-      const params = amount ? `?amount=${amount}` : '';
-      const response = await axios.post(`${API}/customers/${customerId}/clear-debt${params}`);
+      const params = amount ? `?amount=${amount}` : "";
+      const response = await axios.post(
+        `${API}/customers/${customerId}/clear-debt${params}`
+      );
       toast.success(response.data.message);
       if (response.data.bills_marked_paid > 0) {
         toast.info(`${response.data.bills_marked_paid} bills marked as paid`);
@@ -99,9 +199,9 @@ export default function CustomersPage() {
       fetchCustomers(pagination.page);
       if (selectedCustomer && selectedCustomer.id === customerId) {
         // Refresh details dialog data
-        setSelectedCustomer(prev => ({
+        setSelectedCustomer((prev) => ({
           ...prev,
-          total_debt: response.data.remaining_debt
+          total_debt: response.data.remaining_debt,
         }));
         const response2 = await axios.get(`${API}/customers/${customerId}`);
         setCustomerBills(response2.data.bills || []);
@@ -125,7 +225,9 @@ export default function CustomersPage() {
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold">Customers</h1>
-          <p className="text-muted-foreground">{pagination.total} customers registered</p>
+          <p className="text-muted-foreground">
+            {pagination.total} customers registered
+          </p>
         </div>
       </div>
 
@@ -167,7 +269,9 @@ export default function CustomersPage() {
                   <Users className="w-7 h-7 text-primary" />
                 </div>
                 <div className="flex-1">
-                  <h3 className="text-xl font-semibold">{selectedCustomer.name}</h3>
+                  <h3 className="text-xl font-semibold">
+                    {selectedCustomer.name}
+                  </h3>
                   <div className="flex flex-wrap gap-4 mt-2 text-sm text-muted-foreground">
                     <span className="flex items-center gap-1">
                       <Phone className="w-4 h-4" />
@@ -186,9 +290,14 @@ export default function CustomersPage() {
               {/* Stats */}
               <div className="grid grid-cols-2 gap-4">
                 <div className="p-4 rounded-lg bg-primary/10 border border-primary/20">
-                  <p className="text-sm text-muted-foreground mb-1">Total Purchases</p>
+                  <p className="text-sm text-muted-foreground mb-1">
+                    Total Purchases
+                  </p>
                   <p className="text-xl font-bold font-mono text-primary">
-                    ₹{selectedCustomer.total_purchases?.toLocaleString("en-IN") || 0}
+                    ₹
+                    {selectedCustomer.total_purchases?.toLocaleString(
+                      "en-IN"
+                    ) || 0}
                   </p>
                 </div>
                 <div
@@ -198,7 +307,9 @@ export default function CustomersPage() {
                       : "bg-muted/30 border border-white/5"
                   }`}
                 >
-                  <p className="text-sm text-muted-foreground mb-1">Outstanding Debt</p>
+                  <p className="text-sm text-muted-foreground mb-1">
+                    Outstanding Debt
+                  </p>
                   <p
                     className={`text-xl font-bold font-mono ${
                       selectedCustomer.total_debt > 0 ? "text-yellow-500" : ""
@@ -219,6 +330,52 @@ export default function CustomersPage() {
                   )}
                 </div>
               </div>
+
+              {/* Unpaid Bills */}
+              {unpaidBills.length > 0 && (
+                <div>
+                  <h4 className="font-medium mb-3 text-yellow-500">
+                    Outstanding Bills
+                  </h4>
+
+                  <div className="space-y-2">
+                    {unpaidBills.map((bill) => (
+                      <div
+                        key={bill.id}
+                        className="flex items-center justify-between p-3 rounded-lg bg-yellow-500/5 border border-yellow-500/20"
+                      >
+                        <div>
+                          <p className="font-mono text-sm">{bill.bill_no}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {new Date(
+                              bill.billing_date || bill.created_at
+                            ).toLocaleDateString()}
+                          </p>
+                        </div>
+
+                        <div className="flex items-center gap-3">
+                          <span className="font-mono text-yellow-500 font-semibold">
+                            ₹
+                            {(
+                              bill.grand_total ||
+                              bill.total_amount ||
+                              0
+                            ).toFixed(2)}
+                          </span>
+
+                          <Button
+                            size="sm"
+                            className="bg-primary hover:bg-primary/80"
+                            onClick={() => handlePayBill(bill)}
+                          >
+                            Mark Paid
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* Purchase History */}
               <div>
@@ -242,11 +399,17 @@ export default function CustomersPage() {
                           </p>
                         </div>
                         <div className="text-right">
-                          <p className="font-mono text-primary">₹{bill.grand_total?.toFixed(2)}</p>
+                          <p className="font-mono text-primary">
+                            ₹{bill.grand_total?.toFixed(2)}
+                          </p>
                           {bill.is_paid ? (
-                            <Badge className="bg-primary/20 text-primary text-xs">Paid</Badge>
+                            <Badge className="bg-primary/20 text-primary text-xs">
+                              Paid
+                            </Badge>
                           ) : (
-                            <Badge className="bg-yellow-500/20 text-yellow-500 text-xs">Unpaid</Badge>
+                            <Badge className="bg-yellow-500/20 text-yellow-500 text-xs">
+                              Unpaid
+                            </Badge>
                           )}
                         </div>
                       </div>
@@ -302,7 +465,10 @@ export default function CustomersPage() {
           <TableBody>
             {customers.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                <TableCell
+                  colSpan={6}
+                  className="text-center py-8 text-muted-foreground"
+                >
                   <Users className="w-10 h-10 mx-auto mb-2 opacity-50" />
                   No customers found
                 </TableCell>
@@ -342,7 +508,9 @@ export default function CustomersPage() {
                         ₹{customer.total_debt?.toLocaleString("en-IN")}
                       </span>
                     ) : (
-                      <span className="font-mono text-muted-foreground">₹0</span>
+                      <span className="font-mono text-muted-foreground">
+                        ₹0
+                      </span>
                     )}
                   </TableCell>
                   <TableCell>
@@ -357,7 +525,10 @@ export default function CustomersPage() {
                       </Badge>
                     )}
                   </TableCell>
-                  <TableCell className="text-center" onClick={(e) => e.stopPropagation()}>
+                  <TableCell
+                    className="text-center"
+                    onClick={(e) => e.stopPropagation()}
+                  >
                     {customer.total_debt > 0 && (
                       <Button
                         size="sm"
@@ -375,14 +546,16 @@ export default function CustomersPage() {
             )}
           </TableBody>
         </Table>
-        
+
         {/* Pagination */}
         {pagination.total_pages > 1 && (
           <div className="flex items-center justify-between px-4 py-3 border-t">
             <div className="text-sm text-muted-foreground">
-              Showing {((pagination.page - 1) * pagination.limit) + 1} to {Math.min(pagination.page * pagination.limit, pagination.total)} of {pagination.total} customers
+              Showing {(pagination.page - 1) * pagination.limit + 1} to{" "}
+              {Math.min(pagination.page * pagination.limit, pagination.total)}{" "}
+              of {pagination.total} customers
             </div>
-            
+
             <div className="flex items-center gap-2">
               <Button
                 variant="outline"
@@ -393,25 +566,37 @@ export default function CustomersPage() {
                 <ChevronLeft className="h-4 w-4" />
                 Previous
               </Button>
-              
+
               <div className="flex items-center gap-1">
-                {Array.from({ length: Math.min(5, pagination.total_pages) }, (_, i) => {
-                  const pageNum = Math.max(1, Math.min(pagination.total_pages - 4, pagination.page - 2)) + i;
-                  if (pageNum > pagination.total_pages) return null;
-                  return (
-                    <Button
-                      key={pageNum}
-                      variant={pageNum === pagination.page ? "default" : "outline"}
-                      size="sm"
-                      onClick={() => fetchCustomers(pageNum)}
-                      className="w-8 h-8 p-0"
-                    >
-                      {pageNum}
-                    </Button>
-                  );
-                })}
+                {Array.from(
+                  { length: Math.min(5, pagination.total_pages) },
+                  (_, i) => {
+                    const pageNum =
+                      Math.max(
+                        1,
+                        Math.min(
+                          pagination.total_pages - 4,
+                          pagination.page - 2
+                        )
+                      ) + i;
+                    if (pageNum > pagination.total_pages) return null;
+                    return (
+                      <Button
+                        key={pageNum}
+                        variant={
+                          pageNum === pagination.page ? "default" : "outline"
+                        }
+                        size="sm"
+                        onClick={() => fetchCustomers(pageNum)}
+                        className="w-8 h-8 p-0"
+                      >
+                        {pageNum}
+                      </Button>
+                    );
+                  }
+                )}
               </div>
-              
+
               <Button
                 variant="outline"
                 size="sm"
@@ -424,6 +609,44 @@ export default function CustomersPage() {
             </div>
           </div>
         )}
+        <AlertDialog
+          open={payBillDialog.open}
+          onOpenChange={(open) =>
+            setPayBillDialog({ open, bill: open ? payBillDialog.bill : null })
+          }
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Mark Bill as Paid</AlertDialogTitle>
+              <AlertDialogDescription>
+                {payBillDialog.bill && (
+                  <>
+                    Mark bill <strong>{payBillDialog.bill.bill_no}</strong> as
+                    paid?
+                    <br />
+                    Amount: ₹
+                    {(
+                      payBillDialog.bill.grand_total ||
+                      payBillDialog.bill.total_amount ||
+                      0
+                    ).toFixed(2)}
+                  </>
+                )}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={confirmPayBill}
+                className="btn-primary"
+                disabled={processingPayment}
+              >
+                {processingPayment ? "Processing..." : "Mark Paid"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </Card>
     </div>
   );

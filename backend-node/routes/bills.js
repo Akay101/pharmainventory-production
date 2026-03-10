@@ -271,10 +271,12 @@ router.get("/:bill_id", auth, async (req, res, next) => {
 router.put("/:bill_id", auth, async (req, res, next) => {
   try {
     const {
+      customer_id,
       customer_name,
       customer_mobile,
       customer_email,
-      discount_percent,
+      items,
+      discount_percent = 0,
       notes,
       is_paid,
       due_date,
@@ -292,53 +294,158 @@ router.put("/:bill_id", auth, async (req, res, next) => {
       return res.status(404).json({ detail: "Bill not found" });
     }
 
-    const updates = {};
-    if (customer_name !== undefined) updates.customer_name = customer_name;
-    if (customer_mobile !== undefined)
-      updates.customer_mobile = customer_mobile;
-    if (customer_email !== undefined) updates.customer_email = customer_email;
-    if (notes !== undefined) updates.notes = notes;
-    if (due_date !== undefined) updates.due_date = due_date;
-    if (billing_date !== undefined) updates.billing_date = billing_date;
+    /* ---------------- Reverse old inventory ---------------- */
 
-    // Handle discount update
-    if (
-      discount_percent !== undefined &&
-      discount_percent !== bill.discount_percent
-    ) {
-      updates.discount_percent = discount_percent;
-      updates.discount_amount = bill.subtotal * (discount_percent / 100);
-      updates.total_amount = bill.subtotal - updates.discount_amount;
-    }
-
-    // Handle payment status change
-    if (is_paid !== undefined && is_paid !== bill.is_paid) {
-      updates.is_paid = is_paid;
-      if (is_paid) {
-        updates.paid_at = new Date().toISOString();
-        // Reduce customer debt
-        if (bill.customer_id) {
-          await db
-            .collection("customers")
-            .updateOne(
-              { id: bill.customer_id },
-              { $inc: { total_debt: -bill.total_amount } }
-            );
-        }
-      } else {
-        // Increase customer debt
-        if (bill.customer_id) {
-          await db
-            .collection("customers")
-            .updateOne(
-              { id: bill.customer_id },
-              { $inc: { total_debt: bill.total_amount } }
-            );
-        }
+    for (const oldItem of bill.items) {
+      if (oldItem.inventory_id) {
+        await db
+          .collection("inventory")
+          .updateOne(
+            { id: oldItem.inventory_id },
+            { $inc: { available_quantity: oldItem.quantity } }
+          );
       }
     }
 
-    updates.updated_at = new Date().toISOString();
+    /* ---------------- Process new items ---------------- */
+
+    let subtotal = 0;
+    let totalProfit = 0;
+    const processedItems = [];
+
+    for (const item of items) {
+      const quantity = parseInt(item.quantity) || 1;
+      const unitPrice = parseFloat(item.unit_price) || 0;
+      const discountPercent = parseFloat(item.discount_percent) || 0;
+      const purchasePrice = parseFloat(item.purchase_price) || 0;
+
+      const itemSubtotal = quantity * unitPrice;
+      const itemDiscount = itemSubtotal * (discountPercent / 100);
+      const itemTotal = itemSubtotal - itemDiscount;
+      const itemProfit = (unitPrice - purchasePrice) * quantity - itemDiscount;
+
+      subtotal += itemTotal;
+      totalProfit += itemProfit;
+
+      processedItems.push({
+        inventory_id: item.inventory_id || null,
+        product_name: item.product_name,
+        batch_no: item.batch_no || null,
+        expiry_date: item.expiry_date || null,
+        quantity,
+        unit_price: unitPrice,
+        purchase_price: purchasePrice,
+        discount_percent: discountPercent,
+        item_total: itemTotal,
+        profit: itemProfit,
+        is_manual: !item.inventory_id,
+      });
+
+      // Deduct inventory if item linked to inventory
+      if (item.inventory_id) {
+        await db
+          .collection("inventory")
+          .updateOne(
+            { id: item.inventory_id },
+            { $inc: { available_quantity: -quantity } }
+          );
+      }
+    }
+
+    /* ---------------- Calculate totals ---------------- */
+
+    const discountAmount = subtotal * (discount_percent / 100);
+    const totalAmount = subtotal - discountAmount;
+
+    totalProfit -= discountAmount;
+
+    const totalCost = processedItems.reduce(
+      (sum, i) => sum + i.purchase_price * i.quantity,
+      0
+    );
+
+    const inventoryBilledQty = processedItems.reduce(
+      (sum, item) => (item.is_manual ? sum : sum + item.quantity),
+      0
+    );
+
+    const negativeBilledQty = processedItems
+      .filter((item) => item.is_manual)
+      .reduce((sum, item) => sum + item.quantity, 0);
+
+    /* ---------------- Handle customer ---------------- */
+
+    let finalCustomerId = customer_id;
+
+    if (!customer_id && customer_name) {
+      const existingCustomer = await db.collection("customers").findOne({
+        pharmacy_id: req.user.pharmacy_id,
+        $or: [{ name: customer_name }, { mobile: customer_mobile }].filter(
+          (c) => c.name || c.mobile
+        ),
+      });
+
+      if (existingCustomer) {
+        finalCustomerId = existingCustomer.id;
+      } else {
+        finalCustomerId = uuidv4();
+
+        await db.collection("customers").insertOne({
+          id: finalCustomerId,
+          pharmacy_id: req.user.pharmacy_id,
+          name: customer_name,
+          mobile: customer_mobile || null,
+          email: customer_email || null,
+          total_debt: 0,
+          created_at: new Date().toISOString(),
+        });
+      }
+    }
+
+    /* ---------------- Adjust customer debt ---------------- */
+
+    if (bill.customer_id && !bill.is_paid) {
+      await db
+        .collection("customers")
+        .updateOne(
+          { id: bill.customer_id },
+          { $inc: { total_debt: -bill.total_amount } }
+        );
+    }
+
+    if (!is_paid && finalCustomerId) {
+      await db
+        .collection("customers")
+        .updateOne(
+          { id: finalCustomerId },
+          { $inc: { total_debt: totalAmount } }
+        );
+    }
+
+    /* ---------------- Update bill ---------------- */
+
+    const updates = {
+      customer_id: finalCustomerId || null,
+      customer_name: customer_name || "Walk-in",
+      customer_mobile: customer_mobile || null,
+      customer_email: customer_email || null,
+      billing_date: billing_date || bill.billing_date,
+      items: processedItems,
+      subtotal,
+      discount_percent,
+      discount_amount: discountAmount,
+      grand_total: totalAmount,
+      total_amount: totalAmount,
+      total_cost: totalCost,
+      profit: totalProfit,
+      inventory_billed_qty: inventoryBilledQty,
+      negative_billed_qty: negativeBilledQty,
+      is_paid,
+      due_date: due_date || null,
+      payment_date: is_paid ? new Date().toISOString() : null,
+      notes: notes || null,
+      updated_at: new Date().toISOString(),
+    };
 
     await db
       .collection("bills")

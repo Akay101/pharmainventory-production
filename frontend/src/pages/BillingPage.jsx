@@ -56,6 +56,7 @@ import {
   RotateCcw,
   ChevronDown,
   ChevronUp,
+  Save,
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatDate } from "./utils";
@@ -65,6 +66,7 @@ const LOCAL_STORAGE_KEY_BILL = "pharmalogy_bill_draft";
 export default function BillingPage() {
   // Data state
   const [bills, setBills] = useState([]);
+  const [totalBills, setTotalBills] = useState(0);
   const [customers, setCustomers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -101,8 +103,18 @@ export default function BillingPage() {
   const [grandTotalInput, setGrandTotalInput] = useState("");
   const [isEditingGrandTotal, setIsEditingGrandTotal] = useState(false);
 
-  // Edit bill dialog
-  const [editingBill, setEditingBill] = useState(null);
+  // Edit bill state - NEW: Full inline editing like PurchasesPage
+  const [editingBillId, setEditingBillId] = useState(null);
+  const [editingBillItems, setEditingBillItems] = useState([]);
+  const [editingBillData, setEditingBillData] = useState(null);
+  const [editingInventorySearch, setEditingInventorySearch] = useState("");
+  const [editingInventorySuggestions, setEditingInventorySuggestions] =
+    useState([]);
+  const [showEditingInventorySuggestions, setShowEditingInventorySuggestions] =
+    useState(false);
+  const [activeEditingItemId, setActiveEditingItemId] = useState(null);
+  const [highlightedEditingSuggestion, setHighlightedEditingSuggestion] =
+    useState(-1);
 
   // Delete dialog
   const [deleteDialog, setDeleteDialog] = useState({ open: false, bill: null });
@@ -117,6 +129,7 @@ export default function BillingPage() {
   // Refs for keyboard navigation
   const productInputRef = useRef(null);
   const quantityInputRef = useRef(null);
+  const editingProductInputRef = useRef(null);
 
   // Keyboard shortcuts info
   const [showShortcuts, setShowShortcuts] = useState(false);
@@ -145,7 +158,7 @@ export default function BillingPage() {
     purchase_price: 0,
     available: 0,
     discount_percent: 0,
-    is_manual: false, // Flag for manual entry (not from inventory)
+    is_manual: false,
     salt_composition: "",
   };
 
@@ -224,12 +237,19 @@ export default function BillingPage() {
         e.preventDefault();
         handleSubmitBill();
       }
+      // Alt+U - Update bill (when editing)
+      if (e.altKey && e.key === "u" && editingBillId) {
+        e.preventDefault();
+        handleSaveEditBill();
+      }
       // Escape - Cancel
       if (e.key === "Escape") {
         if (newItemRow) {
           handleCancelAddItem();
         } else if (showNewBill) {
           handleCancelNewBill();
+        } else if (editingBillId) {
+          handleCancelEditBill();
         }
       }
       // Alt+A - Add item (when in new bill mode)
@@ -246,13 +266,13 @@ export default function BillingPage() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [showNewBill, newItemRow]);
+  }, [showNewBill, newItemRow, editingBillId]);
 
   useEffect(() => {
     fetchData();
   }, [page, startDate, endDate]);
 
-  // Server-side inventory search
+  // Server-side inventory search for new bills
   useEffect(() => {
     const searchInventory = async () => {
       if (inventorySearch.length >= 2) {
@@ -285,6 +305,38 @@ export default function BillingPage() {
     return () => clearTimeout(debounce);
   }, [inventorySearch]);
 
+  // Server-side inventory search for editing bills
+  useEffect(() => {
+    const searchInventory = async () => {
+      if (editingInventorySearch.length >= 2) {
+        try {
+          const response = await axios.get(
+            `${API}/inventory/search?q=${encodeURIComponent(editingInventorySearch)}&limit=15`
+          );
+          setEditingInventorySuggestions(response.data.inventory);
+          setShowEditingInventorySuggestions(true);
+        } catch (error) {
+          console.error("Inventory search error:", error);
+          try {
+            const response = await axios.get(
+              `${API}/inventory?search=${encodeURIComponent(editingInventorySearch)}&limit=15`
+            );
+            setEditingInventorySuggestions(response.data.inventory);
+            setShowEditingInventorySuggestions(true);
+          } catch (e) {
+            console.error("Fallback search error:", e);
+          }
+        }
+      } else {
+        setEditingInventorySuggestions([]);
+        setShowEditingInventorySuggestions(false);
+      }
+    };
+
+    const debounce = setTimeout(searchInventory, 200);
+    return () => clearTimeout(debounce);
+  }, [editingInventorySearch]);
+
   const fetchData = async () => {
     try {
       setLoading(true);
@@ -298,7 +350,9 @@ export default function BillingPage() {
         },
       });
 
-      setBills(billsRes.data.bills);
+      setBills(billsRes?.data?.bills);
+      setTotalBills(billsRes?.data?.pagination?.total);
+
       setTotalPages(billsRes.data.pagination.total_pages);
 
       const custRes = await axios.get(`${API}/customers`);
@@ -415,7 +469,7 @@ export default function BillingPage() {
           inventory_id: null,
           product_name: productName || item.product_name,
           is_manual: true,
-          available: 0, // No inventory available
+          available: 0,
           batch_no: "",
           expiry_date: "",
           unit_price: 0,
@@ -427,7 +481,6 @@ export default function BillingPage() {
     setInventorySuggestions([]);
     setShowInventorySuggestions(false);
     setHighlightedSuggestion(-1);
-    // Focus on price input for manual entry
     setTimeout(() => quantityInputRef.current?.focus(), 100);
   };
 
@@ -435,7 +488,6 @@ export default function BillingPage() {
   const handleDropdownKeyDown = (e, itemId) => {
     if (!showInventorySuggestions) return;
 
-    // Total options = 1 (manual entry) + inventory suggestions
     const totalOptions = 1 + inventorySuggestions.length;
 
     if (e.key === "ArrowDown") {
@@ -453,13 +505,11 @@ export default function BillingPage() {
         inventorySearch &&
         inventorySearch.length >= 2
       ) {
-        // Manual entry selected
         handleManualEntry(itemId, inventorySearch);
       } else if (
         highlightedSuggestion > 0 &&
         inventorySuggestions[highlightedSuggestion - 1]
       ) {
-        // Inventory item selected
         handleSelectInventoryForRow(
           itemId,
           inventorySuggestions[highlightedSuggestion - 1]
@@ -488,17 +538,27 @@ export default function BillingPage() {
     setInventorySearch("");
     setInventorySuggestions([]);
     setShowInventorySuggestions(false);
-    // Focus quantity input
     setTimeout(() => quantityInputRef.current?.focus(), 100);
   };
 
   const handleSelectCustomer = (customer) => {
-    setCustomerInfo({
-      customer_id: customer.id,
-      customer_name: customer.name,
-      customer_mobile: customer.mobile,
-      customer_email: customer.email || "",
-    });
+    if (editingBillId) {
+      setEditingBillData({
+        ...editingBillData,
+        customer_id: customer.id,
+        customer_name: customer.name,
+        customer_mobile: customer.mobile,
+        customer_email: customer.email || "",
+      });
+    } else {
+      setCustomerInfo({
+        customer_id: customer.id,
+        customer_name: customer.name,
+        customer_mobile: customer.mobile,
+        customer_email: customer.email || "",
+      });
+    }
+
     setCustomerSearch("");
     setShowCustomerSuggestions(false);
   };
@@ -511,7 +571,6 @@ export default function BillingPage() {
 
         const updated = { ...item, [field]: value };
 
-        // Recalculate totals when quantity, price, or discount changes
         if (
           field === "quantity" ||
           field === "unit_price" ||
@@ -628,7 +687,6 @@ export default function BillingPage() {
           default:
             return;
         }
-        // Move to next focusable element
         const form = e.target.form || e.target.closest("tr, .space-y-4");
         const inputs = form?.querySelectorAll("input, select, button");
         const currentIndex = Array.from(inputs || []).indexOf(e.target);
@@ -656,7 +714,6 @@ export default function BillingPage() {
       return;
     }
 
-    // Filter out empty rows (rows without product_name)
     const validItems = billItems.filter(
       (item) => item.product_name && item.product_name.trim() !== ""
     );
@@ -701,7 +758,6 @@ export default function BillingPage() {
 
       toast.success(`Bill ${response.data.bill.bill_no} created successfully`);
 
-      // Ask to generate PDF
       if (window.confirm("Generate PDF for this bill?")) {
         try {
           const pdfRes = await axios.post(
@@ -724,36 +780,235 @@ export default function BillingPage() {
     }
   };
 
-  // ============ EDIT BILL ============
+  // ============ EDIT BILL - FULL INLINE TABLE EDITING ============
 
   const handleStartEditBill = (bill) => {
-    setEditingBill({
+    setEditingBillId(bill.id);
+    setEditingBillData({
       ...bill,
       customer_name: bill.customer_name || "",
       customer_mobile: bill.customer_mobile || "",
       customer_email: bill.customer_email || "",
       discount_percent: bill.discount_percent || 0,
       notes: bill.notes || "",
+      is_paid: bill.is_paid,
+      billing_date: bill.billing_date || bill.created_at?.slice(0, 10),
     });
+
+    // Map existing items to editable format
+    const mappedItems = bill.items.map((item, idx) => ({
+      id: item.id || `edit-${idx}-${Date.now()}`,
+      inventory_id: item.inventory_id || null,
+      product_name: item.product_name,
+      batch_no: item.batch_no || "",
+      expiry_date: item.expiry_date || "",
+      quantity: item.quantity || 1,
+      unit_price: item.unit_price || item.mrp_per_unit || 0,
+      purchase_price: item.purchase_price || 0,
+      discount_percent: item.discount_percent || 0,
+      available: item.available_quantity || 0,
+      is_manual: !item.inventory_id,
+      salt_composition: item.salt_composition || "",
+      original_quantity: item.quantity, // Track original for inventory adjustment
+    }));
+
+    setEditingBillItems(mappedItems);
+  };
+
+  const handleCancelEditBill = () => {
+    setEditingBillId(null);
+    setEditingBillItems([]);
+    setEditingBillData(null);
+    setEditingInventorySearch("");
+    setEditingInventorySuggestions([]);
+    setShowEditingInventorySuggestions(false);
+  };
+
+  const handleAddEditRow = () => {
+    const newRow = { ...emptyItem, id: `temp-${Date.now()}` };
+    setEditingBillItems((prev) => [...prev, newRow]);
+    setTimeout(() => editingProductInputRef.current?.focus(), 100);
+  };
+
+  const handleRemoveEditItem = (itemId) => {
+    setEditingBillItems((prev) => prev.filter((item) => item.id !== itemId));
+  };
+
+  // Handle field changes during editing with bidirectional calculation
+  const handleEditItemFieldChange = (itemId, field, value) => {
+    setEditingBillItems((prev) =>
+      prev.map((item) => {
+        if (item.id !== itemId) return item;
+
+        const updated = { ...item, [field]: value };
+
+        if (
+          field === "quantity" ||
+          field === "unit_price" ||
+          field === "discount_percent"
+        ) {
+          const qty = parseInt(updated.quantity) || 1;
+          const unitPrice = parseFloat(updated.unit_price) || 0;
+          const discPercent = parseFloat(updated.discount_percent) || 0;
+          const purchasePrice = parseFloat(updated.purchase_price) || 0;
+
+          const itemTotal = qty * unitPrice;
+          const itemDiscount = itemTotal * (discPercent / 100);
+          updated.net_total = itemTotal - itemDiscount;
+          updated.profit = (unitPrice - purchasePrice) * qty - itemDiscount;
+        }
+
+        return updated;
+      })
+    );
+
+    if (field === "product_name") {
+      setEditingInventorySearch(value);
+    }
+  };
+
+  // Handle selecting inventory for editing items
+  const handleSelectInventoryForEditRow = (itemId, inventoryItem) => {
+    setEditingBillItems((prev) =>
+      prev.map((item) => {
+        if (item.id !== itemId) return item;
+
+        const qty = parseInt(item.quantity) || 1;
+        const unitPrice = inventoryItem.mrp_per_unit || inventoryItem.mrp || 0;
+        const purchasePrice =
+          inventoryItem.cost_per_unit || inventoryItem.purchase_price || 0;
+
+        return {
+          ...item,
+          inventory_id: inventoryItem.id,
+          product_name: inventoryItem.product_name,
+          salt_composition: inventoryItem.salt_composition || "",
+          batch_no: inventoryItem.batch_no,
+          expiry_date: inventoryItem.expiry_date || "",
+          unit_price: unitPrice,
+          purchase_price: purchasePrice,
+          available:
+            inventoryItem.available_quantity ||
+            inventoryItem.available_units ||
+            0,
+          units_per_pack: inventoryItem.units_per_pack || 1,
+          is_manual: false,
+        };
+      })
+    );
+    setEditingInventorySearch("");
+    setEditingInventorySuggestions([]);
+    setShowEditingInventorySuggestions(false);
+    setHighlightedEditingSuggestion(-1);
+  };
+
+  const handleManualEntryForEdit = (itemId, productName) => {
+    setEditingBillItems((prev) =>
+      prev.map((item) => {
+        if (item.id !== itemId) return item;
+
+        return {
+          ...item,
+          inventory_id: null,
+          product_name: productName || item.product_name,
+          is_manual: true,
+          available: 0,
+          batch_no: "",
+          expiry_date: "",
+        };
+      })
+    );
+    setEditingInventorySearch("");
+    setEditingInventorySuggestions([]);
+    setShowEditingInventorySuggestions(false);
+    setHighlightedEditingSuggestion(-1);
+  };
+
+  const handleEditDropdownKeyDown = (e, itemId) => {
+    if (!showEditingInventorySuggestions) return;
+
+    const totalOptions = 1 + editingInventorySuggestions.length;
+
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setHighlightedEditingSuggestion((prev) => (prev + 1) % totalOptions);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setHighlightedEditingSuggestion((prev) =>
+        prev <= 0 ? totalOptions - 1 : prev - 1
+      );
+    } else if (e.key === "Enter" && highlightedEditingSuggestion >= 0) {
+      e.preventDefault();
+      if (
+        highlightedEditingSuggestion === 0 &&
+        editingInventorySearch &&
+        editingInventorySearch.length >= 2
+      ) {
+        handleManualEntryForEdit(itemId, editingInventorySearch);
+      } else if (
+        highlightedEditingSuggestion > 0 &&
+        editingInventorySuggestions[highlightedEditingSuggestion - 1]
+      ) {
+        handleSelectInventoryForEditRow(
+          itemId,
+          editingInventorySuggestions[highlightedEditingSuggestion - 1]
+        );
+      }
+      setHighlightedEditingSuggestion(-1);
+    } else if (e.key === "Escape") {
+      setShowEditingInventorySuggestions(false);
+      setHighlightedEditingSuggestion(-1);
+    }
   };
 
   const handleSaveEditBill = async () => {
-    if (!editingBill) return;
+    if (!editingBillData) return;
+
+    const validItems = editingBillItems.filter(
+      (item) => item.product_name && item.product_name.trim() !== ""
+    );
+
+    if (validItems.length === 0) {
+      toast.error("Please add at least one item");
+      return;
+    }
 
     setSubmitting(true);
     try {
-      await axios.put(`${API}/bills/${editingBill.id}`, {
-        customer_name: editingBill.customer_name,
-        customer_mobile: editingBill.customer_mobile,
-        customer_email: editingBill.customer_email,
-        discount_percent: parseFloat(editingBill.discount_percent) || 0,
-        is_paid: editingBill.is_paid,
-        notes: editingBill.notes,
-        billing_date: editingBill.billing_date,
+      const response = await axios.put(`${API}/bills/${editingBillId}`, {
+        customer_id: editingBillData.customer_id || null,
+        customer_name: editingBillData.customer_name,
+        customer_mobile: editingBillData.customer_mobile,
+        customer_email: editingBillData.customer_email || null,
+        billing_date: editingBillData.billing_date,
+        items: validItems.map(
+          ({
+            id,
+            net_total,
+            profit,
+            available,
+            units_per_pack,
+            salt_composition,
+            original_quantity,
+            ...item
+          }) => ({
+            inventory_id: item.inventory_id || null,
+            product_name: item.product_name,
+            batch_no: item.batch_no,
+            expiry_date: item.expiry_date,
+            quantity: parseInt(item.quantity) || 1,
+            unit_price: parseFloat(item.unit_price) || 0,
+            purchase_price: parseFloat(item.purchase_price) || 0,
+            discount_percent: parseFloat(item.discount_percent) || 0,
+          })
+        ),
+        discount_percent: parseFloat(editingBillData.discount_percent) || 0,
+        is_paid: editingBillData.is_paid,
+        notes: editingBillData.notes || null,
       });
 
       toast.success("Bill updated successfully");
-      setEditingBill(null);
+      handleCancelEditBill();
       fetchData();
     } catch (error) {
       toast.error(error.response?.data?.detail || "Failed to update bill");
@@ -824,7 +1079,7 @@ export default function BillingPage() {
     return `${packs} pack${packs > 1 ? "s" : ""} + ${remainingUnits} units`;
   };
 
-  // Calculate totals - only for items with product_name
+  // Calculate totals for new bill
   const validItems = billItems.filter(
     (item) => item.product_name && item.product_name.trim() !== ""
   );
@@ -844,19 +1099,17 @@ export default function BillingPage() {
     }
   }, [grandTotal, isEditingGrandTotal]);
 
-  // Calculate profit: (selling price - cost) for each item, then apply bill discount
+  // Calculate profit for new bill
   const itemProfitBeforeDiscount = validItems.reduce((sum, item) => {
     const qty = parseInt(item.quantity) || 0;
     const unitPrice = parseFloat(item.unit_price) || 0;
     const purchasePrice = parseFloat(item.purchase_price) || 0;
     const discPercent = parseFloat(item.discount_percent) || 0;
-    // Item profit = (MRP - Cost) * Qty * (1 - item discount)
     return sum + (unitPrice - purchasePrice) * qty * (1 - discPercent / 100);
   }, 0);
-  // Bill discount reduces the profit proportionally
   const totalProfit = itemProfitBeforeDiscount * (1 - billDiscount / 100);
 
-  // Calculate inventory vs negative billing totals
+  // Calculate inventory vs negative billing totals for new bill
   const inventoryBilledQty = validItems.reduce((sum, item) => {
     if (item.is_manual) return sum;
     const qty = parseInt(item.quantity) || 0;
@@ -869,6 +1122,21 @@ export default function BillingPage() {
     const available = parseInt(item.available) || 0;
     return sum + Math.max(0, qty - available);
   }, 0);
+
+  // Calculate totals for editing bill
+  const validEditItems = editingBillItems.filter(
+    (item) => item.product_name && item.product_name.trim() !== ""
+  );
+  const editSubtotal = validEditItems.reduce((sum, item) => {
+    const qty = parseInt(item.quantity) || 0;
+    const unitPrice = parseFloat(item.unit_price) || 0;
+    const discPercent = parseFloat(item.discount_percent) || 0;
+    const itemTotal = qty * unitPrice * (1 - discPercent / 100);
+    return sum + itemTotal;
+  }, 0);
+  const editDiscountPercent = editingBillData?.discount_percent || 0;
+  const editDiscountAmount = editSubtotal * (editDiscountPercent / 100);
+  const editGrandTotal = editSubtotal - editDiscountAmount;
 
   if (loading) {
     return (
@@ -919,9 +1187,7 @@ export default function BillingPage() {
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold">Billing</h1>
-          <p className="text-muted-foreground">
-            {bills.length} bills generated
-          </p>
+          <p className="text-muted-foreground">{`${totalBills} bill${totalBills > 0 ? "s" : ""} generated`}</p>
         </div>
 
         <div className="flex gap-2">
@@ -937,7 +1203,7 @@ export default function BillingPage() {
             className="btn-primary"
             onClick={handleStartNewBill}
             data-testid="new-bill-btn"
-            disabled={showNewBill}
+            disabled={showNewBill || editingBillId}
           >
             <Plus className="w-4 h-4 mr-2" />
             New Bill (Alt+N)
@@ -971,6 +1237,12 @@ export default function BillingPage() {
               <span>Save Bill</span>
               <kbd className="px-2 py-1 bg-muted rounded text-xs font-mono">
                 Alt + S
+              </kbd>
+            </div>
+            <div className="flex justify-between items-center p-2 bg-muted/30 rounded">
+              <span>Update Bill</span>
+              <kbd className="px-2 py-1 bg-muted rounded text-xs font-mono">
+                Alt + U
               </kbd>
             </div>
             <div className="flex justify-between items-center p-2 bg-muted/30 rounded">
@@ -1163,7 +1435,6 @@ export default function BillingPage() {
                         qty * unitPrice * (1 - discPercent / 100);
                       const available = parseInt(item.available) || 0;
 
-                      // Calculate inventory vs negative billing
                       const fromInventory = item.is_manual
                         ? 0
                         : Math.min(qty, available);
@@ -1228,7 +1499,7 @@ export default function BillingPage() {
                                     marginTop: "4px",
                                   }}
                                 >
-                                  {/* Manual Entry Option - Always show at top */}
+                                  {/* Manual Entry Option */}
                                   {inventorySearch &&
                                     inventorySearch.length >= 2 && (
                                       <div
@@ -1252,7 +1523,6 @@ export default function BillingPage() {
                                             </p>
                                             <p className="text-xs text-muted-foreground">
                                               Add item not in inventory
-                                              (negative billing)
                                             </p>
                                           </div>
                                         </div>
@@ -1281,7 +1551,6 @@ export default function BillingPage() {
                                             <p className="font-medium text-sm">
                                               {invItem.product_name}
                                             </p>
-
                                             {invItem.supplier_name && (
                                               <p className="text-xs text-purple-500 font-medium">
                                                 Supplier:{" "}
@@ -1295,7 +1564,6 @@ export default function BillingPage() {
                                                   : invItem.supplier_name}
                                               </p>
                                             )}
-
                                             {invItem.salt_composition && (
                                               <p className="text-xs text-primary/70">
                                                 {invItem.salt_composition.slice(
@@ -1305,13 +1573,11 @@ export default function BillingPage() {
                                                 ...
                                               </p>
                                             )}
-
                                             <p className="text-xs text-muted-foreground">
                                               Batch: {invItem.batch_no} | Exp:{" "}
                                               {invItem.expiry_date}
                                             </p>
                                           </div>
-
                                           <div className="text-right">
                                             <p className="font-mono text-primary text-sm">
                                               ₹
@@ -1323,13 +1589,11 @@ export default function BillingPage() {
                                                 .replace(/\.00$/, "")}
                                               /unit
                                             </p>
-
                                             <p className="text-xs text-muted-foreground font-medium">
                                               {invItem.available_quantity ||
                                                 invItem.available_units}{" "}
                                               units
                                             </p>
-
                                             <p className="text-xs text-blue-400 font-bold">
                                               Rate : ₹
                                               {Number(
@@ -1341,16 +1605,6 @@ export default function BillingPage() {
                                       </div>
                                     )
                                   )}
-
-                                  {/* No results message */}
-                                  {inventorySuggestions.length === 0 &&
-                                    inventorySearch &&
-                                    inventorySearch.length >= 2 && (
-                                      <div className="p-3 text-center text-muted-foreground text-sm">
-                                        No inventory items found. Use manual
-                                        entry above.
-                                      </div>
-                                    )}
                                 </div>
                               )}
                           </TableCell>
@@ -1437,9 +1691,7 @@ export default function BillingPage() {
                                   hasOverflow ? "border-yellow-500" : ""
                                 }`}
                               />
-
-                              {/* Show only for inventory items */}
-                              {!item.isManual && item.units_per_pack && (
+                              {!item.is_manual && item.units_per_pack && (
                                 <label className="flex items-center gap-2 cursor-pointer select-none text-[11px] font-medium text-gray-600">
                                   <input
                                     type="checkbox"
@@ -1452,13 +1704,7 @@ export default function BillingPage() {
                                         e.target.checked
                                       )
                                     }
-                                    className="
-      h-4 w-4 rounded
-      border border-gray-300
-      text-primary
-      focus:ring-1 focus:ring-primary
-      cursor-pointer
-    "
+                                    className="h-4 w-4 rounded border border-gray-300 text-primary focus:ring-1 focus:ring-primary cursor-pointer"
                                   />
                                   Full Pack
                                 </label>
@@ -1582,7 +1828,6 @@ export default function BillingPage() {
                     </Label>
                   </div>
                 </div>
-                {/* Inventory vs Negative billing warning */}
                 {negativeBilledQty > 0 && (
                   <div className="p-2 bg-yellow-500/10 border border-yellow-500/30 rounded-lg text-sm">
                     <p className="text-yellow-600 font-medium">
@@ -1633,29 +1878,22 @@ export default function BillingPage() {
                     }}
                     onBlur={() => {
                       setIsEditingGrandTotal(false);
-
                       const newGrandTotal = parseFloat(grandTotalInput);
-
                       if (!subtotal || subtotal <= 0) return;
-
                       if (isNaN(newGrandTotal)) {
                         setGrandTotalInput(grandTotal.toFixed(2));
                         return;
                       }
-
                       if (newGrandTotal > subtotal) {
                         setBillDiscount(0);
                         return;
                       }
-
                       if (newGrandTotal < 0) {
                         setGrandTotalInput(grandTotal.toFixed(2));
                         return;
                       }
-
                       const discountPercent =
                         ((subtotal - newGrandTotal) / subtotal) * 100;
-
                       setBillDiscount(parseFloat(discountPercent.toFixed(2)));
                     }}
                     className="w-40 text-right text-lg font-bold text-primary"
@@ -1666,9 +1904,6 @@ export default function BillingPage() {
                 >
                   Est. Profit: ₹{totalProfit.toFixed(2)}
                 </div>
-                <p className="text-xs text-muted-foreground text-right">
-                  Editing grand total adjusts bill discount automatically
-                </p>
               </div>
             </div>
 
@@ -1700,164 +1935,650 @@ export default function BillingPage() {
         </Card>
       )}
 
-      {/* Edit Bill Dialog */}
-      {editingBill && (
-        <Dialog open={!!editingBill} onOpenChange={() => setEditingBill(null)}>
-          <DialogContent className="max-w-lg">
-            <DialogHeader>
-              <DialogTitle>Edit Bill - {editingBill.bill_no}</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-4 pt-4">
-              <div className="grid grid-cols-3 gap-4">
-                <div className="space-y-2">
-                  <Label>Billing Date</Label>
-                  <Input
-                    type="date"
-                    value={editingBill.billing_date || ""}
-                    onChange={(e) =>
-                      setEditingBill({
-                        ...editingBill,
-                        billing_date: e.target.value,
-                      })
-                    }
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <Label>Customer Name</Label>
-                  <Input
-                    value={editingBill.customer_name}
-                    onChange={(e) =>
-                      setEditingBill({
-                        ...editingBill,
-                        customer_name: e.target.value,
-                      })
-                    }
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Mobile</Label>
-                  <Input
-                    value={editingBill.customer_mobile}
-                    onChange={(e) =>
-                      setEditingBill({
-                        ...editingBill,
-                        customer_mobile: e.target.value,
-                      })
-                    }
-                  />
-                </div>
+      {/* EDIT BILL - Full Inline Table Editing (Like PurchasesPage) */}
+      {editingBillId && editingBillData && (
+        <Card
+          className="border-yellow-500/30 bg-yellow-500/5"
+          data-testid="edit-bill-form"
+        >
+          <CardHeader className="pb-4">
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-lg flex items-center gap-2">
+                <Edit2 className="w-5 h-5" />
+                Edit Bill - {editingBillData.bill_no}
+              </CardTitle>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={handleCancelEditBill}
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {/* Customer Info */}
+            <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
+              <div className="space-y-2 relative">
+                <Label>Customer Name *</Label>
+                <Input
+                  placeholder="Search customer..."
+                  value={editingBillData.customer_name || ""}
+                  onChange={(e) => {
+                    setEditingBillData({
+                      ...editingBillData,
+                      customer_name: e.target.value,
+                    });
+                    setCustomerSearch(e.target.value);
+                    setShowCustomerSuggestions(true);
+                  }}
+                />
+                {showCustomerSuggestions &&
+                  customerSearch &&
+                  filteredCustomers.length > 0 && (
+                    <div className="absolute z-50 w-full mt-1 bg-card border border-border rounded-lg shadow-xl max-h-48 overflow-y-auto top-full">
+                      {filteredCustomers.slice(0, 5).map((customer) => (
+                        <div
+                          key={customer.id}
+                          className="p-2 hover:bg-primary/10 cursor-pointer border-b border-border last:border-0"
+                          onMouseDown={() => handleSelectCustomer(customer)}
+                        >
+                          <p className="font-medium text-sm">{customer.name}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {customer.mobile}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+              </div>
+              <div className="space-y-2">
+                <Label>Mobile *</Label>
+                <Input
+                  value={editingBillData.customer_mobile}
+                  onChange={(e) =>
+                    setEditingBillData({
+                      ...editingBillData,
+                      customer_mobile: e.target.value,
+                    })
+                  }
+                />
               </div>
               <div className="space-y-2">
                 <Label>Email</Label>
                 <Input
                   type="email"
-                  value={editingBill.customer_email}
+                  value={editingBillData.customer_email || ""}
                   onChange={(e) =>
-                    setEditingBill({
-                      ...editingBill,
+                    setEditingBillData({
+                      ...editingBillData,
                       customer_email: e.target.value,
                     })
                   }
                 />
               </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>Discount %</Label>
-                  <Input
-                    type="number"
-                    value={editingBill.discount_percent}
-                    onChange={(e) =>
-                      setEditingBill({
-                        ...editingBill,
-                        discount_percent: parseFloat(e.target.value) || 0,
-                      })
-                    }
-                  />
+              <div className="space-y-2">
+                <Label>Discount %</Label>
+                <Input
+                  type="number"
+                  value={editingBillData.discount_percent || 0}
+                  onChange={(e) =>
+                    setEditingBillData({
+                      ...editingBillData,
+                      discount_percent: parseFloat(e.target.value) || 0,
+                    })
+                  }
+                  min="0"
+                  max="100"
+                />
+              </div>
+            </div>
+
+            {/* Items Table - Inline Editable */}
+            <div
+              className="border border-border rounded-lg relative"
+              style={{ overflow: "visible" }}
+            >
+              <div
+                className="max-h-[400px] overflow-x-auto"
+                style={{ overflowY: "visible" }}
+              >
+                <Table>
+                  <TableHeader className="sticky top-0 bg-muted/95 backdrop-blur z-10">
+                    <TableRow>
+                      <TableHead className="w-[180px] font-bold text-foreground">
+                        Product *
+                      </TableHead>
+                      <TableHead className="w-[100px] font-bold text-foreground">
+                        Salt
+                      </TableHead>
+                      <TableHead className="w-[80px] font-bold text-foreground">
+                        Batch
+                      </TableHead>
+                      <TableHead className="w-[70px] text-center font-bold text-foreground">
+                        Avail.
+                      </TableHead>
+                      <TableHead className="w-[90px] font-bold text-foreground">
+                        Expiry
+                      </TableHead>
+                      <TableHead className="w-[70px] text-center font-bold text-foreground">
+                        Qty *
+                      </TableHead>
+                      <TableHead className="w-[90px] text-center font-bold text-foreground">
+                        Cost/Unit
+                      </TableHead>
+                      <TableHead className="w-[90px] text-center font-bold text-foreground">
+                        MRP/Unit *
+                      </TableHead>
+                      <TableHead className="w-[70px] text-center font-bold text-foreground">
+                        Disc %
+                      </TableHead>
+                      <TableHead className="w-[90px] text-right font-bold text-foreground">
+                        Total
+                      </TableHead>
+                      <TableHead className="w-[60px] text-center font-bold text-foreground">
+                        Actions
+                      </TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {editingBillItems.map((item, index) => {
+                      const qty = parseInt(item.quantity) || 0;
+                      const unitPrice = parseFloat(item.unit_price) || 0;
+                      const discPercent =
+                        parseFloat(item.discount_percent) || 0;
+                      const purchasePrice =
+                        parseFloat(item.purchase_price) || 0;
+                      const itemTotal =
+                        qty * unitPrice * (1 - discPercent / 100);
+                      const available = parseInt(item.available) || 0;
+
+                      const hasOverflow =
+                        !item.is_manual && qty > available && available > 0;
+
+                      return (
+                        <TableRow
+                          key={item.id || index}
+                          className={
+                            hasOverflow ? "bg-yellow-500/10" : "bg-primary/5"
+                          }
+                        >
+                          <TableCell
+                            className="relative"
+                            style={{ overflow: "visible" }}
+                          >
+                            <Input
+                              ref={
+                                index === editingBillItems.length - 1
+                                  ? editingProductInputRef
+                                  : null
+                              }
+                              value={item.product_name || ""}
+                              onChange={(e) =>
+                                handleEditItemFieldChange(
+                                  item.id,
+                                  "product_name",
+                                  e.target.value
+                                )
+                              }
+                              onFocus={() => {
+                                setEditingInventorySearch(
+                                  item.product_name || ""
+                                );
+                                setShowEditingInventorySuggestions(true);
+                                setActiveEditingItemId(item.id);
+                                setHighlightedEditingSuggestion(-1);
+                              }}
+                              onBlur={() =>
+                                setTimeout(
+                                  () =>
+                                    setShowEditingInventorySuggestions(false),
+                                  200
+                                )
+                              }
+                              onKeyDown={(e) =>
+                                handleEditDropdownKeyDown(e, item.id)
+                              }
+                              placeholder="Search product..."
+                              className="h-8 text-xs"
+                              autoComplete="off"
+                            />
+                            {/* Search Suggestions Dropdown for Editing */}
+                            {showEditingInventorySuggestions &&
+                              activeEditingItemId === item.id && (
+                                <div
+                                  className="fixed bg-card border border-border rounded-lg shadow-2xl max-h-64 overflow-y-auto"
+                                  style={{
+                                    width: "400px",
+                                    zIndex: 9999,
+                                    marginTop: "4px",
+                                  }}
+                                >
+                                  {/* Manual Entry Option */}
+                                  {editingInventorySearch &&
+                                    editingInventorySearch.length >= 2 && (
+                                      <div
+                                        className={`p-3 cursor-pointer border-b border-border ${highlightedEditingSuggestion === 0 ? "bg-yellow-500/20" : "hover:bg-yellow-500/10 bg-yellow-500/5"}`}
+                                        onMouseDown={(e) => {
+                                          e.preventDefault();
+                                          handleManualEntryForEdit(
+                                            item.id,
+                                            editingInventorySearch
+                                          );
+                                        }}
+                                        onMouseEnter={() =>
+                                          setHighlightedEditingSuggestion(0)
+                                        }
+                                      >
+                                        <div className="flex items-center gap-2">
+                                          <Plus className="w-4 h-4 text-yellow-500" />
+                                          <div>
+                                            <p className="font-medium text-sm text-yellow-500">
+                                              Manual Entry: "
+                                              {editingInventorySearch}"
+                                            </p>
+                                            <p className="text-xs text-muted-foreground">
+                                              Add item not in inventory
+                                            </p>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    )}
+
+                                  {/* Inventory Items */}
+                                  {editingInventorySuggestions.map(
+                                    (invItem, suggIdx) => (
+                                      <div
+                                        key={invItem.id}
+                                        className={`p-3 cursor-pointer border-b border-border last:border-0 ${highlightedEditingSuggestion === suggIdx + 1 ? "bg-primary/20" : "hover:bg-primary/10"}`}
+                                        onMouseDown={(e) => {
+                                          e.preventDefault();
+                                          handleSelectInventoryForEditRow(
+                                            item.id,
+                                            invItem
+                                          );
+                                        }}
+                                        onMouseEnter={() =>
+                                          setHighlightedEditingSuggestion(
+                                            suggIdx + 1
+                                          )
+                                        }
+                                      >
+                                        <div className="flex justify-between items-start">
+                                          <div>
+                                            <p className="font-medium text-sm">
+                                              {invItem.product_name}
+                                            </p>
+                                            {invItem.salt_composition && (
+                                              <p className="text-xs text-primary/70">
+                                                {invItem.salt_composition.slice(
+                                                  0,
+                                                  40
+                                                )}
+                                                ...
+                                              </p>
+                                            )}
+                                            <p className="text-xs text-muted-foreground">
+                                              Batch: {invItem.batch_no} | Exp:{" "}
+                                              {invItem.expiry_date}
+                                            </p>
+                                          </div>
+                                          <div className="text-right">
+                                            <p className="font-mono text-primary text-sm">
+                                              ₹
+                                              {Number(
+                                                invItem.mrp_per_unit ||
+                                                  invItem.mrp
+                                              )
+                                                .toFixed(2)
+                                                .replace(/\.00$/, "")}
+                                              /unit
+                                            </p>
+                                            <p className="text-xs text-muted-foreground font-medium">
+                                              {invItem.available_quantity ||
+                                                invItem.available_units}{" "}
+                                              units
+                                            </p>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    )
+                                  )}
+                                </div>
+                              )}
+                          </TableCell>
+                          <TableCell>
+                            <Input
+                              value={item.salt_composition || ""}
+                              onChange={(e) =>
+                                handleEditItemFieldChange(
+                                  item.id,
+                                  "salt_composition",
+                                  e.target.value
+                                )
+                              }
+                              placeholder="Salt"
+                              className="h-8 text-xs w-24"
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <Input
+                              value={item.batch_no || ""}
+                              onChange={(e) =>
+                                handleEditItemFieldChange(
+                                  item.id,
+                                  "batch_no",
+                                  e.target.value
+                                )
+                              }
+                              placeholder="Batch"
+                              className="h-8 text-xs w-20"
+                            />
+                          </TableCell>
+                          <TableCell className="text-center">
+                            {item.is_manual ? (
+                              <span className="text-xs font-medium text-yellow-500">
+                                Manual
+                              </span>
+                            ) : (
+                              <span className="text-xs font-medium text-primary">
+                                {available || "-"}
+                              </span>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            <Input
+                              type="date"
+                              value={item.expiry_date || ""}
+                              onChange={(e) =>
+                                handleEditItemFieldChange(
+                                  item.id,
+                                  "expiry_date",
+                                  e.target.value
+                                )
+                              }
+                              className="h-8 text-xs w-28"
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <Input
+                              type="number"
+                              value={item.quantity || ""}
+                              onChange={(e) =>
+                                handleEditItemFieldChange(
+                                  item.id,
+                                  "quantity",
+                                  e.target.value
+                                )
+                              }
+                              min="1"
+                              placeholder="1"
+                              className={`h-8 text-xs text-center w-16 ${
+                                hasOverflow ? "border-yellow-500" : ""
+                              }`}
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <Input
+                              type="number"
+                              step="0.01"
+                              value={item.purchase_price || ""}
+                              onChange={(e) =>
+                                handleEditItemFieldChange(
+                                  item.id,
+                                  "purchase_price",
+                                  e.target.value
+                                )
+                              }
+                              placeholder="Cost"
+                              className="h-8 text-xs text-center w-20"
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <Input
+                              type="number"
+                              step="0.01"
+                              value={item.unit_price || ""}
+                              onChange={(e) =>
+                                handleEditItemFieldChange(
+                                  item.id,
+                                  "unit_price",
+                                  e.target.value
+                                )
+                              }
+                              placeholder="MRP"
+                              className="h-8 text-xs text-center w-24"
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <Input
+                              type="number"
+                              value={item.discount_percent || ""}
+                              onChange={(e) =>
+                                handleEditItemFieldChange(
+                                  item.id,
+                                  "discount_percent",
+                                  e.target.value
+                                )
+                              }
+                              min="0"
+                              max="100"
+                              placeholder="0"
+                              className="h-8 text-xs text-center w-16"
+                            />
+                          </TableCell>
+                          <TableCell className="text-right font-mono text-sm font-medium">
+                            ₹{itemTotal.toFixed(2)}
+                          </TableCell>
+                          <TableCell>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                              onClick={() => handleRemoveEditItem(item.id)}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+
+                    {editingBillItems.length === 0 && (
+                      <TableRow>
+                        <TableCell
+                          colSpan={10}
+                          className="text-center py-8 text-muted-foreground"
+                        >
+                          <Package className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                          No items. Click "Add Item" to add a row.
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+
+            {/* Notes */}
+            <div className="space-y-2">
+              <Label>Notes</Label>
+              <Input
+                value={editingBillData.notes || ""}
+                onChange={(e) =>
+                  setEditingBillData({
+                    ...editingBillData,
+                    notes: e.target.value,
+                  })
+                }
+                placeholder="Add notes..."
+              />
+            </div>
+
+            {/* Totals & Actions */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <Button variant="outline" size="sm" onClick={handleAddEditRow}>
+                  <Plus className="h-4 w-4 mr-1" /> Add Item
+                </Button>
+              </div>
+
+              <div className="space-y-2 text-right">
+                <div className="text-sm text-muted-foreground">
+                  Subtotal: ₹{editSubtotal.toFixed(2)}
                 </div>
-                <div className="space-y-2 flex items-end">
+                {editDiscountPercent > 0 && (
+                  <div className="text-sm text-red-500">
+                    Discount ({editDiscountPercent}%): -₹
+                    {editDiscountAmount.toFixed(2)}
+                  </div>
+                )}
+                <div className="text-lg font-semibold flex items-center justify-end gap-2">
+                  <p> Grand Total:</p>
+                  <span className="font-mono text-primary w-fit">
+                    <Input
+                      type="number"
+                      step="0.01"
+                      className="w-fit"
+                      value={editGrandTotal}
+                      onBlur={(e) => {
+                        const newTotal = parseFloat(e.target.value);
+
+                        if (!editSubtotal || editSubtotal <= 0) return;
+
+                        const discountPercent =
+                          ((editSubtotal - newTotal) / editSubtotal) * 100;
+
+                        setEditingBillData({
+                          ...editingBillData,
+                          discount_percent: discountPercent.toFixed(2),
+                        });
+                      }}
+                    />
+                  </span>
+                </div>
+                <div className="flex flex-wrap gap-6 justify-end items-end border-t pt-4">
+                  {/* Paid */}
                   <div className="flex items-center gap-2">
                     <Checkbox
                       id="editIsPaid"
-                      checked={editingBill.is_paid}
+                      checked={editingBillData.is_paid}
                       onCheckedChange={(v) =>
-                        setEditingBill({ ...editingBill, is_paid: v })
+                        setEditingBillData({
+                          ...editingBillData,
+                          is_paid: v,
+                          due_date: v ? null : editingBillData.due_date,
+                        })
                       }
                     />
                     <Label htmlFor="editIsPaid">Paid</Label>
                   </div>
+
+                  {/* Due Date */}
+                  {!editingBillData.is_paid && (
+                    <div className="space-y-1">
+                      <Label>Due Date</Label>
+                      <Input
+                        type="date"
+                        value={editingBillData.due_date || ""}
+                        onChange={(e) =>
+                          setEditingBillData({
+                            ...editingBillData,
+                            due_date: e.target.value,
+                          })
+                        }
+                        className="w-40"
+                      />
+                    </div>
+                  )}
+                  {/* Billing Date */}
+                  <div className="space-y-1">
+                    <Label>Billing Date</Label>
+                    <Input
+                      type="date"
+                      value={editingBillData.billing_date || ""}
+                      onChange={(e) =>
+                        setEditingBillData({
+                          ...editingBillData,
+                          billing_date: e.target.value,
+                        })
+                      }
+                      className="w-40"
+                    />
+                  </div>
                 </div>
               </div>
-              <div className="space-y-2">
-                <Label>Notes</Label>
-                <Input
-                  value={editingBill.notes}
-                  onChange={(e) =>
-                    setEditingBill({ ...editingBill, notes: e.target.value })
-                  }
-                  placeholder="Add notes..."
-                />
-              </div>
-              <div className="flex justify-end gap-2 pt-2">
-                <Button variant="outline" onClick={() => setEditingBill(null)}>
-                  Cancel
-                </Button>
-                <Button
-                  onClick={handleSaveEditBill}
-                  disabled={submitting}
-                  className="btn-primary"
-                >
-                  {submitting ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    "Save Changes"
-                  )}
-                </Button>
-              </div>
             </div>
-          </DialogContent>
-        </Dialog>
+
+            {/* Submit */}
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={handleCancelEditBill}>
+                Cancel (Esc)
+              </Button>
+              <Button
+                onClick={handleSaveEditBill}
+                disabled={submitting || validEditItems.length === 0}
+                className="btn-primary bg-yellow-600 hover:bg-yellow-700"
+              >
+                {submitting ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Updating...
+                  </>
+                ) : (
+                  <>
+                    <Save className="w-4 h-4 mr-2" />
+                    Update Bill (Alt+U)
+                  </>
+                )}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
       )}
-      <Card className="p-4">
-        <div className="flex flex-wrap items-end gap-4">
-          <div>
-            <Label>From Date</Label>
-            <Input
-              type="date"
-              value={startDate}
-              onChange={(e) => {
+
+      {!showNewBill && !editingBillId && (
+        <Card className="p-4">
+          <div className="flex flex-wrap items-end gap-4">
+            <div>
+              <Label>From Date</Label>
+              <Input
+                type="date"
+                value={startDate}
+                onChange={(e) => {
+                  setPage(1);
+                  setStartDate(e.target.value);
+                }}
+              />
+            </div>
+
+            <div>
+              <Label>To Date</Label>
+              <Input
+                type="date"
+                value={endDate}
+                onChange={(e) => {
+                  setPage(1);
+                  setEndDate(e.target.value);
+                }}
+              />
+            </div>
+
+            <Button
+              variant="outline"
+              onClick={() => {
+                setStartDate("");
+                setEndDate("");
                 setPage(1);
-                setStartDate(e.target.value);
               }}
-            />
+            >
+              Clear
+            </Button>
           </div>
+        </Card>
+      )}
 
-          <div>
-            <Label>To Date</Label>
-            <Input
-              type="date"
-              value={endDate}
-              onChange={(e) => {
-                setPage(1);
-                setEndDate(e.target.value);
-              }}
-            />
-          </div>
-
-          <Button
-            variant="outline"
-            onClick={() => {
-              setStartDate("");
-              setEndDate("");
-              setPage(1);
-            }}
-          >
-            Clear
-          </Button>
-        </div>
-      </Card>
-
-      {!showNewBill && (
+      {!showNewBill && !editingBillId && (
         <Card className="data-table">
           <Table>
             <TableHeader>
@@ -2082,7 +2803,6 @@ export default function BillingPage() {
                                 </TableBody>
                               </Table>
                               <div className="mt-3 pt-3 border-t border-border/50 flex justify-between items-center text-sm">
-                                {/* Inventory vs Negative billing info */}
                                 <div>
                                   {(bill.negative_billed_qty > 0 ||
                                     bill.items?.some((i) => i.is_manual)) && (
@@ -2167,7 +2887,6 @@ export default function BillingPage() {
           </div>
         </Card>
       )}
-      {/* Bills Table */}
 
       {/* Delete Dialog */}
       <AlertDialog
