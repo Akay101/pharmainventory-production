@@ -63,6 +63,7 @@ import {
   Keyboard,
   RotateCcw,
   ArrowRight,
+  FileText,
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatDate } from "./utils";
@@ -390,6 +391,22 @@ export default function PurchasesPage() {
       toast.error("Failed to load data");
     } finally {
       setLoading(false);
+    }
+  };
+
+  //Purchase pdf
+  const handleGeneratePurchasePdf = async (purchaseId) => {
+    try {
+      const res = await axios.post(`${API}/purchases/${purchaseId}/pdf`);
+
+      if (res.data?.pdf_url) {
+        window.open(res.data.pdf_url, "_blank");
+        toast.success("PDF generated");
+      } else {
+        toast.error("PDF generation failed");
+      }
+    } catch (error) {
+      toast.error("Failed to generate PDF");
     }
   };
 
@@ -858,8 +875,18 @@ export default function PurchasesPage() {
         );
         toast.success("Purchase updated successfully");
       } else {
-        await axios.post(`${API}/purchases`, payload);
+        const res = await axios.post(`${API}/purchases`, payload);
         toast.success("Purchase recorded successfully");
+
+        const purchaseId = res.data?.purchase?.id;
+
+        if (purchaseId) {
+          setTimeout(() => {
+            if (window.confirm("Generate purchase PDF?")) {
+              handleGeneratePurchasePdf(purchaseId);
+            }
+          }, 300);
+        }
       }
 
       setEditingPurchaseId(null);
@@ -2386,6 +2413,15 @@ export default function PurchasesPage() {
                     onClick={(e) => e.stopPropagation()}
                   >
                     <div className="flex justify-center gap-1">
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="h-7 w-7 text-primary"
+                        onClick={() => handleGeneratePurchasePdf(purchase.id)}
+                        data-testid={`pdf-purchase-${purchase.id}`}
+                      >
+                        <FileText className="h-4 w-4" />
+                      </Button>
                       <Button
                         size="icon"
                         variant="ghost"

@@ -6,6 +6,8 @@ const axios = require("axios");
 const multer = require("multer");
 const { auth } = require("../middleware/auth");
 const { normalizeName } = require("../utils/helpers");
+const { generatePurchasePDF } = require("../services/pdf");
+const { uploadToR2 } = require("../services/r2");
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -478,6 +480,36 @@ router.delete("/:purchase_id", auth, async (req, res, next) => {
 
     await db.collection("purchases").deleteOne({ id: req.params.purchase_id });
     res.json({ message: "Purchase deleted" });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// POST /api/purchases/:purchase_id/pdf
+router.post("/:purchase_id/pdf", auth, async (req, res, next) => {
+  try {
+    const db = mongoose.connection.db;
+
+    const purchase = await db.collection("purchases").findOne({
+      id: req.params.purchase_id,
+      pharmacy_id: req.user.pharmacy_id,
+    });
+
+    if (!purchase) {
+      return res.status(404).json({ detail: "Purchase not found" });
+    }
+
+    const pharmacy = await db
+      .collection("pharmacies")
+      .findOne({ id: req.user.pharmacy_id }, { projection: { _id: 0 } });
+
+    const pdfBuffer = await generatePurchasePDF(purchase, pharmacy);
+
+    const key = `purchases/${req.user.pharmacy_id}/${purchase.invoice_no || purchase.id}.pdf`;
+
+    const pdfUrl = await uploadToR2(key, pdfBuffer, "application/pdf");
+
+    res.json({ pdf_url: pdfUrl });
   } catch (error) {
     next(error);
   }
