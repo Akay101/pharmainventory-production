@@ -9,6 +9,8 @@ const { normalizeName } = require("../utils/helpers");
 const { generatePurchasePDF } = require("../services/pdf");
 const { uploadToR2 } = require("../services/r2");
 
+const pythonPath = process.env.PYTHON_PATH || "python3";
+
 const upload = multer({ storage: multer.memoryStorage() });
 
 // GET /api/purchases/price-history - Check historical prices for a product
@@ -561,7 +563,7 @@ router.post(
           // Call Python helper script
           const helperPath = path.join(__dirname, "../services/scan_helper.py");
           const result = execSync(
-            `python3 "${helperPath}" "${tempFile}" "${apiKey}"`,
+            `"${pythonPath}" "${helperPath}" "${tempFile}" "${apiKey}"`,
             {
               timeout: 120000,
               encoding: "utf-8",
@@ -644,7 +646,7 @@ router.post("/scan-bill", auth, upload.single("file"), async (req, res) => {
     );
 
     const result = execSync(
-      `python3 "${helperPath}" "${tempFile}" "${apiKey}"`,
+      `"${pythonPath}" "${helperPath}" "${tempFile}" "${apiKey}"`,
       {
         timeout: 120000,
         encoding: "utf-8",
