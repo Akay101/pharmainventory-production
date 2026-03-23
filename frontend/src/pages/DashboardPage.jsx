@@ -1,7 +1,12 @@
 import { useState, useEffect } from "react";
 import axios from "axios";
 import { API, useAuth } from "../App";
-import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import {
   IndianRupee,
@@ -29,7 +34,27 @@ import {
 } from "recharts";
 import { toast } from "sonner";
 
-const StatCard = ({ title, value, icon: Icon, trend, trendValue, color = "primary" }) => {
+axios.interceptors.request.use(
+  (config) => {
+    const token = localStorage.getItem("pharmalogy_token");
+
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+
+    return config;
+  },
+  (error) => Promise.reject(error)
+);
+
+const StatCard = ({
+  title,
+  value,
+  icon: Icon,
+  trend,
+  trendValue,
+  color = "primary",
+}) => {
   const colorClasses = {
     primary: "text-primary",
     accent: "text-accent",
@@ -43,7 +68,11 @@ const StatCard = ({ title, value, icon: Icon, trend, trendValue, color = "primar
         <div className="flex items-start justify-between">
           <div>
             <p className="text-sm text-muted-foreground mb-1">{title}</p>
-            <p className={`text-2xl font-bold font-mono ${colorClasses[color]}`}>{value}</p>
+            <p
+              className={`text-2xl font-bold font-mono ${colorClasses[color]}`}
+            >
+              {value}
+            </p>
             {trend !== undefined && (
               <div className="flex items-center gap-1 mt-2">
                 {trend >= 0 ? (
@@ -51,14 +80,20 @@ const StatCard = ({ title, value, icon: Icon, trend, trendValue, color = "primar
                 ) : (
                   <ArrowDownRight className="w-4 h-4 text-destructive" />
                 )}
-                <span className={`text-xs ${trend >= 0 ? "text-primary" : "text-destructive"}`}>
+                <span
+                  className={`text-xs ${trend >= 0 ? "text-primary" : "text-destructive"}`}
+                >
                   {Math.abs(trendValue || trend)}%
                 </span>
-                <span className="text-xs text-muted-foreground">vs last month</span>
+                <span className="text-xs text-muted-foreground">
+                  vs last month
+                </span>
               </div>
             )}
           </div>
-          <div className={`p-3 rounded-xl bg-${color}/10 ${colorClasses[color]}`}>
+          <div
+            className={`p-3 rounded-xl bg-${color}/10 ${colorClasses[color]}`}
+          >
             <Icon className="w-6 h-6" />
           </div>
         </div>
@@ -68,11 +103,14 @@ const StatCard = ({ title, value, icon: Icon, trend, trendValue, color = "primar
 };
 
 export default function DashboardPage() {
-  const { pharmacy } = useAuth();
+  const { pharmacy, user } = useAuth();
   const [stats, setStats] = useState(null);
   const [salesTrend, setSalesTrend] = useState([]);
   const [topProducts, setTopProducts] = useState([]);
-  const [alerts, setAlerts] = useState({ low_stock_alerts: [], expiry_alerts: [] });
+  const [alerts, setAlerts] = useState({
+    low_stock_alerts: [],
+    expiry_alerts: [],
+  });
   const [debtSummary, setDebtSummary] = useState(null);
   const [aiTips, setAiTips] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -84,13 +122,14 @@ export default function DashboardPage() {
 
   const fetchDashboardData = async () => {
     try {
-      const [statsRes, trendRes, productsRes, alertsRes, debtRes] = await Promise.all([
-        axios.get(`${API}/dashboard/stats`),
-        axios.get(`${API}/dashboard/sales-trend?days=30`),
-        axios.get(`${API}/dashboard/top-products?limit=5`),
-        axios.get(`${API}/inventory/alerts`),
-        axios.get(`${API}/dashboard/debt-summary`),
-      ]);
+      const [statsRes, trendRes, productsRes, alertsRes, debtRes] =
+        await Promise.all([
+          axios.get(`${API}/dashboard/stats`),
+          axios.get(`${API}/dashboard/sales-trend?days=30`),
+          axios.get(`${API}/dashboard/top-products?limit=5`),
+          axios.get(`${API}/inventory/alerts`),
+          axios.get(`${API}/dashboard/debt-summary`),
+        ]);
 
       setStats(statsRes.data);
       setSalesTrend(trendRes.data.trend);
@@ -141,7 +180,11 @@ export default function DashboardPage() {
             Welcome back! Here's what's happening at {pharmacy?.name}
           </p>
         </div>
-        <Button variant="outline" onClick={fetchDashboardData} data-testid="refresh-dashboard-btn">
+        <Button
+          variant="outline"
+          onClick={fetchDashboardData}
+          data-testid="refresh-dashboard-btn"
+        >
           <RefreshCw className="w-4 h-4 mr-2" />
           Refresh
         </Button>
@@ -187,7 +230,9 @@ export default function DashboardPage() {
           title="Low Stock Items"
           value={alerts.low_stock_alerts?.length || 0}
           icon={AlertTriangle}
-          color={alerts.low_stock_alerts?.length > 0 ? "destructive" : "primary"}
+          color={
+            alerts.low_stock_alerts?.length > 0 ? "destructive" : "primary"
+          }
         />
         <StatCard
           title="Expiring Soon"
@@ -208,7 +253,10 @@ export default function DashboardPage() {
             <div className="h-64">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={salesTrend}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                  <CartesianGrid
+                    strokeDasharray="3 3"
+                    stroke="hsl(var(--border))"
+                  />
                   <XAxis
                     dataKey="date"
                     stroke="hsl(var(--muted-foreground))"
@@ -226,7 +274,10 @@ export default function DashboardPage() {
                       border: "1px solid hsl(var(--border))",
                       borderRadius: "8px",
                     }}
-                    formatter={(value) => [`₹${value.toLocaleString("en-IN")}`, "Revenue"]}
+                    formatter={(value) => [
+                      `₹${value.toLocaleString("en-IN")}`,
+                      "Revenue",
+                    ]}
                   />
                   <Line
                     type="monotone"
@@ -246,12 +297,23 @@ export default function DashboardPage() {
         <Card className="bg-card/50 backdrop-blur-sm border-white/5">
           <CardHeader>
             <CardTitle className="text-lg">Top Selling Products</CardTitle>
+            {user?.subscription_plan && (
+              <div className="text-sm text-muted-foreground mt-1">
+                Plan:{" "}
+                <span className="font-semibold">{user.subscription_plan}</span>{" "}
+                | Expiry:{" "}
+                {new Date(user.subscription_expiry).toLocaleDateString()}
+              </div>
+            )}
           </CardHeader>
           <CardContent>
             <div className="h-64">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={topProducts} layout="vertical">
-                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                  <CartesianGrid
+                    strokeDasharray="3 3"
+                    stroke="hsl(var(--border))"
+                  />
                   <XAxis
                     type="number"
                     stroke="hsl(var(--muted-foreground))"
@@ -272,9 +334,16 @@ export default function DashboardPage() {
                       border: "1px solid hsl(var(--border))",
                       borderRadius: "8px",
                     }}
-                    formatter={(value) => [`₹${value.toLocaleString("en-IN")}`, "Revenue"]}
+                    formatter={(value) => [
+                      `₹${value.toLocaleString("en-IN")}`,
+                      "Revenue",
+                    ]}
                   />
-                  <Bar dataKey="revenue" fill="hsl(var(--accent))" radius={[0, 4, 4, 0]} />
+                  <Bar
+                    dataKey="revenue"
+                    fill="hsl(var(--accent))"
+                    radius={[0, 4, 4, 0]}
+                  />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -301,7 +370,9 @@ export default function DashboardPage() {
                   {alerts.low_stock_alerts.slice(0, 5).map((item, i) => (
                     <li key={i} className="flex justify-between">
                       <span>{item.product_name}</span>
-                      <span className="font-mono text-yellow-400">{item.quantity} left</span>
+                      <span className="font-mono text-yellow-400">
+                        {item.quantity} left
+                      </span>
                     </li>
                   ))}
                 </ul>
@@ -321,21 +392,24 @@ export default function DashboardPage() {
                       <span>
                         {item.product_name} ({item.batch_no})
                       </span>
-                      <span className="font-mono text-destructive">{item.expiry_date}</span>
+                      <span className="font-mono text-destructive">
+                        {item.expiry_date}
+                      </span>
                     </li>
                   ))}
                 </ul>
               </div>
             )}
 
-            {alerts.low_stock_alerts?.length === 0 && alerts.expiry_alerts?.length === 0 && (
-              <div className="alert-success">
-                <p className="text-primary flex items-center gap-2">
-                  <TrendingUp className="w-4 h-4" />
-                  All good! No alerts at the moment.
-                </p>
-              </div>
-            )}
+            {alerts.low_stock_alerts?.length === 0 &&
+              alerts.expiry_alerts?.length === 0 && (
+                <div className="alert-success">
+                  <p className="text-primary flex items-center gap-2">
+                    <TrendingUp className="w-4 h-4" />
+                    All good! No alerts at the moment.
+                  </p>
+                </div>
+              )}
           </CardContent>
         </Card>
 
@@ -363,7 +437,9 @@ export default function DashboardPage() {
           <CardContent>
             {aiTips ? (
               <div className="prose prose-invert prose-sm max-w-none">
-                <div className="whitespace-pre-wrap text-muted-foreground">{aiTips.tips}</div>
+                <div className="whitespace-pre-wrap text-muted-foreground">
+                  {aiTips.tips}
+                </div>
                 <p className="text-xs text-muted-foreground/50 mt-4">
                   Generated: {new Date(aiTips.generated_at).toLocaleString()}
                 </p>
@@ -389,7 +465,9 @@ export default function DashboardPage() {
           <CardContent>
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
               <div className="p-4 rounded-lg bg-yellow-500/10 border border-yellow-500/20">
-                <p className="text-sm text-muted-foreground">Total Outstanding</p>
+                <p className="text-sm text-muted-foreground">
+                  Total Outstanding
+                </p>
                 <p className="text-xl font-bold font-mono text-yellow-500">
                   {formatCurrency(debtSummary.total_debt)}
                 </p>
@@ -402,17 +480,23 @@ export default function DashboardPage() {
               </div>
               <div className="p-4 rounded-lg bg-muted/50">
                 <p className="text-sm text-muted-foreground">Unpaid Bills</p>
-                <p className="text-xl font-bold font-mono">{debtSummary.total_unpaid_bills}</p>
+                <p className="text-xl font-bold font-mono">
+                  {debtSummary.total_unpaid_bills}
+                </p>
               </div>
               <div className="p-4 rounded-lg bg-muted/50">
                 <p className="text-sm text-muted-foreground">Overdue Bills</p>
-                <p className="text-xl font-bold font-mono">{debtSummary.overdue_count}</p>
+                <p className="text-xl font-bold font-mono">
+                  {debtSummary.overdue_count}
+                </p>
               </div>
             </div>
 
             {debtSummary.top_debtors?.length > 0 && (
               <div>
-                <h4 className="text-sm font-medium text-muted-foreground mb-2">Top Debtors</h4>
+                <h4 className="text-sm font-medium text-muted-foreground mb-2">
+                  Top Debtors
+                </h4>
                 <div className="space-y-2">
                   {debtSummary.top_debtors.slice(0, 5).map((debtor, i) => (
                     <div

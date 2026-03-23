@@ -7,6 +7,8 @@ const { generateBillPDF } = require("../services/pdf");
 const { uploadToR2 } = require("../services/r2");
 const { sendBillEmail } = require("../services/email");
 
+const { requireSubscription } = require("../middleware/subscription");
+
 // Generate bill number
 const generateBillNo = () => {
   const now = new Date();
@@ -14,7 +16,7 @@ const generateBillNo = () => {
 };
 
 // GET /api/bills
-router.get("/", auth, async (req, res, next) => {
+router.get("/", auth, requireSubscription(), async (req, res, next) => {
   try {
     const db = mongoose.connection.db;
 
@@ -92,7 +94,7 @@ router.get("/", auth, async (req, res, next) => {
 });
 
 // POST /api/bills
-router.post("/", auth, async (req, res, next) => {
+router.post("/", auth, requireSubscription(), async (req, res, next) => {
   try {
     const {
       customer_id,
@@ -247,7 +249,7 @@ router.post("/", auth, async (req, res, next) => {
 });
 
 // GET /api/bills/:bill_id
-router.get("/:bill_id", auth, async (req, res, next) => {
+router.get("/:bill_id", auth, requireSubscription(), async (req, res, next) => {
   try {
     const db = mongoose.connection.db;
     const bill = await db
@@ -268,7 +270,7 @@ router.get("/:bill_id", auth, async (req, res, next) => {
 });
 
 // PUT /api/bills/:bill_id
-router.put("/:bill_id", auth, async (req, res, next) => {
+router.put("/:bill_id", auth, requireSubscription(), async (req, res, next) => {
   try {
     const {
       customer_id,
@@ -462,183 +464,203 @@ router.put("/:bill_id", auth, async (req, res, next) => {
 });
 
 // DELETE /api/bills/:bill_id
-router.delete("/:bill_id", auth, async (req, res, next) => {
-  try {
-    const { restore_inventory } = req.query;
-    const db = mongoose.connection.db;
+router.delete(
+  "/:bill_id",
+  auth,
+  requireSubscription(),
+  async (req, res, next) => {
+    try {
+      const { restore_inventory } = req.query;
+      const db = mongoose.connection.db;
 
-    const bill = await db.collection("bills").findOne({
-      id: req.params.bill_id,
-      pharmacy_id: req.user.pharmacy_id,
-    });
+      const bill = await db.collection("bills").findOne({
+        id: req.params.bill_id,
+        pharmacy_id: req.user.pharmacy_id,
+      });
 
-    if (!bill) {
-      return res.status(404).json({ detail: "Bill not found" });
-    }
+      if (!bill) {
+        return res.status(404).json({ detail: "Bill not found" });
+      }
 
-    // Restore inventory if requested
-    if (restore_inventory === "true") {
-      for (const item of bill.items) {
-        if (item.inventory_id && !item.inventory_id.startsWith("negative-")) {
-          await db
-            .collection("inventory")
-            .updateOne(
-              { id: item.inventory_id },
-              { $inc: { available_quantity: item.quantity } }
-            );
+      // Restore inventory if requested
+      if (restore_inventory === "true") {
+        for (const item of bill.items) {
+          if (item.inventory_id && !item.inventory_id.startsWith("negative-")) {
+            await db
+              .collection("inventory")
+              .updateOne(
+                { id: item.inventory_id },
+                { $inc: { available_quantity: item.quantity } }
+              );
+          }
         }
       }
-    }
 
-    // Update customer debt if unpaid
-    if (!bill.is_paid && bill.customer_id) {
-      await db
-        .collection("customers")
-        .updateOne(
-          { id: bill.customer_id },
-          { $inc: { total_debt: -bill.total_amount } }
-        );
-    }
+      // Update customer debt if unpaid
+      if (!bill.is_paid && bill.customer_id) {
+        await db
+          .collection("customers")
+          .updateOne(
+            { id: bill.customer_id },
+            { $inc: { total_debt: -bill.total_amount } }
+          );
+      }
 
-    await db.collection("bills").deleteOne({ id: req.params.bill_id });
-    res.json({
-      message: "Bill deleted",
-      inventory_restored: restore_inventory === "true",
-    });
-  } catch (error) {
-    next(error);
+      await db.collection("bills").deleteOne({ id: req.params.bill_id });
+      res.json({
+        message: "Bill deleted",
+        inventory_restored: restore_inventory === "true",
+      });
+    } catch (error) {
+      next(error);
+    }
   }
-});
+);
 
 // POST /api/bills/:bill_id/mark-paid
-router.post("/:bill_id/mark-paid", auth, async (req, res, next) => {
-  try {
-    const db = mongoose.connection.db;
+router.post(
+  "/:bill_id/mark-paid",
+  auth,
+  requireSubscription(),
+  async (req, res, next) => {
+    try {
+      const db = mongoose.connection.db;
 
-    const bill = await db.collection("bills").findOne({
-      id: req.params.bill_id,
-      pharmacy_id: req.user.pharmacy_id,
-    });
+      const bill = await db.collection("bills").findOne({
+        id: req.params.bill_id,
+        pharmacy_id: req.user.pharmacy_id,
+      });
 
-    if (!bill) {
-      return res.status(404).json({ detail: "Bill not found" });
-    }
+      if (!bill) {
+        return res.status(404).json({ detail: "Bill not found" });
+      }
 
-    if (bill.is_paid) {
-      return res.status(400).json({ detail: "Bill already paid" });
-    }
+      if (bill.is_paid) {
+        return res.status(400).json({ detail: "Bill already paid" });
+      }
 
-    await db
-      .collection("bills")
-      .updateOne(
-        { id: req.params.bill_id },
-        { $set: { is_paid: true, paid_at: new Date().toISOString() } }
-      );
-
-    // Update customer debt
-    if (bill.customer_id) {
       await db
-        .collection("customers")
+        .collection("bills")
         .updateOne(
-          { id: bill.customer_id },
-          { $inc: { total_debt: -bill.total_amount } }
+          { id: req.params.bill_id },
+          { $set: { is_paid: true, paid_at: new Date().toISOString() } }
         );
-    }
 
-    res.json({ message: "Bill marked as paid" });
-  } catch (error) {
-    next(error);
+      // Update customer debt
+      if (bill.customer_id) {
+        await db
+          .collection("customers")
+          .updateOne(
+            { id: bill.customer_id },
+            { $inc: { total_debt: -bill.total_amount } }
+          );
+      }
+
+      res.json({ message: "Bill marked as paid" });
+    } catch (error) {
+      next(error);
+    }
   }
-});
+);
 
 // POST /api/bills/:bill_id/pdf
-router.post("/:bill_id/pdf", auth, async (req, res, next) => {
-  try {
-    const db = mongoose.connection.db;
+router.post(
+  "/:bill_id/pdf",
+  auth,
+  requireSubscription(),
+  async (req, res, next) => {
+    try {
+      const db = mongoose.connection.db;
 
-    const bill = await db.collection("bills").findOne({
-      id: req.params.bill_id,
-      pharmacy_id: req.user.pharmacy_id,
-    });
+      const bill = await db.collection("bills").findOne({
+        id: req.params.bill_id,
+        pharmacy_id: req.user.pharmacy_id,
+      });
 
-    if (!bill) {
-      return res.status(404).json({ detail: "Bill not found" });
-    }
+      if (!bill) {
+        return res.status(404).json({ detail: "Bill not found" });
+      }
 
-    const pharmacy = await db
-      .collection("pharmacies")
-      .findOne({ id: req.user.pharmacy_id }, { projection: { _id: 0 } });
-
-    // Generate PDF
-    const pdfBuffer = await generateBillPDF(bill, pharmacy);
-
-    // Upload to R2
-    const key = `bills/${req.user.pharmacy_id}/${bill.bill_no}.pdf`;
-    const pdfUrl = await uploadToR2(key, pdfBuffer, "application/pdf");
-
-    // Update bill with PDF URL
-    await db
-      .collection("bills")
-      .updateOne({ id: req.params.bill_id }, { $set: { pdf_url: pdfUrl } });
-
-    res.json({ pdf_url: pdfUrl });
-  } catch (error) {
-    next(error);
-  }
-});
-
-// POST /api/bills/:bill_id/email
-router.post("/:bill_id/email", auth, async (req, res, next) => {
-  try {
-    const db = mongoose.connection.db;
-
-    const bill = await db.collection("bills").findOne({
-      id: req.params.bill_id,
-      pharmacy_id: req.user.pharmacy_id,
-    });
-
-    if (!bill) {
-      return res.status(404).json({ detail: "Bill not found" });
-    }
-
-    if (!bill.customer_email) {
-      return res.status(400).json({ detail: "Customer email not available" });
-    }
-
-    let pdfUrl = bill.pdf_url;
-
-    // Generate PDF if not exists
-    if (!pdfUrl) {
       const pharmacy = await db
         .collection("pharmacies")
         .findOne({ id: req.user.pharmacy_id }, { projection: { _id: 0 } });
 
+      // Generate PDF
       const pdfBuffer = await generateBillPDF(bill, pharmacy);
-      const key = `bills/${req.user.pharmacy_id}/${bill.bill_no}.pdf`;
-      pdfUrl = await uploadToR2(key, pdfBuffer, "application/pdf");
 
+      // Upload to R2
+      const key = `bills/${req.user.pharmacy_id}/${bill.bill_no}.pdf`;
+      const pdfUrl = await uploadToR2(key, pdfBuffer, "application/pdf");
+
+      // Update bill with PDF URL
       await db
         .collection("bills")
         .updateOne({ id: req.params.bill_id }, { $set: { pdf_url: pdfUrl } });
+
+      res.json({ pdf_url: pdfUrl });
+    } catch (error) {
+      next(error);
     }
-
-    // Send email
-    const sent = await sendBillEmail(
-      bill.customer_email,
-      bill.customer_name,
-      bill.bill_no,
-      pdfUrl,
-      bill.total_amount
-    );
-
-    if (!sent) {
-      return res.status(500).json({ detail: "Failed to send email" });
-    }
-
-    res.json({ message: "Email sent successfully" });
-  } catch (error) {
-    next(error);
   }
-});
+);
+
+// POST /api/bills/:bill_id/email
+router.post(
+  "/:bill_id/email",
+  auth,
+  requireSubscription(),
+  async (req, res, next) => {
+    try {
+      const db = mongoose.connection.db;
+
+      const bill = await db.collection("bills").findOne({
+        id: req.params.bill_id,
+        pharmacy_id: req.user.pharmacy_id,
+      });
+
+      if (!bill) {
+        return res.status(404).json({ detail: "Bill not found" });
+      }
+
+      if (!bill.customer_email) {
+        return res.status(400).json({ detail: "Customer email not available" });
+      }
+
+      let pdfUrl = bill.pdf_url;
+
+      // Generate PDF if not exists
+      if (!pdfUrl) {
+        const pharmacy = await db
+          .collection("pharmacies")
+          .findOne({ id: req.user.pharmacy_id }, { projection: { _id: 0 } });
+
+        const pdfBuffer = await generateBillPDF(bill, pharmacy);
+        const key = `bills/${req.user.pharmacy_id}/${bill.bill_no}.pdf`;
+        pdfUrl = await uploadToR2(key, pdfBuffer, "application/pdf");
+
+        await db
+          .collection("bills")
+          .updateOne({ id: req.params.bill_id }, { $set: { pdf_url: pdfUrl } });
+      }
+
+      // Send email
+      const sent = await sendBillEmail(
+        bill.customer_email,
+        bill.customer_name,
+        bill.bill_no,
+        pdfUrl,
+        bill.total_amount
+      );
+
+      if (!sent) {
+        return res.status(500).json({ detail: "Failed to send email" });
+      }
+
+      res.json({ message: "Email sent successfully" });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
 
 module.exports = router;

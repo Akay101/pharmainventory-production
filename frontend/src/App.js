@@ -1,5 +1,12 @@
 import { useState, useEffect, createContext, useContext } from "react";
-import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from "react-router-dom";
+import {
+  BrowserRouter,
+  Routes,
+  Route,
+  Navigate,
+  useNavigate,
+  useLocation,
+} from "react-router-dom";
 import axios from "axios";
 import { Toaster } from "./components/ui/sonner";
 
@@ -19,9 +26,23 @@ import ScannerPage from "./pages/ScannerPage";
 
 // Layout
 import DashboardLayout from "./components/DashboardLayout";
+import UpgradePage from "./pages/UpgradePage";
+import PaymentSuccessPage from "./pages/PaymentSuccessPage";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 export const API = `${BACKEND_URL}/api`;
+
+let navigateGlobal = null;
+
+const NavigationHandler = () => {
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    navigateGlobal = navigate;
+  }, [navigate]);
+
+  return null;
+};
 
 // Auth Context
 const AuthContext = createContext(null);
@@ -45,13 +66,18 @@ const AuthProvider = ({ children }) => {
   const fetchUser = async () => {
     try {
       const response = await axios.get(`${API}/auth/me`, {
-        headers: { Authorization: `Bearer ${token}` }
+        headers: { Authorization: `Bearer ${token}` },
       });
       setUser(response.data.user);
       setPharmacy(response.data.pharmacy);
     } catch (error) {
-      console.error("Auth error:", error);
-      logout();
+      const status = error.response?.status;
+
+      if (status === 401) {
+        logout(); // only logout if token invalid
+      } else {
+        console.error("Auth error:", error);
+      }
     } finally {
       setLoading(false);
     }
@@ -82,7 +108,7 @@ const AuthProvider = ({ children }) => {
     logout,
     setUser,
     setPharmacy,
-    isAdmin: user?.role === "ADMIN"
+    isAdmin: user?.role === "ADMIN",
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
@@ -104,9 +130,9 @@ const ProtectedRoute = ({ children, adminOnly = false }) => {
     );
   }
 
-  if (!user) {
-    return <Navigate to="/login" state={{ from: location }} replace />;
-  }
+  // if (!user) {
+  //   return <Navigate to="/login" state={{ from: location }} replace />;
+  // }
 
   if (adminOnly && !isAdmin) {
     return <Navigate to="/dashboard" replace />;
@@ -115,35 +141,69 @@ const ProtectedRoute = ({ children, adminOnly = false }) => {
   return children;
 };
 
-// Axios interceptor for auth
-axios.interceptors.request.use((config) => {
-  const token = localStorage.getItem("pharmalogy_token");
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
-  }
-  return config;
-});
+let isRedirecting = false;
 
 axios.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
+    const status = error.response?.status;
+    const code = error.response?.data?.code;
+
+    // 🔐 Auth error
+    if (status === 401) {
       localStorage.removeItem("pharmalogy_token");
-      window.location.href = "/login";
+      // window.location.href = "/login";
+      return;
     }
+
+    // 💳 Subscription error
+    if (
+      status === 403 &&
+      !isRedirecting &&
+      (code === "SUBSCRIPTION_REQUIRED" ||
+        code === "SUBSCRIPTION_EXPIRED" ||
+        code === "PLAN_UPGRADE_REQUIRED")
+    ) {
+      isRedirecting = true;
+
+      if (navigateGlobal) {
+        navigateGlobal("/upgrade");
+      }
+
+      setTimeout(() => {
+        isRedirecting = false;
+      }, 1000);
+
+      return;
+    }
+
     return Promise.reject(error);
   }
 );
+
+// axios.interceptors.response.use(
+//   (response) => response,
+//   (error) => {
+//     if (error.response?.status === 401) {
+//       localStorage.removeItem("pharmalogy_token");
+//       window.location.href = "/login";
+//     }
+//     return Promise.reject(error);
+//   }
+// );
 
 function App() {
   return (
     <AuthProvider>
       <BrowserRouter>
+        <NavigationHandler />
         <Routes>
           {/* Public Routes */}
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
-          
+          <Route path="/upgrade" element={<UpgradePage />} />
+          <Route path="/payment-success" element={<PaymentSuccessPage />} />
+
           {/* Scanner Route - Standalone for mobile */}
           <Route path="/scan" element={<ScannerPage />} />
 

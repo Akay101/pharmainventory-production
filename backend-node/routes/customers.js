@@ -4,8 +4,10 @@ const mongoose = require("mongoose");
 const { v4: uuidv4 } = require("uuid");
 const { auth, adminOnly } = require("../middleware/auth");
 
+const { requireSubscription } = require("../middleware/subscription");
+
 // GET /api/customers
-router.get("/", auth, async (req, res, next) => {
+router.get("/", auth, requireSubscription(), async (req, res, next) => {
   try {
     const db = mongoose.connection.db;
     const { search, has_debt, page = 1, limit = 50 } = req.query;
@@ -47,7 +49,7 @@ router.get("/", auth, async (req, res, next) => {
 });
 
 // POST /api/customers
-router.post("/", auth, async (req, res, next) => {
+router.post("/", auth, requireSubscription(), async (req, res, next) => {
   try {
     const { name, mobile, email, address } = req.body;
     const db = mongoose.connection.db;
@@ -74,7 +76,7 @@ router.post("/", auth, async (req, res, next) => {
 });
 
 // GET /api/customers/search
-router.get("/search", auth, async (req, res, next) => {
+router.get("/search", auth, requireSubscription(), async (req, res, next) => {
   try {
     const { q, limit = 10 } = req.query;
     const db = mongoose.connection.db;
@@ -101,97 +103,113 @@ router.get("/search", auth, async (req, res, next) => {
 });
 
 // GET /api/customers/:customer_id
-router.get("/:customer_id", auth, async (req, res, next) => {
-  try {
-    const db = mongoose.connection.db;
-    const customer = await db
-      .collection("customers")
-      .findOne(
-        { id: req.params.customer_id, pharmacy_id: req.user.pharmacy_id },
-        { projection: { _id: 0 } }
-      );
+router.get(
+  "/:customer_id",
+  auth,
+  requireSubscription(),
+  async (req, res, next) => {
+    try {
+      const db = mongoose.connection.db;
+      const customer = await db
+        .collection("customers")
+        .findOne(
+          { id: req.params.customer_id, pharmacy_id: req.user.pharmacy_id },
+          { projection: { _id: 0 } }
+        );
 
-    if (!customer) {
-      return res.status(404).json({ detail: "Customer not found" });
+      if (!customer) {
+        return res.status(404).json({ detail: "Customer not found" });
+      }
+
+      // Get bills
+      const bills = await db
+        .collection("bills")
+        .find({ customer_id: req.params.customer_id })
+        .sort({ created_at: -1 })
+        .project({ _id: 0 })
+        .toArray();
+
+      res.json({ customer, bills });
+    } catch (error) {
+      next(error);
     }
-
-    // Get bills
-    const bills = await db
-      .collection("bills")
-      .find({ customer_id: req.params.customer_id })
-      .sort({ created_at: -1 })
-      .project({ _id: 0 })
-      .toArray();
-
-    res.json({ customer, bills });
-  } catch (error) {
-    next(error);
   }
-});
+);
 
 // PUT /api/customers/:customer_id
-router.put("/:customer_id", auth, async (req, res, next) => {
-  try {
-    const { name, mobile, email, address } = req.body;
-    const db = mongoose.connection.db;
+router.put(
+  "/:customer_id",
+  auth,
+  requireSubscription(),
+  async (req, res, next) => {
+    try {
+      const { name, mobile, email, address } = req.body;
+      const db = mongoose.connection.db;
 
-    const result = await db
-      .collection("customers")
-      .updateOne(
-        { id: req.params.customer_id, pharmacy_id: req.user.pharmacy_id },
-        { $set: { name, mobile, email, address } }
-      );
+      const result = await db
+        .collection("customers")
+        .updateOne(
+          { id: req.params.customer_id, pharmacy_id: req.user.pharmacy_id },
+          { $set: { name, mobile, email, address } }
+        );
 
-    if (result.matchedCount === 0) {
-      return res.status(404).json({ detail: "Customer not found" });
+      if (result.matchedCount === 0) {
+        return res.status(404).json({ detail: "Customer not found" });
+      }
+
+      const customer = await db
+        .collection("customers")
+        .findOne({ id: req.params.customer_id }, { projection: { _id: 0 } });
+
+      res.json({ message: "Customer updated", customer });
+    } catch (error) {
+      next(error);
     }
-
-    const customer = await db
-      .collection("customers")
-      .findOne({ id: req.params.customer_id }, { projection: { _id: 0 } });
-
-    res.json({ message: "Customer updated", customer });
-  } catch (error) {
-    next(error);
   }
-});
+);
 
 // GET /api/customers/:customer_id/unpaid-bills
-router.get("/:customer_id/unpaid-bills", auth, async (req, res, next) => {
-  try {
-    const db = mongoose.connection.db;
+router.get(
+  "/:customer_id/unpaid-bills",
+  auth,
+  requireSubscription(),
+  async (req, res, next) => {
+    try {
+      const db = mongoose.connection.db;
 
-    const bills = await db
-      .collection("bills")
-      .find(
-        {
-          pharmacy_id: req.user.pharmacy_id,
-          customer_id: req.params.customer_id,
-          is_paid: false,
-        },
-        { projection: { _id: 0 } }
-      )
-      .sort({ billing_date: -1 })
-      .toArray();
+      const bills = await db
+        .collection("bills")
+        .find(
+          {
+            pharmacy_id: req.user.pharmacy_id,
+            customer_id: req.params.customer_id,
+            is_paid: false,
+          },
+          { projection: { _id: 0 } }
+        )
+        .sort({ billing_date: -1 })
+        .toArray();
 
-    const totalDebt = bills.reduce(
-      (sum, b) => sum + (b.total_amount || b.grand_total || 0),
-      0
-    );
+      const totalDebt = bills.reduce(
+        (sum, b) => sum + (b.total_amount || b.grand_total || 0),
+        0
+      );
 
-    res.json({
-      unpaid_bills: bills,
-      total_debt: totalDebt,
-    });
-  } catch (error) {
-    next(error);
+      res.json({
+        unpaid_bills: bills,
+        total_debt: totalDebt,
+      });
+    } catch (error) {
+      next(error);
+    }
   }
-});
+);
 
 // POST /api/customers/:customer_id/clear-debt
 router.post(
   "/:customer_id/clear-debt",
   auth,
+  requireSubscription(),
   adminOnly,
   async (req, res, next) => {
     try {
@@ -227,22 +245,27 @@ router.post(
 );
 
 // DELETE /api/customers/:customer_id
-router.delete("/:customer_id", auth, async (req, res, next) => {
-  try {
-    const db = mongoose.connection.db;
-    const result = await db.collection("customers").deleteOne({
-      id: req.params.customer_id,
-      pharmacy_id: req.user.pharmacy_id,
-    });
+router.delete(
+  "/:customer_id",
+  auth,
+  requireSubscription(),
+  async (req, res, next) => {
+    try {
+      const db = mongoose.connection.db;
+      const result = await db.collection("customers").deleteOne({
+        id: req.params.customer_id,
+        pharmacy_id: req.user.pharmacy_id,
+      });
 
-    if (result.deletedCount === 0) {
-      return res.status(404).json({ detail: "Customer not found" });
+      if (result.deletedCount === 0) {
+        return res.status(404).json({ detail: "Customer not found" });
+      }
+
+      res.json({ message: "Customer deleted" });
+    } catch (error) {
+      next(error);
     }
-
-    res.json({ message: "Customer deleted" });
-  } catch (error) {
-    next(error);
   }
-});
+);
 
 module.exports = router;

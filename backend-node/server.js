@@ -3,6 +3,8 @@ const express = require("express");
 const cors = require("cors");
 const mongoose = require("mongoose");
 
+const startCronJobs = require("./services/cron");
+
 // Import routes
 const authRoutes = require("./routes/auth");
 const userRoutes = require("./routes/users");
@@ -37,6 +39,8 @@ mongoose
     process.exit(1);
   });
 
+app.use("/api/webhook/cashfree", express.raw({ type: "application/json" }));
+
 // API Routes - all prefixed with /api
 app.use("/api/auth", authRoutes);
 app.use("/api/users", userRoutes);
@@ -50,6 +54,11 @@ app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/medicines", medicineRoutes);
 app.use("/api/migrate", migrateRoutes);
 app.use("/api/pharmacy", pharmacyRoutes);
+
+app.use("/api/payments", require("./routes/payments"));
+app.use("/api/webhook", require("./routes/webhook"));
+
+startCronJobs();
 
 // Root API endpoint
 app.get("/api/", (req, res) => {

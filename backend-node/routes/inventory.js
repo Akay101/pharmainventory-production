@@ -3,8 +3,10 @@ const router = express.Router();
 const mongoose = require("mongoose");
 const { auth } = require("../middleware/auth");
 
+const { requireSubscription } = require("../middleware/subscription");
+
 // GET /api/inventory
-router.get("/", auth, async (req, res, next) => {
+router.get("/", auth, requireSubscription(), async (req, res, next) => {
   try {
     const db = mongoose.connection.db;
     const {
@@ -90,7 +92,7 @@ router.get("/", auth, async (req, res, next) => {
 });
 
 // GET /api/inventory/search
-router.get("/search", auth, async (req, res, next) => {
+router.get("/search", auth, requireSubscription(), async (req, res, next) => {
   try {
     const { q, limit = 15 } = req.query;
     const db = mongoose.connection.db;
@@ -185,7 +187,7 @@ router.get("/search", auth, async (req, res, next) => {
 });
 
 // GET /api/inventory/alerts
-router.get("/alerts", auth, async (req, res, next) => {
+router.get("/alerts", auth, requireSubscription(), async (req, res, next) => {
   try {
     const db = mongoose.connection.db;
 

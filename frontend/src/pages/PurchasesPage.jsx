@@ -98,6 +98,81 @@ export default function PurchasesPage() {
   // Expanded view
   const [expandedPurchase, setExpandedPurchase] = useState(null);
 
+  // Your existing state and refs are correct
+  // Replace your current dropdownPosition state and updateDropdownPosition with this:
+  const [activeItemId, setActiveItemId] = useState(null); // Track which item's dropdown is active
+
+  const [dropdownPosition, setDropdownPosition] = useState({
+    top: 0,
+    left: 0,
+    width: 0,
+  });
+
+  // Use a callback ref that updates position immediately when set
+  const setInputRef = (el, itemId) => {
+    if (el) {
+      inputRefs.current[itemId] = el;
+    }
+  };
+
+  useEffect(() => {
+    if (activeItemId && showSuggestions) {
+      const el = inputRefs.current[activeItemId];
+      if (el) {
+        const rect = el.getBoundingClientRect();
+
+        const scrollContainer = el.closest(".overflow-x-auto");
+        const scrollLeft = scrollContainer ? scrollContainer.scrollLeft : 0;
+
+        const dropdownWidth = Math.max(rect.width, 480);
+
+        setDropdownPosition({
+          top: rect.bottom + window.scrollY + 4,
+          left: rect.left + window.scrollX - scrollLeft,
+          width: dropdownWidth,
+        });
+      }
+    }
+  }, [activeItemId, showSuggestions]);
+
+  useEffect(() => {
+    const handleScroll = () => {
+      if (activeItemId && showSuggestions) {
+        updateDropdownPosition(activeItemId);
+      }
+    };
+
+    window.addEventListener("scroll", handleScroll, true);
+    window.addEventListener("resize", handleScroll);
+
+    return () => {
+      window.removeEventListener("scroll", handleScroll, true);
+      window.removeEventListener("resize", handleScroll);
+    };
+  }, [activeItemId, showSuggestions]);
+
+  const inputRefs = useRef({});
+
+  // Your existing updateDropdownPosition function is correct
+  const updateDropdownPosition = (itemId) => {
+    const inputElement = inputRefs.current[itemId];
+    if (!inputElement) return;
+
+    const rect = inputElement.getBoundingClientRect();
+
+    // find nearest scroll container
+    const scrollContainer = inputElement.closest(".overflow-x-auto");
+
+    const scrollLeft = scrollContainer ? scrollContainer.scrollLeft : 0;
+
+    const dropdownWidth = Math.max(rect.width, 480);
+
+    setDropdownPosition({
+      top: rect.bottom + window.scrollY + 4,
+      left: rect.left + window.scrollX - scrollLeft,
+      width: dropdownWidth,
+    });
+  };
   // Delete dialog
   const [deleteDialog, setDeleteDialog] = useState({
     open: false,
@@ -124,7 +199,6 @@ export default function PurchasesPage() {
   // State for dropdown keyboard navigation
   const [highlightedSuggestionIndex, setHighlightedSuggestionIndex] =
     useState(-1);
-  const [activeItemId, setActiveItemId] = useState(null); // Track which item's dropdown is active
 
   // Price history comparison state
   const [priceAlerts, setPriceAlerts] = useState({}); // { itemId: { productName, currentPrice, cheaperOptions, ... } }
@@ -323,51 +397,21 @@ export default function PurchasesPage() {
   }, [searchQuery, filterSupplier, startDate, endDate, sortBy, sortOrder]);
 
   // Search medicines for suggestions with better ranking
+  // REPLACE this useEffect in PurchasesPage.jsx
   useEffect(() => {
     const searchMedicines = async () => {
       if (searchMedicine.length >= 2) {
         try {
+          // Add fuzzy parameter (default true)
           const response = await axios.get(
-            `${API}/medicines/search?q=${encodeURIComponent(searchMedicine)}&limit=20`
+            `${API}/medicines/search?q=${encodeURIComponent(searchMedicine)}&limit=20&fuzzy=true`
           );
-          let medicines = response.data.medicines || [];
 
-          // Sort results: exact match first, then starts with, then contains
-          const searchLower = searchMedicine.toLowerCase();
-          medicines.sort((a, b) => {
-            const aName = (a.name || "").toLowerCase();
-            const bName = (b.name || "").toLowerCase();
-            const aComp = (a.composition || "").toLowerCase();
-            const bComp = (b.composition || "").toLowerCase();
-
-            // Exact match
-            if (aName === searchLower) return -1;
-            if (bName === searchLower) return 1;
-
-            // Starts with search term (name)
-            const aStartsName = aName.startsWith(searchLower);
-            const bStartsName = bName.startsWith(searchLower);
-            if (aStartsName && !bStartsName) return -1;
-            if (!aStartsName && bStartsName) return 1;
-
-            // Starts with search term (composition/salt)
-            const aStartsComp = aComp.startsWith(searchLower);
-            const bStartsComp = bComp.startsWith(searchLower);
-            if (aStartsComp && !bStartsComp) return -1;
-            if (!aStartsComp && bStartsComp) return 1;
-
-            // Contains search term
-            const aContainsName = aName.includes(searchLower);
-            const bContainsName = bName.includes(searchLower);
-            if (aContainsName && !bContainsName) return -1;
-            if (!aContainsName && bContainsName) return 1;
-
-            return 0;
-          });
-
-          setMedicineSuggestions(medicines.slice(0, 10));
+          // Backend now returns sorted results - no need to re-sort
+          // Just use results as-is
+          setMedicineSuggestions(response.data.medicines || []);
           setShowSuggestions(true);
-          setHighlightedSuggestionIndex(-1); // Reset highlight when suggestions change
+          setHighlightedSuggestionIndex(-1);
         } catch (error) {
           console.error("Medicine search error:", error);
         }
@@ -795,28 +839,66 @@ export default function PurchasesPage() {
 
   // Handle selecting medicine from suggestions for an item row
   const handleSelectMedicineForItem = (itemId, medicine) => {
-    const pricePerUnit = parseFloat(medicine["price(₹)"]) || 0;
-    const packSizeMatch = medicine.pack_size?.match(/(\d+)/);
-    const unitsPerPack = packSizeMatch ? parseInt(packSizeMatch[1]) : 1;
+    const isInventory = medicine.source === "inventory";
 
-    const mrpPack = pricePerUnit * unitsPerPack;
-    const ratePack = mrpPack * 0.7;
+    // Extract pack size
+    let unitsPerPack = 1;
+    if (isInventory && medicine.pack_size) {
+      const match = medicine.pack_size.match(/(\d+)/);
+      unitsPerPack = match ? parseInt(match[1]) : 1;
+    } else if (medicine.pack_size_label) {
+      const match = medicine.pack_size_label.match(/(\d+)/);
+      unitsPerPack = match ? parseInt(match[1]) : 1;
+    }
+
+    // Calculate prices
+    const mrpPerUnit =
+      parseFloat(
+        medicine.mrp_per_unit || medicine.mrp || medicine["price(₹)"]
+      ) || 0;
+    const mrpPack = mrpPerUnit * unitsPerPack;
+
+    // Use historical purchase price if inventory, else 70% of MRP
+    const ratePerUnit =
+      isInventory && medicine.purchase_price
+        ? parseFloat(medicine.purchase_price)
+        : mrpPerUnit * 0.7;
+    const ratePack = ratePerUnit * unitsPerPack;
 
     setPurchaseItems((prev) =>
       prev.map((item) => {
         if (item.id !== itemId) return item;
 
         const qty = parseInt(item.quantity) || 1;
+
         return {
           ...item,
           product_id: medicine.id || `med-${Date.now()}`,
-          product_name: medicine.name,
-          manufacturer: medicine.manufacturer || "",
-          salt_composition: buildSaltComposition(medicine),
+          product_name: medicine.product_name || medicine.name,
+          manufacturer:
+            medicine.manufacturer || medicine.manufacturer_name || "",
+          salt_composition:
+            medicine.salt_composition ||
+            [medicine.short_composition1, medicine.short_composition2]
+              .filter(Boolean)
+              .join(", ") ||
+            "",
           units: String(unitsPerPack),
           rate_pack: ratePack.toFixed(2),
           mrp_pack: mrpPack.toFixed(2),
           total_amount: (qty * ratePack).toFixed(2),
+
+          // Store inventory metadata for visual indicators
+          _inventoryMeta: isInventory
+            ? {
+                batch_no: medicine.batch_no,
+                expiry_date: medicine.expiry_date,
+                available_quantity: medicine.available_quantity,
+                stock_status: medicine.stock_status,
+                last_supplier: medicine.supplier_name,
+                match_quality: medicine.matchQuality, // 'exact', 'good', or 'fuzzy'
+              }
+            : null,
         };
       })
     );
@@ -824,6 +906,11 @@ export default function PurchasesPage() {
     setSearchMedicine("");
     setMedicineSuggestions([]);
     setShowSuggestions(false);
+
+    // Optional: Show toast for fuzzy matches
+    if (isInventory && medicine.matchQuality === "fuzzy") {
+      toast.info(`Fuzzy match: "${medicine.name}" - verify before saving`);
+    }
   };
 
   const handleSubmitPurchase = async () => {
@@ -1563,87 +1650,178 @@ export default function PurchasesPage() {
                             className="relative"
                             style={{ overflow: "visible" }}
                           >
-                            <Input
-                              ref={
-                                index === purchaseItems.length - 1
-                                  ? productInputRef
-                                  : null
-                              }
-                              value={item.product_name || ""}
-                              onChange={(e) => {
-                                handleItemFieldChange(
-                                  item.id,
-                                  "product_name",
-                                  e.target.value
-                                );
-                                setHighlightedSuggestionIndex(-1);
-                              }}
-                              onFocus={() => {
-                                setSearchMedicine(item.product_name || "");
-                                setShowSuggestions(true);
-                                setActiveItemId(item.id);
-                                setHighlightedSuggestionIndex(-1);
-                              }}
-                              onBlur={() =>
-                                setTimeout(() => {
-                                  setShowSuggestions(false);
-                                  setActiveItemId(null);
-                                  setHighlightedSuggestionIndex(-1);
-                                }, 200)
-                              }
-                              onKeyDown={(e) => {
-                                if (
-                                  !showSuggestions ||
-                                  medicineSuggestions.length === 0
-                                )
-                                  return;
-
-                                if (e.key === "ArrowDown") {
-                                  e.preventDefault();
-                                  setHighlightedSuggestionIndex((prev) =>
-                                    prev < medicineSuggestions.length - 1
-                                      ? prev + 1
-                                      : prev
-                                  );
-                                } else if (e.key === "ArrowUp") {
-                                  e.preventDefault();
-                                  setHighlightedSuggestionIndex((prev) =>
-                                    prev > 0 ? prev - 1 : -1
-                                  );
-                                } else if (
-                                  e.key === "Enter" &&
-                                  highlightedSuggestionIndex >= 0
-                                ) {
-                                  e.preventDefault();
-                                  handleSelectMedicineForItem(
+                            <div className="flex items-center gap-2">
+                              <Input
+                                ref={(el) => setInputRef(el, item.id)}
+                                value={item.product_name || ""}
+                                onChange={(e) => {
+                                  handleItemFieldChange(
                                     item.id,
-                                    medicineSuggestions[
-                                      highlightedSuggestionIndex
-                                    ]
+                                    "product_name",
+                                    e.target.value
                                   );
                                   setHighlightedSuggestionIndex(-1);
-                                } else if (e.key === "Escape") {
-                                  setShowSuggestions(false);
+                                }}
+                                onFocus={() => {
+                                  setSearchMedicine(item.product_name || "");
+                                  setShowSuggestions(true);
+                                  setActiveItemId(item.id);
                                   setHighlightedSuggestionIndex(-1);
-                                }
-                              }}
-                              placeholder="Search..."
-                              className="h-8 text-xs"
-                              data-testid={`item-name-${index}`}
-                              autoComplete="off"
-                            />
-                            {/* Search Suggestions Dropdown */}
+
+                                  // Calculate position after a small delay to ensure DOM is ready
+                                  setTimeout(
+                                    () => updateDropdownPosition(item.id),
+                                    0
+                                  );
+                                }}
+                                onBlur={(e) => {
+                                  // Check if focus is moving to the suggestions dropdown
+                                  const relatedTarget = e.relatedTarget;
+                                  const isMovingToSuggestions =
+                                    relatedTarget?.closest?.(
+                                      "[data-suggestions-dropdown]"
+                                    );
+
+                                  if (!isMovingToSuggestions) {
+                                    setTimeout(() => {
+                                      setShowSuggestions(false);
+                                      setActiveItemId(null);
+                                      setHighlightedSuggestionIndex(-1);
+                                    }, 200);
+                                  }
+                                }}
+                                onKeyDown={(e) => {
+                                  if (
+                                    !showSuggestions ||
+                                    medicineSuggestions.length === 0
+                                  )
+                                    return;
+                                  if (e.key === "ArrowDown") {
+                                    e.preventDefault();
+                                    setHighlightedSuggestionIndex((prev) =>
+                                      prev < medicineSuggestions.length - 1
+                                        ? prev + 1
+                                        : prev
+                                    );
+                                  } else if (e.key === "ArrowUp") {
+                                    e.preventDefault();
+                                    setHighlightedSuggestionIndex((prev) =>
+                                      prev > 0 ? prev - 1 : -1
+                                    );
+                                  } else if (
+                                    e.key === "Enter" &&
+                                    highlightedSuggestionIndex >= 0
+                                  ) {
+                                    e.preventDefault();
+                                    handleSelectMedicineForItem(
+                                      item.id,
+                                      medicineSuggestions[
+                                        highlightedSuggestionIndex
+                                      ]
+                                    );
+                                    setHighlightedSuggestionIndex(-1);
+                                  } else if (e.key === "Escape") {
+                                    setShowSuggestions(false);
+                                    setHighlightedSuggestionIndex(-1);
+                                  }
+                                }}
+                                placeholder="Search..."
+                                className={`h-8 text-xs ${
+                                  item._inventoryMeta
+                                    ? item._inventoryMeta.stock_status ===
+                                      "In Stock"
+                                      ? "border-blue-300 bg-blue-50/30"
+                                      : "border-orange-300 bg-orange-50/30"
+                                    : ""
+                                }`}
+                                data-testid={`item-name-${index}`}
+                                autoComplete="off"
+                              />
+
+                              {/* Inventory Indicator Icon */}
+                              {item._inventoryMeta && (
+                                <CustomTooltip
+                                  position="top"
+                                  text={
+                                    item._inventoryMeta.stock_status ===
+                                    "In Stock"
+                                      ? `✅ In Stock: ${item._inventoryMeta.available_quantity} units\nBatch: ${item._inventoryMeta.batch_no || "N/A"}\nLast Supplier: ${item._inventoryMeta.last_supplier || "Unknown"}`
+                                      : `⚠️ Out of Stock\nLast Supplier: ${item._inventoryMeta.last_supplier || "Unknown"}`
+                                  }
+                                >
+                                  <Package
+                                    className={`w-4 h-4 ${
+                                      item._inventoryMeta.stock_status ===
+                                      "In Stock"
+                                        ? "text-blue-500"
+                                        : "text-orange-500"
+                                    }`}
+                                  />
+                                </CustomTooltip>
+                              )}
+
+                              {/* Fuzzy Match Warning */}
+                              {item._inventoryMeta?.match_quality ===
+                                "fuzzy" && (
+                                <CustomTooltip
+                                  position="top"
+                                  text="Fuzzy match - please verify details"
+                                >
+                                  <span className="text-yellow-500 text-xs">
+                                    ⚠️
+                                  </span>
+                                </CustomTooltip>
+                              )}
+                            </div>
+
+                            {/* ========================================== */}
+                            {/* SUGGESTIONS DROPDOWN - THIS WAS MISSING!   */}
+                            {/* ========================================== */}
                             {showSuggestions &&
                               activeItemId === item.id &&
                               medicineSuggestions.length > 0 && (
                                 <div
-                                  className="fixed bg-card border border-border rounded-lg shadow-2xl max-h-64 overflow-y-auto"
+                                  data-suggestions-dropdown="true"
+                                  className="bg-card border border-border rounded-lg shadow-2xl overflow-y-auto"
                                   style={{
-                                    width: "400px",
-                                    zIndex: 9999,
-                                    marginTop: "4px",
+                                    position: "fixed",
+                                    top: dropdownPosition.top,
+                                    left: dropdownPosition.left,
+                                    width: dropdownPosition.width || 480,
+                                    maxHeight: "300px",
+                                    zIndex: 99999, // Higher z-index
                                   }}
                                 >
+                                  {/* Match Quality Summary */}
+                                  {medicineSuggestions[0]?.matchQuality && (
+                                    <div className="px-3 py-2 bg-muted/50 border-b border-border text-xs text-muted-foreground flex gap-3 sticky top-0">
+                                      <span>
+                                        Exact:{" "}
+                                        {
+                                          medicineSuggestions.filter(
+                                            (m) => m.matchQuality === "exact"
+                                          ).length
+                                        }
+                                      </span>
+                                      <span>
+                                        Good:{" "}
+                                        {
+                                          medicineSuggestions.filter(
+                                            (m) => m.matchQuality === "good"
+                                          ).length
+                                        }
+                                      </span>
+                                      <span>
+                                        Fuzzy:{" "}
+                                        {
+                                          medicineSuggestions.filter(
+                                            (m) => m.matchQuality === "fuzzy"
+                                          ).length
+                                        }
+                                      </span>
+                                    </div>
+                                  )}
+
                                   {medicineSuggestions.map((medicine, idx) => (
                                     <div
                                       key={idx}
@@ -1652,8 +1830,9 @@ export default function PurchasesPage() {
                                           ? "bg-primary/20"
                                           : "hover:bg-primary/10"
                                       }`}
+                                      // In your suggestion items, prevent mousedown from causing blur
                                       onMouseDown={(e) => {
-                                        e.preventDefault();
+                                        e.preventDefault(); // ← This prevents the blur from firing at all!
                                         handleSelectMedicineForItem(
                                           item.id,
                                           medicine
@@ -1664,22 +1843,140 @@ export default function PurchasesPage() {
                                         setHighlightedSuggestionIndex(idx)
                                       }
                                     >
-                                      <div className="font-medium text-sm">
-                                        {medicine.name}
+                                      {/* Header: Name + Source Badge + Match Quality */}
+                                      <div className="flex items-center justify-between mb-1">
+                                        <div className="font-medium text-sm flex items-center gap-2 flex-wrap">
+                                          {medicine.name}
+
+                                          {/* Source Badge */}
+                                          {medicine.source === "inventory" && (
+                                            <span className="text-[10px] px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded-full font-medium">
+                                              IN STOCK
+                                            </span>
+                                          )}
+                                          {medicine.source === "global" && (
+                                            <span className="text-[10px] px-1.5 py-0.5 bg-gray-100 text-gray-600 rounded-full font-medium">
+                                              GLOBAL
+                                            </span>
+                                          )}
+
+                                          {/* Match Quality Indicator */}
+                                          {medicine.matchQuality ===
+                                            "exact" && (
+                                            <span className="text-[10px] px-1.5 py-0.5 bg-green-100 text-green-700 rounded-full">
+                                              Exact
+                                            </span>
+                                          )}
+                                          {medicine.matchQuality ===
+                                            "fuzzy" && (
+                                            <span className="text-[10px] px-1.5 py-0.5 bg-yellow-100 text-yellow-700 rounded-full">
+                                              Fuzzy
+                                            </span>
+                                          )}
+                                        </div>
+
+                                        {/* Fuzzy Score */}
+                                        {medicine.fuzzyScore &&
+                                          medicine.fuzzyScore < 90 && (
+                                            <span className="text-[10px] text-muted-foreground">
+                                              {Math.round(medicine.fuzzyScore)}%
+                                              match
+                                            </span>
+                                          )}
                                       </div>
+
+                                      {/* Manufacturer & Composition */}
                                       <div className="text-xs text-muted-foreground">
-                                        <span>{medicine.manufacturer}</span>
-                                        {medicine.composition && (
+                                        <span>
+                                          {medicine.manufacturer ||
+                                            medicine.manufacturer_name}
+                                        </span>
+                                        {(medicine.salt_composition ||
+                                          medicine.short_composition1) && (
                                           <span className="ml-2 text-primary/70">
                                             (
-                                            {medicine.composition?.slice(0, 30)}
+                                            {(
+                                              medicine.salt_composition ||
+                                              medicine.short_composition1
+                                            )?.slice(0, 35)}
                                             ...)
                                           </span>
                                         )}
                                       </div>
-                                      <div className="text-xs text-primary font-mono mt-1">
-                                        ₹{medicine["price(₹)"]} •{" "}
-                                        {medicine.pack_size}
+
+                                      {/* Inventory-Specific Info */}
+                                      {medicine.source === "inventory" && (
+                                        <div className="mt-2 flex items-center gap-2 flex-wrap text-xs">
+                                          <span
+                                            className={`px-2 py-0.5 rounded font-medium ${
+                                              medicine.stock_status ===
+                                              "In Stock"
+                                                ? "bg-green-500/20 text-green-700"
+                                                : "bg-red-500/20 text-red-700"
+                                            }`}
+                                          >
+                                            {medicine.stock_status}:{" "}
+                                            {medicine.available_quantity || 0}{" "}
+                                            units
+                                          </span>
+
+                                          {medicine.batch_no && (
+                                            <span className="text-muted-foreground">
+                                              Batch: {medicine.batch_no}
+                                            </span>
+                                          )}
+
+                                          {medicine.expiry_date && (
+                                            <span
+                                              className={`${
+                                                new Date(medicine.expiry_date) <
+                                                new Date(
+                                                  Date.now() +
+                                                    90 * 24 * 60 * 60 * 1000
+                                                )
+                                                  ? "text-orange-600 font-medium"
+                                                  : "text-muted-foreground"
+                                              }`}
+                                            >
+                                              Exp: {medicine.expiry_date}
+                                              {new Date(medicine.expiry_date) <
+                                                new Date() && " ⚠️ Expired"}
+                                            </span>
+                                          )}
+                                        </div>
+                                      )}
+
+                                      {/* Pricing Info Row */}
+                                      <div className="mt-2 flex items-center gap-3 text-xs">
+                                        {medicine.source === "inventory" ? (
+                                          <>
+                                            <span className="font-mono font-medium text-primary">
+                                              Purchase: ₹
+                                              {Number(
+                                                medicine.purchase_price || 0
+                                              ).toFixed(2)}
+                                              /unit
+                                            </span>
+                                            <span className="font-mono text-muted-foreground">
+                                              MRP: ₹
+                                              {Number(
+                                                medicine.mrp_per_unit ||
+                                                  medicine.mrp ||
+                                                  0
+                                              ).toFixed(2)}
+                                            </span>
+                                            {medicine.supplier_name && (
+                                              <span className="text-blue-600">
+                                                Last: {medicine.supplier_name}
+                                              </span>
+                                            )}
+                                          </>
+                                        ) : (
+                                          <span className="font-mono font-medium text-primary">
+                                            MRP: ₹{medicine["price(₹)"] || 0} •{" "}
+                                            {medicine.pack_size_label || "N/A"}
+                                          </span>
+                                        )}
                                       </div>
                                     </div>
                                   ))}
@@ -1817,8 +2114,11 @@ export default function PurchasesPage() {
                           <TableCell className="text-center font-mono text-xs font-medium text-primary">
                             {totalUnits}
                           </TableCell>
-                          <TableCell className="relative">
-                            <div className="relative flex items-center justify-center">
+                          <TableCell
+                            className="relative"
+                            style={{ position: "relative" }}
+                          >
+                            <div className="flex items-center gap-2">
                               <Input
                                 type="number"
                                 step="0.01"

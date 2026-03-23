@@ -3,6 +3,8 @@ const router = express.Router();
 const mongoose = require("mongoose");
 const { auth } = require("../middleware/auth");
 
+const { requireSubscription } = require("../middleware/subscription");
+
 // Helper function to get dashboard stats
 async function getDashboardStats(pharmacyId) {
   const db = mongoose.connection.db;
@@ -119,7 +121,7 @@ async function getDashboardStats(pharmacyId) {
 }
 
 // GET /api/dashboard - Backward compatible root route
-router.get("/", auth, async (req, res, next) => {
+router.get("/", auth, requireSubscription(), async (req, res, next) => {
   try {
     const stats = await getDashboardStats(req.user.pharmacy_id);
     res.json(stats);
@@ -129,7 +131,7 @@ router.get("/", auth, async (req, res, next) => {
 });
 
 // GET /api/dashboard/stats
-router.get("/stats", auth, async (req, res, next) => {
+router.get("/stats", auth, requireSubscription(), async (req, res, next) => {
   try {
     const stats = await getDashboardStats(req.user.pharmacy_id);
     res.json(stats);
@@ -139,188 +141,214 @@ router.get("/stats", auth, async (req, res, next) => {
 });
 
 // GET /api/dashboard/sales-trend - Sales trend by days
-router.get("/sales-trend", auth, async (req, res, next) => {
-  try {
-    const db = mongoose.connection.db;
-    const { days = 30 } = req.query;
-    const numDays = parseInt(days);
+router.get(
+  "/sales-trend",
+  auth,
+  requireSubscription(),
+  async (req, res, next) => {
+    try {
+      const db = mongoose.connection.db;
+      const { days = 30 } = req.query;
+      const numDays = parseInt(days);
 
-    const startDate = new Date();
-    startDate.setDate(startDate.getDate() - numDays);
+      const startDate = new Date();
+      startDate.setDate(startDate.getDate() - numDays);
 
-    const bills = await db
-      .collection("bills")
-      .find({
-        pharmacy_id: req.user.pharmacy_id,
-        created_at: { $gte: startDate.toISOString() },
-      })
-      .project({ _id: 0 })
-      .toArray();
+      const bills = await db
+        .collection("bills")
+        .find({
+          pharmacy_id: req.user.pharmacy_id,
+          created_at: { $gte: startDate.toISOString() },
+        })
+        .project({ _id: 0 })
+        .toArray();
 
-    // Helper to get bill total
-    const getBillTotal = (bill) => bill.grand_total || bill.total_amount || 0;
+      // Helper to get bill total
+      const getBillTotal = (bill) => bill.grand_total || bill.total_amount || 0;
 
-    // Group by date
-    const salesByDate = {};
-    for (let i = 0; i < numDays; i++) {
-      const date = new Date();
-      date.setDate(date.getDate() - i);
-      const dateStr = date.toISOString().split("T")[0];
-      salesByDate[dateStr] = {
-        date: dateStr,
-        revenue: 0,
-        profit: 0,
-        orders: 0,
-      };
-    }
-
-    bills.forEach((bill) => {
-      const dateStr = bill.created_at.split("T")[0];
-      if (salesByDate[dateStr]) {
-        salesByDate[dateStr].revenue += getBillTotal(bill);
-        salesByDate[dateStr].profit += bill.profit || 0;
-        salesByDate[dateStr].orders += 1;
+      // Group by date
+      const salesByDate = {};
+      for (let i = 0; i < numDays; i++) {
+        const date = new Date();
+        date.setDate(date.getDate() - i);
+        const dateStr = date.toISOString().split("T")[0];
+        salesByDate[dateStr] = {
+          date: dateStr,
+          revenue: 0,
+          profit: 0,
+          orders: 0,
+        };
       }
-    });
 
-    const trendData = Object.values(salesByDate).sort((a, b) =>
-      a.date.localeCompare(b.date)
-    );
+      bills.forEach((bill) => {
+        const dateStr = bill.created_at.split("T")[0];
+        if (salesByDate[dateStr]) {
+          salesByDate[dateStr].revenue += getBillTotal(bill);
+          salesByDate[dateStr].profit += bill.profit || 0;
+          salesByDate[dateStr].orders += 1;
+        }
+      });
 
-    res.json({ trend: trendData });
-  } catch (error) {
-    next(error);
+      const trendData = Object.values(salesByDate).sort((a, b) =>
+        a.date.localeCompare(b.date)
+      );
+
+      res.json({ trend: trendData });
+    } catch (error) {
+      next(error);
+    }
   }
-});
+);
 
 // GET /api/dashboard/debt-summary - Customer debt summary
-router.get("/debt-summary", auth, async (req, res, next) => {
-  try {
-    const db = mongoose.connection.db;
+router.get(
+  "/debt-summary",
+  auth,
+  requireSubscription(),
+  async (req, res, next) => {
+    try {
+      const db = mongoose.connection.db;
 
-    const customers = await db
-      .collection("customers")
-      .find({ pharmacy_id: req.user.pharmacy_id })
-      .project({ _id: 0 })
-      .toArray();
+      const customers = await db
+        .collection("customers")
+        .find({ pharmacy_id: req.user.pharmacy_id })
+        .project({ _id: 0 })
+        .toArray();
 
-    const totalDebt = customers.reduce(
-      (sum, c) => sum + (c.total_debt || 0),
-      0
-    );
-    const customersWithDebt = customers.filter((c) => (c.total_debt || 0) > 0);
+      const totalDebt = customers.reduce(
+        (sum, c) => sum + (c.total_debt || 0),
+        0
+      );
+      const customersWithDebt = customers.filter(
+        (c) => (c.total_debt || 0) > 0
+      );
 
-    // Get top debtors
-    const topDebtors = customersWithDebt
-      .sort((a, b) => (b.total_debt || 0) - (a.total_debt || 0))
-      .slice(0, 5)
-      .map((c) => ({
-        id: c.id,
-        name: c.name,
-        phone: c.phone,
-        total_debt: c.total_debt || 0,
-      }));
+      // Get top debtors
+      const topDebtors = customersWithDebt
+        .sort((a, b) => (b.total_debt || 0) - (a.total_debt || 0))
+        .slice(0, 5)
+        .map((c) => ({
+          id: c.id,
+          name: c.name,
+          phone: c.phone,
+          total_debt: c.total_debt || 0,
+        }));
 
-    res.json({
-      total_debt: totalDebt,
-      customers_with_debt: customersWithDebt.length,
-      top_debtors: topDebtors,
-    });
-  } catch (error) {
-    next(error);
+      res.json({
+        total_debt: totalDebt,
+        customers_with_debt: customersWithDebt.length,
+        top_debtors: topDebtors,
+      });
+    } catch (error) {
+      next(error);
+    }
   }
-});
+);
 
 // GET /api/dashboard/sales-chart
-router.get("/sales-chart", auth, async (req, res, next) => {
-  try {
-    const db = mongoose.connection.db;
-    const { period = "7days" } = req.query;
+router.get(
+  "/sales-chart",
+  auth,
+  requireSubscription(),
+  async (req, res, next) => {
+    try {
+      const db = mongoose.connection.db;
+      const { period = "7days" } = req.query;
 
-    let days = 7;
-    if (period === "30days") days = 30;
-    if (period === "90days") days = 90;
+      let days = 7;
+      if (period === "30days") days = 30;
+      if (period === "90days") days = 90;
 
-    const startDate = new Date();
-    startDate.setDate(startDate.getDate() - days);
+      const startDate = new Date();
+      startDate.setDate(startDate.getDate() - days);
 
-    const bills = await db
-      .collection("bills")
-      .find({
-        pharmacy_id: req.user.pharmacy_id,
-        created_at: { $gte: startDate.toISOString() },
-      })
-      .project({ _id: 0 })
-      .toArray();
+      const bills = await db
+        .collection("bills")
+        .find({
+          pharmacy_id: req.user.pharmacy_id,
+          created_at: { $gte: startDate.toISOString() },
+        })
+        .project({ _id: 0 })
+        .toArray();
 
-    // Group by date
-    const salesByDate = {};
-    for (let i = 0; i < days; i++) {
-      const date = new Date();
-      date.setDate(date.getDate() - i);
-      const dateStr = date.toISOString().split("T")[0];
-      salesByDate[dateStr] = { date: dateStr, sales: 0, profit: 0, bills: 0 };
-    }
-
-    bills.forEach((bill) => {
-      const dateStr = bill.created_at.split("T")[0];
-      if (salesByDate[dateStr]) {
-        const getBillTotal = (bill) =>
-          bill.grand_total || bill.total_amount || 0;
-
-        salesByDate[dateStr].sales += getBillTotal(bill);
-        salesByDate[dateStr].profit += bill.profit || 0;
-        salesByDate[dateStr].bills += 1;
+      // Group by date
+      const salesByDate = {};
+      for (let i = 0; i < days; i++) {
+        const date = new Date();
+        date.setDate(date.getDate() - i);
+        const dateStr = date.toISOString().split("T")[0];
+        salesByDate[dateStr] = { date: dateStr, sales: 0, profit: 0, bills: 0 };
       }
-    });
 
-    const chartData = Object.values(salesByDate).sort((a, b) =>
-      a.date.localeCompare(b.date)
-    );
+      bills.forEach((bill) => {
+        const dateStr = bill.created_at.split("T")[0];
+        if (salesByDate[dateStr]) {
+          const getBillTotal = (bill) =>
+            bill.grand_total || bill.total_amount || 0;
 
-    res.json({ chart_data: chartData });
-  } catch (error) {
-    next(error);
+          salesByDate[dateStr].sales += getBillTotal(bill);
+          salesByDate[dateStr].profit += bill.profit || 0;
+          salesByDate[dateStr].bills += 1;
+        }
+      });
+
+      const chartData = Object.values(salesByDate).sort((a, b) =>
+        a.date.localeCompare(b.date)
+      );
+
+      res.json({ chart_data: chartData });
+    } catch (error) {
+      next(error);
+    }
   }
-});
+);
 
 // GET /api/dashboard/top-products
-router.get("/top-products", auth, async (req, res, next) => {
-  try {
-    const db = mongoose.connection.db;
-    const { limit = 10 } = req.query;
+router.get(
+  "/top-products",
+  auth,
+  requireSubscription(),
+  async (req, res, next) => {
+    try {
+      const db = mongoose.connection.db;
+      const { limit = 10 } = req.query;
 
-    const bills = await db
-      .collection("bills")
-      .find({ pharmacy_id: req.user.pharmacy_id })
-      .project({ _id: 0, items: 1 })
-      .toArray();
+      const bills = await db
+        .collection("bills")
+        .find({ pharmacy_id: req.user.pharmacy_id })
+        .project({ _id: 0, items: 1 })
+        .toArray();
 
-    const productSales = {};
-    bills.forEach((bill) => {
-      (bill.items || []).forEach((item) => {
-        const name = item.product_name;
-        if (!productSales[name]) {
-          productSales[name] = { product_name: name, quantity: 0, revenue: 0 };
-        }
-        productSales[name].quantity += item.quantity;
-        productSales[name].revenue +=
-          item.item_total || item.quantity * item.unit_price;
+      const productSales = {};
+      bills.forEach((bill) => {
+        (bill.items || []).forEach((item) => {
+          const name = item.product_name;
+          if (!productSales[name]) {
+            productSales[name] = {
+              product_name: name,
+              quantity: 0,
+              revenue: 0,
+            };
+          }
+          productSales[name].quantity += item.quantity;
+          productSales[name].revenue +=
+            item.item_total || item.quantity * item.unit_price;
+        });
       });
-    });
 
-    const topProducts = Object.values(productSales)
-      .sort((a, b) => b.quantity - a.quantity)
-      .slice(0, parseInt(limit));
+      const topProducts = Object.values(productSales)
+        .sort((a, b) => b.quantity - a.quantity)
+        .slice(0, parseInt(limit));
 
-    res.json({ top_products: topProducts });
-  } catch (error) {
-    next(error);
+      res.json({ top_products: topProducts });
+    } catch (error) {
+      next(error);
+    }
   }
-});
+);
 
 // GET /api/dashboard/ai-tips
-router.get("/ai-tips", auth, async (req, res, next) => {
+router.get("/ai-tips", auth, requireSubscription(), async (req, res, next) => {
   try {
     const { GoogleGenerativeAI } = require("@google/generative-ai");
 
@@ -409,59 +437,64 @@ Rules:
 });
 
 // GET /api/dashboard/supplier-analysis
-router.get("/supplier-analysis", auth, async (req, res, next) => {
-  try {
-    const db = mongoose.connection.db;
+router.get(
+  "/supplier-analysis",
+  auth,
+  requireSubscription(),
+  async (req, res, next) => {
+    try {
+      const db = mongoose.connection.db;
 
-    // Get all purchases
-    const purchases = await db
-      .collection("purchases")
-      .find({ pharmacy_id: req.user.pharmacy_id })
-      .project({ _id: 0 })
-      .toArray();
+      // Get all purchases
+      const purchases = await db
+        .collection("purchases")
+        .find({ pharmacy_id: req.user.pharmacy_id })
+        .project({ _id: 0 })
+        .toArray();
 
-    // Get all suppliers
-    const suppliers = await db
-      .collection("suppliers")
-      .find({ pharmacy_id: req.user.pharmacy_id })
-      .project({ _id: 0 })
-      .toArray();
+      // Get all suppliers
+      const suppliers = await db
+        .collection("suppliers")
+        .find({ pharmacy_id: req.user.pharmacy_id })
+        .project({ _id: 0 })
+        .toArray();
 
-    // Group purchases by supplier
-    const supplierStats = {};
+      // Group purchases by supplier
+      const supplierStats = {};
 
-    purchases.forEach((purchase) => {
-      const supplierId = purchase.supplier_id;
-      if (!supplierStats[supplierId]) {
-        const supplier = suppliers.find((s) => s.id === supplierId);
-        supplierStats[supplierId] = {
-          id: supplierId,
-          name: supplier?.name || purchase.supplier_name || "Unknown",
-          total_purchases: 0,
-          total_amount: 0,
-          purchase_count: 0,
-        };
-      }
+      purchases.forEach((purchase) => {
+        const supplierId = purchase.supplier_id;
+        if (!supplierStats[supplierId]) {
+          const supplier = suppliers.find((s) => s.id === supplierId);
+          supplierStats[supplierId] = {
+            id: supplierId,
+            name: supplier?.name || purchase.supplier_name || "Unknown",
+            total_purchases: 0,
+            total_amount: 0,
+            purchase_count: 0,
+          };
+        }
 
-      const totalAmount = (purchase.items || []).reduce((sum, item) => {
-        return sum + (item.pack_quantity || 1) * (item.pack_price || 0);
-      }, 0);
+        const totalAmount = (purchase.items || []).reduce((sum, item) => {
+          return sum + (item.pack_quantity || 1) * (item.pack_price || 0);
+        }, 0);
 
-      supplierStats[supplierId].total_amount += totalAmount;
-      supplierStats[supplierId].purchase_count += 1;
-      supplierStats[supplierId].total_purchases += (
-        purchase.items || []
-      ).length;
-    });
+        supplierStats[supplierId].total_amount += totalAmount;
+        supplierStats[supplierId].purchase_count += 1;
+        supplierStats[supplierId].total_purchases += (
+          purchase.items || []
+        ).length;
+      });
 
-    const supplierAnalysis = Object.values(supplierStats).sort(
-      (a, b) => b.total_amount - a.total_amount
-    );
+      const supplierAnalysis = Object.values(supplierStats).sort(
+        (a, b) => b.total_amount - a.total_amount
+      );
 
-    res.json({ supplier_analysis: supplierAnalysis });
-  } catch (error) {
-    next(error);
+      res.json({ supplier_analysis: supplierAnalysis });
+    } catch (error) {
+      next(error);
+    }
   }
-});
+);
 
 module.exports = router;

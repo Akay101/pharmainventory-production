@@ -6,6 +6,8 @@ const { v4: uuidv4 } = require("uuid");
 const { auth, generateToken } = require("../middleware/auth");
 const { sendOTPEmail } = require("../services/email");
 
+const { requireSubscription } = require("../middleware/subscription");
+
 // Generate OTP
 const generateOTP = () => {
   return Math.floor(100000 + Math.random() * 900000).toString();
@@ -60,6 +62,9 @@ router.post("/register", async (req, res, next) => {
       otp,
       otp_expiry: otpExpiry,
       image_url: null,
+      subscription_id: null,
+      subscription_plan: null,
+      subscription_expiry: null,
       created_at: new Date().toISOString(),
     };
     await db.collection("users").insertOne(userData);
