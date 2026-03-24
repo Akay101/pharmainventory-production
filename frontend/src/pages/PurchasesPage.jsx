@@ -65,6 +65,7 @@ import {
   RotateCcw,
   ArrowRight,
   FileText,
+  AlertCircle
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatDate } from "./utils";
@@ -92,6 +93,8 @@ export default function PurchasesPage() {
   const [newItemRow, setNewItemRow] = useState(null);
   const [searchMedicine, setSearchMedicine] = useState("");
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [aiAutofillEnabled, setAiAutofillEnabled] = useState(false);
+  const [isAiLoading, setIsAiLoading] = useState(false);
   
   // Infinite scroll suggestion state
   const [suggestionPage, setSuggestionPage] = useState(1);
@@ -139,7 +142,7 @@ export default function PurchasesPage() {
       setTimeout(() => updateDropdownPosition(activeItemId), 0);
     }
   }, [activeItemId, showSuggestions]);
-
+ 
   // Sync position on global scroll and window resize
   useEffect(() => {
     const handleScroll = () => {
@@ -851,7 +854,7 @@ export default function PurchasesPage() {
   };
 
   // Handle selecting medicine from suggestions for an item row
-  const handleSelectMedicineForItem = (itemId, medicine) => {
+  const handleSelectMedicineForItem = async (itemId, medicine) => {
     const isInventory = medicine.source === "inventory";
 
     // Extract pack size
@@ -878,6 +881,9 @@ export default function PurchasesPage() {
         : mrpPerUnit * 0.7;
     const ratePack = ratePerUnit * unitsPerPack;
 
+    let manufacturer = medicine.manufacturer || medicine.manufacturer_name || "";
+    let salt_composition = medicine.salt_composition || [medicine.short_composition1, medicine.short_composition2].filter(Boolean).join(", ") || "";
+
     setPurchaseItems((prev) =>
       prev.map((item) => {
         if (item.id !== itemId) return item;
@@ -888,14 +894,8 @@ export default function PurchasesPage() {
           ...item,
           product_id: medicine.id || `med-${Date.now()}`,
           product_name: medicine.product_name || medicine.name,
-          manufacturer:
-            medicine.manufacturer || medicine.manufacturer_name || "",
-          salt_composition:
-            medicine.salt_composition ||
-            [medicine.short_composition1, medicine.short_composition2]
-              .filter(Boolean)
-              .join(", ") ||
-            "",
+          manufacturer,
+          salt_composition,
           units: String(unitsPerPack),
           rate_pack: ratePack.toFixed(2),
           mrp_pack: mrpPack.toFixed(2),
@@ -923,6 +923,80 @@ export default function PurchasesPage() {
     // Optional: Show toast for fuzzy matches
     if (isInventory && medicine.matchQuality === "fuzzy") {
       toast.info(`Fuzzy match: "${medicine.name}" - verify before saving`);
+    }
+
+    // AI Enrichment Trigger
+    if (aiAutofillEnabled && (!manufacturer || !salt_composition)) {
+      try {
+        setIsAiLoading(true);
+        const res = await axios.post(`${API}/medicines/enrich`, { product_name: medicine.product_name || medicine.name });
+        
+        if (res.data.manufacturer || res.data.salt_composition) {
+          setPurchaseItems((prev) => prev.map((item) => {
+            if (item.id !== itemId) return item;
+            return {
+              ...item,
+              manufacturer: item.manufacturer || res.data.manufacturer,
+              salt_composition: item.salt_composition || res.data.salt_composition
+            };
+          }));
+          toast.success("AI Autofilled missing metadata ✨");
+        }
+      } catch (err) {
+         console.warn("AI enrichment request failed or timed out.");
+      } finally {
+         setIsAiLoading(false);
+      }
+    }
+  };
+
+  // Direct AI resolution when no suggestions are found or user overrides
+  const handleSelectAiMedicineForItem = async (itemId, productName) => {
+    // 1. Flush local search state and inject base product
+    setPurchaseItems((prev) => prev.map((item) => {
+      if (item.id !== itemId) return item;
+      return {
+        ...item,
+        product_id: `ai-${Date.now()}`,
+        product_name: productName,
+        manufacturer: "",
+        salt_composition: "",
+        units: "1",
+        rate_pack: "",
+        mrp_pack: "",
+        total_amount: "",
+        _inventoryMeta: null,
+      };
+    }));
+    
+    setSearchMedicine("");
+    setMedicineSuggestions([]);
+    setShowSuggestions(false);
+    setHighlightedSuggestionIndex(-1);
+
+    // 2. Force authoritative AI fetch
+    try {
+      setIsAiLoading(true);
+      const res = await axios.post(`${API}/medicines/enrich`, { product_name: productName });
+      
+      if (res.data.manufacturer || res.data.salt_composition) {
+        setPurchaseItems((prev) => prev.map((item) => {
+          if (item.id !== itemId) return item;
+          return {
+            ...item,
+            manufacturer: res.data.manufacturer || item.manufacturer,
+            salt_composition: res.data.salt_composition || item.salt_composition
+          };
+        }));
+        toast.success("AI recovered global product attributes ✨");
+      } else {
+         toast.info("AI couldn't confidently extract properties for this item.");
+      }
+    } catch (err) {
+      console.warn("AI direct lookup failed", err);
+      toast.error("AI lookup failed to connect.");
+    } finally {
+      setIsAiLoading(false);
     }
   };
 
@@ -1491,26 +1565,62 @@ export default function PurchasesPage() {
       {/* New Purchase - Inline Table Entry with UNIT-BASED fields */}
       {showNewPurchase && (
         <Card
-          className="border-primary/30 bg-primary/5"
+          className="border-primary/30 bg-primary/5 relative overflow-hidden"
           data-testid="new-purchase-form"
         >
+          {isAiLoading && (
+            <div className="absolute inset-0 z-[100] flex flex-col items-center justify-center bg-background/60 backdrop-blur-md transition-all duration-300">
+               <div className="relative">
+                 <div className="absolute inset-0 bg-indigo-500/20 blur-xl rounded-full"></div>
+                 <Loader2 className="w-12 h-12 text-indigo-600 animate-spin relative z-10" />
+               </div>
+               <p className="mt-5 text-lg font-extrabold text-foreground tracking-wide animate-pulse">Running AI Analysis...</p>
+               <p className="text-sm font-medium text-muted-foreground mt-1">Extracting properties using Gemini 2.0</p>
+            </div>
+          )}
           <CardHeader className="pb-4">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-lg flex items-center gap-2">
-                <Package className="w-5 h-5" />
-                New Purchase •{" "}
-                <kbd className="px-1 bg-muted rounded text-xs font-mono">
-                  Enter
-                </kbd>{" "}
-                to save item
-              </CardTitle>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={handleCancelNewPurchase}
-              >
-                <X className="h-4 w-4" />
-              </Button>
+            <div className="flex flex-col gap-3">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <Package className="w-5 h-5" />
+                  New Purchase
+                  <span className="text-xs font-normal text-muted-foreground ml-2">
+                    (<kbd className="px-1 bg-muted rounded font-mono text-[10px]">Enter</kbd> to save)
+                  </span>
+                </CardTitle>
+                <div className="flex items-center gap-3">
+                  <Button
+                    variant={aiAutofillEnabled ? "default" : "outline"}
+                    onClick={() => setAiAutofillEnabled(!aiAutofillEnabled)}
+                    className={`relative overflow-hidden group ${
+                      aiAutofillEnabled 
+                        ? "bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white shadow-lg shadow-indigo-500/30 border-none transition-all duration-300 font-bold" 
+                        : "text-indigo-600 border-indigo-200 hover:bg-indigo-50 transition-all font-medium"
+                    }`}
+                    size="sm"
+                  >
+                    {aiAutofillEnabled && (
+                      <div className="absolute inset-0 bg-white/20 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-700 ease-in-out skew-x-12"></div>
+                    )}
+                    ✨ AI Autofill {aiAutofillEnabled ? "ON" : "OFF"}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={handleCancelNewPurchase}
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+              
+              {/* Warning Text Dropdown */}
+              <div className={`flex justify-end pr-10 transition-all duration-300 overflow-hidden ${aiAutofillEnabled ? 'max-h-12 opacity-100' : 'max-h-0 opacity-0'}`}>
+                <div className="text-[11px] font-medium text-amber-600 bg-amber-50 dark:bg-amber-500/10 px-3 py-1.5 rounded-md border border-amber-200/50 dark:border-amber-500/20 flex items-center gap-1.5 shadow-sm">
+                  <AlertCircle className="w-3.5 h-3.5" />
+                  Generative AI may be inaccurate. Please review the autofilled details below before saving.
+                </div>
+              </div>
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -1698,17 +1808,19 @@ export default function PurchasesPage() {
                                   }
                                 }}
                                 onKeyDown={(e) => {
+                                  const hasAiOption = searchMedicine.length > 1;
+                                  const maxIndex = hasAiOption ? medicineSuggestions.length : medicineSuggestions.length - 1;
+
                                   if (
                                     !showSuggestions ||
-                                    medicineSuggestions.length === 0
+                                    (medicineSuggestions.length === 0 && !hasAiOption)
                                   )
                                     return;
+                                    
                                   if (e.key === "ArrowDown") {
                                     e.preventDefault();
                                     setHighlightedSuggestionIndex((prev) =>
-                                      prev < medicineSuggestions.length - 1
-                                        ? prev + 1
-                                        : prev
+                                      prev < maxIndex ? prev + 1 : prev
                                     );
                                   } else if (e.key === "ArrowUp") {
                                     e.preventDefault();
@@ -1720,12 +1832,15 @@ export default function PurchasesPage() {
                                     highlightedSuggestionIndex >= 0
                                   ) {
                                     e.preventDefault();
-                                    handleSelectMedicineForItem(
-                                      item.id,
-                                      medicineSuggestions[
-                                        highlightedSuggestionIndex
-                                      ]
-                                    );
+                                    if (highlightedSuggestionIndex === medicineSuggestions.length) {
+                                      // Trigger AI explicitly
+                                      handleSelectAiMedicineForItem(item.id, searchMedicine);
+                                    } else {
+                                      handleSelectMedicineForItem(
+                                        item.id,
+                                        medicineSuggestions[highlightedSuggestionIndex]
+                                      );
+                                    }
                                     setHighlightedSuggestionIndex(-1);
                                   } else if (e.key === "Escape") {
                                     setShowSuggestions(false);
@@ -1786,7 +1901,7 @@ export default function PurchasesPage() {
                             {/* ========================================== */}
                             {showSuggestions &&
                               activeItemId === item.id &&
-                              medicineSuggestions.length > 0 && 
+                              (medicineSuggestions.length > 0 || searchMedicine.length > 1) && 
                               createPortal(
                                 <div
                                   data-suggestions-dropdown="true"
@@ -1993,6 +2108,28 @@ export default function PurchasesPage() {
                                   {loadingSuggestions && (
                                     <div className="p-3 text-center border-t border-border">
                                       <Loader2 className="w-5 h-5 animate-spin mx-auto text-muted-foreground" />
+                                    </div>
+                                  )}
+
+                                  {/* AI Fallback Option */}
+                                  {!loadingSuggestions && searchMedicine.length > 1 && (
+                                    <div
+                                      className={`p-3 cursor-pointer border-t border-indigo-100 dark:border-indigo-500/20 bg-indigo-50/50 dark:bg-indigo-500/10 hover:bg-indigo-100/50 dark:hover:bg-indigo-500/20 transition-colors ${
+                                        highlightedSuggestionIndex === medicineSuggestions.length
+                                          ? "bg-indigo-100/80 dark:bg-indigo-500/30"
+                                          : ""
+                                      }`}
+                                      onMouseDown={(e) => {
+                                        e.preventDefault();
+                                        handleSelectAiMedicineForItem(item.id, searchMedicine);
+                                      }}
+                                      onMouseEnter={() => setHighlightedSuggestionIndex(medicineSuggestions.length)}
+                                    >
+                                      <div className="flex items-center gap-2 text-indigo-700 dark:text-indigo-400 font-semibold text-sm">
+                                        <div className="p-1.5 bg-indigo-100 dark:bg-indigo-500/20 rounded-md shadow-sm">✨</div>
+                                        <span>Get AI facts for <span className="font-bold underline decoration-indigo-300 dark:decoration-indigo-600 underline-offset-2">"{searchMedicine}"</span></span>
+                                      </div>
+                                      <p className="text-[10.5px] font-medium text-indigo-500/80 dark:text-indigo-400/70 mt-1 ml-9">Bypass search and instantly extract properties using Gemini 2.0</p>
                                     </div>
                                   )}
                                 </div>,

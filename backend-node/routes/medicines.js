@@ -85,6 +85,74 @@ const calculateSimilarity = (query, text) => {
   return Math.max(0, similarity);
 };
 
+// POST /api/medicines/enrich (AI Autofill)
+router.post("/enrich", auth, requireSubscription(), async (req, res, next) => {
+  try {
+    const { product_name } = req.body;
+    if (!product_name)
+      return res.status(400).json({ detail: "Product name required" });
+
+    const { GoogleGenerativeAI } = require("@google/generative-ai");
+    const apiKey = process.env.EMERGENT_LLM_KEY || process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      return res.json({ salt_composition: "", manufacturer: "" });
+    }
+
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+
+    const prompt = `You are a pharmaceutical database system.
+
+For the medicine named "${product_name}", return ONLY:
+1. Exact salt composition
+2. Official marketing company (brand owner)
+
+STRICT RULES:
+- Do NOT guess
+- Do NOT hallucinate
+- If unsure, return empty string
+- Prefer well-known verified pharma companies only
+
+Respond ONLY in JSON:
+{
+  "salt_composition": "string",
+  "manufacturer": "string"
+}
+One example:
+product - Dologel-CT Gel
+
+your response should be:
+{
+    "salt_composition": "Choline Salicylate 9% w/w, Lignocaine Hydrochloride 0.5% w/w",
+    "manufacturer": "Dr. Reddy's Laboratories Ltd"
+}
+`;
+
+    const result = await model.generateContent(prompt);
+    const text = result.response.text();
+
+    // Parse JSON safely
+    const jsonStr = text
+      .replace(/```json/gi, "")
+      .replace(/```/g, "")
+      .trim();
+    let parsed = {};
+    try {
+      parsed = JSON.parse(jsonStr);
+    } catch (e) {
+      console.error("Failed to parse Gemini JSON:", jsonStr);
+    }
+
+    res.json({
+      salt_composition: parsed.salt_composition || "",
+      manufacturer: parsed.manufacturer || "",
+    });
+  } catch (error) {
+    console.error("Gemini enrichment error:", error);
+    res.json({ salt_composition: "", manufacturer: "" }); // Safe fallback
+  }
+});
+
 // GET /api/medicines/search
 router.get("/search", auth, requireSubscription(), async (req, res, next) => {
   try {
@@ -102,8 +170,8 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
     const parsedLimit = parseInt(limit);
     const parsedPage = parseInt(page);
     const skip = (parsedPage - 1) * parsedLimit;
-    // Increase internal search limit to ensure sorting works across pages for fuzzy search 
-    const internalLimit = (parsedLimit * parsedPage) + 100;
+    // Increase internal search limit to ensure sorting works across pages for fuzzy search
+    const internalLimit = parsedLimit * parsedPage + 100;
     const enableFuzzy = fuzzy === "true";
 
     // Build search conditions
@@ -380,28 +448,27 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
     const allResults = [...processedInventory, ...processedGlobal];
 
     // Final ranking: Inventory first (especially in-stock), then by fuzzy score
-    const rankedResults = allResults
-      .sort((a, b) => {
-        // Source priority: inventory > global
-        if (a.source === "inventory" && b.source === "global") {
-          // Check if inventory item is in stock
-          if (a.stock_status === "In Stock") return -1;
-          // Out-of-stock inventory still comes before global if fuzzy score is close
-          if ((a.fuzzyScore || 0) >= (b.fuzzyScore || 0) - 10) return -1;
-          return 1;
-        }
-        if (a.source === "global" && b.source === "inventory") {
-          if (b.stock_status === "In Stock") return 1;
-          if ((b.fuzzyScore || 0) >= (a.fuzzyScore || 0) - 10) return 1;
-          return -1;
-        }
+    const rankedResults = allResults.sort((a, b) => {
+      // Source priority: inventory > global
+      if (a.source === "inventory" && b.source === "global") {
+        // Check if inventory item is in stock
+        if (a.stock_status === "In Stock") return -1;
+        // Out-of-stock inventory still comes before global if fuzzy score is close
+        if ((a.fuzzyScore || 0) >= (b.fuzzyScore || 0) - 10) return -1;
+        return 1;
+      }
+      if (a.source === "global" && b.source === "inventory") {
+        if (b.stock_status === "In Stock") return 1;
+        if ((b.fuzzyScore || 0) >= (a.fuzzyScore || 0) - 10) return 1;
+        return -1;
+      }
 
-        // Both same source: sort by fuzzy score
-        return (b.fuzzyScore || 0) - (a.fuzzyScore || 0);
-      });
+      // Both same source: sort by fuzzy score
+      return (b.fuzzyScore || 0) - (a.fuzzyScore || 0);
+    });
 
     const paginatedResults = rankedResults.slice(skip, skip + parsedLimit);
-    const has_more = rankedResults.length > (skip + parsedLimit);
+    const has_more = rankedResults.length > skip + parsedLimit;
 
     res.json({
       medicines: paginatedResults,
@@ -414,9 +481,12 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
         query: q,
         fuzzy_enabled: enableFuzzy,
         match_breakdown: {
-          exact: paginatedResults.filter((r) => r.matchQuality === "exact").length,
-          good: paginatedResults.filter((r) => r.matchQuality === "good").length,
-          fuzzy: paginatedResults.filter((r) => r.matchQuality === "fuzzy").length,
+          exact: paginatedResults.filter((r) => r.matchQuality === "exact")
+            .length,
+          good: paginatedResults.filter((r) => r.matchQuality === "good")
+            .length,
+          fuzzy: paginatedResults.filter((r) => r.matchQuality === "fuzzy")
+            .length,
         },
       },
     });

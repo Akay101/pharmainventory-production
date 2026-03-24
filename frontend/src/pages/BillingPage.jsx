@@ -57,6 +57,10 @@ import {
   ChevronDown,
   ChevronUp,
   Save,
+  Download,
+  BarChart3,
+  TrendingUp,
+  AlertCircle
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatDate } from "./utils";
@@ -143,9 +147,11 @@ export default function BillingPage() {
   const [limit] = useState(10);
   const [totalPages, setTotalPages] = useState(1);
 
-  // Filters
+  // Filters and Insights
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
+  const [insightsData, setInsightsData] = useState(null);
+  const [insightsLoading, setInsightsLoading] = useState(false);
 
   const emptyItem = {
     id: "",
@@ -271,6 +277,62 @@ export default function BillingPage() {
   useEffect(() => {
     fetchData();
   }, [page, startDate, endDate]);
+
+  // Fetch Insights when dates change
+  useEffect(() => {
+    if (startDate || endDate) {
+      fetchInsights();
+    } else {
+      setInsightsData(null);
+    }
+  }, [startDate, endDate]);
+
+  const fetchInsights = async () => {
+    try {
+      setInsightsLoading(true);
+      const res = await axios.get(`${API}/bills/insights`, {
+        params: { start_date: startDate || undefined, end_date: endDate || undefined }
+      });
+      // Simulate slight delay for premium feeling load animation if network is too fast
+      await new Promise(r => setTimeout(r, 600));
+      setInsightsData(res.data);
+    } catch (e) {
+      toast.error("Failed to load insights");
+    } finally {
+      setInsightsLoading(false);
+    }
+  };
+
+  const handleDownloadInsights = () => {
+    if (!insightsData) return;
+    
+    let csv = "Billing Insights Report\n";
+    csv += `Period,${startDate || "Start"} to ${endDate || "End"}\n\n`;
+    csv += `Summary Metrics\n`;
+    csv += `Total Revenue,${insightsData.summary.total_revenue}\n`;
+    csv += `Total Profit,${insightsData.summary.total_profit}\n`;
+    csv += `Total Bills Created,${insightsData.summary.total_bills}\n`;
+    csv += `Unpaid Bills Count,${insightsData.summary.unpaid_bills}\n`;
+    csv += `Total Unpaid Debt,${insightsData.summary.unpaid_amount}\n\n`;
+    
+    csv += `Top 10 Products by Revenue\n`;
+    csv += `Rank,Product Name,Quantity Sold,Revenue Generated,Profit Generated\n`;
+    insightsData.top_products.forEach((p, idx) => {
+      csv += `${idx + 1},"${p.name}",${p.quantity},${p.revenue},${p.profit}\n`;
+    });
+
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const link = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+    link.setAttribute("href", url);
+    link.setAttribute("download", `Billing_Insights_${startDate||"Start"}_to_${endDate||"End"}.csv`);
+    link.style.visibility = "hidden";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    toast.success("Insights Report Downloaded");
+  };
 
   // Server-side inventory search for new bills
   useEffect(() => {
@@ -2538,42 +2600,182 @@ export default function BillingPage() {
       )}
 
       {!showNewBill && !editingBillId && (
-        <Card className="p-4">
-          <div className="flex flex-wrap items-end gap-4">
-            <div>
-              <Label>From Date</Label>
-              <Input
-                type="date"
-                value={startDate}
-                onChange={(e) => {
-                  setPage(1);
-                  setStartDate(e.target.value);
-                }}
-              />
+        <Card className="p-4 mb-4">
+          <div className="flex flex-col gap-4">
+            <div className="flex flex-wrap items-end gap-4">
+              <div>
+                <Label>From Date</Label>
+                <Input
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => {
+                    setPage(1);
+                    setStartDate(e.target.value);
+                  }}
+                />
+              </div>
+
+              <div>
+                <Label>To Date</Label>
+                <Input
+                  type="date"
+                  value={endDate}
+                  onChange={(e) => {
+                    setPage(1);
+                    setEndDate(e.target.value);
+                  }}
+                />
+              </div>
+
+              <div className="flex gap-2 mb-[2px]">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    const today = new Date().toISOString().slice(0, 10);
+                    setStartDate(today);
+                    setEndDate(today);
+                    setPage(1);
+                  }}
+                  className="bg-primary/5 hover:bg-primary/10 border-primary/20"
+                >
+                  Today
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    const yesterday = new Date();
+                    yesterday.setDate(yesterday.getDate() - 1);
+                    const iso = yesterday.toISOString().slice(0, 10);
+                    setStartDate(iso);
+                    setEndDate(iso);
+                    setPage(1);
+                  }}
+                  className="bg-primary/5 hover:bg-primary/10 border-primary/20"
+                >
+                  Yesterday
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setStartDate("");
+                    setEndDate("");
+                    setPage(1);
+                  }}
+                >
+                  Reset Filter
+                </Button>
+              </div>
             </div>
 
-            <div>
-              <Label>To Date</Label>
-              <Input
-                type="date"
-                value={endDate}
-                onChange={(e) => {
-                  setPage(1);
-                  setEndDate(e.target.value);
-                }}
-              />
-            </div>
+            {/* Premium Insights Dashboard */}
+            {(startDate || endDate) && (
+              <div className="mt-6 border border-border/60 rounded-xl overflow-hidden bg-card shadow-sm transition-all duration-700 ease-in-out">
+                {insightsLoading ? (
+                  <div className="p-10 flex flex-col items-center justify-center space-y-4 bg-muted/20 animate-pulse min-h-[250px]">
+                    <div className="relative">
+                      <div className="absolute inset-0 bg-primary/20 blur-xl rounded-full"></div>
+                      <Loader2 className="w-10 h-10 animate-spin text-primary relative z-10" />
+                    </div>
+                    <p className="text-sm font-semibold text-primary/80 animate-bounce">
+                      Generating Deep Insights...
+                    </p>
+                  </div>
+                ) : insightsData ? (
+                  <div className="animate-in fade-in slide-in-from-top-4 duration-700">
+                    <div className="p-6 border-b border-border/50 flex justify-between items-center bg-gradient-to-r from-muted/30 to-transparent">
+                      <div className="flex items-center gap-3">
+                        <div className="p-2 bg-primary/10 rounded-lg">
+                          <BarChart3 className="w-5 h-5 text-primary" />
+                        </div>
+                        <div>
+                          <h3 className="text-lg font-bold tracking-tight">Period Analytics</h3>
+                          <p className="text-xs text-muted-foreground">{startDate || "Start"} to {endDate || "End"}</p>
+                        </div>
+                      </div>
+                      <Button variant="outline" size="sm" onClick={handleDownloadInsights} className="gap-2">
+                        <Download className="w-4 h-4" /> Download Report
+                      </Button>
+                    </div>
 
-            <Button
-              variant="outline"
-              onClick={() => {
-                setStartDate("");
-                setEndDate("");
-                setPage(1);
-              }}
-            >
-              Clear
-            </Button>
+                    <div className="p-6 bg-card">
+                      {/* Top Metrics Row */}
+                      <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+                        <div className="p-5 rounded-xl border border-border/60 bg-gradient-to-br from-card to-muted/20 shadow-sm relative overflow-hidden group hover:border-primary/30 transition-colors">
+                          <div className="absolute top-0 right-0 w-20 h-20 bg-primary/5 rounded-full -mr-10 -mt-10 blur-xl group-hover:bg-primary/10 transition-colors"></div>
+                          <p className="text-xs font-bold text-muted-foreground tracking-widest uppercase mb-1 drop-shadow-sm">Total Revenue</p>
+                          <p className="text-3xl font-black text-foreground">₹{insightsData.summary.total_revenue?.toFixed(2) || "0.00"}</p>
+                          <p className="text-xs text-muted-foreground mt-2 flex items-center gap-1"><Receipt className="w-3 h-3"/> From {insightsData.summary.total_bills} bills</p>
+                        </div>
+                        
+                        <div className="p-5 rounded-xl border border-green-500/20 bg-gradient-to-br from-green-500/5 to-transparent shadow-sm relative overflow-hidden group hover:border-green-500/40 transition-colors">
+                          <div className="absolute top-0 right-0 w-20 h-20 bg-green-500/10 rounded-full -mr-10 -mt-10 blur-xl group-hover:bg-green-500/20 transition-colors"></div>
+                          <p className="text-xs font-bold text-green-700/70 tracking-widest uppercase mb-1 drop-shadow-sm">Net Profit</p>
+                          <p className="text-3xl font-black text-green-600">₹{insightsData.summary.total_profit?.toFixed(2) || "0.00"}</p>
+                          <p className="text-xs text-green-700/60 mt-2 flex items-center gap-1"><TrendingUp className="w-3 h-3"/> {(insightsData.summary.total_profit / (insightsData.summary.total_revenue || 1) * 100).toFixed(1)}% Margin</p>
+                        </div>
+
+                        <div className="p-5 rounded-xl border border-red-500/20 bg-gradient-to-br from-red-500/5 to-transparent shadow-sm relative overflow-hidden group hover:border-red-500/40 transition-colors">
+                           <div className="absolute top-0 right-0 w-20 h-20 bg-red-500/10 rounded-full -mr-10 -mt-10 blur-xl group-hover:bg-red-500/20 transition-colors"></div>
+                          <p className="text-xs font-bold text-red-700/70 tracking-widest uppercase mb-1 drop-shadow-sm">Unpaid Debt</p>
+                          <p className="text-3xl font-black text-red-600">₹{insightsData.summary.unpaid_amount?.toFixed(2) || "0.00"}</p>
+                          <p className="text-xs text-red-700/60 mt-2 flex items-center gap-1"><AlertCircle className="w-3 h-3"/> Across {insightsData.summary.unpaid_bills} unpaid bills</p>
+                        </div>
+
+                        <div className="p-5 rounded-xl border border-blue-500/20 bg-gradient-to-br from-blue-500/5 to-transparent shadow-sm relative overflow-hidden group hover:border-blue-500/40 transition-colors">
+                          <div className="absolute top-0 right-0 w-20 h-20 bg-blue-500/10 rounded-full -mr-10 -mt-10 blur-xl group-hover:bg-blue-500/20 transition-colors"></div>
+                          <p className="text-xs font-bold text-blue-700/70 tracking-widest uppercase mb-1 drop-shadow-sm">Total Bills</p>
+                          <p className="text-3xl font-black text-blue-600">{insightsData.summary.total_bills}</p>
+                          <p className="text-xs text-blue-700/60 mt-2 flex items-center gap-1"><Check className="w-3 h-3"/> Successfully Generated</p>
+                        </div>
+                      </div>
+
+                      {/* Top 10 Products Row */}
+                      {insightsData.top_products?.length > 0 && (
+                        <div>
+                          <h4 className="text-sm font-bold tracking-widest uppercase text-muted-foreground mb-4">Top Grossing Products</h4>
+                          <div className="border border-border/50 rounded-xl overflow-hidden">
+                            <Table>
+                              <TableHeader className="bg-muted/30">
+                                <TableRow>
+                                  <TableHead className="w-12 text-center">#</TableHead>
+                                  <TableHead>Product Name</TableHead>
+                                  <TableHead className="text-center">Units Sold</TableHead>
+                                  <TableHead className="text-right">Revenue</TableHead>
+                                  <TableHead className="text-right">Profit Contribution</TableHead>
+                                </TableRow>
+                              </TableHeader>
+                              <TableBody>
+                                {insightsData.top_products.map((p, idx) => (
+                                  <TableRow key={idx} className="hover:bg-muted/20 transition-colors">
+                                    <TableCell className="font-bold text-muted-foreground text-center">{idx + 1}</TableCell>
+                                    <TableCell className="font-semibold text-foreground">{p.name}</TableCell>
+                                    <TableCell className="text-center">
+                                      <Badge variant="outline" className="bg-primary/5">{p.quantity} units</Badge>
+                                    </TableCell>
+                                    <TableCell className="text-right font-mono font-bold">₹{p.revenue?.toFixed(2)}</TableCell>
+                                    <TableCell className="text-right">
+                                      <div className="flex flex-col items-end gap-1">
+                                        <span className="font-mono font-bold text-green-600">₹{p.profit?.toFixed(2)}</span>
+                                        <div className="h-1 w-16 bg-muted rounded-full overflow-hidden">
+                                          <div className="h-full bg-green-500" style={{ width: `${Math.max(10, (p.profit / insightsData.summary.total_profit) * 100)}%` }}></div>
+                                        </div>
+                                      </div>
+                                    </TableCell>
+                                  </TableRow>
+                                ))}
+                              </TableBody>
+                            </Table>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            )}
           </div>
         </Card>
       )}

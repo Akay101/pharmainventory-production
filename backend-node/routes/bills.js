@@ -93,6 +93,81 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
   }
 });
 
+// GET /api/bills/insights
+router.get("/insights", auth, requireSubscription(), async (req, res, next) => {
+  try {
+    const db = mongoose.connection.db;
+    const { start_date, end_date } = req.query;
+
+    if (!start_date && !end_date) {
+      return res.status(400).json({ detail: "Date range required for insights" });
+    }
+
+    const query = { pharmacy_id: req.user.pharmacy_id };
+    
+    // Date filter
+    query.billing_date = {};
+    if (start_date) query.billing_date.$gte = start_date;
+    if (end_date) query.billing_date.$lte = end_date;
+
+    // 1. Core Summary Metrics
+    const summaryResult = await db.collection("bills").aggregate([
+      { $match: query },
+      { 
+        $group: { 
+          _id: null, 
+          total_revenue: { $sum: "$grand_total" },
+          total_profit: { $sum: "$profit" },
+          total_bills: { $sum: 1 },
+          unpaid_bills: { 
+            $sum: { $cond: [{ $eq: ["$is_paid", false] }, 1, 0] } 
+          },
+          unpaid_amount: { 
+            $sum: { $cond: [{ $eq: ["$is_paid", false] }, "$grand_total", 0] } 
+          }
+        } 
+      }
+    ]).toArray();
+
+    // 2. Top 10 Products by Revenue
+    const topProductsResult = await db.collection("bills").aggregate([
+      { $match: query },
+      { $unwind: "$items" },
+      {
+        $group: {
+          _id: "$items.product_name",
+          total_profit: { $sum: "$items.profit" },
+          total_revenue: { $sum: "$items.item_total" },
+          total_quantity: { $sum: "$items.quantity" }
+        }
+      },
+      { $sort: { total_revenue: -1 } },
+      { $limit: 10 }
+    ]).toArray();
+
+    const summary = summaryResult.length > 0 ? summaryResult[0] : {
+      total_revenue: 0,
+      total_profit: 0,
+      total_bills: 0,
+      unpaid_bills: 0,
+      unpaid_amount: 0
+    };
+
+    res.json({
+      summary,
+      top_products: topProductsResult.map(p => ({
+        name: p._id,
+        profit: p.total_profit,
+        revenue: p.total_revenue,
+        quantity: p.total_quantity
+      }))
+    });
+
+  } catch (error) {
+    next(error);
+  }
+});
+
 // POST /api/bills
 router.post("/", auth, requireSubscription(), async (req, res, next) => {
   try {
