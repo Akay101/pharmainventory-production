@@ -57,45 +57,50 @@ router.post("/create-order", auth, async (req, res, next) => {
   }
 });
 
-router.post("/create-promo", async (req, res) => {
-  const db = mongoose.connection.db;
-  const { plan, duration_days } = req.body;
+router.post("/create-promo", async (req, res, next) => {
+  try {
+    const db = mongoose.connection.db;
+    const { plan, duration_days } = req.body;
 
-  if (!["BASIC", "ADVANCED", "AGENTIC"].includes(plan)) {
-    return res.status(400).json({ detail: "Invalid plan. Choose BASIC, ADVANCED, or AGENTIC." });
+    if (!["BASIC", "ADVANCED", "AGENTIC"].includes(plan)) {
+      return res.status(400).json({ detail: "Invalid plan. Choose BASIC, ADVANCED, or AGENTIC." });
+    }
+
+    const duration = parseInt(duration_days);
+    if (!duration || duration <= 0) {
+      return res.status(400).json({ detail: "Invalid duration_days." });
+    }
+
+    // Generate 8 character promo code
+    const code = Array.from({ length: 8 }, () =>
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"[Math.floor(Math.random() * 36)]
+    ).join("");
+
+    await db.collection("promo_codes").insertOne({
+      code,
+      plan,
+      duration_days: duration,
+      is_active: true,
+      usage_limit: 1,
+      used_count: 0,
+      created_at: new Date().toISOString()
+    });
+
+    res.json({
+      message: "Promo code successfully generated",
+      code,
+      plan,
+      duration_days: duration
+    });
+  } catch (error) {
+    next(error);
   }
-
-  const duration = parseInt(duration_days);
-  if (!duration || duration <= 0) {
-    return res.status(400).json({ detail: "Invalid duration_days." });
-  }
-
-  // Generate 8 character promo code
-  const code = Array.from({ length: 8 }, () =>
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"[Math.floor(Math.random() * 36)]
-  ).join("");
-
-  await db.collection("promo_codes").insertOne({
-    code,
-    plan,
-    duration_days: duration,
-    is_active: true,
-    usage_limit: 1,
-    used_count: 0,
-    created_at: new Date().toISOString()
-  });
-
-  res.json({
-    message: "Promo code successfully generated",
-    code,
-    plan,
-    duration_days: duration
-  });
 });
 
-router.post("/apply-code", auth, async (req, res) => {
-  const db = mongoose.connection.db;
-  const { code } = req.body;
+router.post("/apply-code", auth, async (req, res, next) => {
+  try {
+    const db = mongoose.connection.db;
+    const { code } = req.body;
 
   if (!code) {
     return res.status(400).json({ detail: "Promo code is required" });
@@ -132,6 +137,7 @@ router.post("/apply-code", auth, async (req, res) => {
     id: subId,
     user_id: req.user.id,
     pharmacy_id: req.user.pharmacy_id,
+    order_id: `promo_${code}_${subId}`, // Prevent duplicate key null error
     plan: promo.plan,
     status: "ACTIVE",
     start_date: start.toISOString(),
@@ -172,6 +178,9 @@ router.post("/apply-code", auth, async (req, res) => {
   );
 
   res.json({ message: "Subscription activated successfully via Promo Code" });
+  } catch (error) {
+    next(error);
+  }
 });
 
 router.post("/verify", auth, async (req, res, next) => {
@@ -241,7 +250,7 @@ router.post("/verify", auth, async (req, res, next) => {
       { $set: { status: "EXPIRED", updated_at: new Date().toISOString() } }
     );
 
-    // 6. Create new active sub
+    // 6. Create new active sub using upsert to avoid duplicate key crash on race conditions
     const subscription = {
       id: subscriptionId,
       user_id: req.user.id,
@@ -257,7 +266,11 @@ router.post("/verify", auth, async (req, res, next) => {
       updated_at: new Date().toISOString(),
     };
 
-    await db.collection("subscriptions").insertOne(subscription);
+    await db.collection("subscriptions").updateOne(
+      { order_id },
+      { $setOnInsert: subscription },
+      { upsert: true }
+    );
 
     // 7. Update user context
     await db.collection("users").updateOne(
