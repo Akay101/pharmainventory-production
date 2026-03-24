@@ -21,22 +21,31 @@ router.post("/create-order", auth, async (req, res, next) => {
 
     const orderId = `order_${uuidv4()}`;
 
-    const request = {
-      order_id: orderId,
-      order_amount: PLAN_CONFIG[plan].amount,
-      order_currency: "INR",
+      const safeFrontendUrl = process.env.FRONTEND_URL ? process.env.FRONTEND_URL.replace(/\/$/, "") : "";
+      const safeBackendUrl = process.env.BACKEND_URL ? process.env.BACKEND_URL.replace(/\/$/, "") : "";
 
-      customer_details: {
-        customer_id: req.user.id,
-        customer_email: req.user.email,
-        customer_phone: req.user.mobile,
-      },
-
-      order_meta: {
-        return_url: `${process.env.FRONTEND_URL}/payment-success?order_id={order_id}`,
+      const order_meta = {
+        return_url: `${safeFrontendUrl}/payment-success?order_id={order_id}`,
         plan: plan,
-      },
-    };
+      };
+
+      if (safeBackendUrl) {
+        order_meta.notify_url = `${safeBackendUrl}/api/webhook/cashfree`;
+      }
+
+      const request = {
+        order_id: orderId,
+        order_amount: PLAN_CONFIG[plan].amount,
+        order_currency: "INR",
+
+        customer_details: {
+          customer_id: req.user.id,
+          customer_email: req.user.email,
+          customer_phone: req.user.mobile,
+        },
+
+        order_meta,
+      };
 
     const response = await cashfree.PGCreateOrder(request);
     res.json({
