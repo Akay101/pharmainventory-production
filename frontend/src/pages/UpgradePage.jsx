@@ -1,10 +1,11 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import { API, useAuth } from "../App";
 import { Button } from "../components/ui/button";
 import { Card, CardContent } from "../components/ui/card";
 import { toast } from "sonner";
-import { Check, Sparkles, Zap, Shield } from "lucide-react";
+import { Check, Sparkles, Zap, Shield, LogOut } from "lucide-react";
 
 const plans = [
   {
@@ -67,7 +68,8 @@ const plans = [
 ];
 
 export default function UpgradePage() {
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
   const [loadingPlan, setLoadingPlan] = useState(null);
   const [promoCode, setPromoCode] = useState("");
   const [isApplyingPromo, setIsApplyingPromo] = useState(false);
@@ -75,6 +77,11 @@ export default function UpgradePage() {
   const currentPlanName = user?.subscription_plan;
   const currentPlan = plans.find((p) => p.name === currentPlanName);
   const currentRank = currentPlan ? currentPlan.rank : 0;
+
+  const handleLogout = () => {
+    logout();
+    navigate("/login");
+  };
 
   const handleBuy = async (plan) => {
     try {
@@ -148,6 +155,14 @@ export default function UpgradePage() {
       `}</style>
       
       <div className="min-h-screen bg-slate-50 relative overflow-hidden py-20 px-4 sm:px-6 lg:px-8 flex items-center justify-center">
+
+        {/* Header / Logout */}
+        <div className="absolute top-6 right-6 lg:right-10 z-50">
+          <Button variant="ghost" onClick={handleLogout} className="bg-white/50 backdrop-blur border border-slate-200/50 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-full px-5 py-2 font-semibold shadow-sm transition-all hover:shadow">
+            <LogOut className="w-4 h-4 mr-2" />
+            Logout
+          </Button>
+        </div>
         
         {/* Moving Gradient Background */}
         <div className="fixed inset-0 overflow-hidden pointer-events-none z-0">
@@ -244,26 +259,26 @@ export default function UpgradePage() {
           </div>
 
           {/* Promo Code Section */}
-          <div className="mt-20 max-w-md mx-auto relative z-10 animate-in fade-in slide-in-from-bottom-8 duration-700" style={{ animationDelay: "500ms" }}>
-            <Card className="bg-white/80 backdrop-blur-xl border border-slate-200/60 shadow-2xl overflow-hidden rounded-2xl">
-              <CardContent className="p-1.5">
-                <div className="flex bg-slate-50/50 p-1.5 rounded-xl border border-slate-100 shadow-inner">
+          <div className="mt-16 max-w-lg mx-auto relative z-10 animate-in fade-in slide-in-from-bottom-8 duration-700" style={{ animationDelay: "500ms" }}>
+            <Card className="bg-white/90 backdrop-blur-xl border border-white shadow-xl overflow-hidden rounded-2xl">
+              <CardContent className="p-2">
+                <div className="flex items-center gap-2 bg-white p-2 rounded-xl border border-slate-100 shadow-sm">
                   <input
                     type="text"
                     value={promoCode}
                     onChange={(e) => setPromoCode(e.target.value.toUpperCase())}
-                    placeholder="Enter promo code"
-                    className="flex-1 bg-transparent px-5 py-3 text-slate-900 font-bold focus:outline-none placeholder:text-slate-400 placeholder:font-medium tracking-widest uppercase transition-all"
+                    placeholder="ENTER PROMO CODE"
+                    className="flex-1 bg-transparent px-4 py-3 text-slate-700 font-bold focus:outline-none placeholder:text-slate-300 placeholder:font-medium tracking-widest uppercase transition-all"
                   />
                   <Button
                     onClick={handleApplyPromo}
                     disabled={isApplyingPromo}
-                    className="bg-slate-900 hover:bg-indigo-600 text-white px-8 rounded-lg shadow-md transition-all active:scale-95 font-bold"
+                    className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-8 py-6 rounded-xl shadow-none transition-all active:scale-95 font-bold border border-indigo-100/50"
                   >
                     {isApplyingPromo ? (
                       <div className="w-5 h-5 border-2 border-current border-t-transparent rounded-full animate-spin" />
                     ) : (
-                      "Apply"
+                      "Apply Code"
                     )}
                   </Button>
                 </div>

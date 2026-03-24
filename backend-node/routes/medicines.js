@@ -88,7 +88,7 @@ const calculateSimilarity = (query, text) => {
 // GET /api/medicines/search
 router.get("/search", auth, requireSubscription(), async (req, res, next) => {
   try {
-    const { q, limit = 20, fuzzy = "true" } = req.query;
+    const { q, limit = 20, fuzzy = "true", page = 1 } = req.query;
     const db = mongoose.connection.db;
     const pharmacyId = req.user.pharmacy_id;
 
@@ -100,6 +100,10 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
 
     const searchLower = q.toLowerCase();
     const parsedLimit = parseInt(limit);
+    const parsedPage = parseInt(page);
+    const skip = (parsedPage - 1) * parsedLimit;
+    // Increase internal search limit to ensure sorting works across pages for fuzzy search 
+    const internalLimit = (parsedLimit * parsedPage) + 100;
     const enableFuzzy = fuzzy === "true";
 
     // Build search conditions
@@ -236,7 +240,7 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
         },
       },
       { $sort: { relevanceScore: -1 } },
-      { $limit: parsedLimit * 3 }, // Get more for fuzzy filtering
+      { $limit: internalLimit }, // Get more for fuzzy filtering
     ];
 
     const inventoryResults = await db
@@ -318,7 +322,7 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
           short_composition2: 1,
         },
       })
-      .limit(parsedLimit * 3)
+      .limit(internalLimit)
       .toArray();
 
     // Process global results with fuzzy scoring
@@ -394,21 +398,25 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
 
         // Both same source: sort by fuzzy score
         return (b.fuzzyScore || 0) - (a.fuzzyScore || 0);
-      })
-      .slice(0, parsedLimit);
+      });
+
+    const paginatedResults = rankedResults.slice(skip, skip + parsedLimit);
+    const has_more = rankedResults.length > (skip + parsedLimit);
 
     res.json({
-      medicines: rankedResults,
+      medicines: paginatedResults,
       meta: {
         total_inventory: processedInventory.length,
         total_global: processedGlobal.length,
-        returned: rankedResults.length,
+        returned: paginatedResults.length,
+        has_more,
+        current_page: parsedPage,
         query: q,
         fuzzy_enabled: enableFuzzy,
         match_breakdown: {
-          exact: rankedResults.filter((r) => r.matchQuality === "exact").length,
-          good: rankedResults.filter((r) => r.matchQuality === "good").length,
-          fuzzy: rankedResults.filter((r) => r.matchQuality === "fuzzy").length,
+          exact: paginatedResults.filter((r) => r.matchQuality === "exact").length,
+          good: paginatedResults.filter((r) => r.matchQuality === "good").length,
+          fuzzy: paginatedResults.filter((r) => r.matchQuality === "fuzzy").length,
         },
       },
     });

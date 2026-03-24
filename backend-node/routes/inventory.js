@@ -261,4 +261,33 @@ router.get("/alerts", auth, requireSubscription(), async (req, res, next) => {
   }
 });
 
+// PATCH /api/inventory/:id/add-quantity
+router.patch("/:id/add-quantity", auth, requireSubscription(), async (req, res, next) => {
+  try {
+    const db = mongoose.connection.db;
+    const { add_quantity } = req.body;
+    
+    if (!add_quantity || isNaN(add_quantity) || Number(add_quantity) <= 0) {
+      return res.status(400).json({ detail: "Please provide a valid quantity to add (> 0)" });
+    }
+
+    const { id } = req.params;
+    const result = await db.collection("inventory").updateOne(
+      { id, pharmacy_id: req.user.pharmacy_id },
+      { 
+        $inc: { available_quantity: Number(add_quantity) },
+        $set: { updated_at: new Date().toISOString() }
+      }
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ detail: "Inventory item not found" });
+    }
+
+    res.json({ message: "Stock updated successfully" });
+  } catch (error) {
+    next(error);
+  }
+});
+
 module.exports = router;

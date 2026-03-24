@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { createPortal } from "react-dom";
 import axios from "axios";
 import { API } from "../App";
 import {
@@ -91,6 +92,11 @@ export default function PurchasesPage() {
   const [newItemRow, setNewItemRow] = useState(null);
   const [searchMedicine, setSearchMedicine] = useState("");
   const [showSuggestions, setShowSuggestions] = useState(false);
+  
+  // Infinite scroll suggestion state
+  const [suggestionPage, setSuggestionPage] = useState(1);
+  const [hasMoreSuggestions, setHasMoreSuggestions] = useState(false);
+  const [loadingSuggestions, setLoadingSuggestions] = useState(false);
 
   // Edit existing purchase
   const [editingPurchase, setEditingPurchase] = useState(null);
@@ -100,48 +106,48 @@ export default function PurchasesPage() {
 
   // Your existing state and refs are correct
   // Replace your current dropdownPosition state and updateDropdownPosition with this:
-  const [activeItemId, setActiveItemId] = useState(null); // Track which item's dropdown is active
+  // Track which item's dropdown is active
+  const [activeItemId, setActiveItemId] = useState(null); 
+  const [dropdownPosition, setDropdownPosition] = useState({ top: 0, left: 0, width: 0 });
 
-  const [dropdownPosition, setDropdownPosition] = useState({
-    top: 0,
-    left: 0,
-    width: 0,
-  });
-
-  // Use a callback ref that updates position immediately when set
   const setInputRef = (el, itemId) => {
     if (el) {
       inputRefs.current[itemId] = el;
     }
   };
 
+  const inputRefs = useRef({});
+
+  const updateDropdownPosition = (itemId) => {
+    const inputElement = inputRefs.current[itemId];
+    if (!inputElement) return;
+
+    const rect = inputElement.getBoundingClientRect();
+    const dropdownWidth = Math.max(rect.width, 480);
+
+    setDropdownPosition({
+      top: rect.bottom + 4,
+      left: rect.left,
+      width: dropdownWidth,
+    });
+  };
+
+  // Sync position initially
   useEffect(() => {
     if (activeItemId && showSuggestions) {
-      const el = inputRefs.current[activeItemId];
-      if (el) {
-        const rect = el.getBoundingClientRect();
-
-        const scrollContainer = el.closest(".overflow-x-auto");
-        const scrollLeft = scrollContainer ? scrollContainer.scrollLeft : 0;
-
-        const dropdownWidth = Math.max(rect.width, 480);
-
-        setDropdownPosition({
-          top: rect.bottom + window.scrollY + 4,
-          left: rect.left + window.scrollX - scrollLeft,
-          width: dropdownWidth,
-        });
-      }
+      // Short delay ensures DOM layout happens first
+      setTimeout(() => updateDropdownPosition(activeItemId), 0);
     }
   }, [activeItemId, showSuggestions]);
 
+  // Sync position on global scroll and window resize
   useEffect(() => {
     const handleScroll = () => {
       if (activeItemId && showSuggestions) {
         updateDropdownPosition(activeItemId);
       }
     };
-
+    // use capture phase to catch internal table scrolls
     window.addEventListener("scroll", handleScroll, true);
     window.addEventListener("resize", handleScroll);
 
@@ -150,29 +156,6 @@ export default function PurchasesPage() {
       window.removeEventListener("resize", handleScroll);
     };
   }, [activeItemId, showSuggestions]);
-
-  const inputRefs = useRef({});
-
-  // Your existing updateDropdownPosition function is correct
-  const updateDropdownPosition = (itemId) => {
-    const inputElement = inputRefs.current[itemId];
-    if (!inputElement) return;
-
-    const rect = inputElement.getBoundingClientRect();
-
-    // find nearest scroll container
-    const scrollContainer = inputElement.closest(".overflow-x-auto");
-
-    const scrollLeft = scrollContainer ? scrollContainer.scrollLeft : 0;
-
-    const dropdownWidth = Math.max(rect.width, 480);
-
-    setDropdownPosition({
-      top: rect.bottom + window.scrollY + 4,
-      left: rect.left + window.scrollX - scrollLeft,
-      width: dropdownWidth,
-    });
-  };
   // Delete dialog
   const [deleteDialog, setDeleteDialog] = useState({
     open: false,
@@ -397,34 +380,64 @@ export default function PurchasesPage() {
   }, [searchQuery, filterSupplier, startDate, endDate, sortBy, sortOrder]);
 
   // Search medicines for suggestions with better ranking
-  // REPLACE this useEffect in PurchasesPage.jsx
   useEffect(() => {
     const searchMedicines = async () => {
       if (searchMedicine.length >= 2) {
+        setLoadingSuggestions(true);
         try {
-          // Add fuzzy parameter (default true)
           const response = await axios.get(
-            `${API}/medicines/search?q=${encodeURIComponent(searchMedicine)}&limit=20&fuzzy=true`
+            `${API}/medicines/search?q=${encodeURIComponent(searchMedicine)}&limit=20&fuzzy=true&page=1`
           );
 
-          // Backend now returns sorted results - no need to re-sort
-          // Just use results as-is
           setMedicineSuggestions(response.data.medicines || []);
+          setHasMoreSuggestions(response.data.meta?.has_more || false);
+          setSuggestionPage(1);
           setShowSuggestions(true);
           setHighlightedSuggestionIndex(-1);
         } catch (error) {
           console.error("Medicine search error:", error);
+        } finally {
+          setLoadingSuggestions(false);
         }
       } else {
         setMedicineSuggestions([]);
         setShowSuggestions(false);
         setHighlightedSuggestionIndex(-1);
+        setHasMoreSuggestions(false);
+        setSuggestionPage(1);
       }
     };
 
     const debounce = setTimeout(searchMedicines, 300);
     return () => clearTimeout(debounce);
   }, [searchMedicine]);
+
+  const loadMoreSuggestions = async () => {
+    if (loadingSuggestions || !hasMoreSuggestions) return;
+    
+    setLoadingSuggestions(true);
+    try {
+      const nextPage = suggestionPage + 1;
+      const response = await axios.get(
+        `${API}/medicines/search?q=${encodeURIComponent(searchMedicine)}&limit=20&fuzzy=true&page=${nextPage}`
+      );
+      
+      setMedicineSuggestions(prev => [...prev, ...(response.data.medicines || [])]);
+      setHasMoreSuggestions(response.data.meta?.has_more || false);
+      setSuggestionPage(nextPage);
+    } catch (error) {
+      console.error("Load more medicines error:", error);
+    } finally {
+      setLoadingSuggestions(false);
+    }
+  };
+
+  const handleScrollSuggestions = (e) => {
+    const bottom = e.target.scrollHeight - e.target.scrollTop - e.target.clientHeight < 50;
+    if (bottom) {
+      loadMoreSuggestions();
+    }
+  };
 
   const fetchData = async () => {
     try {
@@ -1667,12 +1680,6 @@ export default function PurchasesPage() {
                                   setShowSuggestions(true);
                                   setActiveItemId(item.id);
                                   setHighlightedSuggestionIndex(-1);
-
-                                  // Calculate position after a small delay to ensure DOM is ready
-                                  setTimeout(
-                                    () => updateDropdownPosition(item.id),
-                                    0
-                                  );
                                 }}
                                 onBlur={(e) => {
                                   // Check if focus is moving to the suggestions dropdown
@@ -1761,7 +1768,7 @@ export default function PurchasesPage() {
                               )}
 
                               {/* Fuzzy Match Warning */}
-                              {item._inventoryMeta?.match_quality ===
+                              {/* {item._inventoryMeta?.match_quality ===
                                 "fuzzy" && (
                                 <CustomTooltip
                                   position="top"
@@ -1771,38 +1778,41 @@ export default function PurchasesPage() {
                                     ⚠️
                                   </span>
                                 </CustomTooltip>
-                              )}
+                              )} */}
                             </div>
 
                             {/* ========================================== */}
-                            {/* SUGGESTIONS DROPDOWN - THIS WAS MISSING!   */}
+                            {/* SUGGESTIONS DROPDOWN VIA PORTAL            */}
                             {/* ========================================== */}
                             {showSuggestions &&
                               activeItemId === item.id &&
-                              medicineSuggestions.length > 0 && (
+                              medicineSuggestions.length > 0 && 
+                              createPortal(
                                 <div
                                   data-suggestions-dropdown="true"
-                                  className="bg-card border border-border rounded-lg shadow-2xl overflow-y-auto"
+                                  className="bg-card border border-border rounded-lg shadow-2xl overflow-y-auto z-[99999]"
                                   style={{
                                     position: "fixed",
                                     top: dropdownPosition.top,
                                     left: dropdownPosition.left,
                                     width: dropdownPosition.width || 480,
                                     maxHeight: "300px",
-                                    zIndex: 99999, // Higher z-index
+                                    overscrollBehavior: "contain",
+                                    WebkitOverflowScrolling: "touch",
                                   }}
+                                  onScroll={handleScrollSuggestions}
                                 >
                                   {/* Match Quality Summary */}
                                   {medicineSuggestions[0]?.matchQuality && (
                                     <div className="px-3 py-2 bg-muted/50 border-b border-border text-xs text-muted-foreground flex gap-3 sticky top-0">
-                                      <span>
+                                      {/* <span>
                                         Exact:{" "}
                                         {
                                           medicineSuggestions.filter(
                                             (m) => m.matchQuality === "exact"
                                           ).length
                                         }
-                                      </span>
+                                      </span> */}
                                       <span>
                                         Good:{" "}
                                         {
@@ -1811,14 +1821,14 @@ export default function PurchasesPage() {
                                           ).length
                                         }
                                       </span>
-                                      <span>
+                                      {/* <span>
                                         Fuzzy:{" "}
                                         {
                                           medicineSuggestions.filter(
                                             (m) => m.matchQuality === "fuzzy"
                                           ).length
                                         }
-                                      </span>
+                                      </span> */}
                                     </div>
                                   )}
 
@@ -1851,38 +1861,38 @@ export default function PurchasesPage() {
                                           {/* Source Badge */}
                                           {medicine.source === "inventory" && (
                                             <span className="text-[10px] px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded-full font-medium">
-                                              IN STOCK
+                                              Inventory
                                             </span>
                                           )}
                                           {medicine.source === "global" && (
                                             <span className="text-[10px] px-1.5 py-0.5 bg-gray-100 text-gray-600 rounded-full font-medium">
-                                              GLOBAL
+                                              Not in Inventory
                                             </span>
                                           )}
 
                                           {/* Match Quality Indicator */}
-                                          {medicine.matchQuality ===
+                                          {/* {medicine.matchQuality ===
                                             "exact" && (
                                             <span className="text-[10px] px-1.5 py-0.5 bg-green-100 text-green-700 rounded-full">
                                               Exact
                                             </span>
-                                          )}
-                                          {medicine.matchQuality ===
+                                          )} */}
+                                          {/* {medicine.matchQuality ===
                                             "fuzzy" && (
                                             <span className="text-[10px] px-1.5 py-0.5 bg-yellow-100 text-yellow-700 rounded-full">
                                               Fuzzy
                                             </span>
-                                          )}
+                                          )} */}
                                         </div>
 
                                         {/* Fuzzy Score */}
-                                        {medicine.fuzzyScore &&
+                                        {/* {medicine.fuzzyScore &&
                                           medicine.fuzzyScore < 90 && (
                                             <span className="text-[10px] text-muted-foreground">
                                               {Math.round(medicine.fuzzyScore)}%
                                               match
                                             </span>
-                                          )}
+                                          )} */}
                                       </div>
 
                                       {/* Manufacturer & Composition */}
@@ -1980,7 +1990,13 @@ export default function PurchasesPage() {
                                       </div>
                                     </div>
                                   ))}
-                                </div>
+                                  {loadingSuggestions && (
+                                    <div className="p-3 text-center border-t border-border">
+                                      <Loader2 className="w-5 h-5 animate-spin mx-auto text-muted-foreground" />
+                                    </div>
+                                  )}
+                                </div>,
+                                document.body
                               )}
                           </TableCell>
                           <TableCell>

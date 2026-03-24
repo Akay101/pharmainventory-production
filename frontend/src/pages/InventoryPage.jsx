@@ -49,6 +49,7 @@ export default function InventoryPage() {
   const [showLowStock, setShowLowStock] = useState(false);
   const [showExpiringSoon, setShowExpiringSoon] = useState(false);
   const [deleteDialog, setDeleteDialog] = useState({ open: false, item: null, type: null });
+  const [addStockDialog, setAddStockDialog] = useState({ open: false, item: null, quantityToAdd: "" });
   const [productDialog, setProductDialog] = useState(false);
   const [newProduct, setNewProduct] = useState({
     name: "",
@@ -132,6 +133,23 @@ export default function InventoryPage() {
       await fetchInventory(pagination.page);
     } catch (error) {
       toast.error(error.response?.data?.detail || "Failed to delete inventory item");
+    }
+  };
+
+  const handleAddStock = async () => {
+    if (!addStockDialog.quantityToAdd || Number(addStockDialog.quantityToAdd) <= 0) {
+      toast.error("Please enter a valid quantity greater than 0");
+      return;
+    }
+    try {
+      await axios.patch(`${API}/inventory/${addStockDialog.item.id}/add-quantity`, {
+        add_quantity: Number(addStockDialog.quantityToAdd)
+      });
+      toast.success("Stock increased successfully");
+      setAddStockDialog({ open: false, item: null, quantityToAdd: "" });
+      await fetchInventory(pagination.page);
+    } catch (error) {
+      toast.error(error.response?.data?.detail || "Failed to update stock");
     }
   };
 
@@ -431,13 +449,24 @@ export default function InventoryPage() {
                         <Badge className="bg-primary/20 text-primary border-primary/50">In Stock</Badge>
                       )}
                     </TableCell>
-                    <TableCell>
+                    <TableCell className="flex gap-2">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="text-primary hover:text-primary hover:bg-primary/10"
+                        onClick={() => setAddStockDialog({ open: true, item, quantityToAdd: "" })}
+                        title="Add Stock"
+                        data-testid={`add-stock-${item.id}`}
+                      >
+                        <Plus className="w-4 h-4" />
+                      </Button>
                       <Button
                         variant="ghost"
                         size="icon"
                         className="text-destructive hover:text-destructive hover:bg-destructive/10"
                         onClick={() => setDeleteDialog({ open: true, item, type: "inventory" })}
                         data-testid={`delete-inventory-${item.id}`}
+                        title="Delete Item"
                       >
                         <Trash2 className="w-4 h-4" />
                       </Button>
@@ -575,19 +604,53 @@ export default function InventoryPage() {
                   onClick={() => handleDeleteProduct(false)}
                   className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
                 >
-                  Delete Product Only
-                </AlertDialogAction>
-                <AlertDialogAction
-                  onClick={() => handleDeleteProduct(true)}
-                  className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                >
-                  Delete with Inventory
-                </AlertDialogAction>
-              </>
-            )}
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </div>
-  );
-}
+                    Delete Product Only
+                  </AlertDialogAction>
+                  <AlertDialogAction
+                    onClick={() => handleDeleteProduct(true)}
+                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                  >
+                    Delete with Inventory
+                  </AlertDialogAction>
+                </>
+              )}
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        {/* Add Stock Dialog */}
+        <Dialog open={addStockDialog.open} onOpenChange={(open) => setAddStockDialog({ ...addStockDialog, open })}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Quick Add Stock</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4 pt-4">
+              <div className="p-3 bg-muted/50 rounded-lg border border-border">
+                <p className="text-sm">
+                  <strong>{addStockDialog.item?.product_name}</strong>
+                  <br/>
+                  <span className="text-muted-foreground">Batch: {addStockDialog.item?.batch_no}</span>
+                  <br/>
+                  <span className="text-primary font-medium mt-1 inline-block">Current Stock: {addStockDialog.item?.available_quantity} units</span>
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label>Quantity to Add (Units) *</Label>
+                <Input
+                  type="number"
+                  placeholder="e.g. 50"
+                  value={addStockDialog.quantityToAdd}
+                  onChange={(e) => setAddStockDialog({ ...addStockDialog, quantityToAdd: e.target.value })}
+                  min="1"
+                  autoFocus
+                />
+              </div>
+              <Button onClick={handleAddStock} className="w-full btn-primary font-bold">
+                Update Stock
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+      </div>
+    );
+  }
