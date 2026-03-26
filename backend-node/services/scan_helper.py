@@ -7,25 +7,29 @@ import os
 import uuid
 import asyncio
 
-async def scan_image_with_emergent(image_path: str, api_key: str):
+async def scan_image_with_emergent(image_paths: list, api_key: str):
     """Scan using Emergent integrations library."""
     from emergentintegrations.llm.chat import LlmChat, UserMessage, ImageContent
     
-    # Read the image file
-    with open(image_path, 'rb') as f:
-        image_data = f.read()
+    image_contents = []
+    for image_path in image_paths:
+        with open(image_path, 'rb') as f:
+            image_data = f.read()
+            image_base64 = base64.b64encode(image_data).decode('utf-8')
+            image_contents.append(ImageContent(image_base64=image_base64))
     
-    image_base64 = base64.b64encode(image_data).decode('utf-8')
-    
-    prompt = """Analyze this medicine/pharmaceutical product image and extract product information.
-    
-Return a JSON object with these fields (use null if not visible):
+    prompt = """Analyze the provided medicine/pharmaceutical product images. These are images of the SAME single product from different angles. Extract the product information by combining details visible across the multiple images.
+
+CRITICAL INSTRUCTIONS FOR MISSING DATA:
+If "manufacturer" or "salt_composition" are NOT clearly visible on the image, you MUST use your own medical knowledge to autofill them based on the "product_name". Do not leave them empty if you can identify the product!
+
+Return a JSON object with these fields (use null if not visible unless autofill is required):
 {
   "product_name": "full product name",
-  "manufacturer": "manufacturer/company name",
-  "salt_composition": "active ingredients/composition",
+  "manufacturer": "company name (MUST autofill from internal knowledge if not visible)",
+  "salt_composition": "active ingredients (MUST autofill from internal knowledge if not visible)",
   "batch_no": "batch/lot number",
-  "expiry_date": "expiry date in YYYY-MM-DD format",
+  "expiry_date": "expiry date strictly in YYYY-MM-DD format (use last day of month if only MM/YY is given)",
   "mrp": "MRP as number only (no currency symbol)",
   "pack_size": "pack size description (e.g., '10 tablets', '100ml')",
   "pack_type": "Strip/Bottle/Tube/Box/Vial/Syrup/Cream/Injection",
@@ -45,31 +49,27 @@ Important: Only return valid JSON, no other text."""
     )
     
     chat.with_model("gemini", "gemini-2.0-flash")
-    image_content = ImageContent(image_base64=image_base64)
-    user_msg = UserMessage(text=prompt, file_contents=[image_content])
+    user_msg = UserMessage(text=prompt, file_contents=image_contents)
     
     response = await chat.send_message(user_msg)
     return response
 
 
-def scan_image_with_google(image_path: str, api_key: str):
+def scan_image_with_google(image_paths: list, api_key: str):
     from google import genai
     from google.genai import types
 
     client = genai.Client(api_key=api_key)
 
-    with open(image_path, "rb") as f:
-        image_bytes = f.read()
+    prompt = """Analyze the provided medicine/pharmaceutical product images. These are images of the SAME single product from different angles. Extract the product information by combining details visible across the multiple images.
 
-    prompt = """Analyze this medicine/pharmaceutical product image and extract product information.
-
-Return a JSON object with these fields (use null if not visible):
+Return a JSON object with these fields (use null if not visible unless autofill is required):
 {
   "product_name": "full product name",
-  "manufacturer": "manufacturer/company name",
-  "salt_composition": "active ingredients/composition",
+  "manufacturer": "manufacturer/company name. If not visible but you know it based on the product name, autofill it.",
+  "salt_composition": "active ingredients/composition. If not visible but you know it based on the product name, autofill it.",
   "batch_no": "batch/lot number",
-  "expiry_date": "expiry date in YYYY-MM-DD format",
+  "expiry_date": "expiry date strictly in YYYY-MM-DD format (use last day of month if only MM/YY is given)",
   "mrp": "MRP as number only (no currency symbol)",
   "pack_size": "pack size description (e.g., '10 tablets', '100ml')",
   "pack_type": "Strip/Bottle/Tube/Box/Vial/Syrup/Cream/Injection",
@@ -80,15 +80,19 @@ Return a JSON object with these fields (use null if not visible):
 Important: Only return valid JSON, no other text.
 """
 
+    contents = [prompt]
+    for image_path in image_paths:
+        with open(image_path, "rb") as f:
+            contents.append(
+                types.Part.from_bytes(
+                    data=f.read(),
+                    mime_type="image/webp" if image_path.lower().endswith(".webp") else "image/png"
+                )
+            )
+
     response = client.models.generate_content(
         model="gemini-2.0-flash",
-        contents=[
-            prompt,
-            types.Part.from_bytes(
-                data=image_bytes,
-                mime_type="image/webp" if image_path.lower().endswith(".webp") else "image/png"
-            )
-        ]
+        contents=contents
     )
 
     return response.text
@@ -97,16 +101,16 @@ Important: Only return valid JSON, no other text.
 
 
 
-async def scan_image_async(image_path: str, api_key: str):
+async def scan_image_async(image_paths: list, api_key: str):
     """Scan a medicine image and extract product information."""
     try:
         # Determine which API to use based on key format
         if api_key.startswith('sk-emergent'):
             # Use Emergent integrations
-            response = await scan_image_with_emergent(image_path, api_key)
+            response = await scan_image_with_emergent(image_paths, api_key)
         elif api_key.startswith('AIza'):
             # Use direct Google Generative AI SDK
-            response = scan_image_with_google(image_path, api_key)
+            response = scan_image_with_google(image_paths, api_key)
         else:
             return {"success": False, "error": "Unknown API key format. Use EMERGENT_LLM_KEY (sk-emergent...) or GEMINI_API_KEY (AIza...)"}
         
@@ -177,18 +181,18 @@ async def scan_image_async(image_path: str, api_key: str):
         return {"success": False, "error": str(e)}
 
 
-def scan_image(image_path: str, api_key: str):
+def scan_image(image_paths: list, api_key: str):
     """Synchronous wrapper for scan_image_async."""
-    return asyncio.run(scan_image_async(image_path, api_key))
+    return asyncio.run(scan_image_async(image_paths, api_key))
 
 
 if __name__ == '__main__':
     if len(sys.argv) < 3:
-        print(json.dumps({"success": False, "error": "Usage: scan_helper.py <image_path> <api_key>"}))
+        print(json.dumps({"success": False, "error": "Usage: scan_helper.py <api_key> <image_path1> [image_path2...]"}))
         sys.exit(1)
     
-    image_path = sys.argv[1]
-    api_key = sys.argv[2]
+    api_key = sys.argv[1]
+    image_paths = sys.argv[2:]
     
-    result = scan_image(image_path, api_key)
+    result = scan_image(image_paths, api_key)
     print(json.dumps(result))

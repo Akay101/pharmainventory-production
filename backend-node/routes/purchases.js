@@ -552,11 +552,11 @@ router.post(
   "/scan-image",
   auth,
   requireSubscription(),
-  upload.single("file"),
+  upload.array("files", 10),
   async (req, res, next) => {
     try {
-      if (!req.file) {
-        return res.status(400).json({ detail: "No image provided" });
+      if (!req.files || req.files.length === 0) {
+        return res.status(400).json({ detail: "No images provided" });
       }
 
       const { GoogleGenerativeAI } = require("@google/generative-ai");
@@ -581,19 +581,24 @@ router.post(
       // Use Python helper for both Emergent key and direct Gemini key
       // The Python helper now supports both key formats
       if (apiKey.startsWith("sk-emergent") || apiKey.startsWith("AIza")) {
-        // Save the uploaded file temporarily
+        // Save the uploaded files temporarily
         const tempDir = "/tmp";
-        const tempFile = path.join(
-          tempDir,
-          `scan_${Date.now()}_${Math.random().toString(36).slice(2)}.${req.file.mimetype.split("/")[1] || "png"}`
-        );
-        fs.writeFileSync(tempFile, req.file.buffer);
+        const tempFiles = [];
+        for (const file of req.files) {
+          const tempFile = path.join(
+            tempDir,
+            `scan_${Date.now()}_${Math.random().toString(36).slice(2)}.${file.mimetype.split("/")[1] || "png"}`
+          );
+          fs.writeFileSync(tempFile, file.buffer);
+          tempFiles.push(tempFile);
+        }
 
         try {
           // Call Python helper script
           const helperPath = path.join(__dirname, "../services/scan_helper.py");
+          const fileArgs = tempFiles.map(f => `"${f}"`).join(" ");
           const result = execSync(
-            `"${pythonPath}" "${helperPath}" "${tempFile}" "${apiKey}"`,
+            `"${pythonPath}" "${helperPath}" "${apiKey}" ${fileArgs}`,
             {
               timeout: 120000,
               encoding: "utf-8",
@@ -604,8 +609,10 @@ router.post(
           // Parse the result
           const scanResult = JSON.parse(result.trim());
 
-          // Clean up temp file
-          fs.unlinkSync(tempFile);
+          // Clean up temp files
+          for (const tempFile of tempFiles) {
+            try { fs.unlinkSync(tempFile); } catch (e) {}
+          }
 
           if (!scanResult.success) {
             return res.status(400).json({
@@ -616,10 +623,10 @@ router.post(
 
           return res.json(scanResult);
         } catch (execError) {
-          // Clean up temp file on error
-          try {
-            fs.unlinkSync(tempFile);
-          } catch (e) {}
+          // Clean up temp files on error
+          for (const tempFile of tempFiles) {
+            try { fs.unlinkSync(tempFile); } catch (e) {}
+          }
           console.error("Scan helper error:", execError.message);
           return res.status(500).json({
             detail:
@@ -646,16 +653,16 @@ router.post(
   }
 );
 
-//POST /api/purchases/scan-product
+//POST /api/purchases/scan-bill
 router.post(
   "/scan-bill",
   auth,
   requireSubscription(),
-  upload.single("file"),
+  upload.array("files", 10),
   async (req, res) => {
     try {
-      if (!req.file) {
-        return res.status(400).json({ detail: "No image provided" });
+      if (!req.files || req.files.length === 0) {
+        return res.status(400).json({ detail: "No images provided" });
       }
 
       const { execSync } = require("child_process");
@@ -671,17 +678,22 @@ router.post(
         });
       }
 
-      const tempFile = path.join("/tmp", `bill_${Date.now()}.png`);
-
-      fs.writeFileSync(tempFile, req.file.buffer);
+      const tempFiles = [];
+      const tempDir = "/tmp";
+      for (const file of req.files) {
+        const tempFile = path.join(tempDir, `bill_${Date.now()}_${Math.random().toString(36).slice(2)}.png`);
+        fs.writeFileSync(tempFile, file.buffer);
+        tempFiles.push(tempFile);
+      }
 
       const helperPath = path.join(
         __dirname,
         "../services/scan_purchase_bill.py"
       );
 
+      const fileArgs = tempFiles.map(f => `"${f}"`).join(" ");
       const result = execSync(
-        `"${pythonPath}" "${helperPath}" "${tempFile}" "${apiKey}"`,
+        `"${pythonPath}" "${helperPath}" "${apiKey}" ${fileArgs}`,
         {
           timeout: 120000,
           encoding: "utf-8",
@@ -689,7 +701,9 @@ router.post(
         }
       );
 
-      fs.unlinkSync(tempFile);
+      for (const tempFile of tempFiles) {
+        try { fs.unlinkSync(tempFile); } catch(e) {}
+      }
 
       return res.json(JSON.parse(result));
     } catch (error) {

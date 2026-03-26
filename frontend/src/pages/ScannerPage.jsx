@@ -29,6 +29,7 @@ import {
   ShoppingCart,
   Trash2,
   Edit2,
+  Sparkles
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -47,6 +48,14 @@ export default function ScannerPage() {
   const [invoiceNo, setInvoiceNo] = useState("");
 
   const [scanMode, setScanMode] = useState("product"); // "product" | "bill"
+  const [selectedFiles, setSelectedFiles] = useState([]);
+  const [previewUrls, setPreviewUrls] = useState([]);
+
+  useEffect(() => {
+    return () => {
+      previewUrls.forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, [previewUrls]);
 
   useEffect(() => {
     const token = localStorage.getItem("pharmalogy_token");
@@ -65,93 +74,69 @@ export default function ScannerPage() {
     }
   };
 
-  //bill upload handler
-  const handleBillUpload = async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
+  const formatDateForInput = (dateStr) => {
+    if (!dateStr) return "";
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return dateStr;
+    
+    // Handle MM/YY or MM/YYYY format
+    const mmYyMatch = dateStr.match(/^(\d{2})[/.-](\d{2}|\d{4})$/);
+    if (mmYyMatch) {
+      const month = mmYyMatch[1];
+      let year = mmYyMatch[2];
+      if (year.length === 2) year = "20" + year; // Assume 20xx
+      
+      // Get last day of the month
+      const lastDay = new Date(year, month, 0).getDate();
+      return `${year}-${month}-${String(lastDay).padStart(2, '0')}`;
+    }
+    
+    // Native date parsing
+    const d = new Date(dateStr);
+    if (!isNaN(d.getTime())) {
+      return d.toISOString().split("T")[0];
+    }
+    return dateStr;
+  };
 
+  // Unified file change handler (stages files)
+  const handleFileChange = (e) => {
+    const files = Array.from(e.target.files);
+    if (files.length === 0) return;
+
+    setSelectedFiles((prev) => [...prev, ...files]);
+
+    const newUrls = files.map((f) => URL.createObjectURL(f));
+    setPreviewUrls((prev) => [...prev, ...newUrls]);
+
+    // reset inputs
+    if (fileInputRef.current) fileInputRef.current.value = "";
+    if (billInputRef.current) billInputRef.current.value = "";
+  };
+
+  const handleRemoveFile = (index) => {
+    URL.revokeObjectURL(previewUrls[index]);
+    setSelectedFiles((prev) => prev.filter((_, i) => i !== index));
+    setPreviewUrls((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  // Perform the bulk upload
+  const handleConfirmAndAnalyze = async () => {
+    if (selectedFiles.length === 0) return;
     setScanning(true);
 
     try {
       const formData = new FormData();
-      formData.append("file", file);
+      selectedFiles.forEach((file) => {
+        formData.append("files", file);
+      });
 
-      const response = await axios.post(
-        `${API}/purchases/scan-bill`,
-        formData,
-        {
-          headers: { "Content-Type": "multipart/form-data" },
-        }
-      );
+      const endpoint = scanMode === "product" ? "/purchases/scan-image" : "/purchases/scan-bill";
+      const response = await axios.post(`${API}${endpoint}`, formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
 
       if (response.data.success) {
-        const data = response.data.purchase_data;
-
-        // Auto set invoice
-        if (data.invoice_no) setInvoiceNo(data.invoice_no);
-
-        // Try auto match supplier by name
-        const matchedSupplier = suppliers.find((s) =>
-          s.name
-            .toLowerCase()
-            .includes((data.supplier_name || "").toLowerCase())
-        );
-
-        if (matchedSupplier) {
-          setSelectedSupplier(matchedSupplier.id);
-        }
-
-        // Map items to scannedItems format
-        const mappedItems = (data.items || []).map((item) => ({
-          id: Date.now() + Math.random(),
-          product_name: item.product_name || "",
-          manufacturer: "",
-          salt_composition: "",
-          pack_type: "Strip",
-          batch_no: item.batch_no || "",
-          hsn_no: item.hsn_no || "",
-          expiry_date: item.expiry_date || "",
-          pack_quantity: item.quantity || 1,
-          units_per_pack: 1,
-          rate_pack: item.rate_pack || 0,
-          mrp_pack: item.mrp || 0,
-          confidence: 85,
-        }));
-
-        setScannedItems(mappedItems);
-
-        toast.success(`Bill scanned: ${mappedItems.length} items detected`);
-      } else {
-        toast.error("Failed to scan bill");
-      }
-    } catch (error) {
-      toast.error(error.response?.data?.detail || "Failed to scan bill");
-    }
-
-    setScanning(false);
-    if (billInputRef.current) billInputRef.current.value = "";
-  };
-
-  const handleFileSelect = async (e) => {
-    const files = Array.from(e.target.files);
-    if (files.length === 0) return;
-
-    setScanning(true);
-
-    for (const file of files) {
-      try {
-        const formData = new FormData();
-        formData.append("file", file);
-
-        const response = await axios.post(
-          `${API}/purchases/scan-image`,
-          formData,
-          {
-            headers: { "Content-Type": "multipart/form-data" },
-          }
-        );
-
-        if (response.data.success) {
+        if (scanMode === "product") {
           const scanned = response.data.scanned_product;
           setScannedItems((prev) => [
             ...prev,
@@ -163,7 +148,7 @@ export default function ScannerPage() {
               pack_type: scanned.pack_type || "Strip",
               batch_no: scanned.batch_no || "",
               hsn_no: scanned.hsn_no || "",
-              expiry_date: scanned.expiry_date || "",
+              expiry_date: formatDateForInput(scanned.expiry_date),
               pack_quantity: 1, // Packs purchased
               units_per_pack: scanned.units_per_pack || 1,
               rate_pack: scanned.purchase_price || 0, // Rate per pack
@@ -171,23 +156,50 @@ export default function ScannerPage() {
               confidence: scanned.confidence || 75,
             },
           ]);
-          toast.success(
-            `Scanned: ${scanned.product_name || "Product detected"}`
-          );
+          toast.success(`Scanned: ${scanned.product_name || "Product detected"}`);
         } else {
-          toast.error("Failed to scan - no product data found");
+          const data = response.data.purchase_data;
+          if (data.invoice_no) setInvoiceNo(data.invoice_no);
+
+          const matchedSupplier = suppliers.find((s) =>
+            s.name.toLowerCase().includes((data.supplier_name || "").toLowerCase())
+          );
+          if (matchedSupplier) setSelectedSupplier(matchedSupplier.id);
+
+          const mappedItems = (data.items || []).map((item) => ({
+            id: Date.now() + Math.random(),
+            product_name: item.product_name || "",
+            manufacturer: item.manufacturer || "",
+            salt_composition: item.salt_composition || "",
+            pack_type: "Strip",
+            batch_no: item.batch_no || "",
+            hsn_no: item.hsn_no || "",
+            expiry_date: formatDateForInput(item.expiry_date),
+            pack_quantity: item.quantity || 1,
+            units_per_pack: 1,
+            rate_pack: item.rate_pack || 0,
+            mrp_pack: item.mrp || 0,
+            confidence: 85,
+          }));
+
+          setScannedItems((prev) => [...prev, ...mappedItems]);
+          toast.success(`Bill scanned: ${mappedItems.length} items detected`);
         }
-      } catch (error) {
-        toast.error(
-          `Failed to scan ${file.name}: ${error.response?.data?.detail || error.message}`
-        );
+
+        // Clean up staged files on success
+        setSelectedFiles([]);
+        setPreviewUrls([]);
+        if (scanMode === "product") {
+            setScanMode("product"); // Force a tiny re-render or keep user on product view
+        }
+      } else {
+        toast.error("Failed to extract data");
       }
+    } catch (error) {
+      toast.error(`Failed to scan: ${error.response?.data?.detail || error.message}`);
     }
 
     setScanning(false);
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
-    }
   };
 
   const handleUpdateItem = (id, field, value) => {
@@ -334,7 +346,7 @@ export default function ScannerPage() {
             <input
               type="file"
               ref={fileInputRef}
-              onChange={handleFileSelect}
+              onChange={handleFileChange}
               accept="image/jpeg,image/png,image/webp"
               multiple
               className="hidden"
@@ -343,8 +355,9 @@ export default function ScannerPage() {
             <input
               type="file"
               ref={billInputRef}
-              onChange={handleBillUpload}
+              onChange={handleFileChange}
               accept="image/jpeg,image/png,image/webp"
+              multiple
               className="hidden"
             />
 
@@ -353,60 +366,117 @@ export default function ScannerPage() {
               <div className="flex justify-center gap-2 mb-4">
                 <Button
                   variant={scanMode === "product" ? "default" : "outline"}
-                  onClick={() => setScanMode("product")}
+                  onClick={() => {
+                    setScanMode("product");
+                    setSelectedFiles([]);
+                    setPreviewUrls([]);
+                  }}
                   size="sm"
+                  disabled={scanning}
                 >
                   Scan Products
                 </Button>
 
                 <Button
                   variant={scanMode === "bill" ? "default" : "outline"}
-                  onClick={() => setScanMode("bill")}
+                  onClick={() => {
+                    setScanMode("bill");
+                    setSelectedFiles([]);
+                    setPreviewUrls([]);
+                  }}
                   size="sm"
+                  disabled={scanning}
                 >
                   Scan Purchase Bill
                 </Button>
               </div>
 
-              <div className="w-20 h-20 mx-auto rounded-full bg-primary/20 flex items-center justify-center">
-                {scanning ? (
-                  <Loader2 className="w-10 h-10 text-primary animate-spin" />
-                ) : (
-                  <Camera className="w-10 h-10 text-primary" />
-                )}
-              </div>
-
-              {scanMode === "product" ? (
-                <>
-                  <h2 className="text-xl font-bold">Scan Products</h2>
-                  <p className="text-sm text-muted-foreground">
-                    Upload medicine packaging to auto-detect details
-                  </p>
-
-                  <Button
-                    className="btn-primary"
-                    onClick={() => fileInputRef.current?.click()}
-                    disabled={scanning}
-                  >
-                    <Upload className="w-4 h-4 mr-2" />
-                    Upload Product Images
-                  </Button>
-                </>
+              {scanning ? (
+                <div className="flex flex-col items-center justify-center space-y-6 py-6">
+                  {/* Glowing AI Spinner */}
+                  <div className="relative w-24 h-24 flex items-center justify-center">
+                    <div className="absolute w-full h-full rounded-full border-t-2 border-r-2 border-primary animate-spin duration-1000"></div>
+                    <div className="absolute w-16 h-16 rounded-full border-b-2 border-l-2 border-primary/50 animate-[spin_1.5s_linear_infinite_reverse]"></div>
+                    <Sparkles className="w-8 h-8 text-primary animate-pulse" />
+                    <div className="absolute w-full h-full bg-primary/10 rounded-full animate-ping opacity-20"></div>
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-bold bg-gradient-to-r from-primary to-primary/50 bg-clip-text text-transparent animate-pulse">
+                      AI is analyzing images...
+                    </h3>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Extracting product details reliably
+                    </p>
+                  </div>
+                </div>
               ) : (
                 <>
-                  <h2 className="text-xl font-bold">Scan Purchase Bill</h2>
-                  <p className="text-sm text-muted-foreground">
-                    Upload wholesale invoice to auto-create full purchase
-                  </p>
+                  <div className="w-16 h-16 mx-auto rounded-full bg-primary/10 flex items-center justify-center mb-2">
+                    <Camera className="w-8 h-8 text-primary" />
+                  </div>
+                  
+                  {scanMode === "product" ? (
+                    <>
+                      <h2 className="text-xl font-bold">Scan Product Images</h2>
+                      <p className="text-sm text-muted-foreground mb-4">
+                        Upload one or multiple images for a <b>single product</b> to extract complete details (front, back, batch info).
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <h2 className="text-xl font-bold">Scan Invoice Images</h2>
+                      <p className="text-sm text-muted-foreground mb-4">
+                        Upload all pages or portions of a <b>single purchase bill</b>.
+                      </p>
+                    </>
+                  )}
 
-                  <Button
-                    className="btn-primary"
-                    onClick={() => billInputRef.current?.click()}
-                    disabled={scanning}
-                  >
-                    <Upload className="w-4 h-4 mr-2" />
-                    Upload Bill Image
-                  </Button>
+                  {/* Staged Images Preview */}
+                  {previewUrls.length > 0 && (
+                    <div className="flex flex-wrap gap-2 justify-center mb-4 mt-4 bg-muted/30 p-3 rounded-lg border border-white/5">
+                      {previewUrls.map((url, i) => (
+                        <div key={i} className="relative group w-16 h-16 rounded-md overflow-hidden ring-1 ring-border shadow-sm">
+                          <img src={url} alt={`preview-${i}`} className="w-full h-full object-cover" />
+                          <button
+                            className="absolute top-0 right-0 p-1 bg-black/60 text-white hover:bg-destructive rounded-bl-sm backdrop-blur-sm transition-colors"
+                            onClick={() => handleRemoveFile(i)}
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </div>
+                      ))}
+                      <button 
+                        className="w-16 h-16 flex flex-col items-center justify-center border border-dashed border-primary/50 text-primary hover:bg-primary/10 transition-colors rounded-md text-xs font-medium"
+                        onClick={() => scanMode === "product" ? fileInputRef.current?.click() : billInputRef.current?.click()}
+                      >
+                        <Plus className="w-4 h-4 mb-1" />
+                        Add
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Actions */}
+                  {selectedFiles.length === 0 ? (
+                    <Button
+                      className="btn-primary"
+                      onClick={() =>
+                        scanMode === "product"
+                          ? fileInputRef.current?.click()
+                          : billInputRef.current?.click()
+                      }
+                    >
+                      <Upload className="w-4 h-4 mr-2" />
+                      Select Images
+                    </Button>
+                  ) : (
+                    <Button
+                      className="btn-primary w-full animate-in fade-in slide-in-from-bottom-2"
+                      onClick={handleConfirmAndAnalyze}
+                    >
+                      <Sparkles className="w-4 h-4 mr-2" />
+                      Confirm & Extract Details
+                    </Button>
+                  )}
                 </>
               )}
             </div>
