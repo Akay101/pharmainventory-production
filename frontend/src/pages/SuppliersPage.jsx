@@ -271,6 +271,7 @@ export default function SuppliersPage() {
             {suppliers.map((supplier) => (
               <Card
                 key={supplier.id}
+                id={`record-${supplier.id}`}
                 className="bg-card/50 backdrop-blur-sm border-white/5 hover:border-primary/20 transition-colors"
                 data-testid={`supplier-card-${supplier.id}`}
               >

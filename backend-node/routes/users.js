@@ -9,6 +9,7 @@ const { sendOTPEmail } = require("../services/email");
 const { uploadToR2 } = require("../services/r2");
 
 const { requireSubscription } = require("../middleware/subscription");
+const { logActivity } = require("../utils/activityLogger");
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -58,6 +59,8 @@ router.post(
         created_at: new Date().toISOString(),
       };
       await db.collection("users").insertOne(userData);
+
+      await logActivity(db, req.user.pharmacy_id, req.user.id, req.user.name, "CREATE", "USERS", userId, `Added new staff member ${name}`, `/users`);
 
       const emailSent = await sendOTPEmail(email, name, otp);
 
@@ -154,6 +157,7 @@ router.delete(
       }
 
       await db.collection("users").deleteOne({ id: user_id });
+      await logActivity(db, req.user.pharmacy_id, req.user.id, req.user.name, "DELETE", "USERS", user_id, `Removed staff member ${user.name}`, `/users`);
       res.json({ message: "User deleted" });
     } catch (error) {
       next(error);
@@ -265,6 +269,8 @@ router.post(
           { id: req.user.id },
           { projection: { _id: 0, password_hash: 0, password: 0, otp: 0 } }
         );
+
+      await logActivity(db, req.user.pharmacy_id, req.user.id, req.user.name, "UPDATE", "USERS", req.user.id, `Updated their profile`, `/settings`);
 
       res.json({ message: "Profile updated", user: updatedUser });
     } catch (error) {

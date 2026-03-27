@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Outlet, NavLink, useNavigate } from "react-router-dom";
+import { Outlet, NavLink, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../App";
 import { Button } from "./ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "./ui/avatar";
@@ -35,7 +35,10 @@ import {
   Moon,
   PanelLeftClose,
   PanelLeft,
+  Activity,
 } from "lucide-react";
+
+import RecentActivitySidebar from "./RecentActivitySidebar";
 
 const navItems = [
   { path: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -196,6 +199,36 @@ export default function DashboardLayout() {
     return stored ? stored === 'dark' : true;
   });
 
+  const [activityOpen, setActivityOpen] = useState(() => {
+    const stored = localStorage.getItem('activityOpen');
+    return stored ? stored === 'true' : window.innerWidth >= 1024;
+  });
+
+  const location = useLocation();
+
+  useEffect(() => {
+    if (location.state?.highlightId) {
+      const id = location.state.highlightId;
+      let attempts = 0;
+      const interval = setInterval(() => {
+        const el = document.getElementById(`record-${id}`);
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          el.classList.add('bg-primary/20', 'transition-colors', 'duration-1000');
+          setTimeout(() => {
+            el.classList.remove('bg-primary/20');
+          }, 2000);
+          clearInterval(interval);
+        } else if (attempts > 10) {
+          clearInterval(interval);
+        }
+        attempts++;
+      }, 500);
+      
+      return () => clearInterval(interval);
+    }
+  }, [location.state?.highlightId]);
+
   useEffect(() => {
     // Apply theme to document
     if (isDark) {
@@ -215,6 +248,12 @@ export default function DashboardLayout() {
     const newState = !sidebarCollapsed;
     setSidebarCollapsed(newState);
     localStorage.setItem('sidebarCollapsed', String(newState));
+  };
+
+  const toggleActivity = () => {
+    const newState = !activityOpen;
+    setActivityOpen(newState);
+    localStorage.setItem('activityOpen', String(newState));
   };
 
   const handleLogout = () => {
@@ -276,6 +315,16 @@ export default function DashboardLayout() {
                 <span className="absolute top-1 right-1 w-2 h-2 bg-destructive rounded-full"></span>
               </Button>
 
+              <Button 
+                variant="ghost" 
+                size="icon" 
+                onClick={toggleActivity}
+                className={`relative ${activityOpen ? 'bg-primary/10 text-primary' : ''}`}
+                title="Recent Activity"
+              >
+                <Activity className="w-5 h-5" />
+              </Button>
+
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button variant="ghost" className="flex items-center gap-2" data-testid="user-menu-btn">
@@ -306,9 +355,26 @@ export default function DashboardLayout() {
         </header>
 
         {/* Page Content */}
-        <main className="flex-1 p-4 md:p-6 lg:p-8 overflow-y-auto">
-          <Outlet />
-        </main>
+        <div className="flex-1 relative flex overflow-hidden">
+          <main className="flex-1 p-4 md:p-6 lg:p-8 overflow-y-auto w-full">
+            <Outlet />
+          </main>
+
+          {/* Activity Sidebar Backdrop */}
+          {activityOpen && (
+            <div 
+              className="fixed inset-0 z-40 bg-background/40 backdrop-blur-sm transition-opacity" 
+              onClick={() => setActivityOpen(false)}
+            />
+          )}
+
+          {/* Activity Sidebar overlay */}
+          <div className={`fixed right-0 top-0 bottom-0 z-50 shadow-2xl transition-transform duration-300 transform ${
+            activityOpen ? "translate-x-0" : "translate-x-full"
+          }`}>
+            <RecentActivitySidebar open={activityOpen} onClose={() => setActivityOpen(false)} />
+          </div>
+        </div>
       </div>
     </div>
   );

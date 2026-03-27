@@ -477,6 +477,7 @@ export default function CustomersPage() {
               customers.map((customer) => (
                 <TableRow
                   key={customer.id}
+                  id={`record-${customer.id}`}
                   className="cursor-pointer"
                   onClick={() => handleViewCustomer(customer)}
                   data-testid={`customer-row-${customer.id}`}

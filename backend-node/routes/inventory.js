@@ -2,8 +2,8 @@ const express = require("express");
 const router = express.Router();
 const mongoose = require("mongoose");
 const { auth } = require("../middleware/auth");
-
 const { requireSubscription } = require("../middleware/subscription");
+const { logActivity } = require("../utils/activityLogger");
 
 // GET /api/inventory
 router.get("/", auth, requireSubscription(), async (req, res, next) => {
@@ -21,7 +21,6 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
 
     const query = {
       pharmacy_id: req.user.pharmacy_id,
-      available_quantity: { $gt: 0 },
     };
     if (search) {
       query.$or = [
@@ -105,7 +104,6 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
 
     const query = {
       pharmacy_id: req.user.pharmacy_id,
-      available_quantity: { $gt: 0 },
       $or: [
         { product_name: { $regex: q, $options: "i" } },
         { batch_no: { $regex: q, $options: "i" } },
@@ -194,7 +192,7 @@ router.get("/alerts", auth, requireSubscription(), async (req, res, next) => {
     const inventory = await db
       .collection("inventory")
       .find(
-        { pharmacy_id: req.user.pharmacy_id, available_quantity: { $gt: 0 } },
+        { pharmacy_id: req.user.pharmacy_id },
         { projection: { _id: 0 } }
       )
       .toArray();
@@ -272,7 +270,13 @@ router.patch("/:id/add-quantity", auth, requireSubscription(), async (req, res, 
     }
 
     const { id } = req.params;
-    const result = await db.collection("inventory").updateOne(
+    const item = await db.collection("inventory").findOne({ id, pharmacy_id: req.user.pharmacy_id });
+    
+    if (!item) {
+      return res.status(404).json({ detail: "Inventory item not found" });
+    }
+
+    await db.collection("inventory").updateOne(
       { id, pharmacy_id: req.user.pharmacy_id },
       { 
         $inc: { available_quantity: Number(add_quantity) },
@@ -280,9 +284,7 @@ router.patch("/:id/add-quantity", auth, requireSubscription(), async (req, res, 
       }
     );
 
-    if (result.matchedCount === 0) {
-      return res.status(404).json({ detail: "Inventory item not found" });
-    }
+    await logActivity(db, req.user.pharmacy_id, req.user.id, req.user.name, "UPDATE", "INVENTORY", id, `Increased stock of ${item.product_name} by ${add_quantity} units`, `/inventory`);
 
     res.json({ message: "Stock updated successfully" });
   } catch (error) {

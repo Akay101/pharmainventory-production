@@ -60,7 +60,7 @@ import {
   Download,
   BarChart3,
   TrendingUp,
-  AlertCircle
+  AlertCircle,
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatDate } from "./utils";
@@ -291,10 +291,13 @@ export default function BillingPage() {
     try {
       setInsightsLoading(true);
       const res = await axios.get(`${API}/bills/insights`, {
-        params: { start_date: startDate || undefined, end_date: endDate || undefined }
+        params: {
+          start_date: startDate || undefined,
+          end_date: endDate || undefined,
+        },
       });
       // Simulate slight delay for premium feeling load animation if network is too fast
-      await new Promise(r => setTimeout(r, 600));
+      await new Promise((r) => setTimeout(r, 600));
       setInsightsData(res.data);
     } catch (e) {
       toast.error("Failed to load insights");
@@ -305,7 +308,7 @@ export default function BillingPage() {
 
   const handleDownloadInsights = () => {
     if (!insightsData) return;
-    
+
     let csv = "Billing Insights Report\n";
     csv += `Period,${startDate || "Start"} to ${endDate || "End"}\n\n`;
     csv += `Summary Metrics\n`;
@@ -314,7 +317,7 @@ export default function BillingPage() {
     csv += `Total Bills Created,${insightsData.summary.total_bills}\n`;
     csv += `Unpaid Bills Count,${insightsData.summary.unpaid_bills}\n`;
     csv += `Total Unpaid Debt,${insightsData.summary.unpaid_amount}\n\n`;
-    
+
     csv += `Top 10 Products by Revenue\n`;
     csv += `Rank,Product Name,Quantity Sold,Revenue Generated,Profit Generated\n`;
     insightsData.top_products.forEach((p, idx) => {
@@ -325,7 +328,10 @@ export default function BillingPage() {
     const link = document.createElement("a");
     const url = URL.createObjectURL(blob);
     link.setAttribute("href", url);
-    link.setAttribute("download", `Billing_Insights_${startDate||"Start"}_to_${endDate||"End"}.csv`);
+    link.setAttribute(
+      "download",
+      `Billing_Insights_${startDate || "Start"}_to_${endDate || "End"}.csv`
+    );
     link.style.visibility = "hidden";
     document.body.appendChild(link);
     link.click();
@@ -1162,14 +1168,12 @@ export default function BillingPage() {
   }, [grandTotal, isEditingGrandTotal]);
 
   // Calculate profit for new bill
-  const itemProfitBeforeDiscount = validItems.reduce((sum, item) => {
+  const totalCost = validItems.reduce((sum, item) => {
     const qty = parseInt(item.quantity) || 0;
-    const unitPrice = parseFloat(item.unit_price) || 0;
     const purchasePrice = parseFloat(item.purchase_price) || 0;
-    const discPercent = parseFloat(item.discount_percent) || 0;
-    return sum + (unitPrice - purchasePrice) * qty * (1 - discPercent / 100);
+    return sum + (qty * purchasePrice);
   }, 0);
-  const totalProfit = itemProfitBeforeDiscount * (1 - billDiscount / 100);
+  const totalProfit = grandTotal - totalCost;
 
   // Calculate inventory vs negative billing totals for new bill
   const inventoryBilledQty = validItems.reduce((sum, item) => {
@@ -1740,6 +1744,7 @@ export default function BillingPage() {
                                 }
                                 type="number"
                                 value={item.quantity || ""}
+                                onFocus={(e) => e.target.select()} // 👈 this line
                                 onChange={(e) =>
                                   handleItemFieldChange(
                                     item.id,
@@ -2691,11 +2696,20 @@ export default function BillingPage() {
                           <BarChart3 className="w-5 h-5 text-primary" />
                         </div>
                         <div>
-                          <h3 className="text-lg font-bold tracking-tight">Period Analytics</h3>
-                          <p className="text-xs text-muted-foreground">{startDate || "Start"} to {endDate || "End"}</p>
+                          <h3 className="text-lg font-bold tracking-tight">
+                            Period Analytics
+                          </h3>
+                          <p className="text-xs text-muted-foreground">
+                            {startDate || "Start"} to {endDate || "End"}
+                          </p>
                         </div>
                       </div>
-                      <Button variant="outline" size="sm" onClick={handleDownloadInsights} className="gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleDownloadInsights}
+                        className="gap-2"
+                      >
                         <Download className="w-4 h-4" /> Download Report
                       </Button>
                     </div>
@@ -2705,62 +2719,131 @@ export default function BillingPage() {
                       <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
                         <div className="p-5 rounded-xl border border-border/60 bg-gradient-to-br from-card to-muted/20 shadow-sm relative overflow-hidden group hover:border-primary/30 transition-colors">
                           <div className="absolute top-0 right-0 w-20 h-20 bg-primary/5 rounded-full -mr-10 -mt-10 blur-xl group-hover:bg-primary/10 transition-colors"></div>
-                          <p className="text-xs font-bold text-muted-foreground tracking-widest uppercase mb-1 drop-shadow-sm">Total Revenue</p>
-                          <p className="text-3xl font-black text-foreground">₹{insightsData.summary.total_revenue?.toFixed(2) || "0.00"}</p>
-                          <p className="text-xs text-muted-foreground mt-2 flex items-center gap-1"><Receipt className="w-3 h-3"/> From {insightsData.summary.total_bills} bills</p>
+                          <p className="text-xs font-bold text-muted-foreground tracking-widest uppercase mb-1 drop-shadow-sm">
+                            Total Revenue
+                          </p>
+                          <p className="text-3xl font-black text-foreground">
+                            ₹
+                            {insightsData.summary.total_revenue?.toFixed(2) ||
+                              "0.00"}
+                          </p>
+                          <p className="text-xs text-muted-foreground mt-2 flex items-center gap-1">
+                            <Receipt className="w-3 h-3" /> From{" "}
+                            {insightsData.summary.total_bills} bills
+                          </p>
                         </div>
-                        
+
                         <div className="p-5 rounded-xl border border-green-500/20 bg-gradient-to-br from-green-500/5 to-transparent shadow-sm relative overflow-hidden group hover:border-green-500/40 transition-colors">
                           <div className="absolute top-0 right-0 w-20 h-20 bg-green-500/10 rounded-full -mr-10 -mt-10 blur-xl group-hover:bg-green-500/20 transition-colors"></div>
-                          <p className="text-xs font-bold text-green-700/70 tracking-widest uppercase mb-1 drop-shadow-sm">Net Profit</p>
-                          <p className="text-3xl font-black text-green-600">₹{insightsData.summary.total_profit?.toFixed(2) || "0.00"}</p>
-                          <p className="text-xs text-green-700/60 mt-2 flex items-center gap-1"><TrendingUp className="w-3 h-3"/> {(insightsData.summary.total_profit / (insightsData.summary.total_revenue || 1) * 100).toFixed(1)}% Margin</p>
+                          <p className="text-xs font-bold text-green-700/70 tracking-widest uppercase mb-1 drop-shadow-sm">
+                            Net Profit
+                          </p>
+                          <p className="text-3xl font-black text-green-600">
+                            ₹
+                            {insightsData.summary.total_profit?.toFixed(2) ||
+                              "0.00"}
+                          </p>
+                          <p className="text-xs text-green-700/60 mt-2 flex items-center gap-1">
+                            <TrendingUp className="w-3 h-3" />{" "}
+                            {(
+                              (insightsData.summary.total_profit /
+                                (insightsData.summary.total_revenue || 1)) *
+                              100
+                            ).toFixed(1)}
+                            % Margin
+                          </p>
                         </div>
 
                         <div className="p-5 rounded-xl border border-red-500/20 bg-gradient-to-br from-red-500/5 to-transparent shadow-sm relative overflow-hidden group hover:border-red-500/40 transition-colors">
-                           <div className="absolute top-0 right-0 w-20 h-20 bg-red-500/10 rounded-full -mr-10 -mt-10 blur-xl group-hover:bg-red-500/20 transition-colors"></div>
-                          <p className="text-xs font-bold text-red-700/70 tracking-widest uppercase mb-1 drop-shadow-sm">Unpaid Debt</p>
-                          <p className="text-3xl font-black text-red-600">₹{insightsData.summary.unpaid_amount?.toFixed(2) || "0.00"}</p>
-                          <p className="text-xs text-red-700/60 mt-2 flex items-center gap-1"><AlertCircle className="w-3 h-3"/> Across {insightsData.summary.unpaid_bills} unpaid bills</p>
+                          <div className="absolute top-0 right-0 w-20 h-20 bg-red-500/10 rounded-full -mr-10 -mt-10 blur-xl group-hover:bg-red-500/20 transition-colors"></div>
+                          <p className="text-xs font-bold text-red-700/70 tracking-widest uppercase mb-1 drop-shadow-sm">
+                            Unpaid Debt
+                          </p>
+                          <p className="text-3xl font-black text-red-600">
+                            ₹
+                            {insightsData.summary.unpaid_amount?.toFixed(2) ||
+                              "0.00"}
+                          </p>
+                          <p className="text-xs text-red-700/60 mt-2 flex items-center gap-1">
+                            <AlertCircle className="w-3 h-3" /> Across{" "}
+                            {insightsData.summary.unpaid_bills} unpaid bills
+                          </p>
                         </div>
 
                         <div className="p-5 rounded-xl border border-blue-500/20 bg-gradient-to-br from-blue-500/5 to-transparent shadow-sm relative overflow-hidden group hover:border-blue-500/40 transition-colors">
                           <div className="absolute top-0 right-0 w-20 h-20 bg-blue-500/10 rounded-full -mr-10 -mt-10 blur-xl group-hover:bg-blue-500/20 transition-colors"></div>
-                          <p className="text-xs font-bold text-blue-700/70 tracking-widest uppercase mb-1 drop-shadow-sm">Total Bills</p>
-                          <p className="text-3xl font-black text-blue-600">{insightsData.summary.total_bills}</p>
-                          <p className="text-xs text-blue-700/60 mt-2 flex items-center gap-1"><Check className="w-3 h-3"/> Successfully Generated</p>
+                          <p className="text-xs font-bold text-blue-700/70 tracking-widest uppercase mb-1 drop-shadow-sm">
+                            Total Bills
+                          </p>
+                          <p className="text-3xl font-black text-blue-600">
+                            {insightsData.summary.total_bills}
+                          </p>
+                          <p className="text-xs text-blue-700/60 mt-2 flex items-center gap-1">
+                            <Check className="w-3 h-3" /> Successfully Generated
+                          </p>
                         </div>
                       </div>
 
                       {/* Top 10 Products Row */}
                       {insightsData.top_products?.length > 0 && (
                         <div>
-                          <h4 className="text-sm font-bold tracking-widest uppercase text-muted-foreground mb-4">Top Grossing Products</h4>
+                          <h4 className="text-sm font-bold tracking-widest uppercase text-muted-foreground mb-4">
+                            Top Grossing Products
+                          </h4>
                           <div className="border border-border/50 rounded-xl overflow-hidden">
                             <Table>
                               <TableHeader className="bg-muted/30">
                                 <TableRow>
-                                  <TableHead className="w-12 text-center">#</TableHead>
+                                  <TableHead className="w-12 text-center">
+                                    #
+                                  </TableHead>
                                   <TableHead>Product Name</TableHead>
-                                  <TableHead className="text-center">Units Sold</TableHead>
-                                  <TableHead className="text-right">Revenue</TableHead>
-                                  <TableHead className="text-right">Profit Contribution</TableHead>
+                                  <TableHead className="text-center">
+                                    Units Sold
+                                  </TableHead>
+                                  <TableHead className="text-right">
+                                    Revenue
+                                  </TableHead>
+                                  <TableHead className="text-right">
+                                    Profit Contribution
+                                  </TableHead>
                                 </TableRow>
                               </TableHeader>
                               <TableBody>
                                 {insightsData.top_products.map((p, idx) => (
-                                  <TableRow key={idx} className="hover:bg-muted/20 transition-colors">
-                                    <TableCell className="font-bold text-muted-foreground text-center">{idx + 1}</TableCell>
-                                    <TableCell className="font-semibold text-foreground">{p.name}</TableCell>
-                                    <TableCell className="text-center">
-                                      <Badge variant="outline" className="bg-primary/5">{p.quantity} units</Badge>
+                                  <TableRow
+                                    key={idx}
+                                    className="hover:bg-muted/20 transition-colors"
+                                  >
+                                    <TableCell className="font-bold text-muted-foreground text-center">
+                                      {idx + 1}
                                     </TableCell>
-                                    <TableCell className="text-right font-mono font-bold">₹{p.revenue?.toFixed(2)}</TableCell>
+                                    <TableCell className="font-semibold text-foreground">
+                                      {p.name}
+                                    </TableCell>
+                                    <TableCell className="text-center">
+                                      <Badge
+                                        variant="outline"
+                                        className="bg-primary/5"
+                                      >
+                                        {p.quantity} units
+                                      </Badge>
+                                    </TableCell>
+                                    <TableCell className="text-right font-mono font-bold">
+                                      ₹{p.revenue?.toFixed(2)}
+                                    </TableCell>
                                     <TableCell className="text-right">
                                       <div className="flex flex-col items-end gap-1">
-                                        <span className="font-mono font-bold text-green-600">₹{p.profit?.toFixed(2)}</span>
+                                        <span className="font-mono font-bold text-green-600">
+                                          ₹{p.profit?.toFixed(2)}
+                                        </span>
                                         <div className="h-1 w-16 bg-muted rounded-full overflow-hidden">
-                                          <div className="h-full bg-green-500" style={{ width: `${Math.max(10, (p.profit / insightsData.summary.total_profit) * 100)}%` }}></div>
+                                          <div
+                                            className="h-full bg-green-500"
+                                            style={{
+                                              width: `${Math.max(10, (p.profit / insightsData.summary.total_profit) * 100)}%`,
+                                            }}
+                                          ></div>
                                         </div>
                                       </div>
                                     </TableCell>
@@ -2814,6 +2897,7 @@ export default function BillingPage() {
                   return (
                     <React.Fragment key={bill.id}>
                       <TableRow
+                        id={`record-${bill.id}`}
                         data-testid={`bill-row-${bill.id}`}
                         className="cursor-pointer hover:bg-muted/50"
                         onClick={() => toggleBillExpand(bill.id)}

@@ -3,6 +3,7 @@ const router = express.Router();
 const mongoose = require("mongoose");
 const { v4: uuidv4 } = require("uuid");
 const { auth } = require("../middleware/auth");
+const { logActivity } = require("../utils/activityLogger");
 
 const { requireSubscription } = require("../middleware/subscription");
 
@@ -65,6 +66,7 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
 
     await db.collection("suppliers").insertOne(supplierData);
     const { _id, ...supplier } = supplierData;
+    await logActivity(db, req.user.pharmacy_id, req.user.id, req.user.name, "CREATE", "SUPPLIERS", supplierId, `Added Supplier ${name}`, `/suppliers`);
 
     res.status(201).json({ message: "Supplier created", supplier });
   } catch (error) {
@@ -127,6 +129,8 @@ router.put(
       if (result.matchedCount === 0) {
         return res.status(404).json({ detail: "Supplier not found" });
       }
+      
+      await logActivity(db, req.user.pharmacy_id, req.user.id, req.user.name, "UPDATE", "SUPPLIERS", req.params.supplier_id, `Updated Supplier ${name}`, `/suppliers`);
 
       const supplier = await db
         .collection("suppliers")
@@ -155,6 +159,8 @@ router.delete(
       if (result.deletedCount === 0) {
         return res.status(404).json({ detail: "Supplier not found" });
       }
+      
+      await logActivity(db, req.user.pharmacy_id, req.user.id, req.user.name, "DELETE", "SUPPLIERS", req.params.supplier_id, `Deleted Supplier`, `/suppliers`);
 
       res.json({ message: "Supplier deleted" });
     } catch (error) {

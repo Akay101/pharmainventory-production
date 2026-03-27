@@ -6,6 +6,7 @@ const { auth } = require("../middleware/auth");
 const { generateBillPDF } = require("../services/pdf");
 const { uploadToR2 } = require("../services/r2");
 const { sendBillEmail } = require("../services/email");
+const { logActivity } = require("../utils/activityLogger");
 
 const { requireSubscription } = require("../middleware/subscription");
 
@@ -316,6 +317,7 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
 
     await db.collection("bills").insertOne(billData);
     const { _id, ...bill } = billData;
+    await logActivity(db, req.user.pharmacy_id, req.user.id, req.user.name, "CREATE", "BILLING", billId, `Created Bill ${billNo} for ₹${totalAmount}`, `/billing`);
 
     res.status(201).json({ message: "Bill created", bill });
   } catch (error) {
@@ -527,6 +529,8 @@ router.put("/:bill_id", auth, requireSubscription(), async (req, res, next) => {
     await db
       .collection("bills")
       .updateOne({ id: req.params.bill_id }, { $set: updates });
+      
+    await logActivity(db, req.user.pharmacy_id, req.user.id, req.user.name, "UPDATE", "BILLING", req.params.bill_id, `Updated Bill ${bill.bill_no}`, `/billing`);
 
     const updated = await db
       .collection("bills")
@@ -582,6 +586,7 @@ router.delete(
       }
 
       await db.collection("bills").deleteOne({ id: req.params.bill_id });
+      await logActivity(db, req.user.pharmacy_id, req.user.id, req.user.name, "DELETE", "BILLING", req.params.bill_id, `Deleted Bill ${bill.bill_no}`, `/billing`);
       res.json({
         message: "Bill deleted",
         inventory_restored: restore_inventory === "true",
@@ -620,6 +625,8 @@ router.post(
           { id: req.params.bill_id },
           { $set: { is_paid: true, paid_at: new Date().toISOString() } }
         );
+      
+      await logActivity(db, req.user.pharmacy_id, req.user.id, req.user.name, "UPDATE", "BILLING", req.params.bill_id, `Marked Bill ${bill.bill_no} as Paid`, `/billing`);
 
       // Update customer debt
       if (bill.customer_id) {

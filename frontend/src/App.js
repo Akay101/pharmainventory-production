@@ -144,7 +144,13 @@ const ProtectedRoute = ({ children, adminOnly = false }) => {
 let isRedirecting = false;
 
 axios.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    const method = response.config?.method?.toLowerCase();
+    if (['post', 'put', 'delete', 'patch'].includes(method)) {
+      window.dispatchEvent(new Event('activity-updated'));
+    }
+    return response;
+  },
   (error) => {
     const status = error.response?.status;
     const code = error.response?.data?.code;

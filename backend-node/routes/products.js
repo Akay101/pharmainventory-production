@@ -3,6 +3,7 @@ const router = express.Router();
 const mongoose = require("mongoose");
 const { v4: uuidv4 } = require("uuid");
 const { auth } = require("../middleware/auth");
+const { logActivity } = require("../utils/activityLogger");
 
 const { requireSubscription } = require("../middleware/subscription");
 
@@ -60,6 +61,7 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
 
     await db.collection("products").insertOne(productData);
     const { _id, ...product } = productData;
+    await logActivity(db, req.user.pharmacy_id, req.user.id, req.user.name, "CREATE", "PRODUCTS", productId, `Added Product ${name}`, `/inventory`);
 
     res.status(201).json({ message: "Product created", product });
   } catch (error) {
@@ -87,6 +89,8 @@ router.put(
       if (result.matchedCount === 0) {
         return res.status(404).json({ detail: "Product not found" });
       }
+      
+      await logActivity(db, req.user.pharmacy_id, req.user.id, req.user.name, "UPDATE", "PRODUCTS", req.params.product_id, `Updated Product ${name}`, `/inventory`);
 
       const product = await db
         .collection("products")
@@ -115,6 +119,8 @@ router.delete(
       if (result.deletedCount === 0) {
         return res.status(404).json({ detail: "Product not found" });
       }
+
+      await logActivity(db, req.user.pharmacy_id, req.user.id, req.user.name, "DELETE", "PRODUCTS", req.params.product_id, `Deleted Product`, `/inventory`);
 
       res.json({ message: "Product deleted" });
     } catch (error) {

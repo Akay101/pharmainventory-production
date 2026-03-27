@@ -3,6 +3,7 @@ const router = express.Router();
 const mongoose = require("mongoose");
 const { v4: uuidv4 } = require("uuid");
 const { auth, adminOnly } = require("../middleware/auth");
+const { logActivity } = require("../utils/activityLogger");
 
 const { requireSubscription } = require("../middleware/subscription");
 
@@ -68,6 +69,7 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
 
     await db.collection("customers").insertOne(customerData);
     const { _id, ...customer } = customerData;
+    await logActivity(db, req.user.pharmacy_id, req.user.id, req.user.name, "CREATE", "CUSTOMERS", customerId, `Added Customer ${name}`, `/customers`);
 
     res.status(201).json({ message: "Customer created", customer });
   } catch (error) {
@@ -156,6 +158,8 @@ router.put(
       if (result.matchedCount === 0) {
         return res.status(404).json({ detail: "Customer not found" });
       }
+
+      await logActivity(db, req.user.pharmacy_id, req.user.id, req.user.name, "UPDATE", "CUSTOMERS", req.params.customer_id, `Updated Customer ${name}`, `/customers`);
 
       const customer = await db
         .collection("customers")
@@ -260,6 +264,8 @@ router.delete(
       if (result.deletedCount === 0) {
         return res.status(404).json({ detail: "Customer not found" });
       }
+      
+      await logActivity(db, req.user.pharmacy_id, req.user.id, req.user.name, "DELETE", "CUSTOMERS", req.params.customer_id, `Deleted Customer`, `/customers`);
 
       res.json({ message: "Customer deleted" });
     } catch (error) {

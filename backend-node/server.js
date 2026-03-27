@@ -18,6 +18,7 @@ const dashboardRoutes = require("./routes/dashboard");
 const medicineRoutes = require("./routes/medicines");
 const migrateRoutes = require("./routes/migrate");
 const pharmacyRoutes = require("./routes/pharmacy");
+const activityRoutes = require("./routes/activities");
 
 const app = express();
 const PORT = process.env.PORT || 8001;
@@ -54,6 +55,7 @@ app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/medicines", medicineRoutes);
 app.use("/api/migrate", migrateRoutes);
 app.use("/api/pharmacy", pharmacyRoutes);
+app.use("/api/activities", activityRoutes);
 
 app.use("/api/payments", require("./routes/payments"));
 app.use("/api/webhook", require("./routes/webhook"));

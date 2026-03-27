@@ -421,7 +421,7 @@ export default function InventoryPage() {
                 }
                 
                 return (
-                  <TableRow key={item.id} data-testid={`inventory-row-${item.id}`}>
+                  <TableRow key={item.id} id={`record-${item.id}`} data-testid={`inventory-row-${item.id}`}>
                     <TableCell className="font-medium">{item.product_name}</TableCell>
                     <TableCell className="text-sm text-muted-foreground">{item.manufacturer || "-"}</TableCell>
                     <TableCell className="font-mono text-sm">{item.batch_no}</TableCell>
@@ -435,7 +435,9 @@ export default function InventoryPage() {
                     <TableCell className="text-right font-mono">₹{mrpPerUnit.toFixed(2)}</TableCell>
                     <TableCell className="text-right font-mono text-muted-foreground">₹{stockValue.toFixed(2)}</TableCell>
                     <TableCell>
-                      {isExpired(item.expiry_date) ? (
+                      {availableUnits === 0 ? (
+                        <Badge variant="destructive">Out of Stock</Badge>
+                      ) : isExpired(item.expiry_date) ? (
                         <Badge variant="destructive">Expired</Badge>
                       ) : isExpiringSoon(item.expiry_date) ? (
                         <Badge className="bg-yellow-500/20 text-yellow-500 border-yellow-500/50">

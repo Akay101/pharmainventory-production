@@ -8,6 +8,7 @@ const { auth } = require("../middleware/auth");
 const { normalizeName } = require("../utils/helpers");
 const { generatePurchasePDF } = require("../services/pdf");
 const { uploadToR2 } = require("../services/r2");
+const { logActivity } = require("../utils/activityLogger");
 
 const { requireSubscription } = require("../middleware/subscription");
 
@@ -310,6 +311,10 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
 
     await db.collection("purchases").insertOne(purchaseData);
     const { _id, ...purchase } = purchaseData;
+    const itemNames = items.slice(0, 2).map(i => i.product_name).join(", ");
+    const moreCount = items.length > 2 ? ` +${items.length - 2} more` : "";
+    const purchaseDesc = `Purchase with ${itemNames}${moreCount}`;
+    await logActivity(db, req.user.pharmacy_id, req.user.id, req.user.name, "CREATE", "PURCHASES", purchaseId, `Created ${purchaseDesc} for ₹${totalAmount}`, `/purchases`);
 
     res.status(201).json({ message: "Purchase recorded", purchase });
   } catch (error) {
@@ -456,6 +461,11 @@ router.put(
           },
         }
       );
+      
+      const itemNames = items.slice(0, 2).map(i => i.product_name).join(", ");
+      const moreCount = items.length > 2 ? ` +${items.length - 2} more` : "";
+      const purchaseDesc = `Purchase with ${itemNames}${moreCount}`;
+      await logActivity(db, req.user.pharmacy_id, req.user.id, req.user.name, "UPDATE", "PURCHASES", req.params.purchase_id, `Updated ${purchaseDesc}`, `/purchases`);
 
       const updated = await db
         .collection("purchases")
@@ -505,6 +515,11 @@ router.delete(
       await db
         .collection("purchases")
         .deleteOne({ id: req.params.purchase_id });
+        
+      const itemNames = purchase.items.slice(0, 2).map(i => i.product_name).join(", ");
+      const moreCount = purchase.items.length > 2 ? ` +${purchase.items.length - 2} more` : "";
+      const purchaseDesc = `Purchase with ${itemNames}${moreCount}`;
+      await logActivity(db, req.user.pharmacy_id, req.user.id, req.user.name, "DELETE", "PURCHASES", req.params.purchase_id, `Deleted ${purchaseDesc}`, `/purchases`);
       res.json({ message: "Purchase deleted" });
     } catch (error) {
       next(error);
