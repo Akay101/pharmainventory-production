@@ -70,6 +70,7 @@ import {
 import { toast } from "sonner";
 import { formatDate } from "./utils";
 import CustomTooltip from "@/components/ui/CustomTooltip";
+import { getOS } from "../hooks/useKeyboard";
 
 const PACK_TYPES = ["Strip", "Bottle", "Tube", "Packet", "Box", "Unit"];
 const LOCAL_STORAGE_KEY = "pharmalogy_purchase_draft";
@@ -304,21 +305,49 @@ export default function PurchasesPage() {
     setDraftData(null);
   };
 
+  // Refs for keyboard shortcuts to avoid stale closures
+  const handlersRef = useRef({});
+
+  // Keep refs updated
+  useEffect(() => {
+    handlersRef.current = {
+      handleStartNewPurchase, handleSubmitPurchase, handleSaveEditPurchase,
+      handleCancelAddItem, handleCancelNewPurchase,
+      handleAddNewRow, setShowShortcuts, showNewPurchase, newItemRow, editingPurchaseId
+    };
+  });
+
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e) => {
+      const isInput = ['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target?.tagName);
+      if (isInput && !e.ctrlKey && !e.metaKey && !e.altKey && e.key !== 'Escape' && e.key !== 'Enter') return;
+
+      const {
+        handleStartNewPurchase, handleSubmitPurchase, handleSaveEditPurchase,
+        handleCancelAddItem, handleCancelNewPurchase, 
+        handleAddNewRow, setShowShortcuts, showNewPurchase, newItemRow, editingPurchaseId
+      } = handlersRef.current;
+
+      if (!handleStartNewPurchase) return;
+
       // Alt+N - New purchase
-      if (e.altKey && e.key === "n") {
+      if (e.altKey && (e.key === "n" || e.code === "KeyN")) {
         e.preventDefault();
         handleStartNewPurchase();
       }
-      // Alt+S - Save purchase
-      if (e.altKey && e.key === "s" && showNewPurchase) {
-        e.preventDefault();
-        handleSubmitPurchase();
+      // Alt+S or Cmd+Enter - Save purchase
+      if ((((e.altKey && (e.key === "s" || e.code === "KeyS")) || ((e.ctrlKey || e.metaKey) && (e.key === "Enter" || e.code === "Enter"))))) {
+        if (showNewPurchase) {
+          e.preventDefault();
+          handleSubmitPurchase();
+        } else if (editingPurchaseId) {
+          e.preventDefault();
+          handleSaveEditPurchase();
+        }
       }
       // Escape - Cancel
-      if (e.key === "Escape") {
+      if (e.key === "Escape" || e.code === "Escape") {
         if (newItemRow) {
           handleCancelAddItem();
         } else if (showNewPurchase) {
@@ -326,12 +355,14 @@ export default function PurchasesPage() {
         }
       }
       // Alt+A - Add item row
-      if (e.altKey && e.key === "a" && showNewPurchase) {
-        e.preventDefault();
-        handleAddNewRow();
+      if (e.altKey && (e.key === "a" || e.code === "KeyA")) {
+        if (showNewPurchase) {
+          e.preventDefault();
+          handleAddNewRow();
+        }
       }
       // Alt+? - Show shortcuts
-      if (e.altKey && e.key === "/") {
+      if (e.altKey && (e.key === "/" || e.code === "Slash")) {
         e.preventDefault();
         setShowShortcuts(true);
       }
@@ -339,7 +370,7 @@ export default function PurchasesPage() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [showNewPurchase, newItemRow]);
+  }, []);
 
   const fetchPurchases = useCallback(
     async (page = 1) => {
@@ -1389,19 +1420,19 @@ export default function PurchasesPage() {
             <div className="flex justify-between items-center p-2 bg-muted/30 rounded">
               <span>New Purchase</span>
               <kbd className="px-2 py-1 bg-muted rounded text-xs font-mono">
-                Alt + N
+                {getOS() === 'mac' ? '⌥ + N' : 'Alt + N'}
               </kbd>
             </div>
             <div className="flex justify-between items-center p-2 bg-muted/30 rounded">
               <span>Add Item</span>
               <kbd className="px-2 py-1 bg-muted rounded text-xs font-mono">
-                Alt + A
+                {getOS() === 'mac' ? '⌥ + A' : 'Alt + A'}
               </kbd>
             </div>
             <div className="flex justify-between items-center p-2 bg-muted/30 rounded">
               <span>Save Purchase</span>
               <kbd className="px-2 py-1 bg-muted rounded text-xs font-mono">
-                Alt + S
+                {getOS() === 'mac' ? '⌘ + Enter' : 'Ctrl + Enter'}
               </kbd>
             </div>
             <div className="flex justify-between items-center p-2 bg-muted/30 rounded">
@@ -1583,7 +1614,7 @@ export default function PurchasesPage() {
             data-testid="add-purchase-btn"
           >
             <Plus className="w-4 h-4 mr-2" />
-            New (Alt+N)
+            {getOS() === 'mac' ? 'New (⌥N)' : 'New (Alt+N)'}
           </Button>
         </div>
       </div>
@@ -2220,6 +2251,7 @@ export default function PurchasesPage() {
                           </TableCell>
                           <TableCell>
                             <Button
+                              id={`add-salt-${item.id}`}
                               type="button"
                               variant="outline"
                               className="h-8 text-xs w-20 justify-start truncate"
@@ -2260,6 +2292,7 @@ export default function PurchasesPage() {
                           </TableCell>
                           <TableCell>
                             <Input
+                              id={`batch-${item.id}`}
                               value={item.batch_no || ""}
                               onChange={(e) =>
                                 handleItemFieldChange(
@@ -2268,12 +2301,19 @@ export default function PurchasesPage() {
                                   e.target.value
                                 )
                               }
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  e.preventDefault();
+                                  document.getElementById(`hsn-${item.id}`)?.focus({ preventScroll: true });
+                                }
+                              }}
                               placeholder="Batch"
                               className="h-8 text-xs"
                             />
                           </TableCell>
                           <TableCell>
                             <Input
+                              id={`hsn-${item.id}`}
                               value={item.hsn_no || ""}
                               onChange={(e) =>
                                 handleItemFieldChange(
@@ -2282,12 +2322,19 @@ export default function PurchasesPage() {
                                   e.target.value
                                 )
                               }
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  e.preventDefault();
+                                  document.getElementById(`expiry-${item.id}`)?.focus({ preventScroll: true });
+                                }
+                              }}
                               placeholder="HSN"
                               className="h-8 text-xs"
                             />
                           </TableCell>
                           <TableCell>
                             <Input
+                              id={`expiry-${item.id}`}
                               type="date"
                               value={item.expiry_date || ""}
                               onChange={(e) =>
@@ -2297,11 +2344,18 @@ export default function PurchasesPage() {
                                   e.target.value
                                 )
                               }
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  e.preventDefault();
+                                  document.getElementById(`qty-${item.id}`)?.focus({ preventScroll: true });
+                                }
+                              }}
                               className="h-8 text-xs"
                             />
                           </TableCell>
                           <TableCell>
                             <Input
+                              id={`qty-${item.id}`}
                               type="number"
                               value={item.quantity || item.pack_quantity || ""}
                               onChange={(e) =>
@@ -2311,6 +2365,12 @@ export default function PurchasesPage() {
                                   e.target.value
                                 )
                               }
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  e.preventDefault();
+                                  document.getElementById(`units-${item.id}`)?.focus({ preventScroll: true });
+                                }
+                              }}
                               placeholder="1"
                               className="h-8 text-xs text-center w-14"
                               min="1"
@@ -2318,6 +2378,7 @@ export default function PurchasesPage() {
                           </TableCell>
                           <TableCell>
                             <Input
+                              id={`units-${item.id}`}
                               type="number"
                               value={item.units || item.units_per_pack || ""}
                               onChange={(e) =>
@@ -2327,6 +2388,12 @@ export default function PurchasesPage() {
                                   e.target.value
                                 )
                               }
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  e.preventDefault();
+                                  document.getElementById(`rate-${item.id}`)?.focus({ preventScroll: true });
+                                }
+                              }}
                               placeholder="1"
                               className="h-8 text-xs text-center w-14"
                               min="1"
@@ -2341,6 +2408,7 @@ export default function PurchasesPage() {
                           >
                             <div className="flex items-center gap-2">
                               <Input
+                                id={`rate-${item.id}`}
                                 type="number"
                                 step="0.01"
                                 value={item.rate_pack || item.pack_price || ""}
@@ -2351,6 +2419,12 @@ export default function PurchasesPage() {
                                     e.target.value
                                   )
                                 }
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") {
+                                    e.preventDefault();
+                                    document.getElementById(`mrp-${item.id}`)?.focus({ preventScroll: true });
+                                  }
+                                }}
                                 placeholder="₹"
                                 className={`h-8 text-xs text-center w-28 pr-6 ${
                                   priceAlerts[item.id]
@@ -2361,6 +2435,7 @@ export default function PurchasesPage() {
 
                               {(item.rate_pack || item.pack_price) && (
                                 <button
+                                  id={`price-history-${item.id}`}
                                   type="button"
                                   onClick={() => {
                                     const currentRate =
@@ -2395,6 +2470,7 @@ export default function PurchasesPage() {
 
                           <TableCell>
                             <Input
+                              id={`mrp-${item.id}`}
                               type="number"
                               step="0.01"
                               value={item.mrp_pack || ""}
@@ -2405,6 +2481,12 @@ export default function PurchasesPage() {
                                   e.target.value
                                 )
                               }
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  e.preventDefault();
+                                  document.getElementById(`total-${item.id}`)?.focus({ preventScroll: true });
+                                }
+                              }}
                               placeholder="₹"
                               className="h-8 w-28 text-xs text-center"
                             />
@@ -2414,6 +2496,7 @@ export default function PurchasesPage() {
                           </TableCell>
                           <TableCell>
                             <Input
+                              id={`total-${item.id}`}
                               type="number"
                               step="0.01"
                               value={item.total_amount || ""}
@@ -2424,6 +2507,16 @@ export default function PurchasesPage() {
                                   e.target.value
                                 )
                               }
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  e.preventDefault();
+                                  if (index === purchaseItems.length - 1) {
+                                    handleAddNewRow();
+                                  } else {
+                                    document.querySelector(`[data-testid="item-name-${index + 1}"]`)?.focus({ preventScroll: true });
+                                  }
+                                }
+                              }}
                               placeholder="₹"
                               className="h-8 w-28 text-xs text-center "
                             />
@@ -2494,10 +2587,13 @@ export default function PurchasesPage() {
                       Saving...
                     </>
                   ) : (
-                    <>
-                      <Save className="w-4 h-4 mr-2" />
-                      {editingPurchaseId ? "Update Purchase" : "Save Purchase"}
-                    </>
+                    <div className="flex items-center gap-2">
+                       <Save className="w-4 h-4" />
+                       <span>{editingPurchaseId ? "Update Purchase" : "Save Purchase"}</span>
+                       <kbd className="hidden sm:inline-block ml-1 opacity-70 text-[9px] font-mono border border-white/20 px-1 rounded">
+                         {getOS() === 'mac' ? '⌘Enter' : 'Ctrl+Enter'}
+                       </kbd>
+                    </div>
                   )}
                 </Button>
               </div>
@@ -3110,7 +3206,13 @@ export default function PurchasesPage() {
       {/* salt dialog  */}
       <Dialog
         open={saltDialog.open}
-        onOpenChange={(open) => setSaltDialog((prev) => ({ ...prev, open }))}
+        onOpenChange={(open) => {
+          if (!open) {
+            const idToFocus = saltDialog.itemId;
+            setTimeout(() => document.getElementById(`add-salt-${idToFocus}`)?.focus(), 50);
+          }
+          setSaltDialog((prev) => ({ ...prev, open }));
+        }}
       >
         <DialogContent className="max-w-lg">
           <DialogHeader>
@@ -3133,21 +3235,25 @@ export default function PurchasesPage() {
           <div className="flex justify-end gap-2 mt-4">
             <Button
               variant="outline"
-              onClick={() =>
-                setSaltDialog({ open: false, itemId: null, value: "" })
-              }
+              onClick={() => {
+                const idToFocus = saltDialog.itemId;
+                setSaltDialog({ open: false, itemId: null, value: "" });
+                setTimeout(() => document.getElementById(`add-salt-${idToFocus}`)?.focus(), 50);
+              }}
             >
               Cancel
             </Button>
             <Button
               className="btn-primary"
               onClick={() => {
+                const idToFocus = saltDialog.itemId;
                 handleItemFieldChange(
-                  saltDialog.itemId,
+                  idToFocus,
                   "salt_composition",
                   saltDialog.value
                 );
                 setSaltDialog({ open: false, itemId: null, value: "" });
+                setTimeout(() => document.getElementById(`add-salt-${idToFocus}`)?.focus(), 50);
               }}
             >
               Save
@@ -3195,9 +3301,13 @@ export default function PurchasesPage() {
       {/* Price History Comparison Dialog */}
       <Dialog
         open={priceHistoryDialog.open}
-        onOpenChange={(open) =>
-          setPriceHistoryDialog({ open, itemId: null, data: null })
-        }
+        onOpenChange={(open) => {
+          if (!open) {
+            const idToFocus = priceHistoryDialog.itemId;
+            setTimeout(() => document.getElementById(`price-history-${idToFocus}`)?.focus(), 50);
+          }
+          setPriceHistoryDialog({ open, itemId: null, data: null });
+        }}
       >
         <DialogContent className="max-w-lg">
           {priceHistoryDialog?.data?.type === "higher" && (

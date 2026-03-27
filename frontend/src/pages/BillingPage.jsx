@@ -64,6 +64,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatDate } from "./utils";
+import { getOS } from "../hooks/useKeyboard";
 
 const LOCAL_STORAGE_KEY_BILL = "pharmalogy_bill_draft";
 
@@ -228,28 +229,56 @@ export default function BillingPage() {
     setDraftData(null);
   };
 
+  // Refs for keyboard shortcuts to avoid stale closures
+  const handlersRef = useRef({});
+
+  // Keep refs updated
+  useEffect(() => {
+    handlersRef.current = {
+      handleStartNewBill, handleSubmitBill, handleSaveEditBill,
+      handleCancelAddItem, handleCancelNewBill, handleCancelEditBill,
+      handleAddNewRow, setShowShortcuts, showNewBill, newItemRow, editingBillId
+    };
+  });
+
   useEffect(() => {
     fetchData();
 
     // Global keyboard shortcuts
     const handleKeyDown = (e) => {
+      // Avoid triggering when user is typing in generic inputs, UNLESS it's a modifier combo or Escape
+      const isInput = ['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target?.tagName);
+      if (isInput && !e.ctrlKey && !e.metaKey && !e.altKey && e.key !== 'Escape' && e.key !== 'Enter') return;
+
+      const {
+        handleStartNewBill, handleSubmitBill, handleSaveEditBill,
+        handleCancelAddItem, handleCancelNewBill, handleCancelEditBill,
+        handleAddNewRow, setShowShortcuts, showNewBill, newItemRow, editingBillId
+      } = handlersRef.current;
+
+      if (!handleStartNewBill) return;
+
       // Alt+N - New bill
-      if (e.altKey && e.key === "n") {
+      if (e.altKey && (e.key === "n" || e.code === "KeyN")) {
         e.preventDefault();
         handleStartNewBill();
       }
-      // Alt+S - Save bill
-      if (e.altKey && e.key === "s" && showNewBill) {
-        e.preventDefault();
-        handleSubmitBill();
+      // Alt+S or Cmd+Enter - Save bill
+      if ((((e.altKey && (e.key === "s" || e.code === "KeyS")) || ((e.ctrlKey || e.metaKey) && (e.key === "Enter" || e.code === "Enter"))))) {
+        if (showNewBill) {
+          e.preventDefault();
+          handleSubmitBill();
+        }
       }
-      // Alt+U - Update bill (when editing)
-      if (e.altKey && e.key === "u" && editingBillId) {
-        e.preventDefault();
-        handleSaveEditBill();
+      // Alt+U or Cmd+Enter - Update bill (when editing)
+      if ((((e.altKey && (e.key === "u" || e.code === "KeyU")) || ((e.ctrlKey || e.metaKey) && (e.key === "Enter" || e.code === "Enter"))))) {
+        if (editingBillId) {
+          e.preventDefault();
+          handleSaveEditBill();
+        }
       }
       // Escape - Cancel
-      if (e.key === "Escape") {
+      if (e.key === "Escape" || e.code === "Escape") {
         if (newItemRow) {
           handleCancelAddItem();
         } else if (showNewBill) {
@@ -259,12 +288,17 @@ export default function BillingPage() {
         }
       }
       // Alt+A - Add item (when in new bill mode)
-      if (e.altKey && e.key === "a" && showNewBill && !newItemRow) {
-        e.preventDefault();
-        handleStartAddItem();
+      if (e.altKey && (e.key === "a" || e.code === "KeyA")) {
+        if (showNewBill && !newItemRow) {
+          e.preventDefault();
+          handleStartAddItem();
+        } else if (showNewBill) {
+           e.preventDefault();
+           handleAddNewRow();
+        }
       }
       // Alt+? - Show shortcuts
-      if (e.altKey && e.key === "/") {
+      if (e.altKey && (e.key === "/" || e.code === "Slash")) {
         e.preventDefault();
         setShowShortcuts(true);
       }
@@ -272,7 +306,7 @@ export default function BillingPage() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [showNewBill, newItemRow, editingBillId]);
+  }, []);
 
   useEffect(() => {
     fetchData();
@@ -1272,7 +1306,7 @@ export default function BillingPage() {
             disabled={showNewBill || editingBillId}
           >
             <Plus className="w-4 h-4 mr-2" />
-            New Bill (Alt+N)
+            {getOS() === 'mac' ? 'New Bill (⌥N)' : 'New Bill (Alt+N)'}
           </Button>
         </div>
       </div>
@@ -1290,25 +1324,25 @@ export default function BillingPage() {
             <div className="flex justify-between items-center p-2 bg-muted/30 rounded">
               <span>New Bill</span>
               <kbd className="px-2 py-1 bg-muted rounded text-xs font-mono">
-                Alt + N
+                {getOS() === 'mac' ? '⌥ + N' : 'Alt + N'}
               </kbd>
             </div>
             <div className="flex justify-between items-center p-2 bg-muted/30 rounded">
               <span>Add Item</span>
               <kbd className="px-2 py-1 bg-muted rounded text-xs font-mono">
-                Alt + A
+                {getOS() === 'mac' ? '⌥ + A' : 'Alt + A'}
               </kbd>
             </div>
             <div className="flex justify-between items-center p-2 bg-muted/30 rounded">
               <span>Save Bill</span>
               <kbd className="px-2 py-1 bg-muted rounded text-xs font-mono">
-                Alt + S
+                {getOS() === 'mac' ? '⌘ + Enter' : 'Ctrl + Enter'}
               </kbd>
             </div>
             <div className="flex justify-between items-center p-2 bg-muted/30 rounded">
               <span>Update Bill</span>
               <kbd className="px-2 py-1 bg-muted rounded text-xs font-mono">
-                Alt + U
+                {getOS() === 'mac' ? '⌘ + Enter' : 'Ctrl + Enter'}
               </kbd>
             </div>
             <div className="flex justify-between items-center p-2 bg-muted/30 rounded">
@@ -1752,6 +1786,16 @@ export default function BillingPage() {
                                     e.target.value
                                   )
                                 }
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") {
+                                    e.preventDefault();
+                                    if (item.is_manual) {
+                                      document.getElementById(`mrp-${item.id}`)?.focus({ preventScroll: true });
+                                    } else {
+                                      document.getElementById(`discount-${item.id}`)?.focus({ preventScroll: true });
+                                    }
+                                  }
+                                }}
                                 min="1"
                                 placeholder="1"
                                 className={`h-8 text-xs text-center w-14 ${
@@ -1802,6 +1846,7 @@ export default function BillingPage() {
                           </TableCell>
                           <TableCell>
                             <Input
+                              id={`mrp-${item.id}`}
                               type="number"
                               step="0.01"
                               value={item.unit_price || ""}
@@ -1812,12 +1857,19 @@ export default function BillingPage() {
                                   e.target.value
                                 )
                               }
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  e.preventDefault();
+                                  document.getElementById(`discount-${item.id}`)?.focus({ preventScroll: true });
+                                }
+                              }}
                               placeholder="MRP"
                               className="h-8 text-xs text-center w-28"
                             />
                           </TableCell>
                           <TableCell>
                             <Input
+                              id={`discount-${item.id}`}
                               type="number"
                               value={item.discount_percent || ""}
                               onChange={(e) =>
@@ -1827,6 +1879,16 @@ export default function BillingPage() {
                                   e.target.value
                                 )
                               }
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  e.preventDefault();
+                                  if (index === billItems.length - 1) {
+                                    handleAddNewRow();
+                                  } else {
+                                    document.querySelector(`[data-testid="item-product-${index + 1}"]`)?.focus({ preventScroll: true });
+                                  }
+                                }
+                              }}
                               min="0"
                               max="100"
                               placeholder="0"
@@ -1991,10 +2053,13 @@ export default function BillingPage() {
                     Creating...
                   </>
                 ) : (
-                  <>
-                    <CreditCard className="w-4 h-4 mr-2" />
-                    Create Bill (Alt+S)
-                  </>
+                  <div className="flex items-center gap-2">
+                    <CreditCard className="w-4 h-4" />
+                    <span>Create Bill</span>
+                    <kbd className="hidden sm:inline-block ml-1 opacity-70 text-[9px] font-mono border border-white/20 px-1 rounded">
+                      {getOS() === 'mac' ? '⌘Enter' : 'Ctrl+Enter'}
+                    </kbd>
+                  </div>
                 )}
               </Button>
             </div>

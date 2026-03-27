@@ -36,17 +36,19 @@ import {
   PanelLeftClose,
   PanelLeft,
   Activity,
+  Keyboard,
 } from "lucide-react";
 
 import RecentActivitySidebar from "./RecentActivitySidebar";
+import { useKeyboardShortcut, formatShortcut } from "../hooks/useKeyboard";
 
 const navItems = [
   { path: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { path: "/inventory", label: "Inventory", icon: Package },
-  { path: "/purchases", label: "Purchases", icon: ShoppingCart },
-  { path: "/billing", label: "Billing", icon: Receipt },
-  { path: "/suppliers", label: "Suppliers", icon: Truck },
-  { path: "/customers", label: "Customers", icon: Users },
+  { path: "/inventory", label: "Inventory", icon: Package, shortcut: ["alt", "i"] },
+  { path: "/purchases", label: "Purchases", icon: ShoppingCart, shortcut: ["alt", "p"] },
+  { path: "/billing", label: "Billing", icon: Receipt, shortcut: ["alt", "b"] },
+  { path: "/suppliers", label: "Suppliers", icon: Truck, shortcut: ["alt", "s"] },
+  { path: "/customers", label: "Customers", icon: Users, shortcut: ["alt", "c"] },
   { path: "/users", label: "Users", icon: UserCog, adminOnly: true },
   { path: "/reports", label: "Reports", icon: BarChart3 },
   { path: "/settings", label: "Settings", icon: Settings },
@@ -136,12 +138,19 @@ const Sidebar = ({ mobile = false, onClose, collapsed = false, onToggle }) => {
                 to={item.path}
                 onClick={onClose}
                 className={({ isActive }) =>
-                  `sidebar-link ${isActive ? "active" : ""}`
+                  `sidebar-link flex justify-between items-center group ${isActive ? "active" : ""}`
                 }
                 data-testid={`nav-${item.path.slice(1)}`}
               >
-                <item.icon className="w-5 h-5" />
-                <span>{item.label}</span>
+                <div className="flex items-center gap-3">
+                  <item.icon className="w-5 h-5 flex-shrink-0" />
+                  <span>{item.label}</span>
+                </div>
+                {item.shortcut && (
+                  <kbd className="opacity-0 group-hover:opacity-100 transition-opacity text-[10px] font-mono font-medium text-muted-foreground bg-black/5 dark:bg-white/10 px-1.5 py-0.5 rounded shadow-sm">
+                    {formatShortcut(item.shortcut)}
+                  </kbd>
+                )}
               </NavLink>
             )
           ))}
@@ -189,6 +198,12 @@ export default function DashboardLayout() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [mobileOpen, setMobileOpen] = useState(false);
+
+  useKeyboardShortcut('b', () => navigate('/billing'), { alt: true });
+  useKeyboardShortcut('p', () => navigate('/purchases'), { alt: true });
+  useKeyboardShortcut('i', () => navigate('/inventory'), { alt: true });
+  useKeyboardShortcut('s', () => navigate('/suppliers'), { alt: true });
+  useKeyboardShortcut('c', () => navigate('/customers'), { alt: true });
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     const stored = localStorage.getItem('sidebarCollapsed');
     return stored === 'true';
@@ -203,6 +218,8 @@ export default function DashboardLayout() {
     const stored = localStorage.getItem('activityOpen');
     return stored ? stored === 'true' : window.innerWidth >= 1024;
   });
+
+  useKeyboardShortcut('a', () => setActivityOpen(prev => !prev), { alt: true });
 
   const location = useLocation();
 
