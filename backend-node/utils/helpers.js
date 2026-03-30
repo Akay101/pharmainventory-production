@@ -1,5 +1,5 @@
 //normalizing name for comparision
-export function normalizeName(name) {
+function normalizeName(name) {
   return name
     ?.toLowerCase()
     .replace(/mg/g, "")
@@ -7,3 +7,7 @@ export function normalizeName(name) {
     .replace(/\s+/g, " ")
     .trim();
 }
+
+module.exports = {
+  normalizeName,
+};

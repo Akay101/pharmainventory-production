@@ -29,9 +29,7 @@ app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 
 // MongoDB connection
 mongoose
-  .connect(process.env.MONGO_URL, {
-    dbName: process.env.DB_NAME,
-  })
+  .connect(process.env.MONGO_URL)
   .then(() => {
     console.log("Connected to MongoDB");
   })
