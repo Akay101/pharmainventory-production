@@ -100,6 +100,8 @@ export default function BillingPage() {
   const [showInventorySuggestions, setShowInventorySuggestions] =
     useState(false);
 
+
+
   // Customer search
   const [customerSearch, setCustomerSearch] = useState("");
   const [showCustomerSuggestions, setShowCustomerSuggestions] = useState(false);
@@ -107,6 +109,8 @@ export default function BillingPage() {
   //grand total editing state
   const [grandTotalInput, setGrandTotalInput] = useState("");
   const [isEditingGrandTotal, setIsEditingGrandTotal] = useState(false);
+  const [editGrandTotalInput, setEditGrandTotalInput] = useState("");
+  const [isEditingEditGrandTotal, setIsEditingEditGrandTotal] = useState(false);
 
   // Edit bill state - NEW: Full inline editing like PurchasesPage
   const [editingBillId, setEditingBillId] = useState(null);
@@ -1238,6 +1242,34 @@ export default function BillingPage() {
   const editDiscountAmount = editSubtotal * (editDiscountPercent / 100);
   const editGrandTotal = editSubtotal - editDiscountAmount;
 
+  useEffect(() => {
+    if (!isEditingEditGrandTotal) {
+      setEditGrandTotalInput(editGrandTotal.toFixed(2));
+    }
+  }, [editGrandTotal, isEditingEditGrandTotal]);
+
+  // Auto-scroll logic for dropdown suggestions
+  useEffect(() => {
+    if (showInventorySuggestions) {
+      const el = document.getElementById(`suggestion-new-${highlightedSuggestion}`);
+      if (el) el.scrollIntoView({ block: "nearest" });
+    }
+  }, [highlightedSuggestion, showInventorySuggestions]);
+
+  useEffect(() => {
+    if (showEditingInventorySuggestions) {
+      const el = document.getElementById(`suggestion-edit-${highlightedEditingSuggestion}`);
+      if (el) el.scrollIntoView({ block: "nearest" });
+    }
+  }, [highlightedEditingSuggestion, showEditingInventorySuggestions]);
+
+  const editTotalCost = validEditItems.reduce((sum, item) => {
+    const qty = parseInt(item.quantity) || 0;
+    const purchasePrice = parseFloat(item.purchase_price) || 0;
+    return sum + (qty * purchasePrice);
+  }, 0);
+  const editTotalProfit = editGrandTotal - editTotalCost;
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -1479,16 +1511,9 @@ export default function BillingPage() {
             </div>
 
             {/* Items Table - Inline Editable */}
-            <div
-              className="border border-border rounded-lg relative"
-              style={{ overflow: "visible" }}
-            >
-              <div
-                className="max-h-[350px] overflow-x-auto"
-                style={{ overflowY: "visible" }}
-              >
-                <Table>
-                  <TableHeader className="sticky top-0 bg-muted/95 backdrop-blur z-10">
+            <div className="border border-border rounded-lg relative overflow-hidden">
+                <Table wrapperClassName="h-[350px]">
+                  <TableHeader className="sticky top-0 bg-muted/95 backdrop-blur z-[50]">
                     <TableRow>
                       <TableHead className="w-[180px] font-bold text-foreground">
                         Product *
@@ -1603,6 +1628,7 @@ export default function BillingPage() {
                                   {inventorySearch &&
                                     inventorySearch.length >= 2 && (
                                       <div
+                                        id="suggestion-new-0"
                                         className={`p-3 cursor-pointer border-b border-border ${highlightedSuggestion === 0 ? "bg-yellow-500/20" : "hover:bg-yellow-500/10 bg-yellow-500/5"}`}
                                         onMouseDown={(e) => {
                                           e.preventDefault();
@@ -1634,6 +1660,7 @@ export default function BillingPage() {
                                     (invItem, suggIdx) => (
                                       <div
                                         key={invItem.id}
+                                        id={`suggestion-new-${suggIdx + 1}`}
                                         className={`p-3 cursor-pointer border-b border-border last:border-0 ${highlightedSuggestion === suggIdx + 1 ? "bg-primary/20" : "hover:bg-primary/10"}`}
                                         onMouseDown={(e) => {
                                           e.preventDefault();
@@ -1690,9 +1717,9 @@ export default function BillingPage() {
                                               /unit
                                             </p>
                                             <p className="text-xs text-muted-foreground font-medium">
-                                              {invItem.available_quantity ||
-                                                invItem.available_units}{" "}
-                                              units
+                                              {(invItem.available_quantity || invItem.available_units || 0) > 0 
+                                                ? `${invItem.available_quantity || invItem.available_units} units` 
+                                                : <span className="text-red-500 font-bold">Out of Stock</span>}
                                             </p>
                                             <p className="text-xs text-blue-400 font-bold">
                                               Rate : ₹
@@ -1756,7 +1783,7 @@ export default function BillingPage() {
                             ) : hasOverflow ? (
                               <div className="text-center">
                                 <span className="text-xs font-medium text-yellow-500">
-                                  {available}
+                                  {available > 0 ? available : "Out of Stock"}
                                 </span>
                                 <p className="text-[10px] text-yellow-500">
                                   ({negativeBilled} neg)
@@ -1764,7 +1791,7 @@ export default function BillingPage() {
                               </div>
                             ) : (
                               <span className="text-xs font-medium text-primary">
-                                {available || "-"}
+                                {available > 0 ? available : "Out of Stock"}
                               </span>
                             )}
                           </TableCell>
@@ -1925,7 +1952,6 @@ export default function BillingPage() {
                     )}
                   </TableBody>
                 </Table>
-              </div>
             </div>
 
             {/* Tip */}
@@ -2167,16 +2193,9 @@ export default function BillingPage() {
             </div>
 
             {/* Items Table - Inline Editable */}
-            <div
-              className="border border-border rounded-lg relative"
-              style={{ overflow: "visible" }}
-            >
-              <div
-                className="max-h-[400px] overflow-x-auto"
-                style={{ overflowY: "visible" }}
-              >
-                <Table>
-                  <TableHeader className="sticky top-0 bg-muted/95 backdrop-blur z-10">
+            <div className="border border-border rounded-lg relative overflow-hidden">
+                <Table wrapperClassName="h-[400px]">
+                  <TableHeader className="sticky top-0 bg-muted/95 backdrop-blur z-[50]">
                     <TableRow>
                       <TableHead className="w-[180px] font-bold text-foreground">
                         Product *
@@ -2290,6 +2309,7 @@ export default function BillingPage() {
                                   {editingInventorySearch &&
                                     editingInventorySearch.length >= 2 && (
                                       <div
+                                        id="suggestion-edit-0"
                                         className={`p-3 cursor-pointer border-b border-border ${highlightedEditingSuggestion === 0 ? "bg-yellow-500/20" : "hover:bg-yellow-500/10 bg-yellow-500/5"}`}
                                         onMouseDown={(e) => {
                                           e.preventDefault();
@@ -2322,6 +2342,7 @@ export default function BillingPage() {
                                     (invItem, suggIdx) => (
                                       <div
                                         key={invItem.id}
+                                        id={`suggestion-edit-${suggIdx + 1}`}
                                         className={`p-3 cursor-pointer border-b border-border last:border-0 ${highlightedEditingSuggestion === suggIdx + 1 ? "bg-primary/20" : "hover:bg-primary/10"}`}
                                         onMouseDown={(e) => {
                                           e.preventDefault();
@@ -2367,9 +2388,9 @@ export default function BillingPage() {
                                               /unit
                                             </p>
                                             <p className="text-xs text-muted-foreground font-medium">
-                                              {invItem.available_quantity ||
-                                                invItem.available_units}{" "}
-                                              units
+                                              {(invItem.available_quantity || invItem.available_units || 0) > 0 
+                                                ? `${invItem.available_quantity || invItem.available_units} units` 
+                                                : <span className="text-red-500 font-bold">Out of Stock</span>}
                                             </p>
                                           </div>
                                         </div>
@@ -2414,7 +2435,7 @@ export default function BillingPage() {
                               </span>
                             ) : (
                               <span className="text-xs font-medium text-primary">
-                                {available || "-"}
+                                {available > 0 ? available : "Out of Stock"}
                               </span>
                             )}
                           </TableCell>
@@ -2529,7 +2550,6 @@ export default function BillingPage() {
                     )}
                   </TableBody>
                 </Table>
-              </div>
             </div>
 
             {/* Notes */}
@@ -2571,23 +2591,49 @@ export default function BillingPage() {
                     <Input
                       type="number"
                       step="0.01"
-                      className="w-fit"
-                      value={editGrandTotal}
-                      onBlur={(e) => {
-                        const newTotal = parseFloat(e.target.value);
-
+                      className="w-40 text-right text-lg font-bold text-primary"
+                      value={editGrandTotalInput}
+                      onFocus={() => setIsEditingEditGrandTotal(true)}
+                      onChange={(e) => setEditGrandTotalInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.target.blur();
+                        }
+                      }}
+                      onBlur={() => {
+                        setIsEditingEditGrandTotal(false);
+                        const newGrandTotal = parseFloat(editGrandTotalInput);
                         if (!editSubtotal || editSubtotal <= 0) return;
-
+                        if (isNaN(newGrandTotal)) {
+                          setEditGrandTotalInput(editGrandTotal.toFixed(2));
+                          return;
+                        }
+                        if (newGrandTotal > editSubtotal) {
+                          setEditingBillData({
+                            ...editingBillData,
+                            discount_percent: 0,
+                          });
+                          return;
+                        }
+                        if (newGrandTotal < 0) {
+                          setEditGrandTotalInput(editGrandTotal.toFixed(2));
+                          return;
+                        }
                         const discountPercent =
-                          ((editSubtotal - newTotal) / editSubtotal) * 100;
+                          ((editSubtotal - newGrandTotal) / editSubtotal) * 100;
 
                         setEditingBillData({
                           ...editingBillData,
-                          discount_percent: discountPercent.toFixed(2),
+                          discount_percent: parseFloat(discountPercent.toFixed(2)),
                         });
                       }}
                     />
                   </span>
+                </div>
+                <div
+                  className={`text-sm font-medium ${editTotalProfit >= 0 ? "text-green-500" : "text-red-500"}`}
+                >
+                  Est. Profit: ₹{editTotalProfit.toFixed(2)}
                 </div>
                 <div className="flex flex-wrap gap-6 justify-end items-end border-t pt-4">
                   {/* Paid */}

@@ -230,7 +230,7 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
           .collection("inventory")
           .updateOne(
             { id: item.inventory_id },
-            { $inc: { available_quantity: -quantity } }
+            [{ $set: { available_quantity: { $max: [0, { $subtract: ["$available_quantity", quantity] }] } } }]
           );
       }
     }
@@ -426,7 +426,7 @@ router.put("/:bill_id", auth, requireSubscription(), async (req, res, next) => {
           .collection("inventory")
           .updateOne(
             { id: item.inventory_id },
-            { $inc: { available_quantity: -quantity } }
+            [{ $set: { available_quantity: { $max: [0, { $subtract: ["$available_quantity", quantity] }] } } }]
           );
       }
     }

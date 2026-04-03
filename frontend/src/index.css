@@ -238,6 +238,35 @@ select {
   animation: pulse-glow 2s ease-in-out infinite;
 }
 
+/* Price Alert Animations */
+@keyframes row-warning-blink {
+  0%, 40%, 80% { 
+    background-color: rgba(234, 179, 8, 0.25); 
+    box-shadow: inset 4px 0 0 rgb(234, 179, 8); 
+  }
+  20%, 60% { 
+    background-color: transparent; 
+    box-shadow: none; 
+  }
+  100% { 
+    background-color: transparent; 
+    box-shadow: none; 
+  }
+}
+
+.animate-row-alert {
+  animation: row-warning-blink 3s ease-in-out 1 forwards;
+}
+
+@keyframes icon-pulse-warning {
+  0%, 100% { color: inherit; transform: scale(1); }
+  50% { color: rgb(234, 179, 8); transform: scale(1.4); }
+}
+
+.animate-icon-alert {
+  animation: icon-pulse-warning 1s ease-in-out infinite;
+}
+
 /* Debug wrapper */
 [data-debug-wrapper="true"] {
   display: contents !important;

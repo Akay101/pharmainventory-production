@@ -126,6 +126,8 @@ export default function PurchasesPage() {
 
   const inputRefs = useRef({});
 
+
+
   const updateDropdownPosition = (itemId) => {
     const inputElement = inputRefs.current[itemId];
     if (!inputElement) return;
@@ -246,6 +248,7 @@ export default function PurchasesPage() {
     rate_pack: "", // Rate per pack (purchase price per pack)
     total_amount: "", // Total amount (user can enter this OR rate_pack)
     mrp_pack: "", // MRP per pack (user enters this, MRP/Unit is auto-calculated)
+    _is_auto_filled_rate: true, // Prevent price history ping until manually edited
   };
 
   // ============ AUTO-SAVE TO LOCALSTORAGE ============
@@ -782,6 +785,11 @@ export default function PurchasesPage() {
         if (item.id !== itemId) return item;
 
         const updated = { ...item, [field]: value };
+        
+        if (field === "rate_pack" || field === "total_amount") {
+          updated._is_auto_filled_rate = false;
+        }
+
         const qty =
           parseInt(updated.quantity) || parseInt(updated.pack_quantity) || 1;
 
@@ -817,6 +825,36 @@ export default function PurchasesPage() {
     //     checkPriceHistory(itemId, item.product_name, parseFloat(value) || 0);
     //   }
     // }
+  };
+  // Optimize: Check price history silently (used onBlur and immediately on auto-fill)
+  const checkPriceHistorySilent = async (itemId, productName, currentPriceParam) => {
+    const currentPrice = parseFloat(currentPriceParam);
+    if (!productName || !currentPrice || currentPrice <= 0) return;
+
+    try {
+      const token = localStorage.getItem("token");
+      const response = await axios.get(`${API}/purchases/price-history`, {
+        params: { product_name: productName, current_price: currentPrice },
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      const data = response.data;
+      if (data.is_higher_than_history && data.cheaper_options?.length > 0) {
+        setPriceAlerts((prev) => ({
+          ...prev,
+          [itemId]: data,
+        }));
+      } else {
+        // Clear alert if it's fine now
+        setPriceAlerts((prev) => {
+           const updated = { ...prev };
+           delete updated[itemId];
+           return updated;
+        });
+      }
+    } catch (error) {
+      console.error("Silent Check Price History Error:", error);
+    }
   };
 
   // Check historical prices for a product
@@ -929,6 +967,7 @@ export default function PurchasesPage() {
         .join(", ") ||
       "";
 
+    const ratePackFixed = ratePack.toFixed(2);
     setPurchaseItems((prev) =>
       prev.map((item) => {
         if (item.id !== itemId) return item;
@@ -942,9 +981,10 @@ export default function PurchasesPage() {
           manufacturer,
           salt_composition,
           units: String(unitsPerPack),
-          rate_pack: ratePack.toFixed(2),
+          rate_pack: ratePackFixed,
           mrp_pack: mrpPack.toFixed(2),
           total_amount: (qty * ratePack).toFixed(2),
+          _is_auto_filled_rate: true,
 
           // Store inventory metadata for visual indicators
           _inventoryMeta: isInventory
@@ -960,6 +1000,9 @@ export default function PurchasesPage() {
         };
       })
     );
+
+    // Call silent ping immediately so if the loaded price is high, it highlights!
+    checkPriceHistorySilent(itemId, medicine.product_name || medicine.name, ratePackFixed);
 
     setSearchMedicine("");
     setMedicineSuggestions([]);
@@ -1362,6 +1405,13 @@ export default function PurchasesPage() {
     return sum + qty;
   }, 0);
 
+  useEffect(() => {
+    if (showSuggestions && highlightedSuggestionIndex >= 0) {
+      const el = document.getElementById(`purchases-suggestion-${highlightedSuggestionIndex}`);
+      if (el) el.scrollIntoView({ block: "nearest" });
+    }
+  }, [highlightedSuggestionIndex, showSuggestions]);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -1749,16 +1799,9 @@ export default function PurchasesPage() {
             </div>
 
             {/* Items Table - Inline Editable with enhanced fields */}
-            <div
-              className="border border-border rounded-lg relative"
-              style={{ overflow: "visible" }}
-            >
-              <div
-                className="max-h-[400px] overflow-x-auto"
-                style={{ overflowY: "visible" }}
-              >
-                <Table>
-                  <TableHeader className="sticky top-0 bg-muted/95 backdrop-blur z-10">
+            <div className="border border-border rounded-lg relative overflow-hidden">
+                <Table wrapperClassName="h-[350px]">
+                  <TableHeader className="sticky top-0 bg-muted/95 backdrop-blur z-[50]">
                     <TableRow>
                       <TableHead className="w-[150px] font-bold text-foreground">
                         Product *
@@ -1835,7 +1878,9 @@ export default function PurchasesPage() {
                       return (
                         <TableRow
                           key={item.id || index}
-                          className="bg-primary/5"
+                          className={`bg-primary/5 ${
+                            priceAlerts[item.id] ? "animate-row-alert" : ""
+                          }`}
                         >
                           <TableCell
                             className="relative"
@@ -1843,7 +1888,12 @@ export default function PurchasesPage() {
                           >
                             <div className="flex items-center gap-2">
                               <Input
-                                ref={(el) => setInputRef(el, item.id)}
+                                ref={(el) => {
+                                  setInputRef(el, item.id);
+                                  if (index === purchaseItems.length - 1) {
+                                    productInputRef.current = el;
+                                  }
+                                }}
                                 value={item.product_name || ""}
                                 onChange={(e) => {
                                   handleItemFieldChange(
@@ -2030,6 +2080,7 @@ export default function PurchasesPage() {
                                   {medicineSuggestions.map((medicine, idx) => (
                                     <div
                                       key={idx}
+                                      id={`purchases-suggestion-${idx}`}
                                       className={`p-3 cursor-pointer border-b border-border last:border-0 ${
                                         highlightedSuggestionIndex === idx
                                           ? "bg-primary/20"
@@ -2419,6 +2470,7 @@ export default function PurchasesPage() {
                                     e.target.value
                                   )
                                 }
+                                onBlur={() => checkPriceHistorySilent(item.id, item.product_name, item.rate_pack || item.pack_price)}
                                 onKeyDown={(e) => {
                                   if (e.key === "Enter") {
                                     e.preventDefault();
@@ -2461,7 +2513,7 @@ export default function PurchasesPage() {
                                     position="top"
                                     text="Compare with past rates"
                                   >
-                                    <ArrowUpDown className="w-4 h-4" />
+                                    <ArrowUpDown className={`w-4 h-4 ${priceAlerts[item.id] ? "text-yellow-500 animate-icon-alert cursor-pointer" : ""}`} />
                                   </CustomTooltip>
                                 </button>
                               )}
@@ -2548,7 +2600,6 @@ export default function PurchasesPage() {
                     )}
                   </TableBody>
                 </Table>
-              </div>
             </div>
 
             {/* Hint for unit-based system */}
@@ -2669,10 +2720,9 @@ export default function PurchasesPage() {
                 </div>
               </div>
 
-              <div className="border border-border rounded-lg">
-                <div className="max-h-[40vh] overflow-auto">
-                  <Table>
-                    <TableHeader className="sticky top-0 bg-muted/95 backdrop-blur z-10">
+              <div className="border border-border rounded-lg overflow-hidden">
+                  <Table wrapperClassName="h-[400px]">
+                    <TableHeader className="sticky top-0 bg-muted/95 backdrop-blur z-[50]">
                       <TableRow>
                         <TableHead>Product Name</TableHead>
                         <TableHead>Batch</TableHead>
@@ -2700,7 +2750,12 @@ export default function PurchasesPage() {
                         const totalPrice = packQty * packPrice;
 
                         return (
-                          <TableRow key={idx}>
+                          <TableRow
+                            key={idx}
+                            className={`${
+                              priceAlerts[item.id] ? "animate-row-alert" : ""
+                            }`}
+                          >
                             <TableCell>
                               <Input
                                 value={item.product_name}
@@ -2805,7 +2860,12 @@ export default function PurchasesPage() {
                                     items,
                                   }));
                                 }}
-                                className="h-8 text-xs w-20 text-center"
+                                onBlur={() => checkPriceHistorySilent(item.id, item.product_name, item.pack_price)}
+                                className={`h-8 text-xs w-20 text-center ${
+                                  priceAlerts[item.id]
+                                    ? "border-yellow-500 bg-yellow-500/10"
+                                    : ""
+                                }`}
                               />
                             </TableCell>
                             <TableCell>
@@ -2838,7 +2898,6 @@ export default function PurchasesPage() {
                       })}
                     </TableBody>
                   </Table>
-                </div>
               </div>
 
               <div className="flex justify-end gap-2">
