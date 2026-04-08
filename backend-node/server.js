@@ -57,6 +57,7 @@ app.use("/api/activities", activityRoutes);
 
 app.use("/api/payments", require("./routes/payments"));
 app.use("/api/webhook", require("./routes/webhook"));
+app.use("/api/chat", require("./routes/chat"));
 
 startCronJobs();
 

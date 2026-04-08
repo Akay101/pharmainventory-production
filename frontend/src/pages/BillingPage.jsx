@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
+import { createPortal } from "react-dom";
 import axios from "axios";
 import { API } from "../App";
 import {
@@ -146,6 +147,25 @@ export default function BillingPage() {
   // Dropdown keyboard navigation
   const [activeDropdownIndex, setActiveDropdownIndex] = useState(-1);
   const [highlightedSuggestion, setHighlightedSuggestion] = useState(-1);
+
+  const [dropdownPosition, setDropdownPosition] = useState({ top: 0, left: 0, width: 400 });
+
+  useEffect(() => {
+    if (!showInventorySuggestions && !showEditingInventorySuggestions) return;
+    
+    let rafId;
+    const updatePos = () => {
+      const el = showInventorySuggestions ? productInputRef.current : editingProductInputRef.current;
+      if (el) {
+        const rect = el.getBoundingClientRect();
+        setDropdownPosition({ top: rect.bottom + 4, left: rect.left, width: Math.max(rect.width, 400) });
+      }
+      rafId = requestAnimationFrame(updatePos);
+    };
+    
+    rafId = requestAnimationFrame(updatePos);
+    return () => cancelAnimationFrame(rafId);
+  }, [showInventorySuggestions, showEditingInventorySuggestions]);
 
   // Pagination
   const [page, setPage] = useState(1);
@@ -1615,13 +1635,16 @@ export default function BillingPage() {
                             />
                             {/* Search Suggestions Dropdown */}
                             {showInventorySuggestions &&
-                              index === billItems.length - 1 && (
+                              index === billItems.length - 1 &&
+                              createPortal(
                                 <div
-                                  className="fixed bg-card border border-border rounded-lg shadow-2xl max-h-64 overflow-y-auto"
+                                  className="bg-card border border-border rounded-lg shadow-2xl max-h-64 overflow-y-auto"
                                   style={{
-                                    width: "400px",
-                                    zIndex: 9999,
-                                    marginTop: "4px",
+                                    position: "fixed",
+                                    top: dropdownPosition.top,
+                                    left: dropdownPosition.left,
+                                    width: dropdownPosition.width || 400,
+                                    zIndex: 99999,
                                   }}
                                 >
                                   {/* Manual Entry Option */}
@@ -1732,7 +1755,8 @@ export default function BillingPage() {
                                       </div>
                                     )
                                   )}
-                                </div>
+                                </div>,
+                                document.body
                               )}
                           </TableCell>
                           <TableCell>
@@ -2296,13 +2320,16 @@ export default function BillingPage() {
                             />
                             {/* Search Suggestions Dropdown for Editing */}
                             {showEditingInventorySuggestions &&
-                              activeEditingItemId === item.id && (
+                              activeEditingItemId === item.id &&
+                              createPortal(
                                 <div
-                                  className="fixed bg-card border border-border rounded-lg shadow-2xl max-h-64 overflow-y-auto"
+                                  className="bg-card border border-border rounded-lg shadow-2xl max-h-64 overflow-y-auto"
                                   style={{
-                                    width: "400px",
-                                    zIndex: 9999,
-                                    marginTop: "4px",
+                                    position: "fixed",
+                                    top: dropdownPosition.top,
+                                    left: dropdownPosition.left,
+                                    width: dropdownPosition.width || 400,
+                                    zIndex: 99999,
                                   }}
                                 >
                                   {/* Manual Entry Option */}
@@ -2397,7 +2424,8 @@ export default function BillingPage() {
                                       </div>
                                     )
                                   )}
-                                </div>
+                                </div>,
+                                document.body
                               )}
                           </TableCell>
                           <TableCell>

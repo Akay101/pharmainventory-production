@@ -239,6 +239,16 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
     const totalAmount = subtotal - discountAmount;
     totalProfit -= discountAmount;
 
+    // 💰 Distribute bill-level discount to individual items proportionally for consistency
+    if (discountAmount > 0 && subtotal > 0) {
+      processedItems.forEach(item => {
+        const itemProportion = item.item_total / subtotal;
+        const itemDiscountShare = discountAmount * itemProportion;
+        item.item_total -= itemDiscountShare;
+        item.profit -= itemDiscountShare;
+      });
+    }
+
     // Handle customer
     let finalCustomerId = customer_id;
     if (!customer_id && customer_name) {
@@ -435,8 +445,17 @@ router.put("/:bill_id", auth, requireSubscription(), async (req, res, next) => {
 
     const discountAmount = subtotal * (discount_percent / 100);
     const totalAmount = subtotal - discountAmount;
-
     totalProfit -= discountAmount;
+
+    // 💰 Distribute bill-level discount to individual items proportionally for consistency
+    if (discountAmount > 0 && subtotal > 0) {
+      processedItems.forEach(item => {
+        const itemProportion = item.item_total / subtotal;
+        const itemDiscountShare = discountAmount * itemProportion;
+        item.item_total -= itemDiscountShare;
+        item.profit -= itemDiscountShare;
+      });
+    }
 
     const totalCost = processedItems.reduce(
       (sum, i) => sum + i.purchase_price * i.quantity,

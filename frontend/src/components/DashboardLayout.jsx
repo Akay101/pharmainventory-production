@@ -41,6 +41,7 @@ import {
 
 import RecentActivitySidebar from "./RecentActivitySidebar";
 import { useKeyboardShortcut, formatShortcut } from "../hooks/useKeyboard";
+import AgentWidget from "./Agent/AgentWidget";
 
 const navItems = [
   { path: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -393,6 +394,9 @@ export default function DashboardLayout() {
           </div>
         </div>
       </div>
+
+      {/* Global AI Agent Widget */}
+      <AgentWidget user={user} />
     </div>
   );
 }

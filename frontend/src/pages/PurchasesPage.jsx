@@ -142,29 +142,19 @@ export default function PurchasesPage() {
     });
   };
 
-  // Sync position initially
+  // Bulletproof positioning sync
   useEffect(() => {
-    if (activeItemId && showSuggestions) {
-      // Short delay ensures DOM layout happens first
-      setTimeout(() => updateDropdownPosition(activeItemId), 0);
-    }
-  }, [activeItemId, showSuggestions]);
-
-  // Sync position on global scroll and window resize
-  useEffect(() => {
-    const handleScroll = () => {
-      if (activeItemId && showSuggestions) {
-        updateDropdownPosition(activeItemId);
-      }
+    if (!activeItemId || !showSuggestions) return;
+    
+    let rafId;
+    const updatePosition = () => {
+      updateDropdownPosition(activeItemId);
+      rafId = requestAnimationFrame(updatePosition);
     };
-    // use capture phase to catch internal table scrolls
-    window.addEventListener("scroll", handleScroll, true);
-    window.addEventListener("resize", handleScroll);
-
-    return () => {
-      window.removeEventListener("scroll", handleScroll, true);
-      window.removeEventListener("resize", handleScroll);
-    };
+    
+    rafId = requestAnimationFrame(updatePosition);
+    
+    return () => cancelAnimationFrame(rafId);
   }, [activeItemId, showSuggestions]);
   // Delete dialog
   const [deleteDialog, setDeleteDialog] = useState({
