@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import { API } from "../App";
 import { Card, CardContent } from "../components/ui/card";
@@ -43,6 +44,7 @@ import {
 import { toast } from "sonner";
 
 export default function CustomersPage() {
+  const navigate = useNavigate();
   const [customers, setCustomers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -57,6 +59,11 @@ export default function CustomersPage() {
   const [payBillDialog, setPayBillDialog] = useState({
     open: false,
     bill: null,
+  });
+  const [clearDebtDialog, setClearDebtDialog] = useState({
+    open: false,
+    customerId: null,
+    amount: null,
   });
   const [processingPayment, setProcessingPayment] = useState(false);
 
@@ -177,15 +184,14 @@ export default function CustomersPage() {
     setSortOrder(newOrder);
   };
 
-  const handleClearDebt = async (customerId, amount = null) => {
-    const amountStr = amount ? `Rs. ${amount.toFixed(2)}` : "all";
-    if (
-      !window.confirm(
-        `Are you sure you want to clear ${amountStr} debt for this customer?`
-      )
-    ) {
-      return;
-    }
+  const handleClearDebt = (customerId, amount = null) => {
+    setClearDebtDialog({ open: true, customerId, amount });
+  };
+
+  const confirmClearDebt = async () => {
+    const { customerId, amount } = clearDebtDialog;
+    if (!customerId) return;
+    
     try {
       const params = amount ? `?amount=${amount}` : "";
       const response = await axios.post(
@@ -206,6 +212,7 @@ export default function CustomersPage() {
         const response2 = await axios.get(`${API}/customers/${customerId}`);
         setCustomerBills(response2.data.bills || []);
       }
+      setClearDebtDialog({ open: false, customerId: null, amount: null });
     } catch (error) {
       toast.error(error.response?.data?.detail || "Failed to clear debt");
     }
@@ -530,17 +537,28 @@ export default function CustomersPage() {
                     className="text-center"
                     onClick={(e) => e.stopPropagation()}
                   >
-                    {customer.total_debt > 0 && (
+                    <div className="flex justify-center items-center gap-2">
                       <Button
                         size="sm"
                         variant="outline"
-                        className="border-yellow-500/50 text-yellow-500 hover:bg-yellow-500/10"
-                        onClick={() => handleClearDebt(customer.id)}
-                        data-testid={`clear-debt-${customer.id}`}
+                        className="border-primary/50 text-primary hover:bg-primary/5"
+                        onClick={() => navigate(`/billing?customer_id=${customer.id}`)}
                       >
-                        Clear Debt
+                        See Bills
                       </Button>
-                    )}
+                      
+                      {customer.total_debt > 0 && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="border-yellow-500/50 text-yellow-500 hover:bg-yellow-500/10"
+                          onClick={() => handleClearDebt(customer.id)}
+                          data-testid={`clear-debt-${customer.id}`}
+                        >
+                          Clear Debt
+                        </Button>
+                      )}
+                    </div>
                   </TableCell>
                 </TableRow>
               ))
@@ -644,6 +662,28 @@ export default function CustomersPage() {
                 disabled={processingPayment}
               >
                 {processingPayment ? "Processing..." : "Mark Paid"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        <AlertDialog
+          open={clearDebtDialog.open}
+          onOpenChange={(open) =>
+            setClearDebtDialog({ ...clearDebtDialog, open })
+          }
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Clear Debt</AlertDialogTitle>
+              <AlertDialogDescription>
+                Are you sure you want to clear {clearDebtDialog.amount ? `Rs. ${clearDebtDialog.amount.toFixed(2)}` : "all outstanding"} debt for this customer?
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction onClick={confirmClearDebt} className="btn-primary">
+                Confirm
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>

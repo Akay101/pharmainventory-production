@@ -14,6 +14,16 @@ import {
   DialogTrigger,
 } from "../components/ui/dialog";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "../components/ui/alert-dialog";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -38,6 +48,7 @@ export default function UsersPage() {
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [verifyDialog, setVerifyDialog] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState({ open: false, userId: null });
   const [submitting, setSubmitting] = useState(false);
   const [pendingId, setPendingId] = useState("");
   const [otp, setOtp] = useState("");
@@ -110,12 +121,18 @@ export default function UsersPage() {
     }
   };
 
-  const handleDeleteUser = async (userId) => {
-    if (!window.confirm("Are you sure you want to delete this user?")) return;
+  const handleDeleteUser = (userId) => {
+    setDeleteConfirm({ open: true, userId });
+  };
+
+  const confirmDeleteUser = async () => {
+    const { userId } = deleteConfirm;
+    if (!userId) return;
 
     try {
       await axios.delete(`${API}/users/${userId}`);
       toast.success("User deleted successfully");
+      setDeleteConfirm({ open: false, userId: null });
       fetchUsers();
     } catch (error) {
       toast.error(error.response?.data?.detail || "Failed to delete user");
@@ -302,6 +319,23 @@ export default function UsersPage() {
             </div>
           </DialogContent>
         </Dialog>
+
+        <AlertDialog open={deleteConfirm.open} onOpenChange={(open) => setDeleteConfirm({ ...deleteConfirm, open })}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete User</AlertDialogTitle>
+              <AlertDialogDescription>
+                Are you sure you want to delete this user? Their access will be immediately revoked.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction onClick={confirmDeleteUser} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                Delete User
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
 
       {/* Users Table */}

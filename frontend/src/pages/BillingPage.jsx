@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
+import { useSearchParams } from "react-router-dom";
 import { createPortal } from "react-dom";
 import axios from "axios";
 import { API } from "../App";
@@ -13,6 +14,13 @@ import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Badge } from "../components/ui/badge";
 import { Checkbox } from "../components/ui/checkbox";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../components/ui/select";
 import {
   Dialog,
   DialogContent,
@@ -131,6 +139,9 @@ export default function BillingPage() {
 
   // Expanded bill rows
   const [expandedBills, setExpandedBills] = useState({});
+  const [pendingBillNo, setPendingBillNo] = useState("");
+  const [pdfConfirmDialog, setPdfConfirmDialog] = useState({ open: false, billId: null });
+  const [removeConfirmDialog, setRemoveConfirmDialog] = useState({ open: false, itemId: null });
 
   // Restore draft dialog
   const [showRestoreDialog, setShowRestoreDialog] = useState(false);
@@ -175,8 +186,18 @@ export default function BillingPage() {
   // Filters and Insights
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [filterCustomer, setFilterCustomer] = useState(searchParams.get("customer_id") || "all");
   const [insightsData, setInsightsData] = useState(null);
   const [insightsLoading, setInsightsLoading] = useState(false);
+
+  const handleCustomerFilterChange = (val) => {
+    setFilterCustomer(val);
+    setPage(1);
+    if (val === "all") searchParams.delete("customer_id");
+    else searchParams.set("customer_id", val);
+    setSearchParams(searchParams);
+  };
 
   const emptyItem = {
     id: "",
@@ -334,7 +355,7 @@ export default function BillingPage() {
 
   useEffect(() => {
     fetchData();
-  }, [page, startDate, endDate]);
+  }, [page, startDate, endDate, filterCustomer]);
 
   // Fetch Insights when dates change
   useEffect(() => {
@@ -473,10 +494,18 @@ export default function BillingPage() {
           limit,
           start_date: startDate || undefined,
           end_date: endDate || undefined,
+          customer_id: filterCustomer !== "all" ? filterCustomer : undefined,
         },
       });
 
-      setBills(billsRes?.data?.bills);
+      let finalBills = billsRes?.data?.bills || [];
+      
+      // Strict fallback filter: ensure backend results physically match the selected dropdown customer UI
+      if (filterCustomer && filterCustomer !== "all") {
+        finalBills = finalBills.filter(b => b.customer_id === filterCustomer);
+      }
+
+      setBills(finalBills);
       setTotalBills(billsRes?.data?.pagination?.total);
 
       setTotalPages(billsRes.data.pagination.total_pages);
@@ -760,7 +789,13 @@ export default function BillingPage() {
   };
 
   const handleRemoveItem = (itemId) => {
-    setBillItems((prev) => prev.filter((item) => item.id !== itemId));
+    setRemoveConfirmDialog({ open: true, itemId });
+  };
+
+  const confirmRemoveItem = () => {
+    if (!removeConfirmDialog.itemId) return;
+    setBillItems((prev) => prev.filter((item) => item.id !== removeConfirmDialog.itemId));
+    setRemoveConfirmDialog({ open: false, itemId: null });
   };
 
   const handleFullPackToggle = (itemId, checked) => {
@@ -884,21 +919,7 @@ export default function BillingPage() {
 
       toast.success(`Bill ${response.data.bill.bill_no} created successfully`);
 
-      if (window.confirm("Generate PDF for this bill?")) {
-        try {
-          const pdfRes = await axios.post(
-            `${API}/bills/${response.data.bill.id}/pdf`
-          );
-          if (pdfRes.data.pdf_url) {
-            window.open(pdfRes.data.pdf_url, "_blank");
-          }
-        } catch (e) {
-          toast.error("Failed to generate PDF");
-        }
-      }
-
-      handleCancelNewBill();
-      fetchData();
+      setPdfConfirmDialog({ open: true, billId: response.data.bill.id });
     } catch (error) {
       toast.error(error.response?.data?.detail || "Failed to create bill");
     } finally {
@@ -2748,6 +2769,28 @@ export default function BillingPage() {
           <div className="flex flex-col gap-4">
             <div className="flex flex-wrap items-end gap-4">
               <div>
+                <Label>Filter Customer</Label>
+                <div className="mt-1">
+                  <Select
+                    value={filterCustomer}
+                    onValueChange={handleCustomerFilterChange}
+                  >
+                    <SelectTrigger className="w-48">
+                      <SelectValue placeholder="All Customers" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Customers</SelectItem>
+                      {customers?.map((c) => (
+                        <SelectItem key={c.id} value={c.id}>
+                          {c.name || c.mobile || "Unknown"}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              <div>
                 <Label>From Date</Label>
                 <Input
                   type="date"
@@ -3340,6 +3383,70 @@ export default function BillingPage() {
               className="bg-destructive hover:bg-destructive/90"
             >
               Delete & Restore Inventory
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={pdfConfirmDialog.open}
+        onOpenChange={(open) => {
+          if (!open && pdfConfirmDialog.open) {
+            // Only process cleanup if it was open and is now closing
+            setPdfConfirmDialog({ open: false, billId: null });
+            handleCancelNewBill();
+            fetchData();
+          } else {
+            setPdfConfirmDialog({ ...pdfConfirmDialog, open });
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Generate Bill PDF</AlertDialogTitle>
+            <AlertDialogDescription>
+              Would you like to generate and view a PDF receipt for this newly recorded bill?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Skip</AlertDialogCancel>
+            <AlertDialogAction
+              className="btn-primary"
+              onClick={async () => {
+                if (!pdfConfirmDialog.billId) return;
+                try {
+                  const pdfRes = await axios.post(
+                    `${API}/bills/${pdfConfirmDialog.billId}/pdf`
+                  );
+                  if (pdfRes.data.pdf_url) {
+                    window.open(pdfRes.data.pdf_url, "_blank");
+                  }
+                } catch (e) {
+                  toast.error("Failed to generate PDF");
+                }
+                setPdfConfirmDialog({ open: false, billId: null });
+                handleCancelNewBill();
+                fetchData();
+              }}
+            >
+              Generate PDF
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={removeConfirmDialog.open} onOpenChange={(open) => setRemoveConfirmDialog({ ...removeConfirmDialog, open })}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove Item</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to remove this item from the bill?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmRemoveItem} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              Remove
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

@@ -29,10 +29,31 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
       .limit(parseInt(limit))
       .toArray();
 
+    // Augment with total owed
+    const supplierIds = suppliers.map((s) => s.id);
+    const purchases = await db
+      .collection("purchases")
+      .find({ supplier_id: { $in: supplierIds }, payment_status: { $ne: "Paid" } })
+      .project({ _id: 0, supplier_id: 1, total_amount: 1, amount_paid: 1, payment_status: 1 })
+      .toArray();
+
+    const owedBySupplier = {};
+    purchases.forEach((p) => {
+      const remaining = (p.total_amount || 0) - (p.amount_paid || 0);
+      if (remaining > 0) {
+        owedBySupplier[p.supplier_id] = (owedBySupplier[p.supplier_id] || 0) + remaining;
+      }
+    });
+
+    const augmentedSuppliers = suppliers.map((s) => ({
+      ...s,
+      total_amount_owed: owedBySupplier[s.id] || 0,
+    }));
+
     const total = await db.collection("suppliers").countDocuments(query);
 
     res.json({
-      suppliers,
+      suppliers: augmentedSuppliers,
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
@@ -98,11 +119,20 @@ router.get(
         .collection("purchases")
         .find({ supplier_id: req.params.supplier_id })
         .sort({ created_at: -1 })
-        .limit(10)
         .project({ _id: 0 })
         .toArray();
 
-      res.json({ supplier, purchases });
+      // Calculate total amount owed
+      let totalAmountOwed = 0;
+      purchases.forEach((p) => {
+        const total = p.total_amount || 0;
+        const paid = p.amount_paid || 0;
+        if (p.payment_status !== "Paid" && total > paid) {
+          totalAmountOwed += (total - paid);
+        }
+      });
+
+      res.json({ supplier, purchases, total_amount_owed: totalAmountOwed });
     } catch (error) {
       next(error);
     }
@@ -163,6 +193,60 @@ router.delete(
       await logActivity(db, req.user.pharmacy_id, req.user.id, req.user.name, "DELETE", "SUPPLIERS", req.params.supplier_id, `Deleted Supplier`, `/suppliers`);
 
       res.json({ message: "Supplier deleted" });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+// POST /api/suppliers/:supplier_id/pay-all
+router.post(
+  "/:supplier_id/pay-all",
+  auth,
+  requireSubscription(),
+  async (req, res, next) => {
+    try {
+      const db = mongoose.connection.db;
+      const purchases = await db.collection("purchases").find({
+        supplier_id: req.params.supplier_id,
+        pharmacy_id: req.user.pharmacy_id,
+        payment_status: { $ne: "Paid" }
+      }).toArray();
+
+      if (purchases.length === 0) {
+        return res.status(400).json({ detail: "No outstanding balances to pay" });
+      }
+
+      const timestamp = new Date().toISOString();
+      let totalPaid = 0;
+
+      for (const purchase of purchases) {
+        const remaining = (purchase.total_amount || 0) - (purchase.amount_paid || 0);
+        if (remaining > 0) {
+          totalPaid += remaining;
+          await db.collection("purchases").updateOne(
+            { id: purchase.id },
+            { 
+              $set: { 
+                payment_status: "Paid",
+                amount_paid: purchase.total_amount,
+                updated_at: timestamp
+              },
+              $push: {
+                payments: {
+                  amount: remaining,
+                  date: timestamp,
+                  notes: "Bulk Cleared via Supplier Dues",
+                  recorded_by: req.user.id
+                }
+              }
+            }
+          );
+        }
+      }
+
+      await logActivity(db, req.user.pharmacy_id, req.user.id, req.user.name, "PAYMENT", "SUPPLIERS", req.params.supplier_id, `Cleared all outstanding dues (₹${totalPaid.toFixed(2)})`, `/suppliers`);
+
+      res.json({ message: "All outstanding dues cleared successfully", total_paid: totalPaid });
     } catch (error) {
       next(error);
     }

@@ -186,7 +186,7 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
 // POST /api/purchases
 router.post("/", auth, requireSubscription(), async (req, res, next) => {
   try {
-    const { supplier_id, supplier_name, invoice_no, purchase_date, items } =
+    const { supplier_id, supplier_name, invoice_no, purchase_date, items, payment_status, amount_paid } =
       req.body;
     const db = mongoose.connection.db;
 
@@ -296,6 +296,26 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
       }
     }
 
+    // Payment Handling
+    const pStatus = payment_status || "Unpaid";
+    let pAmount = parseFloat(amount_paid) || 0;
+    
+    if (pStatus === "Paid") {
+      pAmount = totalAmount;
+    } else if (pStatus === "Unpaid") {
+      pAmount = 0;
+    }
+
+    const payments = [];
+    if (pAmount > 0) {
+      payments.push({
+        id: uuidv4(),
+        amount: pAmount,
+        date: new Date().toISOString(),
+        notes: "Initial Payment",
+      });
+    }
+
     const purchaseData = {
       id: purchaseId,
       pharmacy_id: req.user.pharmacy_id,
@@ -305,6 +325,9 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
       purchase_date: purchase_date || new Date().toISOString().slice(0, 10),
       items: processedItems,
       total_amount: totalAmount,
+      payment_status: pStatus,
+      amount_paid: pAmount,
+      payments: payments,
       created_by: req.user.id,
       created_at: new Date().toISOString(),
     };
@@ -958,3 +981,78 @@ router.post(
 );
 
 module.exports = router;
+
+// POST /api/purchases/:purchase_id/payments
+router.post(
+  "/:purchase_id/payments",
+  auth,
+  requireSubscription(),
+  async (req, res, next) => {
+    try {
+      const { amount, date, notes } = req.body;
+      const db = mongoose.connection.db;
+
+      if (!amount || amount <= 0) {
+        return res.status(400).json({ detail: "Payment amount must be greater than 0" });
+      }
+
+      const purchase = await db.collection("purchases").findOne({
+        id: req.params.purchase_id,
+        pharmacy_id: req.user.pharmacy_id,
+      });
+
+      if (!purchase) {
+        return res.status(404).json({ detail: "Purchase not found" });
+      }
+
+      const paymentAmount = parseFloat(amount);
+      const newAmountPaid = (purchase.amount_paid || 0) + paymentAmount;
+      let newStatus = "Partial";
+
+      if (newAmountPaid >= purchase.total_amount) {
+        newStatus = "Paid";
+      }
+
+
+      const newPayment = {
+        id: uuidv4(),
+        amount: paymentAmount,
+        date: date || new Date().toISOString(),
+        notes: notes || "Partial Payment",
+      };
+
+      await db.collection("purchases").updateOne(
+        { id: req.params.purchase_id },
+        {
+          $push: { payments: newPayment },
+          $set: {
+            amount_paid: newAmountPaid,
+            payment_status: newStatus,
+            updated_at: new Date().toISOString(),
+          },
+        }
+      );
+
+      await logActivity(
+        db,
+        req.user.pharmacy_id,
+        req.user.id,
+        req.user.name,
+        "UPDATE",
+        "PURCHASES",
+        req.params.purchase_id,
+        `Added payment of ₹${paymentAmount} to Purchase`,
+        `/purchases`
+      );
+
+      res.status(200).json({
+        message: "Payment added successfully",
+        payment_status: newStatus,
+        amount_paid: newAmountPaid,
+        payment: newPayment,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+);

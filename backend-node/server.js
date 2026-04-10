@@ -61,6 +61,19 @@ app.use("/api/chat", require("./routes/chat"));
 
 startCronJobs();
 
+// Swagger Documentation setup
+try {
+  const swaggerUi = require('swagger-ui-express');
+  const swaggerDocument = require('./swagger-output.json');
+  app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument, {
+    customSiteTitle: "Pharmalogy API Explorer",
+    customCss: '.swagger-ui .topbar { display: none }',
+    explorer: true
+  }));
+} catch (error) {
+  console.log("Swagger documentation not generated. Run 'npm run swagger' to generate.");
+}
+
 // Root API endpoint
 app.get("/api/", (req, res) => {
   res.json({ message: "Pharmalogy API - Node.js/Express", version: "2.0.0" });

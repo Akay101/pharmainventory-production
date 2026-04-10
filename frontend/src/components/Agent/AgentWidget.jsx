@@ -14,6 +14,16 @@ import { Input } from "../ui/input";
 import { Avatar, AvatarFallback } from "../ui/avatar";
 import { Badge } from "../ui/badge";
 import { toast } from "sonner";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "../ui/alert-dialog";
 
 const MarkdownComponents = {
   p: ({ children }) => <p className="mb-2 last:mb-0 leading-relaxed text-sm break-words">{children}</p>,
@@ -62,6 +72,7 @@ export default function AgentWidget({ user }) {
   ]);
   const [inputValue, setInputValue] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState({ open: false, convId: null });
   
   // History & Multi-chat state
   const [conversations, setConversations] = useState([]);
@@ -156,9 +167,14 @@ export default function AgentWidget({ user }) {
     localStorage.removeItem(`agent_last_conv_${user?.id}`);
   };
 
-  const handleDeleteConversation = async (e, convId) => {
+  const handleDeleteConversation = (e, convId) => {
     e.stopPropagation();
-    if (!window.confirm("Are you sure you want to delete this chat history?")) return;
+    setDeleteConfirm({ open: true, convId });
+  };
+
+  const confirmDeleteChat = async () => {
+    const { convId } = deleteConfirm;
+    if (!convId) return;
     
     try {
       await axios.delete(`${API}/chat/conversations/${convId}`, {
@@ -167,6 +183,7 @@ export default function AgentWidget({ user }) {
       setConversations(prev => prev.filter(c => c.id !== convId));
       if (activeConvId === convId) handleNewChat();
       toast.success("Chat deleted");
+      setDeleteConfirm({ open: false, convId: null });
     } catch (err) {
       toast.error("Failed to delete chat");
     }
@@ -610,6 +627,23 @@ export default function AgentWidget({ user }) {
            </motion.button>
         )}
       </div>
+
+      <AlertDialog open={deleteConfirm.open} onOpenChange={(open) => setDeleteConfirm({ ...deleteConfirm, open })}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Chat</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete this chat history?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmDeleteChat} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { useSearchParams } from "react-router-dom";
 import { createPortal } from "react-dom";
 import axios from "axios";
 import { API } from "../App";
@@ -66,6 +67,8 @@ import {
   ArrowRight,
   FileText,
   AlertCircle,
+  CreditCard,
+  CheckCircle2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatDate } from "./utils";
@@ -97,6 +100,10 @@ export default function PurchasesPage() {
   const [aiAutofillEnabled, setAiAutofillEnabled] = useState(false);
   const [isAiLoading, setIsAiLoading] = useState(false);
 
+  // Payment Tracking State
+  const [paymentStatus, setPaymentStatus] = useState("Unpaid");
+  const [amountPaid, setAmountPaid] = useState("");
+
   // Infinite scroll suggestion state
   const [suggestionPage, setSuggestionPage] = useState(1);
   const [hasMoreSuggestions, setHasMoreSuggestions] = useState(false);
@@ -107,6 +114,13 @@ export default function PurchasesPage() {
 
   // Expanded view
   const [expandedPurchase, setExpandedPurchase] = useState(null);
+
+  // Add Partial Payment dialog
+  const [paymentDialog, setPaymentDialog] = useState({ open: false, purchase: null });
+  const [newPaymentAmount, setNewPaymentAmount] = useState("");
+  const [newPaymentNotes, setNewPaymentNotes] = useState("");
+  const [pdfConfirmDialog, setPdfConfirmDialog] = useState({ open: false, purchaseId: null });
+  const [removeConfirmDialog, setRemoveConfirmDialog] = useState({ open: false, itemId: null });
 
   // Your existing state and refs are correct
   // Replace your current dropdownPosition state and updateDropdownPosition with this:
@@ -214,7 +228,15 @@ export default function PurchasesPage() {
     total_pages: 1,
   });
   const [searchQuery, setSearchQuery] = useState("");
-  const [filterSupplier, setFilterSupplier] = useState("all");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [filterSupplier, setFilterSupplier] = useState(searchParams.get("supplier_id") || "all");
+
+  const handleSupplierFilterChange = (val) => {
+    setFilterSupplier(val);
+    if (val === "all") searchParams.delete("supplier_id");
+    else searchParams.set("supplier_id", val);
+    setSearchParams(searchParams);
+  };
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [sortBy, setSortBy] = useState("purchase_date");
@@ -707,7 +729,13 @@ export default function PurchasesPage() {
   };
 
   const handleRemoveItem = (itemId) => {
-    setPurchaseItems((prev) => prev.filter((item) => item.id !== itemId));
+    setRemoveConfirmDialog({ open: true, itemId });
+  };
+
+  const confirmRemoveItem = () => {
+    if (!removeConfirmDialog.itemId) return;
+    setPurchaseItems((prev) => prev.filter((item) => item.id !== removeConfirmDialog.itemId));
+    setRemoveConfirmDialog({ open: false, itemId: null });
   };
 
   const handleEditItem = (item) => {
@@ -1130,6 +1158,8 @@ export default function PurchasesPage() {
             (parseFloat(item.mrp_pack) || 0) / (parseInt(item.units) || 1),
           hsn_no: item.hsn_no || null,
         })),
+        payment_status: paymentStatus,
+        amount_paid: paymentStatus === "Partial" ? parseFloat(amountPaid) || 0 : (paymentStatus === "Paid" ? undefined /* backend handles total */ : 0),
       };
 
       if (editingPurchaseId) {
@@ -1145,15 +1175,13 @@ export default function PurchasesPage() {
         const purchaseId = res.data?.purchase?.id;
 
         if (purchaseId) {
-          setTimeout(() => {
-            if (window.confirm("Generate purchase PDF?")) {
-              handleGeneratePurchasePdf(purchaseId);
-            }
-          }, 300);
+          setPdfConfirmDialog({ open: true, purchaseId });
         }
       }
 
       setEditingPurchaseId(null);
+      setPaymentStatus("Unpaid");
+      setAmountPaid("");
       clearDraft();
       handleCancelNewPurchase();
       await fetchPurchases(pagination.page);
@@ -1193,6 +1221,8 @@ export default function PurchasesPage() {
         purchase.created_at?.slice(0, 10) ||
         new Date().toISOString().slice(0, 10)
     );
+    setPaymentStatus(purchase.payment_status || "Unpaid");
+    setAmountPaid(purchase.amount_paid || "");
 
     const mappedItems = purchase.items.map((item, idx) => ({
       id: item.id || `edit-${idx}`,
@@ -1402,6 +1432,46 @@ export default function PurchasesPage() {
     }
   }, [highlightedSuggestionIndex, showSuggestions]);
 
+  // ============ ADD PARTIAL PAYMENT ============
+  const handleAddNewPayment = async () => {
+    if (!newPaymentAmount || parseFloat(newPaymentAmount) <= 0) {
+      toast.error("Please enter a valid amount");
+      return;
+    }
+    setSubmitting(true);
+    try {
+      await axios.post(`${API}/purchases/${paymentDialog.purchase.id}/payments`, {
+        amount: parseFloat(newPaymentAmount),
+        notes: newPaymentNotes,
+      });
+      toast.success("Payment added successfully");
+      setPaymentDialog({ open: false, purchase: null });
+      setNewPaymentAmount("");
+      setNewPaymentNotes("");
+      await fetchPurchases(pagination.page);
+    } catch (error) {
+      toast.error(error.response?.data?.detail || "Failed to add payment");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleMarkAsPaid = async (purchase) => {
+    try {
+      const remainingAmount = purchase.total_amount - (purchase.amount_paid || 0);
+      if (remainingAmount <= 0) return;
+      
+      await axios.post(`${API}/purchases/${purchase.id}/payments`, {
+        amount: remainingAmount,
+        notes: "Marked as Paid in Full",
+      });
+      toast.success("Purchase marked as Paid");
+      await fetchPurchases(pagination.page);
+    } catch (error) {
+      toast.error("Failed to mark as paid");
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -1413,7 +1483,49 @@ export default function PurchasesPage() {
   return (
     <div className="space-y-6 animate-fade-in" data-testid="purchases-page">
       {/* Restore Draft Dialog */}
+      <Dialog open={paymentDialog.open} onOpenChange={(open) => !open && setPaymentDialog({ open: false, purchase: null })}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Add Partial Payment</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label>Amount (₹)</Label>
+              <Input
+                type="number"
+                min="0"
+                step="0.01"
+                placeholder="0.00"
+                value={newPaymentAmount}
+                onChange={(e) => setNewPaymentAmount(e.target.value)}
+              />
+              {paymentDialog.purchase && (
+                <p className="text-xs text-muted-foreground">
+                  Remaining Balance: ₹{(paymentDialog.purchase.total_amount - (paymentDialog.purchase.amount_paid || 0)).toFixed(2)}
+                </p>
+              )}
+            </div>
+            <div className="space-y-2">
+              <Label>Notes (optional)</Label>
+              <Input
+                placeholder="Payment via UPI, Bank Transfer..."
+                value={newPaymentNotes}
+                onChange={(e) => setNewPaymentNotes(e.target.value)}
+              />
+            </div>
+            <Button
+              className="w-full btn-primary"
+              onClick={handleAddNewPayment}
+              disabled={submitting}
+            >
+              {submitting ? "Saving..." : "Save Payment"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       <AlertDialog open={showRestoreDialog} onOpenChange={setShowRestoreDialog}>
+
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle className="flex items-center gap-2">
@@ -1732,9 +1844,9 @@ export default function PurchasesPage() {
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
-            {/* Supplier & Invoice */}
-            <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-              <div className="space-y-2">
+            {/* Supplier & Invoice & Payment Tracking */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+              <div className="space-y-2 lg:col-span-1">
                 <Label>Supplier *</Label>
                 <Select
                   value={selectedSupplier}
@@ -1752,7 +1864,7 @@ export default function PurchasesPage() {
                   </SelectContent>
                 </Select>
               </div>
-              <div className="space-y-2">
+              <div className="space-y-2 lg:col-span-1">
                 <Label>Invoice Number</Label>
                 <Input
                   placeholder="INV-001"
@@ -1761,7 +1873,7 @@ export default function PurchasesPage() {
                   data-testid="invoice-no-input"
                 />
               </div>
-              <div className="space-y-2">
+              <div className="space-y-2 lg:col-span-1">
                 <Label>Purchase Date *</Label>
                 <Input
                   type="date"
@@ -1778,14 +1890,56 @@ export default function PurchasesPage() {
                   {totalUnits}
                 </div>
               </div>
-              <div className="text-center p-2 rounded-lg bg-muted/50">
-                <span className="text-xs text-muted-foreground">
+              <div className="text-center p-2 rounded-lg bg-primary/10 border border-primary/20 shadow-sm">
+                <span className="text-[10px] uppercase font-bold text-primary opacity-80">
                   Total Amount
                 </span>
-                <div className="text-lg font-bold font-mono text-primary">
+                <div className="text-xl font-bold font-mono text-primary leading-none mt-1">
                   ₹{totalAmount.toFixed(2)}
                 </div>
               </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 pt-2 border-t border-border mt-2">
+              <div className="space-y-2 lg:col-span-2">
+                <Label>Payment Status</Label>
+                <div className="flex bg-muted/50 p-1 rounded-lg">
+                  {['Unpaid', 'Partial', 'Paid'].map(status => (
+                    <button
+                      key={status}
+                      type="button"
+                      onClick={() => setPaymentStatus(status)}
+                      className={`flex-1 text-xs font-semibold py-1.5 px-3 rounded-md transition-all ${
+                        paymentStatus === status 
+                        ? (status === 'Paid' ? 'bg-green-500 text-white shadow-sm' : status === 'Unpaid' ? 'bg-red-500 text-white shadow-sm' : 'bg-yellow-500 text-white shadow-sm')
+                        : 'text-muted-foreground hover:bg-background/50'
+                      }`}
+                    >
+                      {status === 'Paid' ? 'Fully Paid' : status}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              
+              {paymentStatus === "Partial" && (
+                <div className="space-y-2 lg:col-span-2">
+                  <Label>Initial Amount Paid (₹)</Label>
+                  <Input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={amountPaid}
+                    onChange={(e) => setAmountPaid(e.target.value)}
+                    placeholder="e.g. 500"
+                    className="border-yellow-500/50 focus-visible:ring-yellow-500/30"
+                  />
+                  {amountPaid && (
+                    <p className="text-[11px] text-muted-foreground">
+                      Remaining: <span className="font-bold text-red-400">₹{(totalAmount - parseFloat(amountPaid)).toFixed(2)}</span>
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Items Table - Inline Editable with enhanced fields */}
@@ -1909,6 +2063,19 @@ export default function PurchasesPage() {
 
                                   if (!isMovingToSuggestions) {
                                     setTimeout(() => {
+                                      if (
+                                        aiAutofillEnabled &&
+                                        item.product_name &&
+                                        item.product_name.length > 2 &&
+                                        !item._inventoryMeta &&
+                                        !item.salt_composition && 
+                                        !item.manufacturer
+                                      ) {
+                                        handleSelectAiMedicineForItem(
+                                          item.id,
+                                          item.product_name
+                                        );
+                                      }
                                       setShowSuggestions(false);
                                       setActiveItemId(null);
                                       setHighlightedSuggestionIndex(-1);
@@ -2936,7 +3103,7 @@ export default function PurchasesPage() {
               <div className="flex gap-2 flex-wrap">
                 <Select
                   value={filterSupplier}
-                  onValueChange={setFilterSupplier}
+                  onValueChange={handleSupplierFilterChange}
                 >
                   <SelectTrigger className="w-48">
                     <SelectValue placeholder="Filter by supplier" />
@@ -3023,6 +3190,7 @@ export default function PurchasesPage() {
                   </TableHead>
                   <TableHead>Invoice</TableHead>
                   <TableHead>Items</TableHead>
+                  <TableHead className="text-center">Status</TableHead>
                   <TableHead className="text-right">
                     <Button
                       variant="ghost"
@@ -3077,6 +3245,15 @@ export default function PurchasesPage() {
                       <TableCell className="text-sm">
                         {purchase.items?.length || 0} items
                       </TableCell>
+                      <TableCell className="text-center">
+                        <span className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                          purchase.payment_status === 'Paid' ? 'bg-green-500/10 text-green-500 border border-green-500/20' :
+                          purchase.payment_status === 'Partial' ? 'bg-yellow-500/10 text-yellow-500 border border-yellow-500/20' :
+                          'bg-red-500/10 text-red-400 border border-red-500/20'
+                        }`}>
+                          {purchase.payment_status || 'Unpaid'}
+                        </span>
+                      </TableCell>
                       <TableCell className="text-right font-mono text-primary">
                         ₹{purchase.total_amount?.toFixed(2)}
                       </TableCell>
@@ -3121,7 +3298,7 @@ export default function PurchasesPage() {
                     </TableRow>
                     {expandedPurchase === purchase.id && (
                       <TableRow className="bg-muted/30">
-                        <TableCell colSpan={7} className="p-4">
+                        <TableCell colSpan={8} className="p-4">
                           <div className="rounded-lg border border-border overflow-hidden">
                             <Table>
                               <TableHeader>
@@ -3199,6 +3376,69 @@ export default function PurchasesPage() {
                               </TableBody>
                             </Table>
                           </div>
+
+                          {/* Payment Timeline Section */}
+                          <div className="mt-4 p-4 rounded-lg bg-card border border-border shadow-sm flex flex-col md:flex-row gap-6">
+                            <div className="flex-1">
+                              <h4 className="font-semibold text-sm mb-4 flex items-center gap-2">
+                                <CreditCard className="w-4 h-4 text-primary" />
+                                Payment History
+                              </h4>
+                              {purchase.payments && purchase.payments.length > 0 ? (
+                                <div className="space-y-4">
+                                  {purchase.payments.map((payment, i) => (
+                                    <div key={i} className="flex relative pl-5 before:absolute before:left-[7px] before:top-5 before:bottom-[-20px] last:before:hidden before:w-[2px] before:bg-muted-foreground/20">
+                                      <div className="absolute left-0 top-1.5 w-[16px] h-[16px] rounded-full bg-primary/20 flex items-center justify-center ring-4 ring-background">
+                                        <div className="w-[8px] h-[8px] rounded-full bg-primary"></div>
+                                      </div>
+                                      <div>
+                                        <p className="text-sm font-bold text-foreground">₹{payment.amount.toFixed(2)}</p>
+                                        <p className="text-xs text-muted-foreground font-medium">{new Date(payment.date).toLocaleString()} <span className="mx-1">•</span> {payment.notes || "Partial Payment"}</p>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <div className="text-sm text-muted-foreground italic flex py-8 items-center justify-center bg-muted/20 rounded-lg border border-dashed border-border/50">
+                                  No payment history recorded.
+                                </div>
+                              )}
+                            </div>
+                            
+                            <div className="w-full md:w-72 bg-muted/30 p-4 rounded-md border border-border/50 flex flex-col justify-center shadow-inner">
+                               <div className="flex justify-between items-center mb-1">
+                                 <span className="text-sm text-muted-foreground">Total Billed:</span>
+                                 <span className="text-sm font-mono font-medium">₹{purchase.total_amount?.toFixed(2)}</span>
+                               </div>
+                               <div className="flex justify-between items-center mb-3">
+                                 <span className="text-sm text-muted-foreground">Amount Paid:</span>
+                                 <span className="text-sm font-mono font-medium text-green-500">₹{(purchase.amount_paid || 0).toFixed(2)}</span>
+                               </div>
+                               <div className="flex justify-between items-center pt-2 border-t border-border mb-4">
+                                 <span className="text-sm font-bold">Remaining:</span>
+                                 <span className="text-base font-mono font-bold text-red-500">₹{Math.max(0, purchase.total_amount - (purchase.amount_paid || 0)).toFixed(2)}</span>
+                               </div>
+                               
+                               <div className="flex gap-2">
+                                 {purchase.payment_status !== "Paid" && (
+                                   <>
+                                     <Button size="sm" className="flex-1 btn-primary" onClick={(e) => { e.stopPropagation(); setPaymentDialog({ open: true, purchase }); }}>
+                                       Pay Part
+                                     </Button>
+                                     <Button size="sm" variant="outline" className="flex-1 hover:bg-green-50 hover:text-green-600 hover:border-green-200" onClick={(e) => { e.stopPropagation(); handleMarkAsPaid(purchase); }}>
+                                       Mark Paid
+                                     </Button>
+                                   </>
+                                 )}
+                                 {purchase.payment_status === "Paid" && (
+                                   <Button size="sm" variant="secondary" className="w-full text-green-600 border-green-200 bg-green-50/50" disabled>
+                                     <CheckCircle2 className="w-4 h-4 mr-1.5" /> Fully Paid
+                                   </Button>
+                                 )}
+                               </div>
+                            </div>
+                          </div>
+
                         </TableCell>
                       </TableRow>
                     )}
@@ -3207,7 +3447,7 @@ export default function PurchasesPage() {
                 {purchases.length === 0 && (
                   <TableRow>
                     <TableCell
-                      colSpan={7}
+                      colSpan={8}
                       className="text-center py-8 text-muted-foreground"
                     >
                       No purchases found
@@ -3332,16 +3572,44 @@ export default function PurchasesPage() {
           <AlertDialogFooter className="flex-col sm:flex-row gap-2">
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              onClick={() => handleDeletePurchase(false)}
-              className="bg-destructive hover:bg-destructive/90"
+              className="bg-destructive hover:bg-destructive/90 transition-colors"
+              onClick={() => handleDeleteWithoutStockMatchDialog()}
             >
-              Delete Purchase Only
+              Force Delete (No Inventory Adjust)
             </AlertDialogAction>
             <AlertDialogAction
+              className="btn-primary"
               onClick={() => handleDeletePurchase(true)}
-              className="bg-destructive hover:bg-destructive/90"
             >
-              Delete with Inventory
+              Delete & Decrease Stock
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={pdfConfirmDialog.open}
+        onOpenChange={(open) =>
+          setPdfConfirmDialog({ ...pdfConfirmDialog, open })
+        }
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Generate Purchase PDF</AlertDialogTitle>
+            <AlertDialogDescription>
+              Would you like to generate and view a PDF receipt for this newly recorded purchase?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Skip</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                handleGeneratePurchasePdf(pdfConfirmDialog.purchaseId);
+                setPdfConfirmDialog({ open: false, purchaseId: null });
+              }}
+              className="btn-primary"
+            >
+              Generate PDF
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -3553,6 +3821,23 @@ export default function PurchasesPage() {
           )}
         </DialogContent>
       </Dialog>
+      
+      <AlertDialog open={removeConfirmDialog.open} onOpenChange={(open) => setRemoveConfirmDialog({ ...removeConfirmDialog, open })}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove Item</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to remove this item from the purchase invoice?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmRemoveItem} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              Remove
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

@@ -19,10 +19,11 @@ const generateBillNo = () => {
 // GET /api/bills
 router.get("/", auth, requireSubscription(), async (req, res, next) => {
   try {
-    const db = mongoose.connection.db;
+    const db = mongoose.connection.db; // Forces reload for updated customer_ids
 
     const {
       search,
+      customer_id,
       is_paid,
       start_date,
       end_date,
@@ -40,6 +41,10 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
         { bill_no: { $regex: search, $options: "i" } },
         { customer_name: { $regex: search, $options: "i" } },
       ];
+    }
+
+    if (customer_id) {
+      query.customer_id = customer_id;
     }
 
     // 💰 Paid filter
