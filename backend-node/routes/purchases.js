@@ -391,7 +391,7 @@ router.put(
   requireSubscription(),
   async (req, res, next) => {
     try {
-      const { items, purchase_date, invoice_no } = req.body;
+      const { items, purchase_date, invoice_no, supplier_id, supplier_name } = req.body;
       const db = mongoose.connection.db;
 
       const purchase = await db.collection("purchases").findOne({
@@ -485,17 +485,20 @@ router.put(
         }
       }
 
+      const updatePayload = {
+        items: processedItems,
+        total_amount: totalAmount,
+        purchase_date: purchase_date || purchase.purchase_date,
+        invoice_no: invoice_no || purchase.invoice_no,
+        updated_at: new Date().toISOString(),
+      };
+
+      if (supplier_id !== undefined) updatePayload.supplier_id = supplier_id;
+      if (supplier_name !== undefined) updatePayload.supplier_name = supplier_name;
+
       await db.collection("purchases").updateOne(
         { id: req.params.purchase_id },
-        {
-          $set: {
-            items: processedItems,
-            total_amount: totalAmount,
-            purchase_date: purchase_date || purchase.purchase_date,
-            invoice_no: invoice_no || purchase.invoice_no,
-            updated_at: new Date().toISOString(),
-          },
-        }
+        { $set: updatePayload }
       );
 
       const itemNames = items

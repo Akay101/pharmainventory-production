@@ -253,4 +253,120 @@ router.post(
   }
 );
 
+// POST /api/suppliers/merge-preview
+router.post("/merge-preview", auth, requireSubscription(), async (req, res, next) => {
+  try {
+    const { supplier_ids } = req.body;
+    if (!supplier_ids || !Array.isArray(supplier_ids)) {
+      return res.status(400).json({ detail: "supplier_ids must be an array" });
+    }
+
+    const db = mongoose.connection.db;
+    
+    const preview = [];
+    let totalPurchases = 0;
+    
+    for (const id of supplier_ids) {
+      const supplier = await db.collection("suppliers").findOne({ id, pharmacy_id: req.user.pharmacy_id });
+      if (!supplier) continue;
+
+      const purchasesCount = await db.collection("purchases").countDocuments({ supplier_id: id, pharmacy_id: req.user.pharmacy_id });
+      
+      preview.push({
+        id,
+        name: supplier.name,
+        purchases: purchasesCount
+      });
+      totalPurchases += purchasesCount;
+    }
+    
+    res.json({ preview, totalPurchases });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/suppliers/merge
+router.post("/merge", auth, requireSubscription(), async (req, res, next) => {
+  try {
+    const { supplier_ids, new_name } = req.body;
+    if (!supplier_ids || !Array.isArray(supplier_ids) || supplier_ids.length < 2) {
+      return res.status(400).json({ detail: "Must select at least 2 suppliers to merge" });
+    }
+    if (!new_name || new_name.trim() === "") {
+      return res.status(400).json({ detail: "New supplier name is required" });
+    }
+
+    const db = mongoose.connection.db;
+
+    const originalSuppliers = await db.collection("suppliers").find({
+      id: { $in: supplier_ids },
+      pharmacy_id: req.user.pharmacy_id
+    }).toArray();
+
+    if (originalSuppliers.length === 0) {
+       return res.status(400).json({ detail: "No valid suppliers found to merge" });
+    }
+
+    const baseSupplier = originalSuppliers[0];
+    const newId = uuidv4();
+
+    const timestamp = new Date().toISOString();
+    const merge_history = [];
+    
+    for (const s of originalSuppliers) {
+      // Also fetch total purchases to keep static log on the history object
+      const purchasesCount = await db.collection("purchases").countDocuments({ supplier_id: s.id, pharmacy_id: req.user.pharmacy_id });
+      merge_history.push({
+          id: s.id,
+          name: s.name,
+          purchases: purchasesCount,
+          merged_at: timestamp
+      });
+    }
+
+    const newSupplier = {
+      id: newId,
+      pharmacy_id: req.user.pharmacy_id,
+      name: new_name.trim(),
+      contact: baseSupplier.contact || null,
+      email: baseSupplier.email || null,
+      address: baseSupplier.address || null,
+      gst_no: baseSupplier.gst_no || null,
+      notes: "Merged Supplier",
+      merge_history,
+      created_at: timestamp
+    };
+
+    await db.collection("suppliers").insertOne(newSupplier);
+
+    // Update relational DB links
+    await db.collection("purchases").updateMany(
+      { supplier_id: { $in: supplier_ids }, pharmacy_id: req.user.pharmacy_id },
+      { $set: { supplier_id: newId, supplier_name: new_name.trim() } }
+    );
+
+    await db.collection("inventory").updateMany(
+      { supplier_id: { $in: supplier_ids }, pharmacy_id: req.user.pharmacy_id },
+      { $set: { supplier_id: newId, supplier_name: new_name.trim() } }
+    );
+
+    await db.collection("medicines").updateMany(
+      { supplier_id: { $in: supplier_ids }, pharmacy_id: req.user.pharmacy_id },
+      { $set: { supplier_id: newId, supplier_name: new_name.trim() } }
+    );
+
+    await db.collection("suppliers").deleteMany({
+      id: { $in: supplier_ids },
+      pharmacy_id: req.user.pharmacy_id
+    });
+
+    await logActivity(db, req.user.pharmacy_id, req.user.id, req.user.name, "MERGE", "SUPPLIERS", newId, `Merged ${originalSuppliers.length} suppliers into '${new_name}'`, `/suppliers`);
+
+    res.json({ message: "Suppliers merged successfully", supplier: newSupplier });
+  } catch (error) {
+    next(error);
+  }
+});
+
 module.exports = router;

@@ -1929,7 +1929,17 @@ export default function PurchasesPage() {
                     min="0"
                     step="0.01"
                     value={amountPaid}
-                    onChange={(e) => setAmountPaid(e.target.value)}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      const numericVal = parseFloat(val);
+                      if (numericVal && numericVal >= totalAmount) {
+                         setPaymentStatus("Paid");
+                         setAmountPaid("");
+                         toast.success("Amount covers total. Marked as Fully Paid.");
+                      } else {
+                         setAmountPaid(val);
+                      }
+                    }}
                     placeholder="e.g. 500"
                     className="border-yellow-500/50 focus-visible:ring-yellow-500/30"
                   />

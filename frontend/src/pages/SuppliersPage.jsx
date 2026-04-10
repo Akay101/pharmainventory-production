@@ -23,6 +23,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "../components/ui/alert-dialog";
+import { Checkbox } from "../components/ui/checkbox";
 import { Search, Plus, Truck, Edit2, Trash2, Loader2, Phone, Mail, MapPin, ChevronLeft, ChevronRight, FileText, CreditCard, ExternalLink, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 import { formatDate } from "./utils";
@@ -55,6 +56,16 @@ export default function SuppliersPage() {
 
   const [deleteConfirm, setDeleteConfirm] = useState({ open: false, supplierId: null });
   const [clearDuesConfirm, setClearDuesConfirm] = useState({ open: false, supplierId: null });
+
+  // Merge Dialog State
+  const [mergeDialogOpen, setMergeDialogOpen] = useState(false);
+  const [mergeSearch, setMergeSearch] = useState("");
+  const [mergeCandidates, setMergeCandidates] = useState([]);
+  const [mergeSelected, setMergeSelected] = useState({});
+  const [mergePreview, setMergePreview] = useState(null);
+  const [mergeNewName, setMergeNewName] = useState("");
+  const [mergeLoading, setMergeLoading] = useState(false);
+  const [previewLoading, setPreviewLoading] = useState(false);
 
   const fetchSuppliers = useCallback(async (page = 1) => {
     try {
@@ -231,6 +242,79 @@ export default function SuppliersPage() {
     }
   };
 
+  const openMergeDialog = () => {
+    setMergeDialogOpen(true);
+    setMergeSelected({});
+    setMergePreview(null);
+    setMergeNewName("");
+    setMergeSearch("");
+    fetchMergeCandidates("");
+  };
+
+  const fetchMergeCandidates = async (term) => {
+    try {
+      const resp = await axios.get(`${API}/suppliers?limit=200&search=${term}`);
+      setMergeCandidates(resp.data.suppliers || []);
+    } catch (e) {
+      toast.error("Failed to fetch merge candidates");
+    }
+  };
+
+  useEffect(() => {
+    if (mergeDialogOpen) {
+      const delay = setTimeout(() => fetchMergeCandidates(mergeSearch), 300);
+      return () => clearTimeout(delay);
+    }
+  }, [mergeSearch, mergeDialogOpen]);
+
+  const toggleMergeSelection = (id) => {
+    setMergeSelected(prev => {
+      const next = { ...prev };
+      if (next[id]) delete next[id];
+      else next[id] = true;
+      return next;
+    });
+  };
+
+  const handleFetchMergePreview = async () => {
+    const ids = Object.keys(mergeSelected);
+    if (ids.length < 2) return toast.error("Select at least 2 suppliers to merge");
+
+    setPreviewLoading(true);
+    try {
+      const res = await axios.post(`${API}/suppliers/merge-preview`, { supplier_ids: ids });
+      setMergePreview(res.data);
+    } catch(err) {
+      toast.error("Failed to load preview");
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  const executeMerge = async () => {
+    const ids = Object.keys(mergeSelected);
+    if (ids.length < 2) return toast.error("Select at least 2 suppliers");
+    if (!mergeNewName || mergeNewName.trim() === "") return toast.error("Enter a robust new supplier name");
+
+    setMergeLoading(true);
+    try {
+      await axios.post(`${API}/suppliers/merge`, {
+        supplier_ids: ids,
+        new_name: mergeNewName
+      });
+      toast.success("Suppliers seamlessly merged!");
+      setMergeDialogOpen(false);
+      setMergeSelected({});
+      setMergePreview(null);
+      setMergeNewName("");
+      fetchSuppliers(1);
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Failed to execute merge operation");
+    } finally {
+      setMergeLoading(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -248,97 +332,184 @@ export default function SuppliersPage() {
           <p className="text-muted-foreground">{pagination.total} suppliers registered</p>
         </div>
 
-        <Dialog
-          open={dialogOpen}
-          onOpenChange={(open) => {
-            setDialogOpen(open);
-            if (!open) resetForm();
-          }}
-        >
-          <DialogTrigger asChild>
-            <Button className="btn-primary" data-testid="add-supplier-btn">
-              <Plus className="w-4 h-4 mr-2" />
-              Add Supplier
+        <div className="flex items-center gap-2">
+          {/* Merge Suppliers Dialog */}
+          <Dialog open={mergeDialogOpen} onOpenChange={setMergeDialogOpen}>
+            <Button variant="outline" className="border-primary/20 hover:bg-primary/10 transition-colors" onClick={openMergeDialog}>
+               Merge Suppliers
             </Button>
-          </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>{editingSupplier ? "Edit Supplier" : "Add New Supplier"}</DialogTitle>
-            </DialogHeader>
+            <DialogContent className="max-w-xl max-h-[85vh] overflow-hidden flex flex-col">
+              <DialogHeader>
+                <DialogTitle>Merge Multiple Suppliers</DialogTitle>
+                <p className="text-sm text-muted-foreground">Select multiple exact-duplicate or overlapping legacy suppliers to seamlessly amalgamate into a single entity.</p>
+              </DialogHeader>
 
-            <div className="space-y-4 pt-4">
-              <div className="space-y-2">
-                <Label>Supplier Name *</Label>
-                <Input
-                  placeholder="ABC Pharmaceuticals"
-                  value={formData.name}
-                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  data-testid="supplier-name-input"
-                />
-              </div>
+              {!mergePreview ? (
+                <>
+                   <div className="py-2 flex-1 overflow-hidden flex flex-col min-h-0">
+                     <div className="relative mb-4 shrink-0">
+                       <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                       <Input 
+                         placeholder="Search to pick suppliers..." 
+                         className="pl-9" 
+                         value={mergeSearch} 
+                         onChange={(e) => setMergeSearch(e.target.value)} 
+                       />
+                     </div>
+                     <div className="border border-border/50 rounded-lg flex-1 overflow-y-auto p-2 bg-muted/10 space-y-1 min-h-[300px]">
+                       {mergeCandidates.map((c) => (
+                         <div key={c.id} className="flex items-center space-x-3 p-2 hover:bg-muted/50 rounded-md transition-colors cursor-pointer" onClick={() => toggleMergeSelection(c.id)}>
+                           <Checkbox checked={!!mergeSelected[c.id]} className="pointer-events-none" />
+                           <div className="flex flex-col">
+                              <span className="text-sm font-medium">{c.name}</span>
+                              <span className="text-xs text-muted-foreground">{c.phone || c.email || c.gst_no || "No Contact info"}</span>
+                           </div>
+                         </div>
+                       ))}
+                       {mergeCandidates.length === 0 && <p className="text-center text-xs text-muted-foreground py-10">No candidates found</p>}
+                     </div>
+                   </div>
+                   <div className="pt-4 border-t flex justify-between items-center bg-background shrink-0">
+                     <span className="text-sm text-muted-foreground">{Object.keys(mergeSelected).length} selected</span>
+                     <Button onClick={handleFetchMergePreview} className="btn-primary" disabled={Object.keys(mergeSelected).length < 2 || previewLoading}>
+                       {previewLoading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : "Preview Merge Details"}
+                     </Button>
+                   </div>
+                </>
+              ) : (
+                <div className="space-y-6 pt-4 flex-1 overflow-y-auto min-h-0">
+                   <div className="bg-primary/5 border border-primary/20 rounded-xl p-4">
+                     <h4 className="font-semibold text-primary mb-3">Merge Blueprint Matrix</h4>
+                     <div className="space-y-2">
+                        {mergePreview.preview.map(p => (
+                           <div key={p.id} className="flex justify-between items-center text-sm border-b border-primary/10 pb-2 last:border-0 last:pb-0">
+                             <span className="font-medium text-foreground/80">{p.name}</span>
+                             <span className="text-muted-foreground">{p.purchases} Purchases</span>
+                           </div>
+                        ))}
+                     </div>
+                     <div className="mt-4 pt-3 border-t border-primary/20 flex justify-between items-center text-primary font-bold">
+                       <span>Total Consolidated Purchases</span>
+                       <span>{mergePreview.totalPurchases} Purchases</span>
+                     </div>
+                   </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>Phone</Label>
-                  <Input
-                    placeholder="+91 9876543210"
-                    value={formData.phone}
-                    onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                    data-testid="supplier-phone-input"
-                  />
+                   <div className="space-y-3 bg-muted/20 p-4 rounded-xl border border-border/50">
+                     <Label>Name for the Master Merged Supplier</Label>
+                     <Input 
+                       placeholder="E.g., ABC Pharma Merged Entity" 
+                       value={mergeNewName} 
+                       onChange={(e) => setMergeNewName(e.target.value)} 
+                       className="bg-background"
+                     />
+                     <p className="text-xs text-muted-foreground leading-relaxed">
+                       All older mapped inventory and historical purchase invoices will automatically reroute seamlessly to this newly typed name. This cannot be undone.
+                     </p>
+                   </div>
+
+                   <div className="flex items-center justify-between pt-2">
+                     <Button variant="ghost" onClick={() => setMergePreview(null)}>Back to Selection</Button>
+                     <Button onClick={executeMerge} disabled={mergeLoading || !mergeNewName} className="btn-primary">
+                       {mergeLoading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : "Confirm Consolidation"}
+                     </Button>
+                   </div>
                 </div>
-                <div className="space-y-2">
-                  <Label>Email</Label>
-                  <Input
-                    type="email"
-                    placeholder="supplier@email.com"
-                    value={formData.email}
-                    onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                    data-testid="supplier-email-input"
-                  />
-                </div>
-              </div>
+              )}
+            </DialogContent>
+          </Dialog>
 
-              <div className="space-y-2">
-                <Label>Address</Label>
-                <Input
-                  placeholder="123 Business Street, City"
-                  value={formData.address}
-                  onChange={(e) => setFormData({ ...formData, address: e.target.value })}
-                  data-testid="supplier-address-input"
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label>GST Number</Label>
-                <Input
-                  placeholder="29ABCDE1234F1Z5"
-                  value={formData.gst_no}
-                  onChange={(e) => setFormData({ ...formData, gst_no: e.target.value })}
-                  data-testid="supplier-gst-input"
-                />
-              </div>
-
-              <Button
-                onClick={handleSubmit}
-                disabled={submitting}
-                className="w-full btn-primary"
-                data-testid="save-supplier-btn"
-              >
-                {submitting ? (
-                  <>
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    Saving...
-                  </>
-                ) : editingSupplier ? (
-                  "Update Supplier"
-                ) : (
-                  "Add Supplier"
-                )}
+          <Dialog
+            open={dialogOpen}
+            onOpenChange={(open) => {
+              setDialogOpen(open);
+              if (!open) resetForm();
+            }}
+          >
+            <DialogTrigger asChild>
+              <Button className="btn-primary" data-testid="add-supplier-btn">
+                <Plus className="w-4 h-4 mr-2" />
+                Add Supplier
               </Button>
-            </div>
-          </DialogContent>
-        </Dialog>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>{editingSupplier ? "Edit Supplier" : "Add New Supplier"}</DialogTitle>
+              </DialogHeader>
+
+              <div className="space-y-4 pt-4">
+                <div className="space-y-2">
+                  <Label>Supplier Name *</Label>
+                  <Input
+                    placeholder="ABC Pharmaceuticals"
+                    value={formData.name}
+                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                    data-testid="supplier-name-input"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Phone</Label>
+                    <Input
+                      placeholder="+91 9876543210"
+                      value={formData.phone}
+                      onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+                      data-testid="supplier-phone-input"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Email</Label>
+                    <Input
+                      type="email"
+                      placeholder="supplier@email.com"
+                      value={formData.email}
+                      onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                      data-testid="supplier-email-input"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Address</Label>
+                  <Input
+                    placeholder="123 Business Street, City"
+                    value={formData.address}
+                    onChange={(e) => setFormData({ ...formData, address: e.target.value })}
+                    data-testid="supplier-address-input"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>GST Number</Label>
+                  <Input
+                    placeholder="29ABCDE1234F1Z5"
+                    value={formData.gst_no}
+                    onChange={(e) => setFormData({ ...formData, gst_no: e.target.value })}
+                    data-testid="supplier-gst-input"
+                  />
+                </div>
+
+                <Button
+                  onClick={handleSubmit}
+                  disabled={submitting}
+                  className="w-full btn-primary"
+                  data-testid="save-supplier-btn"
+                >
+                  {submitting ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Saving...
+                    </>
+                  ) : editingSupplier ? (
+                    "Update Supplier"
+                  ) : (
+                    "Add Supplier"
+                  )}
+                </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
+        </div>
       </div>
 
       {/* Supplier Details Modal */}
@@ -385,6 +556,25 @@ export default function SuppliersPage() {
                
                {/* Body Section */}
                <div className="p-6 md:p-8">
+                 {/* Merge Protocol Banner */}
+                 {detailsDialog.data.supplier.merge_history && detailsDialog.data.supplier.merge_history.length > 0 && (
+                   <div className="mb-8 bg-indigo-500/5 border border-indigo-500/20 rounded-xl p-5 shadow-sm relative overflow-hidden">
+                     <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/10 rounded-full blur-2xl transform translate-x-1/2 -translate-y-1/2"></div>
+                     <h4 className="text-indigo-500 dark:text-indigo-400 font-bold mb-2 flex items-center gap-2">
+                       <ShieldCheck className="w-5 h-5" /> Merged Entity
+                     </h4>
+                     <p className="text-sm text-foreground/80 mb-3">This supplier account was formed by merging the following entities on {new Date(detailsDialog.data.supplier.merge_history[0].merged_at).toLocaleDateString()}:</p>
+                     <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 relative z-10">
+                       {detailsDialog.data.supplier.merge_history.map(mh => (
+                         <div key={mh.id} className="bg-background/80 p-3 rounded-lg border border-border/50 flex justify-between items-center text-sm shadow-sm">
+                           <span className="font-semibold text-primary/90">{mh.name}</span>
+                           <span className="text-muted-foreground font-mono text-xs font-medium bg-muted px-2 py-1 rounded">{mh.purchases} invoices</span>
+                         </div>
+                       ))}
+                     </div>
+                   </div>
+                 )}
+
                  <div className="flex justify-between items-center mb-6">
                    <h3 className="text-xl font-bold flex items-center gap-2">
                      <CreditCard className="w-5 h-5 text-primary" /> Purchase Ledger
