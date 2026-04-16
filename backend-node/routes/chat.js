@@ -15,9 +15,17 @@ const SCHEMA = {
     action: {
       type: "object",
       properties: {
-        intent: { type: "string", enum: ["create_purchase", "list_purchases", "delete_purchase", "check_price_history"] },
-        data: { 
-          type: "object", 
+        intent: {
+          type: "string",
+          enum: [
+            "create_purchase",
+            "list_purchases",
+            "delete_purchase",
+            "check_price_history",
+          ],
+        },
+        data: {
+          type: "object",
           properties: {
             supplier_name: { type: "string" },
             purchase_date: { type: "string" },
@@ -35,19 +43,22 @@ const SCHEMA = {
                   batch_no: { type: "string" },
                   expiry_date: { type: "string" },
                   hsn_no: { type: "string" },
-                  pack_type: { type: "string", enum: ["Strip", "Bottle", "Tube", "Packet", "Box", "Unit"] }
+                  pack_type: {
+                    type: "string",
+                    enum: ["Strip", "Bottle", "Tube", "Packet", "Box", "Unit"],
+                  },
                 },
-                required: ["product_name", "pack_quantity", "pack_price"]
-              }
+                required: ["product_name", "pack_quantity", "pack_price"],
+              },
             },
-            purchase_id: { type: "string" }
-          }
-        }
-      }
+            purchase_id: { type: "string" },
+          },
+        },
+      },
     },
-    chips: { type: "array", items: { type: "string" } }
+    chips: { type: "array", items: { type: "string" } },
   },
-  required: ["type", "content"]
+  required: ["type", "content"],
 };
 
 const SYSTEM_INSTRUCTION = `YOU ARE THE PHARMALOGY EXPERT AGENT. 
@@ -140,7 +151,8 @@ router.delete("/conversations/:id", auth, async (req, res) => {
 router.post("/", auth, requireSubscription(), async (req, res, next) => {
   try {
     const { message, conversationId, conversationHistory = [] } = req.body;
-    if (!message) return res.status(400).json({ detail: "Message is required" });
+    if (!message)
+      return res.status(400).json({ detail: "Message is required" });
 
     const db = mongoose.connection.db;
     let historyToUse = conversationHistory;
@@ -150,7 +162,7 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
     if (conversationId) {
       currentConversation = await db.collection("conversations").findOne({
         id: conversationId,
-        user_id: req.user.id
+        user_id: req.user.id,
       });
       if (currentConversation) {
         historyToUse = currentConversation.messages;
@@ -162,7 +174,7 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
 
     const model = genAI.getGenerativeModel(
       {
-        model: "gemini-2.0-flash", 
+        model: "gemini-2.0-flash",
         systemInstruction: SYSTEM_INSTRUCTION,
       },
       { apiVersion: "v1beta" }
@@ -170,21 +182,24 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
 
     // Filter and format history for Gemini (limit to last 15 for efficiency)
     const recentHistory = historyToUse.slice(-15);
-    const firstUserIndex = recentHistory.findIndex(m => m.role === 'user');
-    
-    const cleanHistory = (firstUserIndex === -1 ? [] : recentHistory.slice(firstUserIndex))
-      .map(m => ({
-        role: m.role === 'model' ? 'model' : 'user',
-        parts: [{ text: typeof m.text === 'string' ? m.text : JSON.stringify(m.text) }],
-      }));
+    const firstUserIndex = recentHistory.findIndex((m) => m.role === "user");
 
-    const chat = model.startChat({ 
+    const cleanHistory = (
+      firstUserIndex === -1 ? [] : recentHistory.slice(firstUserIndex)
+    ).map((m) => ({
+      role: m.role === "model" ? "model" : "user",
+      parts: [
+        { text: typeof m.text === "string" ? m.text : JSON.stringify(m.text) },
+      ],
+    }));
+
+    const chat = model.startChat({
       history: cleanHistory,
       generationConfig: {
         responseMimeType: "application/json",
         responseSchema: SCHEMA,
         temperature: 0.1,
-      }
+      },
     });
 
     const result = await chat.sendMessage(message);
@@ -193,20 +208,23 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
 
     // 2. Save Conversation to DB
     const userMsg = { role: "user", text: message, timestamp: new Date() };
-    const modelMsg = { 
-      role: "model", 
-      text: jsonResponse.content, 
+    const modelMsg = {
+      role: "model",
+      text: jsonResponse.content,
       chips: jsonResponse.chips || [],
       action: jsonResponse.action || null,
-      timestamp: new Date() 
+      timestamp: new Date(),
     };
 
     if (currentConversation) {
       await db.collection("conversations").updateOne(
         { id: conversationId },
-        { 
+        {
           $push: { messages: { $each: [userMsg, modelMsg] } },
-          $set: { updated_at: new Date(), last_message: jsonResponse.content.substring(0, 50) }
+          $set: {
+            updated_at: new Date(),
+            last_message: jsonResponse.content.substring(0, 50),
+          },
         }
       );
       jsonResponse.conversationId = conversationId;
@@ -220,13 +238,12 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
         last_message: jsonResponse.content.substring(0, 50),
         messages: [userMsg, modelMsg],
         created_at: new Date(),
-        updated_at: new Date()
+        updated_at: new Date(),
       });
       jsonResponse.conversationId = newId;
     }
 
     return res.json(jsonResponse);
-
   } catch (error) {
     console.error("Agent Error:", error);
     res.status(500).json({ detail: error.message });

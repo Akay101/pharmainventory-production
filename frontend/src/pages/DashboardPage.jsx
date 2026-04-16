@@ -20,7 +20,28 @@ import {
   RefreshCw,
   ArrowUpRight,
   ArrowDownRight,
+  Check,
+  Truck,
+  CreditCard,
 } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "../components/ui/alert-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "../components/ui/dialog";
+import { Label } from "../components/ui/label";
+import { Input } from "../components/ui/input";
 import {
   LineChart,
   Line,
@@ -112,23 +133,44 @@ export default function DashboardPage() {
     expiry_alerts: [],
   });
   const [debtSummary, setDebtSummary] = useState(null);
+  const [supplierDues, setSupplierDues] = useState(null);
+  const [clearDebtDialog, setClearDebtDialog] = useState({
+    open: false,
+    customerId: null,
+    customerName: "",
+  });
+  const [supplierClearDuesDialog, setSupplierClearDuesDialog] = useState({
+    open: false,
+    supplierId: null,
+    supplierName: "",
+  });
+  const [supplierPartialPaymentDialog, setSupplierPartialPaymentDialog] = useState({
+    open: false,
+    supplierId: null,
+    supplierName: "",
+    amount: "0",
+    notes: ""
+  });
   const [aiTips, setAiTips] = useState(null);
   const [loading, setLoading] = useState(true);
   const [tipsLoading, setTipsLoading] = useState(false);
+  const [clearingDebt, setClearingDebt] = useState(false);
 
   useEffect(() => {
     fetchDashboardData();
   }, []);
 
   const fetchDashboardData = async () => {
+    setLoading(true);
     try {
-      const [statsRes, trendRes, productsRes, alertsRes, debtRes] =
+      const [statsRes, trendRes, productsRes, alertsRes, debtRes, supplierRes] =
         await Promise.all([
           axios.get(`${API}/dashboard/stats`),
           axios.get(`${API}/dashboard/sales-trend?days=30`),
           axios.get(`${API}/dashboard/top-products?limit=5`),
           axios.get(`${API}/inventory/alerts`),
           axios.get(`${API}/dashboard/debt-summary`),
+          axios.get(`${API}/dashboard/supplier-dues`),
         ]);
 
       setStats(statsRes.data);
@@ -136,6 +178,7 @@ export default function DashboardPage() {
       setTopProducts(productsRes.data.top_products);
       setAlerts(alertsRes.data);
       setDebtSummary(debtRes.data);
+      setSupplierDues(supplierRes.data);
     } catch (error) {
       console.error("Dashboard fetch error:", error);
       toast.error("Failed to load dashboard data");
@@ -158,6 +201,83 @@ export default function DashboardPage() {
   };
 
   const formatCurrency = (value) => `₹${(value || 0).toLocaleString("en-IN")}`;
+
+  const handleClearDebt = (customerId, customerName) => {
+    setClearDebtDialog({ open: true, customerId, customerName });
+  };
+
+  const confirmClearDebt = async () => {
+    const { customerId } = clearDebtDialog;
+    if (!customerId) return;
+
+    setClearingDebt(true);
+    try {
+      const response = await axios.post(`${API}/customers/${customerId}/clear-debt`);
+      toast.success(response.data.message);
+      // Refresh dashboard data
+      fetchDashboardData();
+      setClearDebtDialog({ open: false, customerId: null, customerName: "" });
+    } catch (error) {
+      toast.error(error.response?.data?.detail || "Failed to clear debt");
+    } finally {
+      setClearingDebt(false);
+    }
+  };
+
+  const handleSupplierPartialPayment = (supplierId, supplierName) => {
+    setSupplierPartialPaymentDialog({
+      open: true,
+      supplierId,
+      supplierName,
+      amount: "0",
+      notes: ""
+    });
+  };
+
+  const handleSupplierClearDues = (supplierId, supplierName) => {
+    setSupplierClearDuesDialog({
+      open: true,
+      supplierId,
+      supplierName
+    });
+  };
+
+  const confirmSupplierPartialPayment = async () => {
+    const { supplierId, amount, notes } = supplierPartialPaymentDialog;
+    if (!supplierId || parseFloat(amount) <= 0) {
+      toast.error("Please enter a valid payment amount");
+      return;
+    }
+
+    setClearingDebt(true);
+    try {
+      await axios.post(`${API}/suppliers/${supplierId}/pay-part`, { amount: parseFloat(amount), notes });
+      toast.success("Partial payment registered successfully");
+      fetchDashboardData();
+      setSupplierPartialPaymentDialog({ ...supplierPartialPaymentDialog, open: false });
+    } catch (error) {
+      toast.error(error.response?.data?.detail || "Failed to process payment");
+    } finally {
+      setClearingDebt(false);
+    }
+  };
+
+  const confirmSupplierClearAllDues = async () => {
+    const { supplierId } = supplierClearDuesDialog;
+    if (!supplierId) return;
+
+    setClearingDebt(true);
+    try {
+      await axios.post(`${API}/suppliers/${supplierId}/pay-all`);
+      toast.success("All supplier dues cleared successfully");
+      fetchDashboardData();
+      setSupplierClearDuesDialog({ ...supplierClearDuesDialog, open: false });
+    } catch (error) {
+      toast.error(error.response?.data?.detail || "Failed to clear dues");
+    } finally {
+      setClearingDebt(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -458,55 +578,81 @@ export default function DashboardPage() {
 
       {/* Debt Summary */}
       {debtSummary && debtSummary.total_debt > 0 && (
-        <Card className="bg-card/50 backdrop-blur-sm border-white/5">
-          <CardHeader>
+        <Card className="bg-card/50 backdrop-blur-sm border-white/5 overflow-hidden">
+          <CardHeader className="border-b border-white/5 bg-white/5">
             <CardTitle className="text-lg">Payment Receivables</CardTitle>
           </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
-              <div className="p-4 rounded-lg bg-yellow-500/10 border border-yellow-500/20">
-                <p className="text-sm text-muted-foreground">
+          <CardContent className="p-0">
+            <div className="grid grid-cols-1 md:grid-cols-4 divide-y md:divide-y-0 md:divide-x divide-white/10 border-b border-white/5">
+              <div className="p-6 bg-yellow-500/5">
+                <p className="text-sm text-yellow-500/70 mb-1 font-medium">
                   Total Outstanding
                 </p>
-                <p className="text-xl font-bold font-mono text-yellow-500">
+                <p className="text-2xl font-bold font-mono text-yellow-500">
                   {formatCurrency(debtSummary.total_debt)}
                 </p>
               </div>
-              <div className="p-4 rounded-lg bg-destructive/10 border border-destructive/20">
-                <p className="text-sm text-muted-foreground">Overdue</p>
-                <p className="text-xl font-bold font-mono text-destructive">
+              <div className="p-6 bg-destructive/5">
+                <p className="text-sm text-destructive/70 mb-1 font-medium font-medium">Overdue</p>
+                <p className="text-2xl font-bold font-mono text-destructive">
                   {formatCurrency(debtSummary.overdue_amount)}
                 </p>
               </div>
-              <div className="p-4 rounded-lg bg-muted/50">
-                <p className="text-sm text-muted-foreground">Unpaid Bills</p>
-                <p className="text-xl font-bold font-mono">
+              <div className="p-6">
+                <p className="text-sm text-muted-foreground mb-1">Unpaid Bills</p>
+                <p className="text-2xl font-bold font-mono">
                   {debtSummary.total_unpaid_bills}
                 </p>
               </div>
-              <div className="p-4 rounded-lg bg-muted/50">
-                <p className="text-sm text-muted-foreground">Overdue Bills</p>
-                <p className="text-xl font-bold font-mono">
+              <div className="p-6">
+                <p className="text-sm text-muted-foreground mb-1 font-medium">Overdue Bills</p>
+                <p className="text-2xl font-bold font-mono text-destructive/80">
                   {debtSummary.overdue_count}
                 </p>
               </div>
             </div>
 
             {debtSummary.top_debtors?.length > 0 && (
-              <div>
-                <h4 className="text-sm font-medium text-muted-foreground mb-2">
+              <div className="p-6">
+                <h4 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-4">
                   Top Debtors
                 </h4>
-                <div className="space-y-2">
-                  {debtSummary.top_debtors.slice(0, 5).map((debtor, i) => (
+                <div className="space-y-3">
+                  {debtSummary.top_debtors.map((debtor, i) => (
                     <div
                       key={i}
-                      className="flex items-center justify-between p-2 rounded-lg bg-muted/30"
+                      className="flex items-center justify-between p-4 rounded-xl bg-white/5 border border-white/5 hover:border-primary/20 transition-all group"
                     >
-                      <span>{debtor.name}</span>
-                      <span className="font-mono text-yellow-500">
-                        {formatCurrency(debtor.amount)} ({debtor.bills} bills)
-                      </span>
+                      <div className="flex items-center gap-4">
+                        <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold">
+                          {debtor.name.charAt(0)}
+                        </div>
+                        <div>
+                          <p className="font-semibold">{debtor.name}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {debtor.bills_count} unpaid bills
+                          </p>
+                        </div>
+                      </div>
+                      
+                      <div className="flex items-center gap-6">
+                        <div className="text-right">
+                          <p className="font-mono font-bold text-yellow-500">
+                            {formatCurrency(debtor.total_debt)}
+                          </p>
+                          <p className="text-[10px] text-muted-foreground uppercase">Outstanding</p>
+                        </div>
+                        
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="w-10 h-10 p-0 rounded-full border-primary/20 hover:bg-primary hover:text-primary-foreground group-hover:border-primary transition-all"
+                          onClick={() => handleClearDebt(debtor.id, debtor.name)}
+                          title="Mark as Paid"
+                        >
+                          <Check className="w-5 h-5" />
+                        </Button>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -515,6 +661,234 @@ export default function DashboardPage() {
           </CardContent>
         </Card>
       )}
+
+      {/* Supplier Dues Summary */}
+      {supplierDues && supplierDues.total_due > 0 && (
+        <Card className="bg-card/50 backdrop-blur-sm border-white/5 overflow-hidden">
+          <CardHeader className="border-b border-white/5 bg-white/5">
+            <CardTitle className="text-lg">Payment Due (Suppliers)</CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            <div className="grid grid-cols-1 md:grid-cols-4 divide-y md:divide-y-0 md:divide-x divide-white/10 border-b border-white/5">
+              <div className="p-6 bg-primary/5">
+                <p className="text-sm text-primary/70 mb-1 font-medium">
+                  Total Outstanding
+                </p>
+                <p className="text-2xl font-bold font-mono text-primary">
+                  {formatCurrency(supplierDues.total_due)}
+                </p>
+              </div>
+              <div className="p-6 bg-destructive/5">
+                <p className="text-sm text-destructive/70 mb-1 font-medium">Overdue Dues</p>
+                <p className="text-2xl font-bold font-mono text-destructive">
+                  {formatCurrency(supplierDues.overdue_due)}
+                </p>
+              </div>
+              <div className="p-6">
+                <p className="text-sm text-muted-foreground mb-1">Unpaid Purchases</p>
+                <p className="text-2xl font-bold font-mono">
+                  {supplierDues.unpaid_purchases_count}
+                </p>
+              </div>
+              <div className="p-6">
+                <p className="text-sm text-muted-foreground mb-1 font-medium text-destructive/70 px-2 rounded-full border border-destructive/20 inline-block">Overdue Purchases</p>
+                <div className="mt-1">
+                  <p className="text-2xl font-bold font-mono text-destructive/80 inline-block">
+                    {supplierDues.overdue_count}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {supplierDues.top_suppliers?.length > 0 && (
+              <div className="p-6">
+                <h4 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-4">
+                  Top Suppliers to Pay
+                </h4>
+                <div className="space-y-3">
+                  {supplierDues.top_suppliers.map((supplier, i) => (
+                    <div
+                      key={i}
+                      className="flex items-center justify-between p-4 rounded-xl bg-white/5 border border-white/5 hover:border-primary/20 transition-all group"
+                    >
+                      <div className="flex items-center gap-4">
+                        <div className="w-10 h-10 rounded-full bg-accent/10 flex items-center justify-center text-accent font-bold">
+                          <Truck className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <p className="font-semibold">{supplier.name}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {supplier.purchase_count} unpaid purchases
+                          </p>
+                        </div>
+                      </div>
+                      
+                      <div className="flex items-center gap-4">
+                        <div className="text-right mr-4">
+                          <p className="font-mono font-bold text-primary">
+                            {formatCurrency(supplier.total_debt)}
+                          </p>
+                          <p className="text-[10px] text-muted-foreground uppercase">Outstanding</p>
+                        </div>
+                        
+                        <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <Button 
+                            variant="outline" 
+                            size="sm" 
+                            className="bg-white/5 border-white/10 hover:bg-primary/20 hover:text-primary hover:border-primary"
+                            onClick={() => handleSupplierPartialPayment(supplier.id, supplier.name)}
+                          >
+                            Pay Part
+                          </Button>
+                          <Button 
+                            variant="outline" 
+                            size="sm" 
+                            className="bg-primary/10 border-primary/20 text-primary hover:bg-primary hover:text-primary-foreground"
+                            onClick={() => handleSupplierClearDues(supplier.id, supplier.name)}
+                          >
+                            Fully Paid
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Clear Debt Confirmation Dialog */}
+      <AlertDialog
+        open={clearDebtDialog.open}
+        onOpenChange={(open) =>
+          !open && setClearDebtDialog({ ...clearDebtDialog, open: false })
+        }
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Clear Customer Debt?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will mark all unpaid bills for{" "}
+              <span className="font-bold text-foreground">
+                {clearDebtDialog.customerName}
+              </span>{" "}
+              as paid and clear their outstanding balance. This action cannot be
+              undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={clearingDebt}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-primary hover:bg-primary/90"
+              onClick={(e) => {
+                e.preventDefault();
+                confirmClearDebt();
+              }}
+              disabled={clearingDebt}
+            >
+              {clearingDebt ? (
+                <>
+                  <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                  Processing...
+                </>
+              ) : (
+                "Yes, Clear Debt"
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Supplier Partial Payment Dialog */}
+      <Dialog 
+        open={supplierPartialPaymentDialog.open} 
+        onOpenChange={(open) => !open && setSupplierPartialPaymentDialog({ ...supplierPartialPaymentDialog, open: false })}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Register Partial Supplier Payment</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-3">
+            <div className="space-y-2">
+              <Label>Paying to: {supplierPartialPaymentDialog.supplierName}</Label>
+            </div>
+            <div className="space-y-2">
+              <Label>Amount Paid (₹)</Label>
+              <Input 
+                type="number" 
+                min="0" 
+                step="0.01" 
+                placeholder="Enter amount"
+                value={supplierPartialPaymentDialog.amount} 
+                onChange={(e) => setSupplierPartialPaymentDialog({ ...supplierPartialPaymentDialog, amount: e.target.value })} 
+              />
+              <p className="text-[10px] text-muted-foreground">This amount will be applied to the oldest unpaid purchases first (FIFO).</p>
+            </div>
+            <div className="space-y-2">
+              <Label>Reference Notes</Label>
+              <Input 
+                placeholder="Check #, UPI Ref, etc." 
+                value={supplierPartialPaymentDialog.notes} 
+                onChange={(e) => setSupplierPartialPaymentDialog({ ...supplierPartialPaymentDialog, notes: e.target.value })} 
+              />
+            </div>
+            <Button 
+              onClick={confirmSupplierPartialPayment} 
+              disabled={clearingDebt} 
+              className="w-full btn-primary"
+            >
+              {clearingDebt ? (
+                <>
+                  <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                  Processing...
+                </>
+              ) : (
+                "Confirm Payment"
+              )}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Supplier Fully Paid Confirmation Dialog */}
+      <AlertDialog
+        open={supplierClearDuesDialog.open}
+        onOpenChange={(open) =>
+          !open && setSupplierClearDuesDialog({ ...supplierClearDuesDialog, open: false })
+        }
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Clear All Dues for {supplierClearDuesDialog.supplierName}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to clear all outstanding dues for this supplier? 
+              This will mark all unpaid purchases as fully paid. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={clearingDebt}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-primary hover:bg-primary/90"
+              onClick={(e) => {
+                e.preventDefault();
+                confirmSupplierClearAllDues();
+              }}
+              disabled={clearingDebt}
+            >
+              {clearingDebt ? (
+                <>
+                  <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                  Processing...
+                </>
+              ) : (
+                "Yes, Clear All Dues"
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

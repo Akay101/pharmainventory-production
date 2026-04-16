@@ -208,36 +208,168 @@ router.get(
   async (req, res, next) => {
     try {
       const db = mongoose.connection.db;
+      const pharmacyId = req.user.pharmacy_id;
 
-      const customers = await db
-        .collection("customers")
-        .find({ pharmacy_id: req.user.pharmacy_id })
-        .project({ _id: 0 })
+      // 30 days ago for overdue calculation
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      const overdueThreshold = thirtyDaysAgo.toISOString();
+
+      // Fetch all unpaid bills for this pharmacy
+      const unpaidBills = await db
+        .collection("bills")
+        .find({ 
+          pharmacy_id: pharmacyId, 
+          is_paid: false 
+        })
+        .project({ _id: 0, customer_id: 1, customer_name: 1, grand_total: 1, total_amount: 1, billing_date: 1, amount_paid: 1 })
         .toArray();
 
-      const totalDebt = customers.reduce(
-        (sum, c) => sum + (c.total_debt || 0),
-        0
-      );
-      const customersWithDebt = customers.filter(
-        (c) => (c.total_debt || 0) > 0
-      );
+      const stats = {
+        total_debt: 0,
+        overdue_amount: 0,
+        total_unpaid_bills: unpaidBills.length,
+        overdue_count: 0,
+        debtors_map: {}
+      };
 
-      // Get top debtors
-      const topDebtors = customersWithDebt
-        .sort((a, b) => (b.total_debt || 0) - (a.total_debt || 0))
+      unpaidBills.forEach(bill => {
+        const total = bill.grand_total || bill.total_amount || 0;
+        const paid = bill.amount_paid || 0;
+        const remaining = Math.max(0, total - paid);
+        
+        if (remaining <= 0) return; // Skip if fully paid
+
+        stats.total_debt += remaining;
+        
+        // Overdue check
+        if (bill.billing_date < overdueThreshold) {
+          stats.overdue_amount += remaining;
+          stats.overdue_count += 1;
+        }
+
+        // Group by debtor
+        const customerId = bill.customer_id;
+        if (customerId) {
+          if (!stats.debtors_map[customerId]) {
+            stats.debtors_map[customerId] = {
+              id: customerId,
+              name: bill.customer_name || "Unknown",
+              total_debt: 0,
+              bills_count: 0
+            };
+          }
+          stats.debtors_map[customerId].total_debt += remaining;
+          stats.debtors_map[customerId].bills_count += 1;
+        }
+      });
+
+      // Get top 5 debtors
+      const topDebtors = Object.values(stats.debtors_map)
+        .sort((a, b) => b.total_debt - a.total_debt)
         .slice(0, 5)
-        .map((c) => ({
-          id: c.id,
-          name: c.name,
-          phone: c.phone,
-          total_debt: c.total_debt || 0,
+        .map(d => ({
+          ...d,
+          total_debt: parseFloat(d.total_debt.toFixed(2))
         }));
 
       res.json({
-        total_debt: totalDebt,
-        customers_with_debt: customersWithDebt.length,
-        top_debtors: topDebtors,
+        total_debt: parseFloat(stats.total_debt.toFixed(2)),
+        overdue_amount: parseFloat(stats.overdue_amount.toFixed(2)),
+        total_unpaid_bills: stats.total_unpaid_bills,
+        overdue_count: stats.overdue_count,
+        top_debtors: topDebtors
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+// GET /api/dashboard/supplier-dues - Supplier payment dues summary
+router.get(
+  "/supplier-dues",
+  auth,
+  requireSubscription(),
+  async (req, res, next) => {
+    try {
+      const db = mongoose.connection.db;
+      const pharmacyId = req.user.pharmacy_id;
+
+      // 30 days ago for overdue calculation
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      const overdueThreshold = thirtyDaysAgo.toISOString();
+
+      // Fetch all purchases with outstanding balance
+      const unpaidPurchases = await db
+        .collection("purchases")
+        .find({
+          pharmacy_id: pharmacyId,
+          payment_status: { $in: ["Unpaid", "Partial", "Partially Paid"] }
+        })
+        .project({ _id: 0, id: 1, supplier_id: 1, supplier_name: 1, total_amount: 1, amount_paid: 1, created_at: 1 })
+        .toArray();
+
+      const stats = {
+        total_due: 0,
+        total_paid: 0, // NEW: Track parts already paid
+        overdue_due: 0,
+        unpaid_purchases_count: 0,
+        overdue_count: 0,
+        suppliers_map: {}
+      };
+
+      unpaidPurchases.forEach(purchase => {
+        const total = purchase.total_amount || 0;
+        const paid = purchase.amount_paid || 0;
+        const remaining = Math.max(0, total - paid);
+
+        if (remaining <= 0) return;
+
+        // ONLY count purchases that have a valid supplier_id to match the 'Top Suppliers' list
+        const supplierId = purchase.supplier_id;
+        if (!supplierId) return;
+
+        stats.total_due += remaining;
+        stats.total_paid += paid;
+        stats.unpaid_purchases_count += 1;
+
+        // Overdue check
+        if (purchase.created_at < overdueThreshold) {
+          stats.overdue_due += remaining;
+          stats.overdue_count += 1;
+        }
+
+        // Group by supplier
+        if (!stats.suppliers_map[supplierId]) {
+          stats.suppliers_map[supplierId] = {
+            id: supplierId,
+            name: purchase.supplier_name || "Unknown",
+            total_debt: 0,
+            purchase_count: 0
+          };
+        }
+        stats.suppliers_map[supplierId].total_debt += remaining;
+        stats.suppliers_map[supplierId].purchase_count += 1;
+      });
+
+      // Get top 5 suppliers by debt
+      const topSuppliers = Object.values(stats.suppliers_map)
+        .sort((a, b) => b.total_debt - a.total_debt)
+        .slice(0, 5)
+        .map(s => ({
+          ...s,
+          total_debt: parseFloat(s.total_debt.toFixed(2))
+        }));
+
+      res.json({
+        total_due: parseFloat(stats.total_due.toFixed(2)),
+        total_paid: parseFloat(stats.total_paid.toFixed(2)),
+        overdue_due: parseFloat(stats.overdue_due.toFixed(2)),
+        unpaid_purchases_count: stats.unpaid_purchases_count,
+        overdue_count: stats.overdue_count,
+        top_suppliers: topSuppliers
       });
     } catch (error) {
       next(error);

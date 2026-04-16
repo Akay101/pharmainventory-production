@@ -253,6 +253,103 @@ router.post(
   }
 );
 
+// POST /api/suppliers/:supplier_id/pay-part
+router.post(
+  "/:supplier_id/pay-part",
+  auth,
+  requireSubscription(),
+  async (req, res, next) => {
+    try {
+      const { amount, notes } = req.body;
+      const db = mongoose.connection.db;
+      const pharmacyId = req.user.pharmacy_id;
+
+      if (!amount || parseFloat(amount) <= 0) {
+        return res.status(400).json({ detail: "Amount must be greater than 0" });
+      }
+
+      let remainingAmount = parseFloat(amount);
+      const timestamp = new Date().toISOString();
+
+      // Fetch unpaid purchases sorted by oldest first (FIFO)
+      const purchases = await db.collection("purchases")
+        .find({
+          supplier_id: req.params.supplier_id,
+          pharmacy_id: pharmacyId,
+          payment_status: { $ne: "Paid" }
+        })
+        .sort({ created_at: 1 }) // Oldest first
+        .toArray();
+
+      if (purchases.length === 0) {
+        return res.status(400).json({ detail: "No outstanding balances to pay" });
+      }
+
+      let totalApplied = 0;
+      const updatedPurchases = [];
+
+      for (const purchase of purchases) {
+        if (remainingAmount <= 0) break;
+
+        const purchaseTotal = purchase.total_amount || 0;
+        const purchasePaid = purchase.amount_paid || 0;
+        const purchaseDue = Math.max(0, purchaseTotal - purchasePaid);
+
+        if (purchaseDue <= 0) continue;
+
+        const paymentToApply = Math.min(remainingAmount, purchaseDue);
+        const newPaidAmount = purchasePaid + paymentToApply;
+        const newStatus = newPaidAmount >= purchaseTotal ? "Paid" : "Partial";
+
+        await db.collection("purchases").updateOne(
+          { id: purchase.id },
+          {
+            $set: {
+              amount_paid: parseFloat(newPaidAmount.toFixed(2)),
+              payment_status: newStatus,
+              updated_at: timestamp
+            },
+            $push: {
+              payments: {
+                id: uuidv4(),
+                amount: parseFloat(paymentToApply.toFixed(2)),
+                date: timestamp,
+                notes: notes || "Partial Payment (Supplier Level)",
+                recorded_by: req.user.id
+              }
+            }
+          }
+        );
+
+        totalApplied += paymentToApply;
+        remainingAmount -= paymentToApply;
+        updatedPurchases.push(purchase.id);
+      }
+
+      await logActivity(
+        db, 
+        pharmacyId, 
+        req.user.id, 
+        req.user.name, 
+        "PAYMENT", 
+        "SUPPLIERS", 
+        req.params.supplier_id, 
+        `Paid ₹${totalApplied.toFixed(2)} towards outstanding dues across ${updatedPurchases.length} purchases`, 
+        `/suppliers`
+      );
+
+      res.json({ 
+        message: "Payment processed successfully", 
+        total_applied: totalApplied, 
+        remaining_payment_unused: remainingAmount,
+        purchases_updated: updatedPurchases.length 
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
 // POST /api/suppliers/merge-preview
 router.post("/merge-preview", auth, requireSubscription(), async (req, res, next) => {
   try {

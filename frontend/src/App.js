@@ -54,6 +54,8 @@ const AuthProvider = ({ children }) => {
   const [pharmacy, setPharmacy] = useState(null);
   const [loading, setLoading] = useState(true);
   const [token, setToken] = useState(localStorage.getItem("pharmalogy_token"));
+  const [settings, setSettings] = useState({});
+  const [settingsDefinitions, setSettingsDefinitions] = useState([]);
 
   useEffect(() => {
     if (token) {
@@ -63,6 +65,38 @@ const AuthProvider = ({ children }) => {
     }
   }, [token]);
 
+  const fetchSettings = async () => {
+    try {
+      const response = await axios.get(`${API}/settings`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      setSettings(response.data.preferences);
+      setSettingsDefinitions(response.data.settings);
+    } catch (error) {
+      console.error("Settings error:", error);
+    }
+  };
+
+  const updateSetting = async (key, value) => {
+    try {
+      // Optimistic update
+      setSettings((prev) => ({ ...prev, [key]: value }));
+      
+      await axios.post(`${API}/settings/update`, { key, value }, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      
+      // Refresh definitions as well
+      const response = await axios.get(`${API}/settings`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      setSettingsDefinitions(response.data.settings);
+    } catch (error) {
+      console.error("Failed to update setting:", error);
+      // Rollback? Currently just logging.
+    }
+  };
+
   const fetchUser = async () => {
     try {
       const response = await axios.get(`${API}/auth/me`, {
@@ -70,6 +104,8 @@ const AuthProvider = ({ children }) => {
       });
       setUser(response.data.user);
       setPharmacy(response.data.pharmacy);
+      // Fetch settings after user is confirmed
+      fetchSettings();
     } catch (error) {
       const status = error.response?.status;
 
@@ -108,6 +144,9 @@ const AuthProvider = ({ children }) => {
     logout,
     setUser,
     setPharmacy,
+    settings,
+    settingsDefinitions,
+    updateSetting,
     isAdmin: user?.role === "ADMIN",
   };
 

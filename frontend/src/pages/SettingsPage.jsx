@@ -22,11 +22,12 @@ import {
   DialogTitle,
   DialogDescription,
 } from "../components/ui/dialog";
-import { Settings, Building2, User, Camera, Loader2, Save, Upload, Database, Download, FileJson, Edit2, KeyRound, Mail } from "lucide-react";
+import { Settings, Building2, User, Camera, Loader2, Save, Upload, Database, Download, FileJson, Edit2, KeyRound, Mail, Layout, Sliders } from "lucide-react";
 import { toast } from "sonner";
+import { Switch } from "../components/ui/switch";
 
 export default function SettingsPage() {
-  const { user, pharmacy, setUser, setPharmacy, isAdmin } = useAuth();
+  const { user, pharmacy, setUser, setPharmacy, isAdmin, settings, settingsDefinitions, updateSetting } = useAuth();
   const [saving, setSaving] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
@@ -291,6 +292,10 @@ export default function SettingsPage() {
           <TabsTrigger value="profile">
             <User className="w-4 h-4 mr-2" />
             Profile
+          </TabsTrigger>
+          <TabsTrigger value="preferences">
+            <Sliders className="w-4 h-4 mr-2" />
+            Preferences
           </TabsTrigger>
           {isAdmin && (
             <TabsTrigger value="data">
@@ -635,6 +640,74 @@ export default function SettingsPage() {
               </div>
             </DialogContent>
           </Dialog>
+        </TabsContent>
+        {/* Preferences Tab */}
+        <TabsContent value="preferences">
+          <Card className="bg-card/50 backdrop-blur-sm border-white/5">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Sliders className="w-5 h-5 text-primary" />
+                User Preferences
+              </CardTitle>
+              <CardDescription>
+                Personalize your workspace. These settings are saved to your account.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              {/* Grouping by Category */}
+              {Array.from(new Set(settingsDefinitions.map(s => s.category))).map(category => (
+                <div key={category} className="space-y-4">
+                  <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">{category}</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    {settingsDefinitions.filter(s => s.category === category).map(setting => (
+                      <div key={setting.key} className="flex items-center justify-between p-4 rounded-lg bg-white/5 border border-white/5 hover:border-primary/20 transition-all group">
+                        <div className="space-y-1 pr-4">
+                          <Label className="text-base cursor-pointer" htmlFor={setting.key}>
+                            {setting.label}
+                          </Label>
+                          <p className="text-xs text-muted-foreground leading-relaxed">
+                            {setting.description}
+                          </p>
+                        </div>
+                        
+                        {setting.type === 'boolean' && (
+                          <Switch
+                            id={setting.key}
+                            checked={settings[setting.key] !== undefined ? settings[setting.key] : setting.default}
+                            onCheckedChange={(val) => updateSetting(setting.key, val)}
+                          />
+                        )}
+                        
+                        {setting.type === 'select' && (
+                          <Select
+                            value={settings[setting.key] || setting.default}
+                            onValueChange={(val) => updateSetting(setting.key, val)}
+                          >
+                            <SelectTrigger className="w-[120px] bg-background/50">
+                              <SelectValue placeholder="Select" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {setting.options.map(opt => (
+                                <SelectItem key={opt} value={opt} className="capitalize">{opt}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  <Separator className="bg-white/5" />
+                </div>
+              ))}
+              
+              {settingsDefinitions.length === 0 && (
+                <div className="py-12 text-center text-muted-foreground">
+                  <Loader2 className="w-8 h-8 animate-spin mx-auto mb-4 opacity-20" />
+                  <p>Loading personalizations...</p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </TabsContent>
 
         {/* Data Migration Tab */}

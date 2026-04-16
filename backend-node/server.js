@@ -19,6 +19,7 @@ const medicineRoutes = require("./routes/medicines");
 const migrateRoutes = require("./routes/migrate");
 const pharmacyRoutes = require("./routes/pharmacy");
 const activityRoutes = require("./routes/activities");
+const settingsRoutes = require("./routes/settings");
 
 const app = express();
 const PORT = process.env.PORT || 8001;
@@ -54,6 +55,7 @@ app.use("/api/medicines", medicineRoutes);
 app.use("/api/migrate", migrateRoutes);
 app.use("/api/pharmacy", pharmacyRoutes);
 app.use("/api/activities", activityRoutes);
+app.use("/api/settings", settingsRoutes);
 
 app.use("/api/payments", require("./routes/payments"));
 app.use("/api/webhook", require("./routes/webhook"));

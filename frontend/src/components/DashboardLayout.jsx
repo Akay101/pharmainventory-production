@@ -196,7 +196,7 @@ const Sidebar = ({ mobile = false, onClose, collapsed = false, onToggle }) => {
 };
 
 export default function DashboardLayout() {
-  const { user, logout } = useAuth();
+  const { user, logout, settings, updateSetting } = useAuth();
   const navigate = useNavigate();
   const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -209,8 +209,8 @@ export default function DashboardLayout() {
     const stored = localStorage.getItem('sidebarCollapsed');
     return stored === 'true';
   });
+
   const [isDark, setIsDark] = useState(() => {
-    // Check localStorage or default to dark
     const stored = localStorage.getItem('theme');
     return stored ? stored === 'dark' : true;
   });
@@ -219,6 +219,21 @@ export default function DashboardLayout() {
     const stored = localStorage.getItem('activityOpen');
     return stored ? stored === 'true' : window.innerWidth >= 1024;
   });
+
+  // 🔄 Sync local state with DB settings when they load
+  useEffect(() => {
+    if (settings) {
+      if (settings.sidebar_collapsed !== undefined) {
+        setSidebarCollapsed(settings.sidebar_collapsed);
+      }
+      if (settings.theme !== undefined) {
+        setIsDark(settings.theme === 'dark');
+      }
+      if (settings.activity_sidebar_open !== undefined) {
+        setActivityOpen(settings.activity_sidebar_open);
+      }
+    }
+  }, [settings]);
 
   useKeyboardShortcut('a', () => setActivityOpen(prev => !prev), { alt: true });
 
@@ -259,19 +274,23 @@ export default function DashboardLayout() {
   }, [isDark]);
 
   const toggleTheme = () => {
-    setIsDark(!isDark);
+    const nextDark = !isDark;
+    setIsDark(nextDark);
+    updateSetting('theme', nextDark ? 'dark' : 'light');
   };
 
   const toggleSidebar = () => {
-    const newState = !sidebarCollapsed;
-    setSidebarCollapsed(newState);
-    localStorage.setItem('sidebarCollapsed', String(newState));
+    const nextCollapsed = !sidebarCollapsed;
+    setSidebarCollapsed(nextCollapsed);
+    updateSetting('sidebar_collapsed', nextCollapsed);
+    localStorage.setItem('sidebarCollapsed', String(nextCollapsed));
   };
 
   const toggleActivity = () => {
-    const newState = !activityOpen;
-    setActivityOpen(newState);
-    localStorage.setItem('activityOpen', String(newState));
+    const nextOpen = !activityOpen;
+    setActivityOpen(nextOpen);
+    updateSetting('activity_sidebar_open', nextOpen);
+    localStorage.setItem('activityOpen', String(nextOpen));
   };
 
   const handleLogout = () => {

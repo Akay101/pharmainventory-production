@@ -201,12 +201,32 @@ select {
 
 /* Sidebar styles */
 .sidebar-link {
-  @apply flex items-center gap-3 px-4 py-3 rounded-lg text-muted-foreground hover:text-foreground hover:bg-white/5 transition-colors;
+  @apply flex items-center gap-3 px-4 py-3 rounded-lg text-muted-foreground hover:text-foreground hover:bg-white/5 transition-all duration-200 cursor-pointer select-none;
 }
 
-.sidebar-link.active {
-  @apply text-primary bg-primary/10;
+/* 🎯 Unified Active State - Bold Solid Background Box */
+.nav-item-active {
+  @apply bg-primary text-primary-foreground shadow-lg shadow-primary/20 font-bold opacity-100 !important;
 }
+
+.nav-item-active svg, 
+.nav-item-active span {
+  @apply text-primary-foreground opacity-100 !important;
+}
+
+/* Inactive state refinement */
+.sidebar-link:not(.nav-item-active) {
+  @apply opacity-70 hover:opacity-100;
+}
+
+
+
+/* Sidebar transition */
+.sidebar-transition {
+  @apply transition-all duration-300 ease-in-out;
+}
+
+
 
 /* Dashboard grid */
 .dashboard-grid {

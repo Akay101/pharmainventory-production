@@ -35,11 +35,11 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
 
     const query = { pharmacy_id: req.user.pharmacy_id };
 
-    // 🔍 Search filter
     if (search) {
       query.$or = [
         { bill_no: { $regex: search, $options: "i" } },
         { customer_name: { $regex: search, $options: "i" } },
+        { "items.product_name": { $regex: search, $options: "i" } },
       ];
     }
 

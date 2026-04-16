@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useSearchParams } from "react-router-dom";
+import { v4 as uuidv4 } from "uuid";
 import { createPortal } from "react-dom";
 import axios from "axios";
-import { API } from "../App";
+import { API, useAuth } from "../App";
 import {
   Card,
   CardContent,
@@ -83,6 +84,9 @@ export default function BillingPage() {
   const [totalBills, setTotalBills] = useState(0);
   const [customers, setCustomers] = useState([]);
   const [loading, setLoading] = useState(true);
+  const { user } = useAuth();
+  const [tabs, setTabs] = useState([]);
+  const [activeTabId, setActiveTabId] = useState(null);
   const [submitting, setSubmitting] = useState(false);
 
   // New bill state - inline table approach
@@ -142,10 +146,6 @@ export default function BillingPage() {
   const [pendingBillNo, setPendingBillNo] = useState("");
   const [pdfConfirmDialog, setPdfConfirmDialog] = useState({ open: false, billId: null });
   const [removeConfirmDialog, setRemoveConfirmDialog] = useState({ open: false, itemId: null });
-
-  // Restore draft dialog
-  const [showRestoreDialog, setShowRestoreDialog] = useState(false);
-  const [draftData, setDraftData] = useState(null);
 
   // Refs for keyboard navigation
   const productInputRef = useRef(null);
@@ -214,64 +214,138 @@ export default function BillingPage() {
     salt_composition: "",
   };
 
-  // Check for saved draft on mount
+  // ============ MULTI-TAB DRAFTS ============
+
   useEffect(() => {
-    const savedDraft = localStorage.getItem(LOCAL_STORAGE_KEY_BILL);
-    if (savedDraft) {
+    if (!user?.id) return;
+    const STORAGE_KEY = `pharmalogy_billing_drafts_${user.id}`;
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) {
       try {
-        const draft = JSON.parse(savedDraft);
-        if (draft.items?.length > 0 || draft.customer?.customer_name) {
-          setDraftData(draft);
-          setShowRestoreDialog(true);
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setTabs(parsed);
+          const active = parsed[0];
+          setActiveTabId(active.id);
+          setCustomerInfo(active.data.customerInfo || { customer_id: "", customer_name: "", customer_mobile: "", customer_email: "" });
+          setBillingDate(active.data.billingDate || new Date().toISOString().slice(0, 10));
+          setBillItems(active.data.billItems || []);
+          setBillDiscount(active.data.billDiscount || 0);
+          setIsPaid(active.data.isPaid !== false);
         }
       } catch (e) {
-        localStorage.removeItem(LOCAL_STORAGE_KEY_BILL);
+        console.error("Failed to parse billing drafts", e);
       }
     }
-  }, []);
+  }, [user?.id]);
 
-  // Auto-save draft when data changes
   useEffect(() => {
-    if (showNewBill && (billItems.length > 0 || customerInfo.customer_name)) {
-      const draft = {
-        customer: customerInfo,
-        items: billItems,
-        discount: billDiscount,
-        isPaid: isPaid,
-        savedAt: new Date().toISOString(),
-      };
-      localStorage.setItem(LOCAL_STORAGE_KEY_BILL, JSON.stringify(draft));
+    if (!user?.id || !activeTabId) return;
+    const delay = setTimeout(() => {
+      setTabs((prev) => {
+        const newTabs = prev.map((t) =>
+          t.id === activeTabId
+            ? {
+                ...t,
+                data: {
+                  customerInfo,
+                  billingDate,
+                  billItems,
+                  billDiscount,
+                  isPaid,
+                },
+              }
+            : t
+        );
+        localStorage.setItem(
+          `pharmalogy_billing_drafts_${user.id}`,
+          JSON.stringify(newTabs)
+        );
+        return newTabs;
+      });
+    }, 500);
+    return () => clearTimeout(delay);
+  }, [
+    customerInfo,
+    billingDate,
+    billItems,
+    billDiscount,
+    isPaid,
+    activeTabId,
+    user?.id,
+  ]);
+
+  const createNewTab = () => {
+    if (tabs.length >= 10) {
+      toast.error("Maximum 10 tabs allowed");
+      return;
     }
-  }, [showNewBill, billItems, customerInfo, billDiscount, isPaid]);
+    const newId = uuidv4();
+    const newTab = {
+      id: newId,
+      data: {
+        customerInfo: { customer_id: "", customer_name: "", customer_mobile: "", customer_email: "" },
+        billingDate: new Date().toISOString().slice(0, 10),
+        billItems: [],
+        billDiscount: 0,
+        isPaid: true,
+      },
+    };
+    setTabs((prev) => [...prev, newTab]);
+    setActiveTabId(newId);
+    setCustomerInfo({ customer_id: "", customer_name: "", customer_mobile: "", customer_email: "" });
+    setBillingDate(new Date().toISOString().slice(0, 10));
+    setBillItems([]);
+    setBillDiscount(0);
+    setIsPaid(true);
+    setShowNewBill(true);
+  };
+
+  const switchTab = (tabId) => {
+    const target = tabs.find((t) => t.id === tabId);
+    if (!target) return;
+    
+    // Switch state directly
+    setActiveTabId(tabId);
+    setCustomerInfo(target.data.customerInfo || { customer_id: "", customer_name: "", customer_mobile: "", customer_email: "" });
+    setBillingDate(target.data.billingDate || new Date().toISOString().slice(0, 10));
+    setBillItems(target.data.billItems || []);
+    setBillDiscount(target.data.billDiscount || 0);
+    setIsPaid(target.data.isPaid !== false);
+    setShowNewBill(true);
+  };
+
+  const closeTab = (tabId) => {
+    const isClosingActive = tabId === activeTabId;
+    const remainingTabs = tabs.filter((t) => t.id !== tabId);
+    
+    setTabs(remainingTabs);
+    
+    if (remainingTabs.length > 0) {
+      if (isClosingActive) {
+        const next = remainingTabs[0];
+        switchTab(next.id);
+      }
+    } else {
+      setActiveTabId(null);
+      setCustomerInfo({ customer_id: "", customer_name: "", customer_mobile: "", customer_email: "" });
+      setBillingDate(new Date().toISOString().slice(0, 10));
+      setBillItems([]);
+      setBillDiscount(0);
+      setIsPaid(true);
+      setShowNewBill(false);
+    }
+    
+    if (user?.id) {
+      localStorage.setItem(
+        `pharmalogy_billing_drafts_${user.id}`,
+        JSON.stringify(remainingTabs)
+      );
+    }
+  };
 
   const clearDraft = () => {
-    localStorage.removeItem(LOCAL_STORAGE_KEY_BILL);
-  };
-
-  const handleRestoreDraft = () => {
-    if (draftData) {
-      setShowNewBill(true);
-      setCustomerInfo(
-        draftData.customer || {
-          customer_id: "",
-          customer_name: "",
-          customer_mobile: "",
-          customer_email: "",
-        }
-      );
-      setBillItems(draftData.items || []);
-      setBillDiscount(draftData.discount || 0);
-      setIsPaid(draftData.isPaid !== false);
-      toast.success("Draft restored successfully");
-    }
-    setShowRestoreDialog(false);
-    setDraftData(null);
-  };
-
-  const handleDiscardDraft = () => {
-    clearDraft();
-    setShowRestoreDialog(false);
-    setDraftData(null);
+    if (activeTabId) closeTab(activeTabId);
   };
 
   // Refs for keyboard shortcuts to avoid stale closures
@@ -531,20 +605,12 @@ export default function BillingPage() {
   // ============ NEW BILL - INLINE TABLE ============
 
   const handleStartNewBill = () => {
-    setShowNewBill(true);
-    // Start with one default empty row
-    const defaultRow = { ...emptyItem, id: `temp-${Date.now()}` };
-    setBillItems([defaultRow]);
-    setCustomerInfo({
-      customer_id: "",
-      customer_name: "",
-      customer_mobile: "",
-      customer_email: "",
-    });
-    setBillDiscount(0);
-    setBillingDate(new Date().toISOString().slice(0, 10));
-    setIsPaid(true);
-    setNewItemRow(null);
+    if (!showNewBill && tabs.length === 0) {
+      createNewTab();
+    } else {
+      setShowNewBill(true);
+      setTimeout(() => document.getElementById("search-inventory-input")?.focus(), 100);
+    }
   };
 
   const handleCancelNewBill = () => {
@@ -1322,40 +1388,6 @@ export default function BillingPage() {
   return (
     <div className="space-y-6 animate-fade-in" data-testid="billing-page">
       {/* Restore Draft Dialog */}
-      <AlertDialog open={showRestoreDialog} onOpenChange={setShowRestoreDialog}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle className="flex items-center gap-2">
-              <RotateCcw className="w-5 h-5 text-primary" />
-              Restore Previous Bill?
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              You have an unsaved bill from{" "}
-              {draftData?.savedAt
-                ? new Date(draftData.savedAt).toLocaleString()
-                : "earlier"}
-              .
-              <br />
-              <span className="text-foreground font-medium">
-                {draftData?.items?.length || 0} items, Customer:{" "}
-                {draftData?.customer?.customer_name || "None"}
-              </span>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel onClick={handleDiscardDraft}>
-              Discard
-            </AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleRestoreDraft}
-              className="btn-primary"
-            >
-              Restore
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
@@ -2107,33 +2139,7 @@ export default function BillingPage() {
               </div>
             </div>
 
-            {/* Submit */}
-            <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={handleCancelNewBill}>
-                Cancel (Esc)
-              </Button>
-              <Button
-                onClick={handleSubmitBill}
-                disabled={submitting || validItems.length === 0}
-                className="btn-primary"
-                data-testid="submit-bill-btn"
-              >
-                {submitting ? (
-                  <>
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    Creating...
-                  </>
-                ) : (
-                  <div className="flex items-center gap-2">
-                    <CreditCard className="w-4 h-4" />
-                    <span>Create Bill</span>
-                    <kbd className="hidden sm:inline-block ml-1 opacity-70 text-[9px] font-mono border border-white/20 px-1 rounded">
-                      {getOS() === 'mac' ? '⌘Enter' : 'Ctrl+Enter'}
-                    </kbd>
-                  </div>
-                )}
-              </Button>
-            </div>
+            {/* Submit moved to fixed footer */}
           </CardContent>
         </Card>
       )}
@@ -2737,29 +2743,7 @@ export default function BillingPage() {
               </div>
             </div>
 
-            {/* Submit */}
-            <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={handleCancelEditBill}>
-                Cancel (Esc)
-              </Button>
-              <Button
-                onClick={handleSaveEditBill}
-                disabled={submitting || validEditItems.length === 0}
-                className="btn-primary bg-yellow-600 hover:bg-yellow-700"
-              >
-                {submitting ? (
-                  <>
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    Updating...
-                  </>
-                ) : (
-                  <>
-                    <Save className="w-4 h-4 mr-2" />
-                    Update Bill (Alt+U)
-                  </>
-                )}
-              </Button>
-            </div>
+            {/* Submit moved to fixed footer */}
           </CardContent>
         </Card>
       )}
@@ -3451,6 +3435,118 @@ export default function BillingPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* TABS & ACTION NAVBAR */}
+      {(showNewBill || editingBillId) && (
+        <div className="fixed bottom-0 left-0 md:left-[250px] right-0 z-[100] flex items-center justify-between bg-card/95 backdrop-blur-md border-t border-border shadow-[0_-8px_30px_rgba(0,0,0,0.12)] px-6 py-4 gap-4 overflow-x-auto scroller-hide overflow-y-hidden mb-0 transition-all duration-300">
+          <div className="flex items-center gap-2 overflow-x-auto scroller-hide">
+            {showNewBill && tabs.map((tab, idx) => {
+              const isActive = tab.id === activeTabId;
+              let tabName = `Tab ${idx + 1}`;
+              if (tab.data?.billItems?.length > 0) {
+                const firstProduct = tab.data.billItems[0].product_name || "Unknown";
+                const extra = tab.data.billItems.length - 1;
+                tabName = extra > 0 ? `${firstProduct} +${extra}` : firstProduct;
+              }
+              return (
+                <div key={tab.id} className="relative group shrink-0">
+                  <Button
+                    variant={isActive ? "default" : "secondary"}
+                    size="sm"
+                    onClick={(e) => { e.preventDefault(); switchTab(tab.id); }}
+                    className={`pr-8 h-9 ${isActive ? "shadow-md ring-1 ring-primary/50" : "opacity-80 hover:opacity-100"}`}
+                  >
+                    <FileText className="w-3.5 h-3.5 mr-1.5 opacity-70" />
+                    <span className="max-w-[120px] truncate">{tabName}</span>
+                  </Button>
+                  {tabs.length > 0 && (
+                    <div
+                      className="absolute right-1.5 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center rounded-full bg-background/50 hover:bg-destructive hover:text-destructive-foreground cursor-pointer transition-colors"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        closeTab(tab.id);
+                      }}
+                    >
+                      <X className="w-3 h-3" />
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+            {showNewBill && tabs.length < 10 && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={createNewTab}
+                className="bg-primary/5 hover:bg-primary/10 border-primary/20 text-primary shrink-0 transition-colors shadow-sm h-9"
+              >
+                <Plus className="w-4 h-4 mr-1" /> New Tab
+              </Button>
+            )}
+            {editingBillId && (
+              <div className="flex items-center gap-2 px-3 py-1 bg-yellow-500/10 border border-yellow-500/20 rounded-md text-yellow-600 text-sm font-medium">
+                <Edit className="w-4 h-4" />
+                Editing Bill #{editingBillData?.bill_no}
+              </div>
+            )}
+          </div>
+
+          <div className="flex items-center gap-3 shrink-0 ml-auto border-l border-border pl-6">
+            <Button 
+                variant="ghost" 
+                onClick={showNewBill ? handleCancelNewBill : handleCancelEditBill}
+                className="text-muted-foreground hover:text-foreground"
+            >
+              Cancel (Esc)
+            </Button>
+            
+            {showNewBill ? (
+              <Button
+                onClick={handleSubmitBill}
+                disabled={submitting || validItems.length === 0}
+                className="btn-primary shadow-lg shadow-primary/20 min-w-[140px]"
+              >
+                {submitting ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Creating...
+                  </>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <CreditCard className="w-4 h-4" />
+                    <span>Create Bill</span>
+                    <kbd className="hidden sm:inline-block ml-1 opacity-70 text-[9px] font-mono border border-white/20 px-1 rounded">
+                      {getOS() === 'mac' ? '⌘Enter' : 'Ctrl+Enter'}
+                    </kbd>
+                  </div>
+                )}
+              </Button>
+            ) : (
+              <Button
+                onClick={handleSaveEditBill}
+                disabled={submitting || validEditItems.length === 0}
+                className="btn-primary bg-yellow-600 hover:bg-yellow-700 shadow-lg shadow-yellow-600/20 min-w-[140px]"
+              >
+                {submitting ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Updating...
+                  </>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <Save className="w-4 h-4" />
+                    <span>Update Bill</span>
+                    <kbd className="hidden sm:inline-block ml-1 opacity-70 text-[9px] font-mono border border-white/20 px-1 rounded">
+                      Alt+U
+                    </kbd>
+                  </div>
+                )}
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
