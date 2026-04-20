@@ -3917,7 +3917,7 @@ export default function PurchasesPage() {
             )}
             {editingPurchaseId && (
               <div className="flex items-center gap-2 px-3 py-1 bg-yellow-500/10 border border-yellow-500/20 rounded-md text-yellow-600 text-sm font-medium">
-                <Edit className="w-4 h-4" />
+                <Edit2 className="w-4 h-4" />
                 Editing Purchase #{editingPurchaseId}
               </div>
             )}
