@@ -71,6 +71,7 @@ import {
   BarChart3,
   TrendingUp,
   AlertCircle,
+  Edit,
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatDate } from "./utils";
@@ -113,8 +114,6 @@ export default function BillingPage() {
   const [showInventorySuggestions, setShowInventorySuggestions] =
     useState(false);
 
-
-
   // Customer search
   const [customerSearch, setCustomerSearch] = useState("");
   const [showCustomerSuggestions, setShowCustomerSuggestions] = useState(false);
@@ -144,8 +143,14 @@ export default function BillingPage() {
   // Expanded bill rows
   const [expandedBills, setExpandedBills] = useState({});
   const [pendingBillNo, setPendingBillNo] = useState("");
-  const [pdfConfirmDialog, setPdfConfirmDialog] = useState({ open: false, billId: null });
-  const [removeConfirmDialog, setRemoveConfirmDialog] = useState({ open: false, itemId: null });
+  const [pdfConfirmDialog, setPdfConfirmDialog] = useState({
+    open: false,
+    billId: null,
+  });
+  const [removeConfirmDialog, setRemoveConfirmDialog] = useState({
+    open: false,
+    itemId: null,
+  });
 
   // Refs for keyboard navigation
   const productInputRef = useRef(null);
@@ -159,21 +164,31 @@ export default function BillingPage() {
   const [activeDropdownIndex, setActiveDropdownIndex] = useState(-1);
   const [highlightedSuggestion, setHighlightedSuggestion] = useState(-1);
 
-  const [dropdownPosition, setDropdownPosition] = useState({ top: 0, left: 0, width: 400 });
+  const [dropdownPosition, setDropdownPosition] = useState({
+    top: 0,
+    left: 0,
+    width: 400,
+  });
 
   useEffect(() => {
     if (!showInventorySuggestions && !showEditingInventorySuggestions) return;
-    
+
     let rafId;
     const updatePos = () => {
-      const el = showInventorySuggestions ? productInputRef.current : editingProductInputRef.current;
+      const el = showInventorySuggestions
+        ? productInputRef.current
+        : editingProductInputRef.current;
       if (el) {
         const rect = el.getBoundingClientRect();
-        setDropdownPosition({ top: rect.bottom + 4, left: rect.left, width: Math.max(rect.width, 400) });
+        setDropdownPosition({
+          top: rect.bottom + 4,
+          left: rect.left,
+          width: Math.max(rect.width, 400),
+        });
       }
       rafId = requestAnimationFrame(updatePos);
     };
-    
+
     rafId = requestAnimationFrame(updatePos);
     return () => cancelAnimationFrame(rafId);
   }, [showInventorySuggestions, showEditingInventorySuggestions]);
@@ -187,7 +202,9 @@ export default function BillingPage() {
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [searchParams, setSearchParams] = useSearchParams();
-  const [filterCustomer, setFilterCustomer] = useState(searchParams.get("customer_id") || "all");
+  const [filterCustomer, setFilterCustomer] = useState(
+    searchParams.get("customer_id") || "all"
+  );
   const [insightsData, setInsightsData] = useState(null);
   const [insightsLoading, setInsightsLoading] = useState(false);
 
@@ -227,8 +244,17 @@ export default function BillingPage() {
           setTabs(parsed);
           const active = parsed[0];
           setActiveTabId(active.id);
-          setCustomerInfo(active.data.customerInfo || { customer_id: "", customer_name: "", customer_mobile: "", customer_email: "" });
-          setBillingDate(active.data.billingDate || new Date().toISOString().slice(0, 10));
+          setCustomerInfo(
+            active.data.customerInfo || {
+              customer_id: "",
+              customer_name: "",
+              customer_mobile: "",
+              customer_email: "",
+            }
+          );
+          setBillingDate(
+            active.data.billingDate || new Date().toISOString().slice(0, 10)
+          );
           setBillItems(active.data.billItems || []);
           setBillDiscount(active.data.billDiscount || 0);
           setIsPaid(active.data.isPaid !== false);
@@ -284,7 +310,12 @@ export default function BillingPage() {
     const newTab = {
       id: newId,
       data: {
-        customerInfo: { customer_id: "", customer_name: "", customer_mobile: "", customer_email: "" },
+        customerInfo: {
+          customer_id: "",
+          customer_name: "",
+          customer_mobile: "",
+          customer_email: "",
+        },
         billingDate: new Date().toISOString().slice(0, 10),
         billItems: [],
         billDiscount: 0,
@@ -293,7 +324,12 @@ export default function BillingPage() {
     };
     setTabs((prev) => [...prev, newTab]);
     setActiveTabId(newId);
-    setCustomerInfo({ customer_id: "", customer_name: "", customer_mobile: "", customer_email: "" });
+    setCustomerInfo({
+      customer_id: "",
+      customer_name: "",
+      customer_mobile: "",
+      customer_email: "",
+    });
     setBillingDate(new Date().toISOString().slice(0, 10));
     setBillItems([]);
     setBillDiscount(0);
@@ -304,11 +340,20 @@ export default function BillingPage() {
   const switchTab = (tabId) => {
     const target = tabs.find((t) => t.id === tabId);
     if (!target) return;
-    
+
     // Switch state directly
     setActiveTabId(tabId);
-    setCustomerInfo(target.data.customerInfo || { customer_id: "", customer_name: "", customer_mobile: "", customer_email: "" });
-    setBillingDate(target.data.billingDate || new Date().toISOString().slice(0, 10));
+    setCustomerInfo(
+      target.data.customerInfo || {
+        customer_id: "",
+        customer_name: "",
+        customer_mobile: "",
+        customer_email: "",
+      }
+    );
+    setBillingDate(
+      target.data.billingDate || new Date().toISOString().slice(0, 10)
+    );
     setBillItems(target.data.billItems || []);
     setBillDiscount(target.data.billDiscount || 0);
     setIsPaid(target.data.isPaid !== false);
@@ -318,9 +363,9 @@ export default function BillingPage() {
   const closeTab = (tabId) => {
     const isClosingActive = tabId === activeTabId;
     const remainingTabs = tabs.filter((t) => t.id !== tabId);
-    
+
     setTabs(remainingTabs);
-    
+
     if (remainingTabs.length > 0) {
       if (isClosingActive) {
         const next = remainingTabs[0];
@@ -328,14 +373,19 @@ export default function BillingPage() {
       }
     } else {
       setActiveTabId(null);
-      setCustomerInfo({ customer_id: "", customer_name: "", customer_mobile: "", customer_email: "" });
+      setCustomerInfo({
+        customer_id: "",
+        customer_name: "",
+        customer_mobile: "",
+        customer_email: "",
+      });
       setBillingDate(new Date().toISOString().slice(0, 10));
       setBillItems([]);
       setBillDiscount(0);
       setIsPaid(true);
       setShowNewBill(false);
     }
-    
+
     if (user?.id) {
       localStorage.setItem(
         `pharmalogy_billing_drafts_${user.id}`,
@@ -354,9 +404,17 @@ export default function BillingPage() {
   // Keep refs updated
   useEffect(() => {
     handlersRef.current = {
-      handleStartNewBill, handleSubmitBill, handleSaveEditBill,
-      handleCancelAddItem, handleCancelNewBill, handleCancelEditBill,
-      handleAddNewRow, setShowShortcuts, showNewBill, newItemRow, editingBillId
+      handleStartNewBill,
+      handleSubmitBill,
+      handleSaveEditBill,
+      handleCancelAddItem,
+      handleCancelNewBill,
+      handleCancelEditBill,
+      handleAddNewRow,
+      setShowShortcuts,
+      showNewBill,
+      newItemRow,
+      editingBillId,
     };
   });
 
@@ -366,13 +424,31 @@ export default function BillingPage() {
     // Global keyboard shortcuts
     const handleKeyDown = (e) => {
       // Avoid triggering when user is typing in generic inputs, UNLESS it's a modifier combo or Escape
-      const isInput = ['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target?.tagName);
-      if (isInput && !e.ctrlKey && !e.metaKey && !e.altKey && e.key !== 'Escape' && e.key !== 'Enter') return;
+      const isInput = ["INPUT", "TEXTAREA", "SELECT"].includes(
+        e.target?.tagName
+      );
+      if (
+        isInput &&
+        !e.ctrlKey &&
+        !e.metaKey &&
+        !e.altKey &&
+        e.key !== "Escape" &&
+        e.key !== "Enter"
+      )
+        return;
 
       const {
-        handleStartNewBill, handleSubmitBill, handleSaveEditBill,
-        handleCancelAddItem, handleCancelNewBill, handleCancelEditBill,
-        handleAddNewRow, setShowShortcuts, showNewBill, newItemRow, editingBillId
+        handleStartNewBill,
+        handleSubmitBill,
+        handleSaveEditBill,
+        handleCancelAddItem,
+        handleCancelNewBill,
+        handleCancelEditBill,
+        handleAddNewRow,
+        setShowShortcuts,
+        showNewBill,
+        newItemRow,
+        editingBillId,
       } = handlersRef.current;
 
       if (!handleStartNewBill) return;
@@ -383,14 +459,20 @@ export default function BillingPage() {
         handleStartNewBill();
       }
       // Alt+S or Cmd+Enter - Save bill
-      if ((((e.altKey && (e.key === "s" || e.code === "KeyS")) || ((e.ctrlKey || e.metaKey) && (e.key === "Enter" || e.code === "Enter"))))) {
+      if (
+        (e.altKey && (e.key === "s" || e.code === "KeyS")) ||
+        ((e.ctrlKey || e.metaKey) && (e.key === "Enter" || e.code === "Enter"))
+      ) {
         if (showNewBill) {
           e.preventDefault();
           handleSubmitBill();
         }
       }
       // Alt+U or Cmd+Enter - Update bill (when editing)
-      if ((((e.altKey && (e.key === "u" || e.code === "KeyU")) || ((e.ctrlKey || e.metaKey) && (e.key === "Enter" || e.code === "Enter"))))) {
+      if (
+        (e.altKey && (e.key === "u" || e.code === "KeyU")) ||
+        ((e.ctrlKey || e.metaKey) && (e.key === "Enter" || e.code === "Enter"))
+      ) {
         if (editingBillId) {
           e.preventDefault();
           handleSaveEditBill();
@@ -412,8 +494,8 @@ export default function BillingPage() {
           e.preventDefault();
           handleStartAddItem();
         } else if (showNewBill) {
-           e.preventDefault();
-           handleAddNewRow();
+          e.preventDefault();
+          handleAddNewRow();
         }
       }
       // Alt+? - Show shortcuts
@@ -573,10 +655,10 @@ export default function BillingPage() {
       });
 
       let finalBills = billsRes?.data?.bills || [];
-      
+
       // Strict fallback filter: ensure backend results physically match the selected dropdown customer UI
       if (filterCustomer && filterCustomer !== "all") {
-        finalBills = finalBills.filter(b => b.customer_id === filterCustomer);
+        finalBills = finalBills.filter((b) => b.customer_id === filterCustomer);
       }
 
       setBills(finalBills);
@@ -609,7 +691,10 @@ export default function BillingPage() {
       createNewTab();
     } else {
       setShowNewBill(true);
-      setTimeout(() => document.getElementById("search-inventory-input")?.focus(), 100);
+      setTimeout(
+        () => document.getElementById("search-inventory-input")?.focus(),
+        100
+      );
     }
   };
 
@@ -860,7 +945,9 @@ export default function BillingPage() {
 
   const confirmRemoveItem = () => {
     if (!removeConfirmDialog.itemId) return;
-    setBillItems((prev) => prev.filter((item) => item.id !== removeConfirmDialog.itemId));
+    setBillItems((prev) =>
+      prev.filter((item) => item.id !== removeConfirmDialog.itemId)
+    );
     setRemoveConfirmDialog({ open: false, itemId: null });
   };
 
@@ -1316,7 +1403,7 @@ export default function BillingPage() {
   const totalCost = validItems.reduce((sum, item) => {
     const qty = parseInt(item.quantity) || 0;
     const purchasePrice = parseFloat(item.purchase_price) || 0;
-    return sum + (qty * purchasePrice);
+    return sum + qty * purchasePrice;
   }, 0);
   const totalProfit = grandTotal - totalCost;
 
@@ -1358,14 +1445,18 @@ export default function BillingPage() {
   // Auto-scroll logic for dropdown suggestions
   useEffect(() => {
     if (showInventorySuggestions) {
-      const el = document.getElementById(`suggestion-new-${highlightedSuggestion}`);
+      const el = document.getElementById(
+        `suggestion-new-${highlightedSuggestion}`
+      );
       if (el) el.scrollIntoView({ block: "nearest" });
     }
   }, [highlightedSuggestion, showInventorySuggestions]);
 
   useEffect(() => {
     if (showEditingInventorySuggestions) {
-      const el = document.getElementById(`suggestion-edit-${highlightedEditingSuggestion}`);
+      const el = document.getElementById(
+        `suggestion-edit-${highlightedEditingSuggestion}`
+      );
       if (el) el.scrollIntoView({ block: "nearest" });
     }
   }, [highlightedEditingSuggestion, showEditingInventorySuggestions]);
@@ -1373,7 +1464,7 @@ export default function BillingPage() {
   const editTotalCost = validEditItems.reduce((sum, item) => {
     const qty = parseInt(item.quantity) || 0;
     const purchasePrice = parseFloat(item.purchase_price) || 0;
-    return sum + (qty * purchasePrice);
+    return sum + qty * purchasePrice;
   }, 0);
   const editTotalProfit = editGrandTotal - editTotalCost;
 
@@ -1411,7 +1502,7 @@ export default function BillingPage() {
             disabled={showNewBill || editingBillId}
           >
             <Plus className="w-4 h-4 mr-2" />
-            {getOS() === 'mac' ? 'New Bill (⌥N)' : 'New Bill (Alt+N)'}
+            {getOS() === "mac" ? "New Bill (⌥N)" : "New Bill (Alt+N)"}
           </Button>
         </div>
       </div>
@@ -1429,25 +1520,25 @@ export default function BillingPage() {
             <div className="flex justify-between items-center p-2 bg-muted/30 rounded">
               <span>New Bill</span>
               <kbd className="px-2 py-1 bg-muted rounded text-xs font-mono">
-                {getOS() === 'mac' ? '⌥ + N' : 'Alt + N'}
+                {getOS() === "mac" ? "⌥ + N" : "Alt + N"}
               </kbd>
             </div>
             <div className="flex justify-between items-center p-2 bg-muted/30 rounded">
               <span>Add Item</span>
               <kbd className="px-2 py-1 bg-muted rounded text-xs font-mono">
-                {getOS() === 'mac' ? '⌥ + A' : 'Alt + A'}
+                {getOS() === "mac" ? "⌥ + A" : "Alt + A"}
               </kbd>
             </div>
             <div className="flex justify-between items-center p-2 bg-muted/30 rounded">
               <span>Save Bill</span>
               <kbd className="px-2 py-1 bg-muted rounded text-xs font-mono">
-                {getOS() === 'mac' ? '⌘ + Enter' : 'Ctrl + Enter'}
+                {getOS() === "mac" ? "⌘ + Enter" : "Ctrl + Enter"}
               </kbd>
             </div>
             <div className="flex justify-between items-center p-2 bg-muted/30 rounded">
               <span>Update Bill</span>
               <kbd className="px-2 py-1 bg-muted rounded text-xs font-mono">
-                {getOS() === 'mac' ? '⌘ + Enter' : 'Ctrl + Enter'}
+                {getOS() === "mac" ? "⌘ + Enter" : "Ctrl + Enter"}
               </kbd>
             </div>
             <div className="flex justify-between items-center p-2 bg-muted/30 rounded">
@@ -1585,450 +1676,460 @@ export default function BillingPage() {
 
             {/* Items Table - Inline Editable */}
             <div className="border border-border rounded-lg relative overflow-hidden">
-                <Table wrapperClassName="h-[350px]">
-                  <TableHeader className="sticky top-0 bg-muted/95 backdrop-blur z-[50]">
-                    <TableRow>
-                      <TableHead className="w-[180px] font-bold text-foreground">
-                        Product *
-                      </TableHead>
-                      <TableHead className="w-[100px] font-bold text-foreground">
-                        Salt
-                      </TableHead>
-                      <TableHead className="w-[70px] font-bold text-foreground">
-                        Batch
-                      </TableHead>
-                      <TableHead className="w-[60px] text-center font-bold text-foreground">
-                        Avail.
-                      </TableHead>
-                      <TableHead className="w-[60px] text-center font-bold text-foreground">
-                        Qty *
-                      </TableHead>
-                      <TableHead className="w-[80px] text-center font-bold text-foreground">
-                        Cost/Unit
-                      </TableHead>
-                      <TableHead className="w-[80px] text-center font-bold text-foreground">
-                        MRP/Unit *
-                      </TableHead>
-                      <TableHead className="w-[60px] text-center font-bold text-foreground">
-                        Disc %
-                      </TableHead>
-                      <TableHead className="w-[80px] text-right font-bold text-foreground">
-                        Total
-                      </TableHead>
-                      <TableHead className="w-[60px] text-center font-bold text-foreground">
-                        Actions
-                      </TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {/* Editable Item Rows */}
-                    {billItems.map((item, index) => {
-                      const qty = parseInt(item.quantity) || 0;
-                      const unitPrice = parseFloat(item.unit_price) || 0;
-                      const discPercent =
-                        parseFloat(item.discount_percent) || 0;
-                      const purchasePrice =
-                        parseFloat(item.purchase_price) || 0;
-                      const itemTotal =
-                        qty * unitPrice * (1 - discPercent / 100);
-                      const available = parseInt(item.available) || 0;
+              <Table wrapperClassName="h-[350px]">
+                <TableHeader className="sticky top-0 bg-muted/95 backdrop-blur z-[50]">
+                  <TableRow>
+                    <TableHead className="w-[180px] font-bold text-foreground">
+                      Product *
+                    </TableHead>
+                    <TableHead className="w-[100px] font-bold text-foreground">
+                      Salt
+                    </TableHead>
+                    <TableHead className="w-[70px] font-bold text-foreground">
+                      Batch
+                    </TableHead>
+                    <TableHead className="w-[60px] text-center font-bold text-foreground">
+                      Avail.
+                    </TableHead>
+                    <TableHead className="w-[60px] text-center font-bold text-foreground">
+                      Qty *
+                    </TableHead>
+                    <TableHead className="w-[80px] text-center font-bold text-foreground">
+                      Cost/Unit
+                    </TableHead>
+                    <TableHead className="w-[80px] text-center font-bold text-foreground">
+                      MRP/Unit *
+                    </TableHead>
+                    <TableHead className="w-[60px] text-center font-bold text-foreground">
+                      Disc %
+                    </TableHead>
+                    <TableHead className="w-[80px] text-right font-bold text-foreground">
+                      Total
+                    </TableHead>
+                    <TableHead className="w-[60px] text-center font-bold text-foreground">
+                      Actions
+                    </TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {/* Editable Item Rows */}
+                  {billItems.map((item, index) => {
+                    const qty = parseInt(item.quantity) || 0;
+                    const unitPrice = parseFloat(item.unit_price) || 0;
+                    const discPercent = parseFloat(item.discount_percent) || 0;
+                    const purchasePrice = parseFloat(item.purchase_price) || 0;
+                    const itemTotal = qty * unitPrice * (1 - discPercent / 100);
+                    const available = parseInt(item.available) || 0;
 
-                      const fromInventory = item.is_manual
-                        ? 0
-                        : Math.min(qty, available);
-                      const negativeBilled = item.is_manual
-                        ? qty
-                        : Math.max(0, qty - available);
-                      const hasOverflow =
-                        !item.is_manual && qty > available && available > 0;
+                    const fromInventory = item.is_manual
+                      ? 0
+                      : Math.min(qty, available);
+                    const negativeBilled = item.is_manual
+                      ? qty
+                      : Math.max(0, qty - available);
+                    const hasOverflow =
+                      !item.is_manual && qty > available && available > 0;
 
-                      return (
-                        <TableRow
-                          key={item.id || index}
-                          className={
-                            hasOverflow ? "bg-yellow-500/10" : "bg-primary/5"
-                          }
+                    return (
+                      <TableRow
+                        key={item.id || index}
+                        className={
+                          hasOverflow ? "bg-yellow-500/10" : "bg-primary/5"
+                        }
+                      >
+                        <TableCell
+                          className="relative"
+                          style={{ overflow: "visible" }}
                         >
-                          <TableCell
-                            className="relative"
-                            style={{ overflow: "visible" }}
-                          >
+                          <Input
+                            ref={
+                              index === billItems.length - 1
+                                ? productInputRef
+                                : null
+                            }
+                            value={item.product_name || ""}
+                            onChange={(e) =>
+                              handleItemFieldChange(
+                                item.id,
+                                "product_name",
+                                e.target.value
+                              )
+                            }
+                            onFocus={() => {
+                              setInventorySearch(item.product_name || "");
+                              setShowInventorySuggestions(true);
+                              setActiveDropdownIndex(index);
+                            }}
+                            onBlur={() =>
+                              setTimeout(
+                                () => setShowInventorySuggestions(false),
+                                200
+                              )
+                            }
+                            onKeyDown={(e) => handleDropdownKeyDown(e, item.id)}
+                            placeholder="Search product or salt..."
+                            className="h-8 text-xs"
+                            data-testid={`item-product-${index}`}
+                            autoComplete="off"
+                          />
+                          {/* Search Suggestions Dropdown */}
+                          {showInventorySuggestions &&
+                            index === billItems.length - 1 &&
+                            createPortal(
+                              <div
+                                className="bg-card border border-border rounded-lg shadow-2xl max-h-64 overflow-y-auto"
+                                style={{
+                                  position: "fixed",
+                                  top: dropdownPosition.top,
+                                  left: dropdownPosition.left,
+                                  width: dropdownPosition.width || 400,
+                                  zIndex: 99999,
+                                }}
+                              >
+                                {/* Manual Entry Option */}
+                                {inventorySearch &&
+                                  inventorySearch.length >= 2 && (
+                                    <div
+                                      id="suggestion-new-0"
+                                      className={`p-3 cursor-pointer border-b border-border ${highlightedSuggestion === 0 ? "bg-yellow-500/20" : "hover:bg-yellow-500/10 bg-yellow-500/5"}`}
+                                      onMouseDown={(e) => {
+                                        e.preventDefault();
+                                        handleManualEntry(
+                                          item.id,
+                                          inventorySearch
+                                        );
+                                      }}
+                                      onMouseEnter={() =>
+                                        setHighlightedSuggestion(0)
+                                      }
+                                    >
+                                      <div className="flex items-center gap-2">
+                                        <Plus className="w-4 h-4 text-yellow-500" />
+                                        <div>
+                                          <p className="font-medium text-sm text-yellow-500">
+                                            Manual Entry: "{inventorySearch}"
+                                          </p>
+                                          <p className="text-xs text-muted-foreground">
+                                            Add item not in inventory
+                                          </p>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  )}
+
+                                {/* Inventory Items */}
+                                {inventorySuggestions.map(
+                                  (invItem, suggIdx) => (
+                                    <div
+                                      key={invItem.id}
+                                      id={`suggestion-new-${suggIdx + 1}`}
+                                      className={`p-3 cursor-pointer border-b border-border last:border-0 ${highlightedSuggestion === suggIdx + 1 ? "bg-primary/20" : "hover:bg-primary/10"}`}
+                                      onMouseDown={(e) => {
+                                        e.preventDefault();
+                                        handleSelectInventoryForRow(
+                                          item.id,
+                                          invItem
+                                        );
+                                      }}
+                                      onMouseEnter={() =>
+                                        setHighlightedSuggestion(suggIdx + 1)
+                                      }
+                                    >
+                                      <div className="flex justify-between items-start">
+                                        <div>
+                                          <p className="font-medium text-sm">
+                                            {invItem.product_name}
+                                          </p>
+                                          {invItem.supplier_name && (
+                                            <p className="text-xs text-purple-500 font-medium">
+                                              Supplier:{" "}
+                                              {invItem.supplier_name.length > 18
+                                                ? invItem.supplier_name
+                                                    .split(" ")
+                                                    .map((word) => word[0])
+                                                    .join("")
+                                                    .toUpperCase()
+                                                : invItem.supplier_name}
+                                            </p>
+                                          )}
+                                          {invItem.salt_composition && (
+                                            <p className="text-xs text-primary/70">
+                                              {invItem.salt_composition.slice(
+                                                0,
+                                                40
+                                              )}
+                                              ...
+                                            </p>
+                                          )}
+                                          <p className="text-xs text-muted-foreground">
+                                            Batch: {invItem.batch_no} | Exp:{" "}
+                                            {invItem.expiry_date}
+                                          </p>
+                                        </div>
+                                        <div className="text-right">
+                                          <p className="font-mono text-primary text-sm">
+                                            ₹
+                                            {Number(
+                                              invItem.mrp_per_unit ||
+                                                invItem.mrp
+                                            )
+                                              .toFixed(2)
+                                              .replace(/\.00$/, "")}
+                                            /unit
+                                          </p>
+                                          <p className="text-xs text-muted-foreground font-medium">
+                                            {(invItem.available_quantity ||
+                                              invItem.available_units ||
+                                              0) > 0 ? (
+                                              `${invItem.available_quantity || invItem.available_units} units`
+                                            ) : (
+                                              <span className="text-red-500 font-bold">
+                                                Out of Stock
+                                              </span>
+                                            )}
+                                          </p>
+                                          <p className="text-xs text-blue-400 font-bold">
+                                            Rate : ₹
+                                            {Number(
+                                              invItem.purchase_price
+                                            ).toFixed(2)}
+                                          </p>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  )
+                                )}
+                              </div>,
+                              document.body
+                            )}
+                        </TableCell>
+                        <TableCell>
+                          {item.is_manual ? (
+                            <Input
+                              value={item.salt_composition || ""}
+                              onChange={(e) =>
+                                handleItemFieldChange(
+                                  item.id,
+                                  "salt_composition",
+                                  e.target.value
+                                )
+                              }
+                              placeholder="Salt"
+                              className="h-8 text-xs w-20"
+                            />
+                          ) : (
+                            <span className="text-xs text-muted-foreground">
+                              {item.salt_composition?.slice(0, 15) || "-"}
+                            </span>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          {item.is_manual ? (
+                            <Input
+                              value={item.batch_no || ""}
+                              onChange={(e) =>
+                                handleItemFieldChange(
+                                  item.id,
+                                  "batch_no",
+                                  e.target.value
+                                )
+                              }
+                              placeholder="Batch"
+                              className="h-8 text-xs w-14"
+                            />
+                          ) : (
+                            <span className="text-xs text-muted-foreground">
+                              {item.batch_no || "-"}
+                            </span>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-center">
+                          {item.is_manual ? (
+                            <span className="text-xs font-medium text-yellow-500">
+                              Manual
+                            </span>
+                          ) : hasOverflow ? (
+                            <div className="text-center">
+                              <span className="text-xs font-medium text-yellow-500">
+                                {available > 0 ? available : "Out of Stock"}
+                              </span>
+                              <p className="text-[10px] text-yellow-500">
+                                ({negativeBilled} neg)
+                              </p>
+                            </div>
+                          ) : (
+                            <span className="text-xs font-medium text-primary">
+                              {available > 0 ? available : "Out of Stock"}
+                            </span>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
                             <Input
                               ref={
                                 index === billItems.length - 1
-                                  ? productInputRef
+                                  ? quantityInputRef
                                   : null
                               }
-                              value={item.product_name || ""}
+                              type="number"
+                              value={item.quantity || ""}
+                              onFocus={(e) => e.target.select()} // 👈 this line
                               onChange={(e) =>
                                 handleItemFieldChange(
                                   item.id,
-                                  "product_name",
+                                  "quantity",
                                   e.target.value
                                 )
                               }
-                              onFocus={() => {
-                                setInventorySearch(item.product_name || "");
-                                setShowInventorySuggestions(true);
-                                setActiveDropdownIndex(index);
-                              }}
-                              onBlur={() =>
-                                setTimeout(
-                                  () => setShowInventorySuggestions(false),
-                                  200
-                                )
-                              }
-                              onKeyDown={(e) =>
-                                handleDropdownKeyDown(e, item.id)
-                              }
-                              placeholder="Search product or salt..."
-                              className="h-8 text-xs"
-                              data-testid={`item-product-${index}`}
-                              autoComplete="off"
-                            />
-                            {/* Search Suggestions Dropdown */}
-                            {showInventorySuggestions &&
-                              index === billItems.length - 1 &&
-                              createPortal(
-                                <div
-                                  className="bg-card border border-border rounded-lg shadow-2xl max-h-64 overflow-y-auto"
-                                  style={{
-                                    position: "fixed",
-                                    top: dropdownPosition.top,
-                                    left: dropdownPosition.left,
-                                    width: dropdownPosition.width || 400,
-                                    zIndex: 99999,
-                                  }}
-                                >
-                                  {/* Manual Entry Option */}
-                                  {inventorySearch &&
-                                    inventorySearch.length >= 2 && (
-                                      <div
-                                        id="suggestion-new-0"
-                                        className={`p-3 cursor-pointer border-b border-border ${highlightedSuggestion === 0 ? "bg-yellow-500/20" : "hover:bg-yellow-500/10 bg-yellow-500/5"}`}
-                                        onMouseDown={(e) => {
-                                          e.preventDefault();
-                                          handleManualEntry(
-                                            item.id,
-                                            inventorySearch
-                                          );
-                                        }}
-                                        onMouseEnter={() =>
-                                          setHighlightedSuggestion(0)
-                                        }
-                                      >
-                                        <div className="flex items-center gap-2">
-                                          <Plus className="w-4 h-4 text-yellow-500" />
-                                          <div>
-                                            <p className="font-medium text-sm text-yellow-500">
-                                              Manual Entry: "{inventorySearch}"
-                                            </p>
-                                            <p className="text-xs text-muted-foreground">
-                                              Add item not in inventory
-                                            </p>
-                                          </div>
-                                        </div>
-                                      </div>
-                                    )}
-
-                                  {/* Inventory Items */}
-                                  {inventorySuggestions.map(
-                                    (invItem, suggIdx) => (
-                                      <div
-                                        key={invItem.id}
-                                        id={`suggestion-new-${suggIdx + 1}`}
-                                        className={`p-3 cursor-pointer border-b border-border last:border-0 ${highlightedSuggestion === suggIdx + 1 ? "bg-primary/20" : "hover:bg-primary/10"}`}
-                                        onMouseDown={(e) => {
-                                          e.preventDefault();
-                                          handleSelectInventoryForRow(
-                                            item.id,
-                                            invItem
-                                          );
-                                        }}
-                                        onMouseEnter={() =>
-                                          setHighlightedSuggestion(suggIdx + 1)
-                                        }
-                                      >
-                                        <div className="flex justify-between items-start">
-                                          <div>
-                                            <p className="font-medium text-sm">
-                                              {invItem.product_name}
-                                            </p>
-                                            {invItem.supplier_name && (
-                                              <p className="text-xs text-purple-500 font-medium">
-                                                Supplier:{" "}
-                                                {invItem.supplier_name.length >
-                                                18
-                                                  ? invItem.supplier_name
-                                                      .split(" ")
-                                                      .map((word) => word[0])
-                                                      .join("")
-                                                      .toUpperCase()
-                                                  : invItem.supplier_name}
-                                              </p>
-                                            )}
-                                            {invItem.salt_composition && (
-                                              <p className="text-xs text-primary/70">
-                                                {invItem.salt_composition.slice(
-                                                  0,
-                                                  40
-                                                )}
-                                                ...
-                                              </p>
-                                            )}
-                                            <p className="text-xs text-muted-foreground">
-                                              Batch: {invItem.batch_no} | Exp:{" "}
-                                              {invItem.expiry_date}
-                                            </p>
-                                          </div>
-                                          <div className="text-right">
-                                            <p className="font-mono text-primary text-sm">
-                                              ₹
-                                              {Number(
-                                                invItem.mrp_per_unit ||
-                                                  invItem.mrp
-                                              )
-                                                .toFixed(2)
-                                                .replace(/\.00$/, "")}
-                                              /unit
-                                            </p>
-                                            <p className="text-xs text-muted-foreground font-medium">
-                                              {(invItem.available_quantity || invItem.available_units || 0) > 0 
-                                                ? `${invItem.available_quantity || invItem.available_units} units` 
-                                                : <span className="text-red-500 font-bold">Out of Stock</span>}
-                                            </p>
-                                            <p className="text-xs text-blue-400 font-bold">
-                                              Rate : ₹
-                                              {Number(
-                                                invItem.purchase_price
-                                              ).toFixed(2)}
-                                            </p>
-                                          </div>
-                                        </div>
-                                      </div>
-                                    )
-                                  )}
-                                </div>,
-                                document.body
-                              )}
-                          </TableCell>
-                          <TableCell>
-                            {item.is_manual ? (
-                              <Input
-                                value={item.salt_composition || ""}
-                                onChange={(e) =>
-                                  handleItemFieldChange(
-                                    item.id,
-                                    "salt_composition",
-                                    e.target.value
-                                  )
-                                }
-                                placeholder="Salt"
-                                className="h-8 text-xs w-20"
-                              />
-                            ) : (
-                              <span className="text-xs text-muted-foreground">
-                                {item.salt_composition?.slice(0, 15) || "-"}
-                              </span>
-                            )}
-                          </TableCell>
-                          <TableCell>
-                            {item.is_manual ? (
-                              <Input
-                                value={item.batch_no || ""}
-                                onChange={(e) =>
-                                  handleItemFieldChange(
-                                    item.id,
-                                    "batch_no",
-                                    e.target.value
-                                  )
-                                }
-                                placeholder="Batch"
-                                className="h-8 text-xs w-14"
-                              />
-                            ) : (
-                              <span className="text-xs text-muted-foreground">
-                                {item.batch_no || "-"}
-                              </span>
-                            )}
-                          </TableCell>
-                          <TableCell className="text-center">
-                            {item.is_manual ? (
-                              <span className="text-xs font-medium text-yellow-500">
-                                Manual
-                              </span>
-                            ) : hasOverflow ? (
-                              <div className="text-center">
-                                <span className="text-xs font-medium text-yellow-500">
-                                  {available > 0 ? available : "Out of Stock"}
-                                </span>
-                                <p className="text-[10px] text-yellow-500">
-                                  ({negativeBilled} neg)
-                                </p>
-                              </div>
-                            ) : (
-                              <span className="text-xs font-medium text-primary">
-                                {available > 0 ? available : "Out of Stock"}
-                              </span>
-                            )}
-                          </TableCell>
-                          <TableCell>
-                            <div className="flex items-center gap-2">
-                              <Input
-                                ref={
-                                  index === billItems.length - 1
-                                    ? quantityInputRef
-                                    : null
-                                }
-                                type="number"
-                                value={item.quantity || ""}
-                                onFocus={(e) => e.target.select()} // 👈 this line
-                                onChange={(e) =>
-                                  handleItemFieldChange(
-                                    item.id,
-                                    "quantity",
-                                    e.target.value
-                                  )
-                                }
-                                onKeyDown={(e) => {
-                                  if (e.key === "Enter") {
-                                    e.preventDefault();
-                                    if (item.is_manual) {
-                                      document.getElementById(`mrp-${item.id}`)?.focus({ preventScroll: true });
-                                    } else {
-                                      document.getElementById(`discount-${item.id}`)?.focus({ preventScroll: true });
-                                    }
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  e.preventDefault();
+                                  if (item.is_manual) {
+                                    document
+                                      .getElementById(`mrp-${item.id}`)
+                                      ?.focus({ preventScroll: true });
+                                  } else {
+                                    document
+                                      .getElementById(`discount-${item.id}`)
+                                      ?.focus({ preventScroll: true });
                                   }
-                                }}
-                                min="1"
-                                placeholder="1"
-                                className={`h-8 text-xs text-center w-14 ${
-                                  hasOverflow ? "border-yellow-500" : ""
-                                }`}
-                              />
-                              {!item.is_manual && item.units_per_pack && (
-                                <label className="flex items-center gap-2 cursor-pointer select-none text-[11px] font-medium text-gray-600">
-                                  <input
-                                    type="checkbox"
-                                    checked={
-                                      item.quantity === item.units_per_pack
-                                    }
-                                    onChange={(e) =>
-                                      handleFullPackToggle(
-                                        item.id,
-                                        e.target.checked
-                                      )
-                                    }
-                                    className="h-4 w-4 rounded border border-gray-300 text-primary focus:ring-1 focus:ring-primary cursor-pointer"
-                                  />
-                                  Full Pack
-                                </label>
-                              )}
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            {item.is_manual ? (
-                              <Input
-                                type="number"
-                                step="0.01"
-                                value={item.purchase_price || ""}
-                                onChange={(e) =>
-                                  handleItemFieldChange(
-                                    item.id,
-                                    "purchase_price",
-                                    e.target.value
-                                  )
                                 }
-                                placeholder="Cost"
-                                className="h-8 text-xs text-center w-16"
-                              />
-                            ) : (
-                              <span className="text-xs text-muted-foreground font-mono">
-                                ₹{purchasePrice.toFixed(2)}
-                              </span>
+                              }}
+                              min="1"
+                              placeholder="1"
+                              className={`h-8 text-xs text-center w-14 ${
+                                hasOverflow ? "border-yellow-500" : ""
+                              }`}
+                            />
+                            {!item.is_manual && item.units_per_pack && (
+                              <label className="flex items-center gap-2 cursor-pointer select-none text-[11px] font-medium text-gray-600">
+                                <input
+                                  type="checkbox"
+                                  checked={
+                                    item.quantity === item.units_per_pack
+                                  }
+                                  onChange={(e) =>
+                                    handleFullPackToggle(
+                                      item.id,
+                                      e.target.checked
+                                    )
+                                  }
+                                  className="h-4 w-4 rounded border border-gray-300 text-primary focus:ring-1 focus:ring-primary cursor-pointer"
+                                />
+                                Full Pack
+                              </label>
                             )}
-                          </TableCell>
-                          <TableCell>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          {item.is_manual ? (
                             <Input
-                              id={`mrp-${item.id}`}
                               type="number"
                               step="0.01"
-                              value={item.unit_price || ""}
+                              value={item.purchase_price || ""}
                               onChange={(e) =>
                                 handleItemFieldChange(
                                   item.id,
-                                  "unit_price",
+                                  "purchase_price",
                                   e.target.value
                                 )
                               }
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter") {
-                                  e.preventDefault();
-                                  document.getElementById(`discount-${item.id}`)?.focus({ preventScroll: true });
-                                }
-                              }}
-                              placeholder="MRP"
-                              className="h-8 text-xs text-center w-28"
+                              placeholder="Cost"
+                              className="h-8 text-xs text-center w-16"
                             />
-                          </TableCell>
-                          <TableCell>
-                            <Input
-                              id={`discount-${item.id}`}
-                              type="number"
-                              value={item.discount_percent || ""}
-                              onChange={(e) =>
-                                handleItemFieldChange(
-                                  item.id,
-                                  "discount_percent",
-                                  e.target.value
-                                )
+                          ) : (
+                            <span className="text-xs text-muted-foreground font-mono">
+                              ₹{purchasePrice.toFixed(2)}
+                            </span>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <Input
+                            id={`mrp-${item.id}`}
+                            type="number"
+                            step="0.01"
+                            value={item.unit_price || ""}
+                            onChange={(e) =>
+                              handleItemFieldChange(
+                                item.id,
+                                "unit_price",
+                                e.target.value
+                              )
+                            }
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                document
+                                  .getElementById(`discount-${item.id}`)
+                                  ?.focus({ preventScroll: true });
                               }
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter") {
-                                  e.preventDefault();
-                                  if (index === billItems.length - 1) {
-                                    handleAddNewRow();
-                                  } else {
-                                    document.querySelector(`[data-testid="item-product-${index + 1}"]`)?.focus({ preventScroll: true });
-                                  }
+                            }}
+                            placeholder="MRP"
+                            className="h-8 text-xs text-center w-28"
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <Input
+                            id={`discount-${item.id}`}
+                            type="number"
+                            value={item.discount_percent || ""}
+                            onChange={(e) =>
+                              handleItemFieldChange(
+                                item.id,
+                                "discount_percent",
+                                e.target.value
+                              )
+                            }
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                if (index === billItems.length - 1) {
+                                  handleAddNewRow();
+                                } else {
+                                  document
+                                    .querySelector(
+                                      `[data-testid="item-product-${index + 1}"]`
+                                    )
+                                    ?.focus({ preventScroll: true });
                                 }
-                              }}
-                              min="0"
-                              max="100"
-                              placeholder="0"
-                              className="h-8 text-xs text-center w-24"
-                            />
-                          </TableCell>
-                          <TableCell className="text-right font-mono text-sm font-medium">
-                            ₹{itemTotal.toFixed(2)}
-                          </TableCell>
-                          <TableCell>
-                            <Button
-                              size="icon"
-                              variant="ghost"
-                              className="h-7 w-7 text-muted-foreground hover:text-destructive"
-                              onClick={() => handleRemoveItem(item.id)}
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-
-                    {billItems.length === 0 && (
-                      <TableRow>
-                        <TableCell
-                          colSpan={9}
-                          className="text-center py-8 text-muted-foreground"
-                        >
-                          <Package className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                          No items. Click "Add Item" to add a row.
+                              }
+                            }}
+                            min="0"
+                            max="100"
+                            placeholder="0"
+                            className="h-8 text-xs text-center w-24"
+                          />
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-sm font-medium">
+                          ₹{itemTotal.toFixed(2)}
+                        </TableCell>
+                        <TableCell>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                            onClick={() => handleRemoveItem(item.id)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
                         </TableCell>
                       </TableRow>
-                    )}
-                  </TableBody>
-                </Table>
+                    );
+                  })}
+
+                  {billItems.length === 0 && (
+                    <TableRow>
+                      <TableCell
+                        colSpan={9}
+                        className="text-center py-8 text-muted-foreground"
+                      >
+                        <Package className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                        No items. Click "Add Item" to add a row.
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
             </div>
 
             {/* Tip */}
@@ -2245,366 +2346,368 @@ export default function BillingPage() {
 
             {/* Items Table - Inline Editable */}
             <div className="border border-border rounded-lg relative overflow-hidden">
-                <Table wrapperClassName="h-[400px]">
-                  <TableHeader className="sticky top-0 bg-muted/95 backdrop-blur z-[50]">
-                    <TableRow>
-                      <TableHead className="w-[180px] font-bold text-foreground">
-                        Product *
-                      </TableHead>
-                      <TableHead className="w-[100px] font-bold text-foreground">
-                        Salt
-                      </TableHead>
-                      <TableHead className="w-[80px] font-bold text-foreground">
-                        Batch
-                      </TableHead>
-                      <TableHead className="w-[70px] text-center font-bold text-foreground">
-                        Avail.
-                      </TableHead>
-                      <TableHead className="w-[90px] font-bold text-foreground">
-                        Expiry
-                      </TableHead>
-                      <TableHead className="w-[70px] text-center font-bold text-foreground">
-                        Qty *
-                      </TableHead>
-                      <TableHead className="w-[90px] text-center font-bold text-foreground">
-                        Cost/Unit
-                      </TableHead>
-                      <TableHead className="w-[90px] text-center font-bold text-foreground">
-                        MRP/Unit *
-                      </TableHead>
-                      <TableHead className="w-[70px] text-center font-bold text-foreground">
-                        Disc %
-                      </TableHead>
-                      <TableHead className="w-[90px] text-right font-bold text-foreground">
-                        Total
-                      </TableHead>
-                      <TableHead className="w-[60px] text-center font-bold text-foreground">
-                        Actions
-                      </TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {editingBillItems.map((item, index) => {
-                      const qty = parseInt(item.quantity) || 0;
-                      const unitPrice = parseFloat(item.unit_price) || 0;
-                      const discPercent =
-                        parseFloat(item.discount_percent) || 0;
-                      const purchasePrice =
-                        parseFloat(item.purchase_price) || 0;
-                      const itemTotal =
-                        qty * unitPrice * (1 - discPercent / 100);
-                      const available = parseInt(item.available) || 0;
+              <Table wrapperClassName="h-[400px]">
+                <TableHeader className="sticky top-0 bg-muted/95 backdrop-blur z-[50]">
+                  <TableRow>
+                    <TableHead className="w-[180px] font-bold text-foreground">
+                      Product *
+                    </TableHead>
+                    <TableHead className="w-[100px] font-bold text-foreground">
+                      Salt
+                    </TableHead>
+                    <TableHead className="w-[80px] font-bold text-foreground">
+                      Batch
+                    </TableHead>
+                    <TableHead className="w-[70px] text-center font-bold text-foreground">
+                      Avail.
+                    </TableHead>
+                    <TableHead className="w-[90px] font-bold text-foreground">
+                      Expiry
+                    </TableHead>
+                    <TableHead className="w-[70px] text-center font-bold text-foreground">
+                      Qty *
+                    </TableHead>
+                    <TableHead className="w-[90px] text-center font-bold text-foreground">
+                      Cost/Unit
+                    </TableHead>
+                    <TableHead className="w-[90px] text-center font-bold text-foreground">
+                      MRP/Unit *
+                    </TableHead>
+                    <TableHead className="w-[70px] text-center font-bold text-foreground">
+                      Disc %
+                    </TableHead>
+                    <TableHead className="w-[90px] text-right font-bold text-foreground">
+                      Total
+                    </TableHead>
+                    <TableHead className="w-[60px] text-center font-bold text-foreground">
+                      Actions
+                    </TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {editingBillItems.map((item, index) => {
+                    const qty = parseInt(item.quantity) || 0;
+                    const unitPrice = parseFloat(item.unit_price) || 0;
+                    const discPercent = parseFloat(item.discount_percent) || 0;
+                    const purchasePrice = parseFloat(item.purchase_price) || 0;
+                    const itemTotal = qty * unitPrice * (1 - discPercent / 100);
+                    const available = parseInt(item.available) || 0;
 
-                      const hasOverflow =
-                        !item.is_manual && qty > available && available > 0;
+                    const hasOverflow =
+                      !item.is_manual && qty > available && available > 0;
 
-                      return (
-                        <TableRow
-                          key={item.id || index}
-                          className={
-                            hasOverflow ? "bg-yellow-500/10" : "bg-primary/5"
-                          }
-                        >
-                          <TableCell
-                            className="relative"
-                            style={{ overflow: "visible" }}
-                          >
-                            <Input
-                              ref={
-                                index === editingBillItems.length - 1
-                                  ? editingProductInputRef
-                                  : null
-                              }
-                              value={item.product_name || ""}
-                              onChange={(e) =>
-                                handleEditItemFieldChange(
-                                  item.id,
-                                  "product_name",
-                                  e.target.value
-                                )
-                              }
-                              onFocus={() => {
-                                setEditingInventorySearch(
-                                  item.product_name || ""
-                                );
-                                setShowEditingInventorySuggestions(true);
-                                setActiveEditingItemId(item.id);
-                                setHighlightedEditingSuggestion(-1);
-                              }}
-                              onBlur={() =>
-                                setTimeout(
-                                  () =>
-                                    setShowEditingInventorySuggestions(false),
-                                  200
-                                )
-                              }
-                              onKeyDown={(e) =>
-                                handleEditDropdownKeyDown(e, item.id)
-                              }
-                              placeholder="Search product..."
-                              className="h-8 text-xs"
-                              autoComplete="off"
-                            />
-                            {/* Search Suggestions Dropdown for Editing */}
-                            {showEditingInventorySuggestions &&
-                              activeEditingItemId === item.id &&
-                              createPortal(
-                                <div
-                                  className="bg-card border border-border rounded-lg shadow-2xl max-h-64 overflow-y-auto"
-                                  style={{
-                                    position: "fixed",
-                                    top: dropdownPosition.top,
-                                    left: dropdownPosition.left,
-                                    width: dropdownPosition.width || 400,
-                                    zIndex: 99999,
-                                  }}
-                                >
-                                  {/* Manual Entry Option */}
-                                  {editingInventorySearch &&
-                                    editingInventorySearch.length >= 2 && (
-                                      <div
-                                        id="suggestion-edit-0"
-                                        className={`p-3 cursor-pointer border-b border-border ${highlightedEditingSuggestion === 0 ? "bg-yellow-500/20" : "hover:bg-yellow-500/10 bg-yellow-500/5"}`}
-                                        onMouseDown={(e) => {
-                                          e.preventDefault();
-                                          handleManualEntryForEdit(
-                                            item.id,
-                                            editingInventorySearch
-                                          );
-                                        }}
-                                        onMouseEnter={() =>
-                                          setHighlightedEditingSuggestion(0)
-                                        }
-                                      >
-                                        <div className="flex items-center gap-2">
-                                          <Plus className="w-4 h-4 text-yellow-500" />
-                                          <div>
-                                            <p className="font-medium text-sm text-yellow-500">
-                                              Manual Entry: "
-                                              {editingInventorySearch}"
-                                            </p>
-                                            <p className="text-xs text-muted-foreground">
-                                              Add item not in inventory
-                                            </p>
-                                          </div>
-                                        </div>
-                                      </div>
-                                    )}
-
-                                  {/* Inventory Items */}
-                                  {editingInventorySuggestions.map(
-                                    (invItem, suggIdx) => (
-                                      <div
-                                        key={invItem.id}
-                                        id={`suggestion-edit-${suggIdx + 1}`}
-                                        className={`p-3 cursor-pointer border-b border-border last:border-0 ${highlightedEditingSuggestion === suggIdx + 1 ? "bg-primary/20" : "hover:bg-primary/10"}`}
-                                        onMouseDown={(e) => {
-                                          e.preventDefault();
-                                          handleSelectInventoryForEditRow(
-                                            item.id,
-                                            invItem
-                                          );
-                                        }}
-                                        onMouseEnter={() =>
-                                          setHighlightedEditingSuggestion(
-                                            suggIdx + 1
-                                          )
-                                        }
-                                      >
-                                        <div className="flex justify-between items-start">
-                                          <div>
-                                            <p className="font-medium text-sm">
-                                              {invItem.product_name}
-                                            </p>
-                                            {invItem.salt_composition && (
-                                              <p className="text-xs text-primary/70">
-                                                {invItem.salt_composition.slice(
-                                                  0,
-                                                  40
-                                                )}
-                                                ...
-                                              </p>
-                                            )}
-                                            <p className="text-xs text-muted-foreground">
-                                              Batch: {invItem.batch_no} | Exp:{" "}
-                                              {invItem.expiry_date}
-                                            </p>
-                                          </div>
-                                          <div className="text-right">
-                                            <p className="font-mono text-primary text-sm">
-                                              ₹
-                                              {Number(
-                                                invItem.mrp_per_unit ||
-                                                  invItem.mrp
-                                              )
-                                                .toFixed(2)
-                                                .replace(/\.00$/, "")}
-                                              /unit
-                                            </p>
-                                            <p className="text-xs text-muted-foreground font-medium">
-                                              {(invItem.available_quantity || invItem.available_units || 0) > 0 
-                                                ? `${invItem.available_quantity || invItem.available_units} units` 
-                                                : <span className="text-red-500 font-bold">Out of Stock</span>}
-                                            </p>
-                                          </div>
-                                        </div>
-                                      </div>
-                                    )
-                                  )}
-                                </div>,
-                                document.body
-                              )}
-                          </TableCell>
-                          <TableCell>
-                            <Input
-                              value={item.salt_composition || ""}
-                              onChange={(e) =>
-                                handleEditItemFieldChange(
-                                  item.id,
-                                  "salt_composition",
-                                  e.target.value
-                                )
-                              }
-                              placeholder="Salt"
-                              className="h-8 text-xs w-24"
-                            />
-                          </TableCell>
-                          <TableCell>
-                            <Input
-                              value={item.batch_no || ""}
-                              onChange={(e) =>
-                                handleEditItemFieldChange(
-                                  item.id,
-                                  "batch_no",
-                                  e.target.value
-                                )
-                              }
-                              placeholder="Batch"
-                              className="h-8 text-xs w-20"
-                            />
-                          </TableCell>
-                          <TableCell className="text-center">
-                            {item.is_manual ? (
-                              <span className="text-xs font-medium text-yellow-500">
-                                Manual
-                              </span>
-                            ) : (
-                              <span className="text-xs font-medium text-primary">
-                                {available > 0 ? available : "Out of Stock"}
-                              </span>
-                            )}
-                          </TableCell>
-                          <TableCell>
-                            <Input
-                              type="date"
-                              value={item.expiry_date || ""}
-                              onChange={(e) =>
-                                handleEditItemFieldChange(
-                                  item.id,
-                                  "expiry_date",
-                                  e.target.value
-                                )
-                              }
-                              className="h-8 text-xs w-28"
-                            />
-                          </TableCell>
-                          <TableCell>
-                            <Input
-                              type="number"
-                              value={item.quantity || ""}
-                              onChange={(e) =>
-                                handleEditItemFieldChange(
-                                  item.id,
-                                  "quantity",
-                                  e.target.value
-                                )
-                              }
-                              min="1"
-                              placeholder="1"
-                              className={`h-8 text-xs text-center w-16 ${
-                                hasOverflow ? "border-yellow-500" : ""
-                              }`}
-                            />
-                          </TableCell>
-                          <TableCell>
-                            <Input
-                              type="number"
-                              step="0.01"
-                              value={item.purchase_price || ""}
-                              onChange={(e) =>
-                                handleEditItemFieldChange(
-                                  item.id,
-                                  "purchase_price",
-                                  e.target.value
-                                )
-                              }
-                              placeholder="Cost"
-                              className="h-8 text-xs text-center w-20"
-                            />
-                          </TableCell>
-                          <TableCell>
-                            <Input
-                              type="number"
-                              step="0.01"
-                              value={item.unit_price || ""}
-                              onChange={(e) =>
-                                handleEditItemFieldChange(
-                                  item.id,
-                                  "unit_price",
-                                  e.target.value
-                                )
-                              }
-                              placeholder="MRP"
-                              className="h-8 text-xs text-center w-24"
-                            />
-                          </TableCell>
-                          <TableCell>
-                            <Input
-                              type="number"
-                              value={item.discount_percent || ""}
-                              onChange={(e) =>
-                                handleEditItemFieldChange(
-                                  item.id,
-                                  "discount_percent",
-                                  e.target.value
-                                )
-                              }
-                              min="0"
-                              max="100"
-                              placeholder="0"
-                              className="h-8 text-xs text-center w-16"
-                            />
-                          </TableCell>
-                          <TableCell className="text-right font-mono text-sm font-medium">
-                            ₹{itemTotal.toFixed(2)}
-                          </TableCell>
-                          <TableCell>
-                            <Button
-                              size="icon"
-                              variant="ghost"
-                              className="h-7 w-7 text-muted-foreground hover:text-destructive"
-                              onClick={() => handleRemoveEditItem(item.id)}
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-
-                    {editingBillItems.length === 0 && (
-                      <TableRow>
+                    return (
+                      <TableRow
+                        key={item.id || index}
+                        className={
+                          hasOverflow ? "bg-yellow-500/10" : "bg-primary/5"
+                        }
+                      >
                         <TableCell
-                          colSpan={10}
-                          className="text-center py-8 text-muted-foreground"
+                          className="relative"
+                          style={{ overflow: "visible" }}
                         >
-                          <Package className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                          No items. Click "Add Item" to add a row.
+                          <Input
+                            ref={
+                              index === editingBillItems.length - 1
+                                ? editingProductInputRef
+                                : null
+                            }
+                            value={item.product_name || ""}
+                            onChange={(e) =>
+                              handleEditItemFieldChange(
+                                item.id,
+                                "product_name",
+                                e.target.value
+                              )
+                            }
+                            onFocus={() => {
+                              setEditingInventorySearch(
+                                item.product_name || ""
+                              );
+                              setShowEditingInventorySuggestions(true);
+                              setActiveEditingItemId(item.id);
+                              setHighlightedEditingSuggestion(-1);
+                            }}
+                            onBlur={() =>
+                              setTimeout(
+                                () => setShowEditingInventorySuggestions(false),
+                                200
+                              )
+                            }
+                            onKeyDown={(e) =>
+                              handleEditDropdownKeyDown(e, item.id)
+                            }
+                            placeholder="Search product..."
+                            className="h-8 text-xs"
+                            autoComplete="off"
+                          />
+                          {/* Search Suggestions Dropdown for Editing */}
+                          {showEditingInventorySuggestions &&
+                            activeEditingItemId === item.id &&
+                            createPortal(
+                              <div
+                                className="bg-card border border-border rounded-lg shadow-2xl max-h-64 overflow-y-auto"
+                                style={{
+                                  position: "fixed",
+                                  top: dropdownPosition.top,
+                                  left: dropdownPosition.left,
+                                  width: dropdownPosition.width || 400,
+                                  zIndex: 99999,
+                                }}
+                              >
+                                {/* Manual Entry Option */}
+                                {editingInventorySearch &&
+                                  editingInventorySearch.length >= 2 && (
+                                    <div
+                                      id="suggestion-edit-0"
+                                      className={`p-3 cursor-pointer border-b border-border ${highlightedEditingSuggestion === 0 ? "bg-yellow-500/20" : "hover:bg-yellow-500/10 bg-yellow-500/5"}`}
+                                      onMouseDown={(e) => {
+                                        e.preventDefault();
+                                        handleManualEntryForEdit(
+                                          item.id,
+                                          editingInventorySearch
+                                        );
+                                      }}
+                                      onMouseEnter={() =>
+                                        setHighlightedEditingSuggestion(0)
+                                      }
+                                    >
+                                      <div className="flex items-center gap-2">
+                                        <Plus className="w-4 h-4 text-yellow-500" />
+                                        <div>
+                                          <p className="font-medium text-sm text-yellow-500">
+                                            Manual Entry: "
+                                            {editingInventorySearch}"
+                                          </p>
+                                          <p className="text-xs text-muted-foreground">
+                                            Add item not in inventory
+                                          </p>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  )}
+
+                                {/* Inventory Items */}
+                                {editingInventorySuggestions.map(
+                                  (invItem, suggIdx) => (
+                                    <div
+                                      key={invItem.id}
+                                      id={`suggestion-edit-${suggIdx + 1}`}
+                                      className={`p-3 cursor-pointer border-b border-border last:border-0 ${highlightedEditingSuggestion === suggIdx + 1 ? "bg-primary/20" : "hover:bg-primary/10"}`}
+                                      onMouseDown={(e) => {
+                                        e.preventDefault();
+                                        handleSelectInventoryForEditRow(
+                                          item.id,
+                                          invItem
+                                        );
+                                      }}
+                                      onMouseEnter={() =>
+                                        setHighlightedEditingSuggestion(
+                                          suggIdx + 1
+                                        )
+                                      }
+                                    >
+                                      <div className="flex justify-between items-start">
+                                        <div>
+                                          <p className="font-medium text-sm">
+                                            {invItem.product_name}
+                                          </p>
+                                          {invItem.salt_composition && (
+                                            <p className="text-xs text-primary/70">
+                                              {invItem.salt_composition.slice(
+                                                0,
+                                                40
+                                              )}
+                                              ...
+                                            </p>
+                                          )}
+                                          <p className="text-xs text-muted-foreground">
+                                            Batch: {invItem.batch_no} | Exp:{" "}
+                                            {invItem.expiry_date}
+                                          </p>
+                                        </div>
+                                        <div className="text-right">
+                                          <p className="font-mono text-primary text-sm">
+                                            ₹
+                                            {Number(
+                                              invItem.mrp_per_unit ||
+                                                invItem.mrp
+                                            )
+                                              .toFixed(2)
+                                              .replace(/\.00$/, "")}
+                                            /unit
+                                          </p>
+                                          <p className="text-xs text-muted-foreground font-medium">
+                                            {(invItem.available_quantity ||
+                                              invItem.available_units ||
+                                              0) > 0 ? (
+                                              `${invItem.available_quantity || invItem.available_units} units`
+                                            ) : (
+                                              <span className="text-red-500 font-bold">
+                                                Out of Stock
+                                              </span>
+                                            )}
+                                          </p>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  )
+                                )}
+                              </div>,
+                              document.body
+                            )}
+                        </TableCell>
+                        <TableCell>
+                          <Input
+                            value={item.salt_composition || ""}
+                            onChange={(e) =>
+                              handleEditItemFieldChange(
+                                item.id,
+                                "salt_composition",
+                                e.target.value
+                              )
+                            }
+                            placeholder="Salt"
+                            className="h-8 text-xs w-24"
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <Input
+                            value={item.batch_no || ""}
+                            onChange={(e) =>
+                              handleEditItemFieldChange(
+                                item.id,
+                                "batch_no",
+                                e.target.value
+                              )
+                            }
+                            placeholder="Batch"
+                            className="h-8 text-xs w-20"
+                          />
+                        </TableCell>
+                        <TableCell className="text-center">
+                          {item.is_manual ? (
+                            <span className="text-xs font-medium text-yellow-500">
+                              Manual
+                            </span>
+                          ) : (
+                            <span className="text-xs font-medium text-primary">
+                              {available > 0 ? available : "Out of Stock"}
+                            </span>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <Input
+                            type="date"
+                            value={item.expiry_date || ""}
+                            onChange={(e) =>
+                              handleEditItemFieldChange(
+                                item.id,
+                                "expiry_date",
+                                e.target.value
+                              )
+                            }
+                            className="h-8 text-xs w-28"
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <Input
+                            type="number"
+                            value={item.quantity || ""}
+                            onChange={(e) =>
+                              handleEditItemFieldChange(
+                                item.id,
+                                "quantity",
+                                e.target.value
+                              )
+                            }
+                            min="1"
+                            placeholder="1"
+                            className={`h-8 text-xs text-center w-16 ${
+                              hasOverflow ? "border-yellow-500" : ""
+                            }`}
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <Input
+                            type="number"
+                            step="0.01"
+                            value={item.purchase_price || ""}
+                            onChange={(e) =>
+                              handleEditItemFieldChange(
+                                item.id,
+                                "purchase_price",
+                                e.target.value
+                              )
+                            }
+                            placeholder="Cost"
+                            className="h-8 text-xs text-center w-20"
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <Input
+                            type="number"
+                            step="0.01"
+                            value={item.unit_price || ""}
+                            onChange={(e) =>
+                              handleEditItemFieldChange(
+                                item.id,
+                                "unit_price",
+                                e.target.value
+                              )
+                            }
+                            placeholder="MRP"
+                            className="h-8 text-xs text-center w-24"
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <Input
+                            type="number"
+                            value={item.discount_percent || ""}
+                            onChange={(e) =>
+                              handleEditItemFieldChange(
+                                item.id,
+                                "discount_percent",
+                                e.target.value
+                              )
+                            }
+                            min="0"
+                            max="100"
+                            placeholder="0"
+                            className="h-8 text-xs text-center w-16"
+                          />
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-sm font-medium">
+                          ₹{itemTotal.toFixed(2)}
+                        </TableCell>
+                        <TableCell>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                            onClick={() => handleRemoveEditItem(item.id)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
                         </TableCell>
                       </TableRow>
-                    )}
-                  </TableBody>
-                </Table>
+                    );
+                  })}
+
+                  {editingBillItems.length === 0 && (
+                    <TableRow>
+                      <TableCell
+                        colSpan={10}
+                        className="text-center py-8 text-muted-foreground"
+                      >
+                        <Package className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                        No items. Click "Add Item" to add a row.
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
             </div>
 
             {/* Notes */}
@@ -2679,7 +2782,9 @@ export default function BillingPage() {
 
                         setEditingBillData({
                           ...editingBillData,
-                          discount_percent: parseFloat(discountPercent.toFixed(2)),
+                          discount_percent: parseFloat(
+                            discountPercent.toFixed(2)
+                          ),
                         });
                       }}
                     />
@@ -3389,7 +3494,8 @@ export default function BillingPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Generate Bill PDF</AlertDialogTitle>
             <AlertDialogDescription>
-              Would you like to generate and view a PDF receipt for this newly recorded bill?
+              Would you like to generate and view a PDF receipt for this newly
+              recorded bill?
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -3419,7 +3525,12 @@ export default function BillingPage() {
         </AlertDialogContent>
       </AlertDialog>
 
-      <AlertDialog open={removeConfirmDialog.open} onOpenChange={(open) => setRemoveConfirmDialog({ ...removeConfirmDialog, open })}>
+      <AlertDialog
+        open={removeConfirmDialog.open}
+        onOpenChange={(open) =>
+          setRemoveConfirmDialog({ ...removeConfirmDialog, open })
+        }
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Remove Item</AlertDialogTitle>
@@ -3429,7 +3540,10 @@ export default function BillingPage() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={confirmRemoveItem} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+            <AlertDialogAction
+              onClick={confirmRemoveItem}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
               Remove
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -3440,40 +3554,46 @@ export default function BillingPage() {
       {(showNewBill || editingBillId) && (
         <div className="fixed bottom-0 left-0 md:left-[250px] right-0 z-[100] flex items-center justify-between bg-card/95 backdrop-blur-md border-t border-border shadow-[0_-8px_30px_rgba(0,0,0,0.12)] px-6 py-4 gap-4 overflow-x-auto scroller-hide overflow-y-hidden mb-0 transition-all duration-300">
           <div className="flex items-center gap-2 overflow-x-auto scroller-hide">
-            {showNewBill && tabs.map((tab, idx) => {
-              const isActive = tab.id === activeTabId;
-              let tabName = `Tab ${idx + 1}`;
-              if (tab.data?.billItems?.length > 0) {
-                const firstProduct = tab.data.billItems[0].product_name || "Unknown";
-                const extra = tab.data.billItems.length - 1;
-                tabName = extra > 0 ? `${firstProduct} +${extra}` : firstProduct;
-              }
-              return (
-                <div key={tab.id} className="relative group shrink-0">
-                  <Button
-                    variant={isActive ? "default" : "secondary"}
-                    size="sm"
-                    onClick={(e) => { e.preventDefault(); switchTab(tab.id); }}
-                    className={`pr-8 h-9 ${isActive ? "shadow-md ring-1 ring-primary/50" : "opacity-80 hover:opacity-100"}`}
-                  >
-                    <FileText className="w-3.5 h-3.5 mr-1.5 opacity-70" />
-                    <span className="max-w-[120px] truncate">{tabName}</span>
-                  </Button>
-                  {tabs.length > 0 && (
-                    <div
-                      className="absolute right-1.5 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center rounded-full bg-background/50 hover:bg-destructive hover:text-destructive-foreground cursor-pointer transition-colors"
+            {showNewBill &&
+              tabs.map((tab, idx) => {
+                const isActive = tab.id === activeTabId;
+                let tabName = `Tab ${idx + 1}`;
+                if (tab.data?.billItems?.length > 0) {
+                  const firstProduct =
+                    tab.data.billItems[0].product_name || "Unknown";
+                  const extra = tab.data.billItems.length - 1;
+                  tabName =
+                    extra > 0 ? `${firstProduct} +${extra}` : firstProduct;
+                }
+                return (
+                  <div key={tab.id} className="relative group shrink-0">
+                    <Button
+                      variant={isActive ? "default" : "secondary"}
+                      size="sm"
                       onClick={(e) => {
                         e.preventDefault();
-                        e.stopPropagation();
-                        closeTab(tab.id);
+                        switchTab(tab.id);
                       }}
+                      className={`pr-8 h-9 ${isActive ? "shadow-md ring-1 ring-primary/50" : "opacity-80 hover:opacity-100"}`}
                     >
-                      <X className="w-3 h-3" />
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+                      <FileText className="w-3.5 h-3.5 mr-1.5 opacity-70" />
+                      <span className="max-w-[120px] truncate">{tabName}</span>
+                    </Button>
+                    {tabs.length > 0 && (
+                      <div
+                        className="absolute right-1.5 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center rounded-full bg-background/50 hover:bg-destructive hover:text-destructive-foreground cursor-pointer transition-colors"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          closeTab(tab.id);
+                        }}
+                      >
+                        <X className="w-3 h-3" />
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             {showNewBill && tabs.length < 10 && (
               <Button
                 variant="outline"
@@ -3493,14 +3613,14 @@ export default function BillingPage() {
           </div>
 
           <div className="flex items-center gap-3 shrink-0 ml-auto border-l border-border pl-6">
-            <Button 
-                variant="ghost" 
-                onClick={showNewBill ? handleCancelNewBill : handleCancelEditBill}
-                className="text-muted-foreground hover:text-foreground"
+            <Button
+              variant="ghost"
+              onClick={showNewBill ? handleCancelNewBill : handleCancelEditBill}
+              className="text-muted-foreground hover:text-foreground"
             >
               Cancel (Esc)
             </Button>
-            
+
             {showNewBill ? (
               <Button
                 onClick={handleSubmitBill}
@@ -3517,7 +3637,7 @@ export default function BillingPage() {
                     <CreditCard className="w-4 h-4" />
                     <span>Create Bill</span>
                     <kbd className="hidden sm:inline-block ml-1 opacity-70 text-[9px] font-mono border border-white/20 px-1 rounded">
-                      {getOS() === 'mac' ? '⌘Enter' : 'Ctrl+Enter'}
+                      {getOS() === "mac" ? "⌘Enter" : "Ctrl+Enter"}
                     </kbd>
                   </div>
                 )}
