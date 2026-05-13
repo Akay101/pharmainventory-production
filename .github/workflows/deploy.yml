@@ -1,75 +1,73 @@
-name: Auto Deploy Full Stack
+name: Auto Deploy Backend
 
 on:
-  push:
-    branches:
-      - main
+push:
+branches:
+- main
 
 jobs:
-  deploy:
-    runs-on: ubuntu-latest
+deploy:
+runs-on: ubuntu-latest
 
-    steps:
-      # Step 1: Checkout repository
-      - name: Checkout code
-        uses: actions/checkout@v4
+```
+steps:
+  ####################################################
+  # CHECKOUT CODE
+  ####################################################
+  - name: Checkout code
+    uses: actions/checkout@v4
 
-      # Step 2: Login to Docker Hub
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
+  ####################################################
+  # LOGIN TO DOCKER HUB
+  ####################################################
+  - name: Login to Docker Hub
+    uses: docker/login-action@v3
+    with:
+      username: ${{ secrets.DOCKER_USERNAME }}
+      password: ${{ secrets.DOCKER_PASSWORD }}
 
-      ####################################################
-      # BUILD FRONTEND IMAGE
-      ####################################################
-      - name: Build Frontend Docker Image
-        working-directory: ./frontend
-        run: |
-          docker build \
-          -t pharmalogy/pharmalogy-frontend:latest \
-          .
+  ####################################################
+  # BUILD BACKEND API IMAGE
+  ####################################################
+  - name: Build Backend API Docker Image
+    run: |
+      docker build \
+        -f ./backend-node/Dockerfile \
+        -t pharmalogy/pharmalogy-backend:latest \
+        ./backend-node
 
-      ####################################################
-      # BUILD API IMAGE
-      ####################################################
-      - name: Build API Docker Image
-        working-directory: ./backend-node
-        run: |
-          docker build \
-          -t pharmalogy/pharmalogy-backend:latest \
-          .
+  ####################################################
+  # BUILD WORKER IMAGE
+  ####################################################
+  - name: Build Worker Docker Image
+    run: |
+      docker build \
+        -f ./backend-node/Dockerfile.worker \
+        -t pharmalogy/pharmalogy-worker:latest \
+        ./backend-node
 
-      ####################################################
-      # BUILD WORKER IMAGE
-      ####################################################
-      - name: Build Worker Docker Image
-        working-directory: ./backend-node
-        run: |
-          docker build \
-          -f Dockerfile.worker \
-          -t pharmalogy/pharmalogy-worker:latest \
-          .
+  ####################################################
+  # PUSH BACKEND IMAGE
+  ####################################################
+  - name: Push Backend API Docker Image
+    run: docker push pharmalogy/pharmalogy-backend:latest
 
-      ####################################################
-      # PUSH IMAGES
-      ####################################################
-      - name: Push Docker Images
-        run: |
-          docker push pharmalogy/pharmalogy-frontend:latest
-          docker push pharmalogy/pharmalogy-backend:latest
-          docker push pharmalogy/pharmalogy-worker:latest
+  ####################################################
+  # PUSH WORKER IMAGE
+  ####################################################
+  - name: Push Worker Docker Image
+    run: docker push pharmalogy/pharmalogy-worker:latest
 
-      ####################################################
-      # DEPLOY TO LIGHTSAIL
-      ####################################################
-      - name: Deploy to Lightsail
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ubuntu
-          key: ${{ secrets.SERVER_SSH_KEY }}
-          script: |
-            cd ~
-            ./deploy.sh
+  ####################################################
+  # DEPLOY TO LIGHTSAIL
+  ####################################################
+  - name: Deploy to Lightsail
+    uses: appleboy/ssh-action@v1.0.3
+    with:
+      host: ${{ secrets.SERVER_HOST }}
+      username: ubuntu
+      key: ${{ secrets.SERVER_SSH_KEY }}
+      script: |
+        cd ~
+        ./deploy.sh
+```
