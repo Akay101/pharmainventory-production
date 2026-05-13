@@ -8,7 +8,9 @@ import time
 from google import genai
 from google.genai import types
 
-def scan_image_with_google(image_paths: list, api_key: str, max_retries=2):
+import urllib.request
+
+def scan_image_with_google(image_urls: list, api_key: str, max_retries=2):
     client = genai.Client(api_key=api_key)
 
     prompt = """Analyze the provided medicine/pharmaceutical product images. These are images of the SAME single product from different angles. Extract the product information by combining details visible across the multiple images.
@@ -17,19 +19,29 @@ CRITICAL INSTRUCTIONS:
 1. Extract: product_name, manufacturer, salt_composition, batch_no, expiry_date, mrp, pack_type, units_per_pack, hsn_no.
 2. If "manufacturer" or "salt_composition" are NOT clearly visible, you MUST use your own medical knowledge to autofill them based on the "product_name".
 3. Provide a "confidence" score (0-100) based on how clearly you can read the data.
+4. IMPORTANT: If no images are provided or images are unreadable, you MUST return an error or low confidence result.
 """
 
     contents = [prompt]
-    for image_path in image_paths:
-        if not os.path.exists(image_path):
-            continue
-        with open(image_path, "rb") as f:
-            contents.append(
-                types.Part.from_bytes(
-                    data=f.read(),
-                    mime_type="image/webp" if image_path.endswith(".webp") else "image/png"
+    for url in image_urls:
+        try:
+            with urllib.request.urlopen(url) as response:
+                image_data = response.read()
+                contents.append(
+                    types.Part.from_bytes(
+                        data=image_data,
+                        mime_type="image/webp"
+                    )
                 )
-            )
+        except Exception as e:
+            print(f"Failed to download image from {url}: {e}", file=sys.stderr)
+
+    if len(contents) <= 1:
+         return {
+            'success': False,
+            'error': 'No images could be retrieved for processing',
+            'error_category': 'image_error'
+        }
 
     for attempt in range(max_retries + 1):
         try:

@@ -11,7 +11,7 @@ const rateLimit = require("express-rate-limit");
 const { auth } = require("../middleware/auth");
 const { normalizeName } = require("../utils/helpers");
 const { generatePurchasePDF } = require("../services/pdf");
-const { uploadToR2 } = require("../services/r2");
+const { uploadToR2, deleteFromR2 } = require("../services/r2");
 const { logActivity } = require("../utils/activityLogger");
 const { requireSubscription } = require("../middleware/subscription");
 
@@ -798,18 +798,38 @@ async function queueScan(req, res, type) {
       type: type
     });
 
+    // [Issue #R2] Upload to Cloudflare R2
+    const r2Keys = [];
+    for (const compressedPath of compressedFiles) {
+      try {
+        const key = `scans/${jobId}/${path.basename(compressedPath)}`;
+        const buffer = fs.readFileSync(compressedPath);
+        await uploadToR2(key, buffer, 'image/webp');
+        r2Keys.push(key);
+      } catch (r2Error) {
+        console.error(`R2 upload failed for ${compressedPath}:`, r2Error);
+      } finally {
+        // Always cleanup local compressed file after trying to upload
+        try { fs.unlinkSync(compressedPath); } catch (e) {}
+      }
+    }
+
+    if (r2Keys.length === 0) {
+      return res.status(500).json({ detail: "Failed to upload images for processing", success: false });
+    }
+
     try {
-      // Add to BullMQ [Issue #6] Set jobId, [Issue #19] Remove secrets
+      // Add to BullMQ [Issue #6] Set jobId, [Issue #19] Remove secrets, [R2] Pass keys
       await scanQueue.add("scan", {
         jobId,
-        tempFiles: compressedFiles,
+        r2Keys,
         type: type
       }, { jobId });
     } catch (queueError) {
-      // [Issue #4] Cleanup compressed files if queue fails
-      compressedFiles.forEach(f => {
-        try { fs.unlinkSync(f); } catch (e) {}
-      });
+      // [Issue #4] Cleanup R2 files if queue fails
+      for (const key of r2Keys) {
+        try { await deleteFromR2(key); } catch (e) {}
+      }
       // [Issue #3] Cleanup Orphaned ScanJob in DB
       try { await ScanJob.deleteOne({ jobId }); } catch (dbErr) {}
       

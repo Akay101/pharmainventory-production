@@ -8,7 +8,9 @@ import os
 from google import genai
 from google.genai import types
 
-def scan_bill_with_google(image_paths: list, api_key: str, max_retries=2):
+import urllib.request
+
+def scan_bill_with_google(image_urls: list, api_key: str, max_retries=2):
     client = genai.Client(api_key=api_key)
 
     prompt = """
@@ -22,19 +24,25 @@ Rules:
 - Quantity should be numeric
 - If GST split into SGST/CGST combine them
 - Convert numbers to numeric format (no ₹ symbol)
+- IMPORTANT: If no images are provided, return success: false with an error message.
 """
 
     contents = [prompt]
-    for image_path in image_paths:
-        if not os.path.exists(image_path):
-            continue
-        with open(image_path, "rb") as f:
-            contents.append(
-                types.Part.from_bytes(
-                    data=f.read(),
-                    mime_type="image/webp" if image_path.endswith(".webp") else "image/png"
+    for url in image_urls:
+        try:
+            with urllib.request.urlopen(url) as response:
+                image_data = response.read()
+                contents.append(
+                    types.Part.from_bytes(
+                        data=image_data,
+                        mime_type="image/webp"
+                    )
                 )
-            )
+        except Exception as e:
+            print(f"Failed to download image from {url}: {e}", file=sys.stderr)
+
+    if len(contents) <= 1:
+        raise Exception("No images could be retrieved for processing")
 
     for attempt in range(max_retries + 1):
         try:

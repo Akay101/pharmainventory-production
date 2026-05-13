@@ -11,6 +11,7 @@ dotenv.config({ path: path.join(__dirname, "../.env") });
 const { connection } = require("../services/ai/queue");
 const ScanJob = require("../models/scanJob");
 const { cleanupTmpFolder } = require("../services/ai/cleanup_service");
+const { deleteFromR2, R2_PUBLIC_URL } = require("../services/r2");
 
 // Connect to MongoDB
 const MONGO_URL =
@@ -25,15 +26,18 @@ const pythonPath = process.env.PYTHON_PATH || "python3";
 const worker = new Worker(
   "scan-queue",
   async (job) => {
-    const { jobId, tempFiles, type } = job.data;
+    const { jobId, r2Keys, type } = job.data;
     const apiKey = process.env.EMERGENT_LLM_KEY || process.env.GEMINI_API_KEY;
 
-    console.log(`[Worker] Processing job ${jobId} (type: ${type})`);
+    console.log(`[Worker] Processing job ${jobId} (type: ${type}) from R2`);
+
+    // Resolve R2 URLs
+    const imageUrls = r2Keys.map((key) => `${R2_PUBLIC_URL}/${key}`);
 
     // [Issue #7] Granular progress steps
-    await job.updateProgress(10); // Upload validated
+    await job.updateProgress(10);
 
-    // Update status to processing if not already
+    // Update status to processing
     await ScanJob.findOneAndUpdate(
       { jobId },
       { status: "processing" },
@@ -45,10 +49,8 @@ const worker = new Worker(
         ? path.join(__dirname, "../services/scan_purchase_bill.py")
         : path.join(__dirname, "../services/scan_helper.py");
 
-    await job.updateProgress(25); // Compression complete (happens in route, but worker starts here)
-    await job.updateProgress(40); // Python process starting
+    await job.updateProgress(40);
 
-    // [UX] Incremental progress ticker to keep UI alive during long extraction
     let currentProgress = 40;
     const progressTicker = setInterval(async () => {
       if (currentProgress < 80) {
@@ -59,47 +61,26 @@ const worker = new Worker(
       } else {
         clearInterval(progressTicker);
       }
-    }, 10000); // Increment every 10s
+    }, 10000);
 
     return new Promise((resolve, reject) => {
-      console.log("[Worker] Files received:", tempFiles);
-
-      for (const file of tempFiles) {
-        if (!fs.existsSync(file)) {
-          console.error("[Worker] Missing upload file:", file);
-
-          return reject(
-            new Error(`Upload file missing inside worker container: ${file}`)
-          );
+      const pythonProcess = spawn(
+        pythonPath,
+        [helperPath, apiKey, ...imageUrls],
+        {
+          shell: false,
         }
-
-        const stats = fs.statSync(file);
-
-        console.log(`[Worker] File OK -> ${file} (${stats.size} bytes)`);
-
-        if (stats.size <= 0) {
-          return reject(new Error(`Upload file is empty: ${file}`));
-        }
-      }
+      );
 
       let stdoutData = "";
       let stderrData = "";
 
-      const pythonProcess = spawn(
-        pythonPath,
-        [helperPath, JSON.stringify(tempFiles), apiKey || ""],
-        {
-          stdio: ["pipe", "pipe", "pipe"],
-        }
-      );
-
-      // Timeout protection: Kill after 90 seconds
       const timeout = setTimeout(async () => {
         clearInterval(progressTicker);
-        // [Issue #6] Only kill and update if still running
+
         if (pythonProcess.exitCode === null) {
           pythonProcess.kill();
-          // [Issue #3] Cleanup ScanJob state on timeout
+
           await ScanJob.findOneAndUpdate(
             { jobId },
             {
@@ -108,6 +89,7 @@ const worker = new Worker(
               errorMessage: "Process timed out after 90 seconds",
             }
           );
+
           reject(new Error("PROCESS_TIMEOUT"));
         }
       }, 90000);
@@ -124,38 +106,28 @@ const worker = new Worker(
         clearTimeout(timeout);
         clearInterval(progressTicker);
 
+        // Cleanup R2 files
+        for (const key of r2Keys) {
+          try {
+            await deleteFromR2(key);
+          } catch (e) {}
+        }
+
         try {
           if (code !== 0) {
-            // [Issue #8] Cleanup temp files on failure
-            tempFiles.forEach((f) => {
-              try {
-                fs.unlinkSync(f);
-              } catch (e) {}
-            });
             const errorMsg =
               stderrData || `Python process exited with code ${code}`;
+
             return reject(new Error(errorMsg));
           }
 
-          await job.updateProgress(85); // [Issue #7] Parsing stage
+          await job.updateProgress(85);
+
           const result = JSON.parse(stdoutData.trim());
 
           if (!result.success) {
-            // [Issue #8] Cleanup on AI extraction failure
-            tempFiles.forEach((f) => {
-              try {
-                fs.unlinkSync(f);
-              } catch (e) {}
-            });
             return reject(new Error(result.error || "AI extraction failed"));
           }
-
-          // Success - Now cleanup temp files [Issue #8]
-          tempFiles.forEach((f) => {
-            try {
-              fs.unlinkSync(f);
-            } catch (e) {}
-          });
 
           await ScanJob.findOneAndUpdate(
             { jobId },
@@ -164,15 +136,11 @@ const worker = new Worker(
               result: result,
             }
           );
+
           await job.updateProgress(100);
+
           resolve(result);
         } catch (err) {
-          // [Issue #8] Cleanup on JSON parse error
-          tempFiles.forEach((f) => {
-            try {
-              fs.unlinkSync(f);
-            } catch (e) {}
-          });
           reject(err);
         }
       });
