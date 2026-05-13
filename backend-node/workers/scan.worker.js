@@ -85,6 +85,14 @@ const worker = new Worker(
       let stdoutData = "";
       let stderrData = "";
 
+      const pythonProcess = spawn(
+        pythonPath,
+        [helperPath, JSON.stringify(tempFiles), apiKey || ""],
+        {
+          stdio: ["pipe", "pipe", "pipe"],
+        }
+      );
+
       // Timeout protection: Kill after 90 seconds
       const timeout = setTimeout(async () => {
         clearInterval(progressTicker);
