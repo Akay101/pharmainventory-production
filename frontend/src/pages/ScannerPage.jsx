@@ -29,7 +29,7 @@ import {
   ShoppingCart,
   Trash2,
   Edit2,
-  Sparkles
+  Sparkles,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -78,19 +78,19 @@ export default function ScannerPage() {
   const formatDateForInput = (dateStr) => {
     if (!dateStr) return "";
     if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return dateStr;
-    
+
     // Handle MM/YY or MM/YYYY format
     const mmYyMatch = dateStr.match(/^(\d{2})[/.-](\d{2}|\d{4})$/);
     if (mmYyMatch) {
       const month = mmYyMatch[1];
       let year = mmYyMatch[2];
       if (year.length === 2) year = "20" + year; // Assume 20xx
-      
+
       // Get last day of the month
       const lastDay = new Date(year, month, 0).getDate();
-      return `${year}-${month}-${String(lastDay).padStart(2, '0')}`;
+      return `${year}-${month}-${String(lastDay).padStart(2, "0")}`;
     }
-    
+
     // Native date parsing
     const d = new Date(dateStr);
     if (!isNaN(d.getTime())) {
@@ -131,7 +131,7 @@ export default function ScannerPage() {
 
   const handleConfirmAndAnalyze = async () => {
     if (selectedFiles.length === 0) return;
-    
+
     // [Issue #15] Frontend Validation
     if (selectedFiles.length > 10) {
       toast.error("Maximum 10 images allowed per scan");
@@ -146,7 +146,10 @@ export default function ScannerPage() {
         formData.append("files", file);
       });
 
-      const endpoint = scanMode === "product" ? "/purchases/scan-image" : "/purchases/scan-bill";
+      const endpoint =
+        scanMode === "product"
+          ? "/purchases/scan-image"
+          : "/purchases/scan-bill";
       const response = await axios.post(`${API}${endpoint}`, formData, {
         headers: { "Content-Type": "multipart/form-data" },
       });
@@ -159,7 +162,9 @@ export default function ScannerPage() {
         setScanning(false);
       }
     } catch (error) {
-      toast.error(`Failed to scan: ${error.response?.data?.detail || error.message}`);
+      toast.error(
+        `Failed to scan: ${error.response?.data?.detail || error.message}`
+      );
       setScanning(false);
     }
   };
@@ -175,15 +180,19 @@ export default function ScannerPage() {
         if (Date.now() - startTime > MAX_POLLING_MS) {
           clearInterval(pollingRef.current);
           pollingRef.current = null;
-          toast.error("Scanning timed out. Please check the queue dashboard or try again.");
+          toast.error(
+            "Scanning timed out. Please check the queue dashboard or try again."
+          );
           setScanning(false);
           setScanProgress(0);
           return;
         }
 
-        const response = await axios.get(`${API}/purchases/scan-status/${jobId}`);
+        const response = await axios.get(
+          `${API}/purchases/scan-status/${jobId}`
+        );
         const job = response.data;
-        
+
         if (job.progress) {
           setScanProgress(job.progress);
         }
@@ -242,7 +251,9 @@ export default function ScannerPage() {
       if (billData.invoice_no) setInvoiceNo(billData.invoice_no);
 
       const matchedSupplier = suppliers.find((s) =>
-        s.name.toLowerCase().includes((billData.supplier_name || "").toLowerCase())
+        s.name
+          .toLowerCase()
+          .includes((billData.supplier_name || "").toLowerCase())
       );
       if (matchedSupplier) setSelectedSupplier(matchedSupplier.id);
 
@@ -469,16 +480,20 @@ export default function ScannerPage() {
                     <div className="space-y-1">
                       <div className="flex justify-between text-xs font-bold text-primary">
                         <span className="uppercase tracking-wider">
-                          {scanProgress < 20 ? "Initializing..." : 
-                           scanProgress < 35 ? "Compressing..." : 
-                           scanProgress < 50 ? "Starting AI..." : 
-                           scanProgress < 85 ? "AI Extraction..." : 
-                           "Finalizing..."}
+                          {scanProgress < 20
+                            ? "Initializing..."
+                            : scanProgress < 35
+                              ? "Compressing..."
+                              : scanProgress < 50
+                                ? "Starting AI..."
+                                : scanProgress < 85
+                                  ? "AI Extraction..."
+                                  : "Finalizing..."}
                         </span>
                         <span>{scanProgress}%</span>
                       </div>
                       <div className="w-full bg-primary/10 h-1.5 rounded-full overflow-hidden border border-primary/5">
-                        <div 
+                        <div
                           className="bg-gradient-to-r from-primary to-primary/60 h-full transition-all duration-700 ease-out"
                           style={{ width: `${scanProgress}%` }}
                         ></div>
@@ -494,19 +509,22 @@ export default function ScannerPage() {
                   <div className="w-16 h-16 mx-auto rounded-full bg-primary/10 flex items-center justify-center mb-2">
                     <Camera className="w-8 h-8 text-primary" />
                   </div>
-                  
+
                   {scanMode === "product" ? (
                     <>
                       <h2 className="text-xl font-bold">Scan Product Images</h2>
                       <p className="text-sm text-muted-foreground mb-4">
-                        Upload one or multiple images for a <b>single product</b> to extract complete details (front, back, batch info).
+                        Upload one or multiple images for a{" "}
+                        <b>single product</b> to extract complete details
+                        (front, back, batch info).
                       </p>
                     </>
                   ) : (
                     <>
                       <h2 className="text-xl font-bold">Scan Invoice Images</h2>
                       <p className="text-sm text-muted-foreground mb-4">
-                        Upload all pages or portions of a <b>single purchase bill</b>.
+                        Upload all pages or portions of a{" "}
+                        <b>single purchase bill</b>.
                       </p>
                     </>
                   )}
@@ -515,8 +533,15 @@ export default function ScannerPage() {
                   {previewUrls.length > 0 && (
                     <div className="flex flex-wrap gap-2 justify-center mb-4 mt-4 bg-muted/30 p-3 rounded-lg border border-white/5">
                       {previewUrls.map((url, i) => (
-                        <div key={i} className="relative group w-16 h-16 rounded-md overflow-hidden ring-1 ring-border shadow-sm">
-                          <img src={url} alt={`preview-${i}`} className="w-full h-full object-cover" />
+                        <div
+                          key={i}
+                          className="relative group w-16 h-16 rounded-md overflow-hidden ring-1 ring-border shadow-sm"
+                        >
+                          <img
+                            src={url}
+                            alt={`preview-${i}`}
+                            className="w-full h-full object-cover"
+                          />
                           <button
                             className="absolute top-0 right-0 p-1 bg-black/60 text-white hover:bg-destructive rounded-bl-sm backdrop-blur-sm transition-colors"
                             onClick={() => handleRemoveFile(i)}
@@ -525,9 +550,13 @@ export default function ScannerPage() {
                           </button>
                         </div>
                       ))}
-                      <button 
+                      <button
                         className="w-16 h-16 flex flex-col items-center justify-center border border-dashed border-primary/50 text-primary hover:bg-primary/10 transition-colors rounded-md text-xs font-medium"
-                        onClick={() => scanMode === "product" ? fileInputRef.current?.click() : billInputRef.current?.click()}
+                        onClick={() =>
+                          scanMode === "product"
+                            ? fileInputRef.current?.click()
+                            : billInputRef.current?.click()
+                        }
                       >
                         <Plus className="w-4 h-4 mb-1" />
                         Add
