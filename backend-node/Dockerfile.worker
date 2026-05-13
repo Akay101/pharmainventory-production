@@ -8,10 +8,18 @@ RUN npm install
 
 COPY . .
 
-RUN apt-get update && apt-get install -y python3 python3-pip
+# Install Python
+RUN apt-get update && apt-get install -y python3 python3-pip python3-venv
 
-RUN pip3 install google-genai pillow
+# Create virtual environment
+RUN python3 -m venv /opt/venv
 
-EXPOSE 8001
+# Activate venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Install Python packages inside venv
+RUN pip install --upgrade pip
+
+RUN pip install google-genai pillow
 
 CMD ["node", "workers/scan.worker.js"]
