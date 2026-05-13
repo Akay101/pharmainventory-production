@@ -13,8 +13,10 @@ const ScanJob = require("../models/scanJob");
 const { cleanupTmpFolder } = require("../services/ai/cleanup_service");
 
 // Connect to MongoDB
-const MONGO_URL = process.env.MONGO_URL || "mongodb://localhost:27017/pharmalogy";
-mongoose.connect(MONGO_URL)
+const MONGO_URL =
+  process.env.MONGO_URL || "mongodb://localhost:27017/pharmalogy";
+mongoose
+  .connect(MONGO_URL)
   .then(() => console.log("[Worker] Connected to MongoDB"))
   .catch((err) => console.error("[Worker] MongoDB connection error:", err));
 
@@ -27,13 +29,13 @@ const worker = new Worker(
     const apiKey = process.env.EMERGENT_LLM_KEY || process.env.GEMINI_API_KEY;
 
     console.log(`[Worker] Processing job ${jobId} (type: ${type})`);
-    
+
     // [Issue #7] Granular progress steps
     await job.updateProgress(10); // Upload validated
 
     // Update status to processing if not already
     await ScanJob.findOneAndUpdate(
-      { jobId }, 
+      { jobId },
       { status: "processing" },
       { upsert: true }
     );
@@ -51,16 +53,34 @@ const worker = new Worker(
     const progressTicker = setInterval(async () => {
       if (currentProgress < 80) {
         currentProgress += 5;
-        try { await job.updateProgress(currentProgress); } catch (e) {}
+        try {
+          await job.updateProgress(currentProgress);
+        } catch (e) {}
       } else {
         clearInterval(progressTicker);
       }
     }, 10000); // Increment every 10s
 
     return new Promise((resolve, reject) => {
-      const pythonProcess = spawn(pythonPath, [helperPath, apiKey, ...tempFiles], {
-        shell: false // [Issue #10] Security Hardening
-      });
+      console.log("[Worker] Files received:", tempFiles);
+
+      for (const file of tempFiles) {
+        if (!fs.existsSync(file)) {
+          console.error("[Worker] Missing upload file:", file);
+
+          return reject(
+            new Error(`Upload file missing inside worker container: ${file}`)
+          );
+        }
+
+        const stats = fs.statSync(file);
+
+        console.log(`[Worker] File OK -> ${file} (${stats.size} bytes)`);
+
+        if (stats.size <= 0) {
+          return reject(new Error(`Upload file is empty: ${file}`));
+        }
+      }
 
       let stdoutData = "";
       let stderrData = "";
@@ -100,9 +120,12 @@ const worker = new Worker(
           if (code !== 0) {
             // [Issue #8] Cleanup temp files on failure
             tempFiles.forEach((f) => {
-              try { fs.unlinkSync(f); } catch (e) {}
+              try {
+                fs.unlinkSync(f);
+              } catch (e) {}
             });
-            const errorMsg = stderrData || `Python process exited with code ${code}`;
+            const errorMsg =
+              stderrData || `Python process exited with code ${code}`;
             return reject(new Error(errorMsg));
           }
 
@@ -112,14 +135,18 @@ const worker = new Worker(
           if (!result.success) {
             // [Issue #8] Cleanup on AI extraction failure
             tempFiles.forEach((f) => {
-              try { fs.unlinkSync(f); } catch (e) {}
+              try {
+                fs.unlinkSync(f);
+              } catch (e) {}
             });
             return reject(new Error(result.error || "AI extraction failed"));
           }
 
           // Success - Now cleanup temp files [Issue #8]
           tempFiles.forEach((f) => {
-            try { fs.unlinkSync(f); } catch (e) {}
+            try {
+              fs.unlinkSync(f);
+            } catch (e) {}
           });
 
           await ScanJob.findOneAndUpdate(
@@ -134,7 +161,9 @@ const worker = new Worker(
         } catch (err) {
           // [Issue #8] Cleanup on JSON parse error
           tempFiles.forEach((f) => {
-            try { fs.unlinkSync(f); } catch (e) {}
+            try {
+              fs.unlinkSync(f);
+            } catch (e) {}
           });
           reject(err);
         }
@@ -151,9 +180,11 @@ const worker = new Worker(
 // [Issue #8] Handle Failure - Only mark failed if retries are exhausted
 worker.on("failed", async (job, err) => {
   console.error(`[Worker] Job ${job.id} failed:`, err.message);
-  
+
   if (job.attemptsMade >= (job.opts.attempts || 3)) {
-    console.log(`[Worker] Max retries reached for job ${job.data.jobId}. Marking as failed in DB.`);
+    console.log(
+      `[Worker] Max retries reached for job ${job.data.jobId}. Marking as failed in DB.`
+    );
     await ScanJob.findOneAndUpdate(
       { jobId: job.data.jobId },
       {
