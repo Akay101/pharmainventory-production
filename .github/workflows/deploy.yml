@@ -1,16 +1,16 @@
-name: Auto Deploy Backend
+name: Auto Deploy Full Stack
 
 on:
   push:
     branches:
-      - main # change if needed
+      - main
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
 
     steps:
-      # Step 1: Checkout code
+      # Step 1: Checkout repository
       - name: Checkout code
         uses: actions/checkout@v4
 
@@ -21,16 +21,49 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      # Step 3: Build Docker Image (IMPORTANT FIX)
-      - name: Build Docker Image
+      ####################################################
+      # BUILD FRONTEND IMAGE
+      ####################################################
+      - name: Build Frontend Docker Image
+        working-directory: ./frontend
+        run: |
+          docker build \
+          -t pharmalogy/pharmalogy-frontend:latest \
+          .
+
+      ####################################################
+      # BUILD API IMAGE
+      ####################################################
+      - name: Build API Docker Image
         working-directory: ./backend-node
-        run: docker build -t pharmalogy/pharmalogy-backend .
+        run: |
+          docker build \
+          -t pharmalogy/pharmalogy-backend:latest \
+          .
 
-      # Step 4: Push Docker Image
-      - name: Push Docker Image
-        run: docker push pharmalogy/pharmalogy-backend
+      ####################################################
+      # BUILD WORKER IMAGE
+      ####################################################
+      - name: Build Worker Docker Image
+        working-directory: ./backend-node
+        run: |
+          docker build \
+          -f Dockerfile.worker \
+          -t pharmalogy/pharmalogy-worker:latest \
+          .
 
-      # Step 5: SSH into server and deploy
+      ####################################################
+      # PUSH IMAGES
+      ####################################################
+      - name: Push Docker Images
+        run: |
+          docker push pharmalogy/pharmalogy-frontend:latest
+          docker push pharmalogy/pharmalogy-backend:latest
+          docker push pharmalogy/pharmalogy-worker:latest
+
+      ####################################################
+      # DEPLOY TO LIGHTSAIL
+      ####################################################
       - name: Deploy to Lightsail
         uses: appleboy/ssh-action@v1.0.3
         with:

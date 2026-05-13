@@ -2,98 +2,103 @@
 import sys
 import json
 import base64
-import asyncio
-import re
+import time
+import os
 
 from google import genai
 from google.genai import types
 
-
-def scan_bill_with_google(image_paths: list, api_key: str):
+def scan_bill_with_google(image_paths: list, api_key: str, max_retries=2):
     client = genai.Client(api_key=api_key)
 
     prompt = """
-You are analyzing a PHARMACY PURCHASE BILL (wholesale invoice). The user has provided one or multiple images of the SAME invoice (multiple pages or portions).
-
-Extract ALL structured data by combining details visible across the multiple images.
+You are analyzing a PHARMACY PURCHASE BILL (wholesale invoice). Extract ALL structured data by combining details visible across the multiple images.
 
 CRITICAL INSTRUCTIONS FOR MISSING DATA:
 If "manufacturer" or "salt_composition" are NOT visible for any item, you MUST use your own internal medical knowledge to autofill them based on the "product_name". Do not leave them empty if you recognize the product!
-
-Return ONLY valid JSON in this format:
-
-{
-  "supplier_name": "",
-  "supplier_gst": "",
-  "invoice_no": "",
-  "invoice_date": "YYYY-MM-DD",
-  "items": [
-    {
-      "product_name": "",
-      "manufacturer": "MUST autofill from internal knowledge if not visible",
-      "salt_composition": "MUST autofill from internal knowledge if not visible",
-      "batch_no": "",
-      "expiry_date": "strictly YYYY-MM-DD (use last day of month if only MM/YY is given)",
-      "hsn_no": "",
-      "mrp": 0,
-      "rate_pack": 0,
-      "discount_percent": 0,
-      "gst_percent": 0,
-      "quantity": 0,
-      "amount": 0
-    }
-  ],
-  "subtotal": 0,
-  "total_gst": 0,
-  "grand_total": 0
-}
 
 Rules:
 - Extract ALL rows from the table
 - Quantity should be numeric
 - If GST split into SGST/CGST combine them
 - Convert numbers to numeric format (no ₹ symbol)
-- Return ONLY JSON
 """
 
     contents = [prompt]
     for image_path in image_paths:
+        if not os.path.exists(image_path):
+            continue
         with open(image_path, "rb") as f:
             contents.append(
                 types.Part.from_bytes(
                     data=f.read(),
-                    mime_type="image/png"
+                    mime_type="image/webp" if image_path.endswith(".webp") else "image/png"
                 )
             )
 
-    response = client.models.generate_content(
-        model="gemini-2.0-flash",
-        contents=contents
-    )
+    for attempt in range(max_retries + 1):
+        try:
+            schema = {
+                "type": "OBJECT",
+                "properties": {
+                    "supplier_name": {"type": "STRING"},
+                    "invoice_no": {"type": "STRING"},
+                    "confidence": {"type": "INTEGER"},
+                    "items": {
+                        "type": "ARRAY",
+                        "items": {
+                            "type": "OBJECT",
+                            "properties": {
+                                "product_name": {"type": "STRING"},
+                                "manufacturer": {"type": "STRING"},
+                                "salt_composition": {"type": "STRING"},
+                                "batch_no": {"type": "STRING"},
+                                "expiry_date": {"type": "STRING"},
+                                "quantity": {"type": "INTEGER"},
+                                "rate_pack": {"type": "NUMBER"},
+                                "mrp": {"type": "NUMBER"},
+                                "hsn_no": {"type": "STRING"}
+                            },
+                            "required": ["product_name", "quantity", "rate_pack"]
+                        }
+                    }
+                },
+                "required": ["supplier_name", "items", "confidence"]
+            }
 
-    return response.text
-
-
-def parse_json(response_text):
-    match = re.search(r"\{[\s\S]*\}", response_text)
-    if not match:
-        return {"success": False, "error": "Could not parse JSON"}
-
-    data = json.loads(match.group(0))
-    return {"success": True, "purchase_data": data}
-
+            response = client.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=contents,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema=schema
+                )
+            )
+            
+            data = json.loads(response.text)
+            if isinstance(data, list):
+                data = data[0] if len(data) > 0 else {}
+            return data
+        except Exception as e:
+            if attempt == max_retries:
+                raise e
+            time.sleep(2 * (attempt + 1)) # Exponential backoff
 
 if __name__ == "__main__":
     if len(sys.argv) < 3:
-        print(json.dumps({"success": False, "error": "Usage: scan_purchase_bill.py <api_key> <image_path1> [image_path2...]"}))
+        print(json.dumps({"success": False, "error": "Usage: scan_purchase_bill.py <api_key> <image_path1> [image_path2...]", "error_category": "invalid_input"}))
         sys.exit(1)
 
     api_key = sys.argv[1]
     image_paths = sys.argv[2:]
 
     try:
-        response_text = scan_bill_with_google(image_paths, api_key)
-        result = parse_json(response_text)
-        print(json.dumps(result))
+        data = scan_bill_with_google(image_paths, api_key)
+        print(json.dumps({"success": True, "purchase_data": data}))
     except Exception as e:
-        print(json.dumps({"success": False, "error": str(e)}))
+        error_msg = str(e)
+        category = "gemini_error"
+        if "quota" in error_msg.lower(): category = "rate_limit"
+        elif "timeout" in error_msg.lower(): category = "timeout"
+        
+        print(json.dumps({"success": False, "error": error_msg, "error_category": category}))

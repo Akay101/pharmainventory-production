@@ -21,6 +21,12 @@ const pharmacyRoutes = require("./routes/pharmacy");
 const activityRoutes = require("./routes/activities");
 const settingsRoutes = require("./routes/settings");
 
+const { createBullBoard } = require("@bull-board/api");
+const { BullMQAdapter } = require("@bull-board/api/bullMQAdapter");
+const { ExpressAdapter } = require("@bull-board/express");
+const { scanQueue } = require("./services/ai/queue");
+const basicAuth = require("express-basic-auth");
+
 const app = express();
 const PORT = process.env.PORT || 8001;
 // Middleware
@@ -60,6 +66,28 @@ app.use("/api/settings", settingsRoutes);
 app.use("/api/payments", require("./routes/payments"));
 app.use("/api/webhook", require("./routes/webhook"));
 app.use("/api/chat", require("./routes/chat"));
+
+// Bull Board Setup (Protected with Basic Auth)
+if (!process.env.ADMIN_PASSWORD) {
+  console.error("CRITICAL ERROR: ADMIN_PASSWORD environment variable is missing.");
+  process.exit(1);
+}
+
+const serverAdapter = new ExpressAdapter();
+serverAdapter.setBasePath("/admin/queues");
+createBullBoard({
+  queues: [new BullMQAdapter(scanQueue)],
+  serverAdapter: serverAdapter,
+});
+
+app.use(
+  "/admin/queues",
+  basicAuth({
+    users: { admin: process.env.ADMIN_PASSWORD },
+    challenge: true,
+  }),
+  serverAdapter.getRouter()
+);
 
 startCronJobs();
 

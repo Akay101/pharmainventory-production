@@ -1,0 +1,49 @@
+services:
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    image: pharmalogy/pharmalogy-frontend:latest
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    networks:
+      - pharmalogy-network
+
+  backend:
+    build:
+      context: ./backend-node
+      dockerfile: dockerfile
+    image: pharmalogy/pharmalogy-backend:latest
+    ports:
+      - "8001:8001"
+    env_file:
+      - .env.docker
+    depends_on:
+      - redis
+    networks:
+      - pharmalogy-network
+
+  worker:
+    build:
+      context: ./backend-node
+      dockerfile: Dockerfile.worker
+    image: pharmalogy/pharmalogy-worker:latest
+    env_file:
+      - .env.docker
+    depends_on:
+      - redis
+    networks:
+      - pharmalogy-network
+
+  redis:
+    image: redis:alpine
+    ports:
+      - "6379:6379"
+    networks:
+      - pharmalogy-network
+
+networks:
+  pharmalogy-network:
+    driver: bridge

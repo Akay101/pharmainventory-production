@@ -4,17 +4,57 @@ const mongoose = require("mongoose");
 const { v4: uuidv4 } = require("uuid");
 const axios = require("axios");
 const multer = require("multer");
+const sharp = require("sharp");
+const fs = require("fs");
+const path = require("path");
+const rateLimit = require("express-rate-limit");
 const { auth } = require("../middleware/auth");
 const { normalizeName } = require("../utils/helpers");
 const { generatePurchasePDF } = require("../services/pdf");
 const { uploadToR2 } = require("../services/r2");
 const { logActivity } = require("../utils/activityLogger");
-
 const { requireSubscription } = require("../middleware/subscription");
+
+const ScanJob = require("../models/scanJob");
+const { scanQueue } = require("../services/ai/queue");
+const { compressImage } = require("../services/ai/image_processor");
 
 const pythonPath = process.env.PYTHON_PATH || "python3";
 
-const upload = multer({ storage: multer.memoryStorage() });
+// Rate limiter for scanning endpoints
+const scanRateLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000, // 5 minutes
+  max: 20, // 20 requests per user
+  message: { detail: "Too many scan requests. Please try again in 5 minutes." },
+  keyGenerator: (req) => req.user.id, // Limit per user
+});
+
+// Multer Configuration
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const uploadDir = path.join(process.cwd(), "tmp/uploads");
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+    cb(null, uploadDir);
+  },
+  filename: (req, file, cb) => {
+    cb(null, `${Date.now()}-${uuidv4()}${path.extname(file.originalname)}`);
+  },
+});
+
+const upload = multer({
+  storage: storage,
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
+  fileFilter: (req, file, cb) => {
+    const allowedTypes = ["image/jpeg", "image/png", "image/webp"];
+    if (allowedTypes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error("Invalid file type. Only PNG, JPEG, and WebP are allowed."));
+    }
+  },
+});
 
 // GET /api/purchases/price-history - Check historical prices for a product
 router.get(
@@ -185,13 +225,34 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
 
 // POST /api/purchases
 router.post("/", auth, requireSubscription(), async (req, res, next) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
   try {
     const { supplier_id, supplier_name, invoice_no, purchase_date, items, payment_status, amount_paid } =
       req.body;
     const db = mongoose.connection.db;
 
     if (!items || items.length === 0) {
+      await session.abortTransaction();
+      session.endSession();
       return res.status(400).json({ detail: "At least one item is required" });
+    }
+
+    // [Issue #11] Idempotency Check
+    if (invoice_no) {
+      const existingPurchase = await db.collection("purchases").findOne({
+        pharmacy_id: req.user.pharmacy_id,
+        supplier_id,
+        invoice_no,
+        created_at: { $gt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString() }
+      }, { session });
+
+      if (existingPurchase) {
+        await session.abortTransaction();
+        session.endSession();
+        return res.status(409).json({ detail: "Duplicate purchase detected (same invoice and supplier in last 30 days)" });
+      }
     }
 
     const purchaseId = uuidv4();
@@ -199,13 +260,11 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
     const processedItems = [];
 
     for (const item of items) {
-      // Handle both old and new format
       let packQty = item.pack_quantity || item.quantity || 1;
       let unitsPerPack = item.units_per_pack || 1;
       let packPrice = item.pack_price || item.purchase_price || 0;
       let mrpPerUnit = item.mrp_per_unit || item.mrp || 0;
 
-      // If old format (simple quantity and price per unit)
       if (item.quantity && !item.pack_quantity && item.purchase_price) {
         packQty = item.quantity;
         unitsPerPack = 1;
@@ -243,12 +302,12 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
       };
       processedItems.push(processedItem);
 
-      // Update inventory
+      // Update inventory (with session)
       const existingInventory = await db.collection("inventory").findOne({
         pharmacy_id: req.user.pharmacy_id,
         product_name: item.product_name,
         batch_no: item.batch_no,
-      });
+      }, { session });
 
       if (existingInventory) {
         await db.collection("inventory").updateOne(
@@ -266,7 +325,8 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
               mrp_pack: mrpPerUnit ? mrpPerUnit * unitsPerPack : null,
               expiry_date: item.expiry_date,
             },
-          }
+          },
+          { session }
         );
       } else {
         const inventoryId = uuidv4();
@@ -292,19 +352,15 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
           purchase_id: purchaseId,
           supplier_id: supplier_id,
           created_at: new Date().toISOString(),
-        });
+        }, { session });
       }
     }
 
-    // Payment Handling
     const pStatus = payment_status || "Unpaid";
     let pAmount = parseFloat(amount_paid) || 0;
     
-    if (pStatus === "Paid") {
-      pAmount = totalAmount;
-    } else if (pStatus === "Unpaid") {
-      pAmount = 0;
-    }
+    if (pStatus === "Paid") pAmount = totalAmount;
+    else if (pStatus === "Unpaid") pAmount = 0;
 
     const payments = [];
     if (pAmount > 0) {
@@ -332,14 +388,8 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
       created_at: new Date().toISOString(),
     };
 
-    await db.collection("purchases").insertOne(purchaseData);
-    const { _id, ...purchase } = purchaseData;
-    const itemNames = items
-      .slice(0, 2)
-      .map((i) => i.product_name)
-      .join(", ");
-    const moreCount = items.length > 2 ? ` +${items.length - 2} more` : "";
-    const purchaseDesc = `Purchase with ${itemNames}${moreCount}`;
+    await db.collection("purchases").insertOne(purchaseData, { session });
+    
     await logActivity(
       db,
       req.user.pharmacy_id,
@@ -348,12 +398,17 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
       "CREATE",
       "PURCHASES",
       purchaseId,
-      `Created ${purchaseDesc} for ₹${totalAmount}`,
-      `/purchases`
+      `Created purchase for ₹${totalAmount}`,
+      `/purchases`,
+      { session }
     );
 
-    res.status(201).json({ message: "Purchase recorded", purchase });
+    await session.commitTransaction();
+    session.endSession();
+    res.status(201).json({ message: "Purchase recorded", purchase: purchaseData });
   } catch (error) {
+    await session.abortTransaction();
+    session.endSession();
     next(error);
   }
 });
@@ -390,6 +445,9 @@ router.put(
   auth,
   requireSubscription(),
   async (req, res, next) => {
+    const session = await mongoose.startSession();
+    session.startTransaction();
+
     try {
       const { items, purchase_date, invoice_no, supplier_id, supplier_name } = req.body;
       const db = mongoose.connection.db;
@@ -397,15 +455,17 @@ router.put(
       const purchase = await db.collection("purchases").findOne({
         id: req.params.purchase_id,
         pharmacy_id: req.user.pharmacy_id,
-      });
+      }, { session });
 
       if (!purchase) {
+        await session.abortTransaction();
+        session.endSession();
         return res.status(404).json({ detail: "Purchase not found" });
       }
 
       // Reverse old inventory
       for (const oldItem of purchase.items) {
-        await db.collection("inventory").updateOne(
+        const updateResult = await db.collection("inventory").findOneAndUpdate(
           {
             pharmacy_id: req.user.pharmacy_id,
             product_name: oldItem.product_name,
@@ -416,8 +476,26 @@ router.put(
               quantity: -oldItem.total_units,
               available_quantity: -oldItem.total_units,
             },
-          }
+          },
+          { session, returnDocument: "after" }
         );
+
+        // [Issue #1] Handle Missing Inventory Record + Negative Protection
+        if (!updateResult?.value) {
+          await session.abortTransaction();
+          session.endSession();
+          return res.status(404).json({
+            detail: `Inventory record missing for ${oldItem.product_name}. Cannot update.`,
+          });
+        }
+
+        if (updateResult.value.quantity < 0 || updateResult.value.available_quantity < 0) {
+          await session.abortTransaction();
+          session.endSession();
+          return res.status(400).json({
+            detail: `Update failed: Inventory for ${oldItem.product_name} would become negative.`,
+          });
+        }
       }
 
       // Process new items
@@ -456,7 +534,7 @@ router.put(
           pharmacy_id: req.user.pharmacy_id,
           product_name: item.product_name,
           batch_no: item.batch_no,
-        });
+        }, { session });
 
         if (existingInventory) {
           await db.collection("inventory").updateOne(
@@ -464,7 +542,8 @@ router.put(
             {
               $inc: { quantity: totalUnits, available_quantity: totalUnits },
               $set: { purchase_price: pricePerUnit, mrp: mrpPerUnit },
-            }
+            },
+            { session }
           );
         } else {
           await db.collection("inventory").insertOne({
@@ -481,7 +560,7 @@ router.put(
             mrp: mrpPerUnit,
             purchase_id: req.params.purchase_id,
             created_at: new Date().toISOString(),
-          });
+          }, { session });
         }
       }
 
@@ -498,15 +577,10 @@ router.put(
 
       await db.collection("purchases").updateOne(
         { id: req.params.purchase_id },
-        { $set: updatePayload }
+        { $set: updatePayload },
+        { session }
       );
 
-      const itemNames = items
-        .slice(0, 2)
-        .map((i) => i.product_name)
-        .join(", ");
-      const moreCount = items.length > 2 ? ` +${items.length - 2} more` : "";
-      const purchaseDesc = `Purchase with ${itemNames}${moreCount}`;
       await logActivity(
         db,
         req.user.pharmacy_id,
@@ -515,9 +589,13 @@ router.put(
         "UPDATE",
         "PURCHASES",
         req.params.purchase_id,
-        `Updated ${purchaseDesc}`,
-        `/purchases`
+        `Updated purchase`,
+        `/purchases`,
+        { session }
       );
+
+      await session.commitTransaction();
+      session.endSession();
 
       const updated = await db
         .collection("purchases")
@@ -525,6 +603,8 @@ router.put(
 
       res.json({ message: "Purchase updated", purchase: updated });
     } catch (error) {
+      await session.abortTransaction();
+      session.endSession();
       next(error);
     }
   }
@@ -536,20 +616,25 @@ router.delete(
   auth,
   requireSubscription(),
   async (req, res, next) => {
+    const session = await mongoose.startSession();
+    session.startTransaction();
+
     try {
       const db = mongoose.connection.db;
       const purchase = await db.collection("purchases").findOne({
         id: req.params.purchase_id,
         pharmacy_id: req.user.pharmacy_id,
-      });
+      }, { session });
 
       if (!purchase) {
+        await session.abortTransaction();
+        session.endSession();
         return res.status(404).json({ detail: "Purchase not found" });
       }
 
       // Reverse inventory
       for (const item of purchase.items) {
-        await db.collection("inventory").updateOne(
+        const updateResult = await db.collection("inventory").findOneAndUpdate(
           {
             pharmacy_id: req.user.pharmacy_id,
             product_name: item.product_name,
@@ -560,21 +645,32 @@ router.delete(
               quantity: -item.total_units,
               available_quantity: -item.total_units,
             },
-          }
+          },
+          { session, returnDocument: "after" }
         );
+
+        // [Issue #1] Handle Missing Inventory Record + Negative Protection
+        if (!updateResult?.value) {
+          await session.abortTransaction();
+          session.endSession();
+          return res.status(404).json({
+            detail: `Inventory record missing for ${item.product_name}. Cannot delete.`,
+          });
+        }
+
+        if (updateResult.value.quantity < 0 || updateResult.value.available_quantity < 0) {
+          await session.abortTransaction();
+          session.endSession();
+          return res.status(400).json({
+            detail: `Delete failed: Inventory for ${item.product_name} would become negative.`,
+          });
+        }
       }
 
       await db
         .collection("purchases")
-        .deleteOne({ id: req.params.purchase_id });
+        .deleteOne({ id: req.params.purchase_id }, { session });
 
-      const itemNames = purchase.items
-        .slice(0, 2)
-        .map((i) => i.product_name)
-        .join(", ");
-      const moreCount =
-        purchase.items.length > 2 ? ` +${purchase.items.length - 2} more` : "";
-      const purchaseDesc = `Purchase with ${itemNames}${moreCount}`;
       await logActivity(
         db,
         req.user.pharmacy_id,
@@ -583,11 +679,17 @@ router.delete(
         "DELETE",
         "PURCHASES",
         req.params.purchase_id,
-        `Deleted ${purchaseDesc}`,
-        `/purchases`
+        `Deleted purchase`,
+        `/purchases`,
+        { session }
       );
+
+      await session.commitTransaction();
+      session.endSession();
       res.json({ message: "Purchase deleted" });
     } catch (error) {
+      await session.abortTransaction();
+      session.endSession();
       next(error);
     }
   }
@@ -628,180 +730,120 @@ router.post(
   }
 );
 
+// GET /api/purchases/scan-status/:jobId
+router.get("/scan-status/:jobId", auth, async (req, res) => {
+  try {
+    const job = await ScanJob.findOne({
+      jobId: req.params.jobId,
+      pharmacyId: req.user.pharmacy_id
+    });
+    
+    if (!job) {
+      return res.status(404).json({ detail: "Job not found", success: false });
+    }
+
+    // [Issue #5] Fetch progress from BullMQ
+    const bullJob = await scanQueue.getJob(req.params.jobId);
+    const progress = bullJob?.progress || 0;
+
+    res.json({
+      ...job.toObject(),
+      progress
+    });
+  } catch (error) {
+    res.status(500).json({ detail: error.message, success: false });
+  }
+});
+
+// Helper for Scan Queueing
+async function queueScan(req, res, type) {
+  try {
+    // [Issue #15] File count limit
+    if (!req.files || req.files.length === 0) {
+      return res.status(400).json({ detail: "No images provided" });
+    }
+    if (req.files.length > 10) {
+      return res.status(400).json({ detail: "Maximum 10 files allowed" });
+    }
+
+    // [Issue #11] MIME Spoofing Protection (Sharp Validation)
+    const compressedFiles = [];
+    for (const file of req.files) {
+      try {
+        // Validate it's a real image
+        await sharp(file.path).metadata();
+        
+        const compressedPath = await compressImage(file.path);
+        compressedFiles.push(compressedPath);
+      } catch (e) {
+        console.error(`File validation/compression failed for ${file.path}:`, e);
+      } finally {
+        // [Issue #6] Always cleanup original upload
+        try { fs.unlinkSync(file.path); } catch (e) {}
+      }
+    }
+
+    if (compressedFiles.length === 0) {
+      return res.status(400).json({ detail: "No valid images could be processed" });
+    }
+
+    const jobId = uuidv4();
+    
+    // Create job record in MongoDB
+    await ScanJob.create({
+      jobId,
+      pharmacyId: req.user.pharmacy_id,
+      userId: req.user.id,
+      status: "pending",
+      type: type
+    });
+
+    try {
+      // Add to BullMQ [Issue #6] Set jobId, [Issue #19] Remove secrets
+      await scanQueue.add("scan", {
+        jobId,
+        tempFiles: compressedFiles,
+        type: type
+      }, { jobId });
+    } catch (queueError) {
+      // [Issue #4] Cleanup compressed files if queue fails
+      compressedFiles.forEach(f => {
+        try { fs.unlinkSync(f); } catch (e) {}
+      });
+      // [Issue #3] Cleanup Orphaned ScanJob in DB
+      try { await ScanJob.deleteOne({ jobId }); } catch (dbErr) {}
+      
+      throw queueError;
+    }
+
+    res.json({ success: true, jobId });
+  } catch (error) {
+    console.error("Scan error:", error);
+    res.status(500).json({ detail: error.message, success: false });
+  }
+}
+
 // POST /api/purchases/scan-image
 router.post(
   "/scan-image",
   auth,
   requireSubscription(),
+  scanRateLimiter,
   upload.array("files", 10),
-  async (req, res, next) => {
-    try {
-      if (!req.files || req.files.length === 0) {
-        return res.status(400).json({ detail: "No images provided" });
-      }
-
-      const { GoogleGenerativeAI } = require("@google/generative-ai");
-      const { execSync } = require("child_process");
-      const fs = require("fs");
-      const path = require("path");
-
-      // Use Emergent LLM Key (platform) or direct Gemini API Key (local development)
-      const apiKey = process.env.EMERGENT_LLM_KEY || process.env.GEMINI_API_KEY;
-
-      if (!apiKey) {
-        return res.status(500).json({
-          detail:
-            "No API key configured. Set EMERGENT_LLM_KEY (for Emergent platform) or GEMINI_API_KEY (for local dev with Google AI key)",
-          success: false,
-        });
-      }
-
-      // Create client with Emergent's baseURL for the universal key
-      const genAI = new GoogleGenerativeAI(apiKey);
-
-      // Use Python helper for both Emergent key and direct Gemini key
-      // The Python helper now supports both key formats
-      if (apiKey.startsWith("sk-emergent") || apiKey.startsWith("AIza")) {
-        // Save the uploaded files temporarily
-        const tempDir = "/tmp";
-        const tempFiles = [];
-        for (const file of req.files) {
-          const tempFile = path.join(
-            tempDir,
-            `scan_${Date.now()}_${Math.random().toString(36).slice(2)}.${file.mimetype.split("/")[1] || "png"}`
-          );
-          fs.writeFileSync(tempFile, file.buffer);
-          tempFiles.push(tempFile);
-        }
-
-        try {
-          // Call Python helper script
-          const helperPath = path.join(__dirname, "../services/scan_helper.py");
-          const fileArgs = tempFiles.map((f) => `"${f}"`).join(" ");
-          const result = execSync(
-            `"${pythonPath}" "${helperPath}" "${apiKey}" ${fileArgs}`,
-            {
-              timeout: 120000,
-              encoding: "utf-8",
-              maxBuffer: 10 * 1024 * 1024,
-            }
-          );
-
-          // Parse the result
-          const scanResult = JSON.parse(result.trim());
-
-          // Clean up temp files
-          for (const tempFile of tempFiles) {
-            try {
-              fs.unlinkSync(tempFile);
-            } catch (e) {}
-          }
-
-          if (!scanResult.success) {
-            return res.status(400).json({
-              detail: scanResult.error || "Failed to scan image",
-              success: false,
-            });
-          }
-
-          return res.json(scanResult);
-        } catch (execError) {
-          // Clean up temp files on error
-          for (const tempFile of tempFiles) {
-            try {
-              fs.unlinkSync(tempFile);
-            } catch (e) {}
-          }
-          console.error("Scan helper error:", execError.message);
-          return res.status(500).json({
-            detail:
-              "Failed to scan image: " +
-              (execError.stderr || execError.message),
-            success: false,
-          });
-        }
-      }
-
-      // Fallback: Unknown key format
-      return res.status(500).json({
-        detail:
-          "Unknown API key format. Use EMERGENT_LLM_KEY (sk-emergent...) or GEMINI_API_KEY (AIza...)",
-        success: false,
-      });
-    } catch (error) {
-      console.error("Scan error:", error);
-      res.status(500).json({
-        detail: "Failed to scan image: " + error.message,
-        success: false,
-      });
-    }
+  async (req, res) => {
+    await queueScan(req, res, "product");
   }
 );
 
-//POST /api/purchases/scan-bill
+// POST /api/purchases/scan-bill
 router.post(
   "/scan-bill",
   auth,
   requireSubscription(),
+  scanRateLimiter,
   upload.array("files", 10),
   async (req, res) => {
-    try {
-      if (!req.files || req.files.length === 0) {
-        return res.status(400).json({ detail: "No images provided" });
-      }
-
-      const { execSync } = require("child_process");
-      const fs = require("fs");
-      const path = require("path");
-
-      const apiKey = process.env.EMERGENT_LLM_KEY || process.env.GEMINI_API_KEY;
-
-      if (!apiKey) {
-        return res.status(500).json({
-          detail: "No API key configured",
-          success: false,
-        });
-      }
-
-      const tempFiles = [];
-      const tempDir = "/tmp";
-      for (const file of req.files) {
-        const tempFile = path.join(
-          tempDir,
-          `bill_${Date.now()}_${Math.random().toString(36).slice(2)}.png`
-        );
-        fs.writeFileSync(tempFile, file.buffer);
-        tempFiles.push(tempFile);
-      }
-
-      const helperPath = path.join(
-        __dirname,
-        "../services/scan_purchase_bill.py"
-      );
-
-      const fileArgs = tempFiles.map((f) => `"${f}"`).join(" ");
-      const result = execSync(
-        `"${pythonPath}" "${helperPath}" "${apiKey}" ${fileArgs}`,
-        {
-          timeout: 120000,
-          encoding: "utf-8",
-          maxBuffer: 10 * 1024 * 1024,
-        }
-      );
-
-      for (const tempFile of tempFiles) {
-        try {
-          fs.unlinkSync(tempFile);
-        } catch (e) {}
-      }
-
-      return res.json(JSON.parse(result));
-    } catch (error) {
-      return res.status(500).json({
-        detail: error.message,
-        success: false,
-      });
-    }
+    await queueScan(req, res, "bill");
   }
 );
 
@@ -817,8 +859,12 @@ router.post(
         return res.status(400).json({ detail: "No file provided" });
       }
 
-      const content = req.file.buffer.toString("utf-8");
+      // [Issue #12] CSV Buffer fix (use diskStorage path)
+      const content = fs.readFileSync(req.file.path, "utf-8");
       const lines = content.split("\n").filter((l) => l.trim());
+      
+      // Cleanup file after reading
+      try { fs.unlinkSync(req.file.path); } catch(e) {}
 
       if (lines.length < 2) {
         return res
@@ -843,17 +889,22 @@ router.post(
   }
 );
 
-// POST /api/purchases/csv/import
+// POST /api/purchases/bulk-import
 router.post(
-  "/csv/import",
+  "/bulk-import",
   auth,
   requireSubscription(),
   async (req, res, next) => {
+    const session = await mongoose.startSession();
+    session.startTransaction();
+
     try {
       const { supplier_id, supplier_name, invoice_no, items } = req.body;
       const db = mongoose.connection.db;
 
       if (!items || items.length === 0) {
+        await session.abortTransaction();
+        session.endSession();
         return res.status(400).json({ detail: "No items provided" });
       }
 
@@ -862,20 +913,13 @@ router.post(
       const processedItems = [];
 
       for (const item of items) {
-        // Parse values with fallbacks
-        const packQty =
-          parseInt(item.pack_quantity) || parseInt(item.quantity) || 1;
+        const packQty = parseInt(item.pack_quantity) || parseInt(item.quantity) || 1;
         const unitsPerPack = parseInt(item.units_per_pack) || 1;
-        const packPrice =
-          parseFloat(item.pack_price) ||
-          parseFloat(item.rate_pack) ||
-          parseFloat(item.purchase_price) ||
-          0;
+        const packPrice = parseFloat(item.pack_price) || parseFloat(item.rate_pack) || parseFloat(item.purchase_price) || 0;
         const mrpPack = parseFloat(item.mrp_pack) || parseFloat(item.mrp) || 0;
 
         const totalUnits = packQty * unitsPerPack;
-        const pricePerUnit =
-          unitsPerPack > 0 ? packPrice / unitsPerPack : packPrice;
+        const pricePerUnit = unitsPerPack > 0 ? packPrice / unitsPerPack : packPrice;
         const mrpPerUnit = unitsPerPack > 0 ? mrpPack / unitsPerPack : mrpPack;
         const itemTotal = packQty * packPrice;
         totalAmount += itemTotal;
@@ -888,11 +932,7 @@ router.post(
           pack_type: item.pack_type || "Strip",
           batch_no: item.batch_no || `BATCH-${Date.now()}`,
           hsn_no: item.hsn_no || null,
-          expiry_date:
-            item.expiry_date ||
-            new Date(Date.now() + 365 * 24 * 60 * 60 * 1000)
-              .toISOString()
-              .split("T")[0],
+          expiry_date: item.expiry_date || new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
           pack_quantity: packQty,
           units_per_pack: unitsPerPack,
           total_units: totalUnits,
@@ -905,12 +945,11 @@ router.post(
 
         processedItems.push(processedItem);
 
-        // Add to inventory
         const existingInventory = await db.collection("inventory").findOne({
           pharmacy_id: req.user.pharmacy_id,
           product_name: item.product_name,
           batch_no: processedItem.batch_no,
-        });
+        }, { session });
 
         if (existingInventory) {
           await db.collection("inventory").updateOne(
@@ -920,15 +959,13 @@ router.post(
               $set: {
                 purchase_price: pricePerUnit,
                 mrp: mrpPerUnit,
-                mrp_per_unit: mrpPerUnit,
                 units_per_pack: unitsPerPack,
                 pack_type: item.pack_type || "Strip",
-                manufacturer: item.manufacturer,
-                salt_composition: item.salt_composition,
                 pack_price: packPrice,
                 mrp_pack: mrpPack,
               },
-            }
+            },
+            { session }
           );
         } else {
           await db.collection("inventory").insertOne({
@@ -936,25 +973,19 @@ router.post(
             pharmacy_id: req.user.pharmacy_id,
             product_id: processedItem.product_id,
             product_name: item.product_name,
-            manufacturer: item.manufacturer || null,
-            salt_composition: item.salt_composition || null,
-            pack_type: item.pack_type || "Strip",
             batch_no: processedItem.batch_no,
-            hsn_no: item.hsn_no || null,
             expiry_date: processedItem.expiry_date,
             quantity: totalUnits,
             available_quantity: totalUnits,
             units_per_pack: unitsPerPack,
             purchase_price: pricePerUnit,
-            cost_per_unit: pricePerUnit,
             mrp: mrpPerUnit,
-            mrp_per_unit: mrpPerUnit,
             pack_price: packPrice,
             mrp_pack: mrpPack,
             purchase_id: purchaseId,
             supplier_id: supplier_id,
             created_at: new Date().toISOString(),
-          });
+          }, { session });
         }
       }
 
@@ -970,7 +1001,9 @@ router.post(
         created_at: new Date().toISOString(),
       };
 
-      await db.collection("purchases").insertOne(purchaseData);
+      await db.collection("purchases").insertOne(purchaseData, { session });
+      await session.commitTransaction();
+      session.endSession();
 
       res.json({
         message: `Imported ${processedItems.length} items successfully`,
@@ -978,12 +1011,12 @@ router.post(
         total_amount: totalAmount,
       });
     } catch (error) {
+      await session.abortTransaction();
+      session.endSession();
       next(error);
     }
   }
 );
-
-module.exports = router;
 
 // POST /api/purchases/:purchase_id/payments
 router.post(
@@ -991,11 +1024,16 @@ router.post(
   auth,
   requireSubscription(),
   async (req, res, next) => {
+    const session = await mongoose.startSession();
+    session.startTransaction();
+
     try {
       const { amount, date, notes } = req.body;
       const db = mongoose.connection.db;
 
       if (!amount || amount <= 0) {
+        await session.abortTransaction();
+        session.endSession();
         return res.status(400).json({ detail: "Payment amount must be greater than 0" });
       }
 
@@ -1005,6 +1043,8 @@ router.post(
       });
 
       if (!purchase) {
+        await session.abortTransaction();
+        session.endSession();
         return res.status(404).json({ detail: "Purchase not found" });
       }
 
@@ -1015,7 +1055,6 @@ router.post(
       if (newAmountPaid >= purchase.total_amount) {
         newStatus = "Paid";
       }
-
 
       const newPayment = {
         id: uuidv4(),
@@ -1033,7 +1072,8 @@ router.post(
             payment_status: newStatus,
             updated_at: new Date().toISOString(),
           },
-        }
+        },
+        { session }
       );
 
       await logActivity(
@@ -1044,9 +1084,13 @@ router.post(
         "UPDATE",
         "PURCHASES",
         req.params.purchase_id,
-        `Added payment of ₹${paymentAmount} to Purchase`,
-        `/purchases`
+        `Added payment of ₹${paymentAmount}`,
+        `/purchases`,
+        { session }
       );
+
+      await session.commitTransaction();
+      session.endSession();
 
       res.status(200).json({
         message: "Payment added successfully",
@@ -1055,7 +1099,11 @@ router.post(
         payment: newPayment,
       });
     } catch (error) {
+      await session.abortTransaction();
+      session.endSession();
       next(error);
     }
   }
 );
+
+module.exports = router;

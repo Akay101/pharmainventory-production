@@ -39,6 +39,7 @@ export default function ScannerPage() {
   const billInputRef = useRef(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [scanning, setScanning] = useState(false);
+  const [scanProgress, setScanProgress] = useState(0); // [Issue #14] Progress UI
   const [scannedItems, setScannedItems] = useState([]);
   const [editingItem, setEditingItem] = useState(null);
   const [suppliers, setSuppliers] = useState([]);
@@ -120,8 +121,23 @@ export default function ScannerPage() {
   };
 
   // Perform the bulk upload
+  const pollingRef = useRef(null);
+
+  useEffect(() => {
+    return () => {
+      if (pollingRef.current) clearInterval(pollingRef.current);
+    };
+  }, []);
+
   const handleConfirmAndAnalyze = async () => {
     if (selectedFiles.length === 0) return;
+    
+    // [Issue #15] Frontend Validation
+    if (selectedFiles.length > 10) {
+      toast.error("Maximum 10 images allowed per scan");
+      return;
+    }
+
     setScanning(true);
 
     try {
@@ -135,71 +151,120 @@ export default function ScannerPage() {
         headers: { "Content-Type": "multipart/form-data" },
       });
 
-      if (response.data.success) {
-        if (scanMode === "product") {
-          const scanned = response.data.scanned_product;
-          setScannedItems((prev) => [
-            ...prev,
-            {
-              id: Date.now() + Math.random(),
-              product_name: scanned.product_name || "",
-              manufacturer: scanned.manufacturer || "",
-              salt_composition: scanned.salt_composition || "",
-              pack_type: scanned.pack_type || "Strip",
-              batch_no: scanned.batch_no || "",
-              hsn_no: scanned.hsn_no || "",
-              expiry_date: formatDateForInput(scanned.expiry_date),
-              pack_quantity: 1, // Packs purchased
-              units_per_pack: scanned.units_per_pack || 1,
-              rate_pack: scanned.purchase_price || 0, // Rate per pack
-              mrp_pack: scanned.mrp_pack || scanned.mrp || 0, // MRP per pack
-              confidence: scanned.confidence || 75,
-            },
-          ]);
-          toast.success(`Scanned: ${scanned.product_name || "Product detected"}`);
-        } else {
-          const data = response.data.purchase_data;
-          if (data.invoice_no) setInvoiceNo(data.invoice_no);
-
-          const matchedSupplier = suppliers.find((s) =>
-            s.name.toLowerCase().includes((data.supplier_name || "").toLowerCase())
-          );
-          if (matchedSupplier) setSelectedSupplier(matchedSupplier.id);
-
-          const mappedItems = (data.items || []).map((item) => ({
-            id: Date.now() + Math.random(),
-            product_name: item.product_name || "",
-            manufacturer: item.manufacturer || "",
-            salt_composition: item.salt_composition || "",
-            pack_type: "Strip",
-            batch_no: item.batch_no || "",
-            hsn_no: item.hsn_no || "",
-            expiry_date: formatDateForInput(item.expiry_date),
-            pack_quantity: item.quantity || 1,
-            units_per_pack: 1,
-            rate_pack: item.rate_pack || 0,
-            mrp_pack: item.mrp || 0,
-            confidence: 85,
-          }));
-
-          setScannedItems((prev) => [...prev, ...mappedItems]);
-          toast.success(`Bill scanned: ${mappedItems.length} items detected`);
-        }
-
-        // Clean up staged files on success
-        setSelectedFiles([]);
-        setPreviewUrls([]);
-        if (scanMode === "product") {
-            setScanMode("product"); // Force a tiny re-render or keep user on product view
-        }
+      if (response.data.success && response.data.jobId) {
+        const jobId = response.data.jobId;
+        pollJobStatus(jobId);
       } else {
-        toast.error("Failed to extract data");
+        toast.error("Failed to start scan");
+        setScanning(false);
       }
     } catch (error) {
       toast.error(`Failed to scan: ${error.response?.data?.detail || error.message}`);
+      setScanning(false);
     }
+  };
 
-    setScanning(false);
+  const pollJobStatus = (jobId) => {
+    if (pollingRef.current) clearInterval(pollingRef.current);
+    const startTime = Date.now();
+    const MAX_POLLING_MS = 3 * 60 * 1000; // 3 minutes
+
+    pollingRef.current = setInterval(async () => {
+      try {
+        // [Issue #11] Check for timeout
+        if (Date.now() - startTime > MAX_POLLING_MS) {
+          clearInterval(pollingRef.current);
+          pollingRef.current = null;
+          toast.error("Scanning timed out. Please check the queue dashboard or try again.");
+          setScanning(false);
+          setScanProgress(0);
+          return;
+        }
+
+        const response = await axios.get(`${API}/purchases/scan-status/${jobId}`);
+        const job = response.data;
+        
+        if (job.progress) {
+          setScanProgress(job.progress);
+        }
+
+        if (job.status === "completed") {
+          clearInterval(pollingRef.current);
+          pollingRef.current = null;
+          setScanProgress(100);
+          processScanResult(job.result);
+          setScanning(false);
+          setScanProgress(0);
+          setSelectedFiles([]);
+          setPreviewUrls([]);
+        } else if (job.status === "failed") {
+          clearInterval(pollingRef.current);
+          pollingRef.current = null;
+          toast.error(`Scan failed: ${job.errorMessage || "Unknown error"}`);
+          setScanning(false);
+          setScanProgress(0);
+        }
+      } catch (error) {
+        if (error.response?.status !== 404) {
+          clearInterval(pollingRef.current);
+          pollingRef.current = null;
+          toast.error("Error checking scan status");
+          setScanning(false);
+        }
+      }
+    }, 2000);
+  };
+
+  const processScanResult = (data) => {
+    if (scanMode === "product") {
+      const scanned = data.scanned_product;
+      setScannedItems((prev) => [
+        ...prev,
+        {
+          id: Date.now() + Math.random(),
+          product_name: scanned.product_name || "",
+          manufacturer: scanned.manufacturer || "",
+          salt_composition: scanned.salt_composition || "",
+          pack_type: scanned.pack_type || "Strip",
+          batch_no: scanned.batch_no || "",
+          hsn_no: scanned.hsn_no || "",
+          expiry_date: formatDateForInput(scanned.expiry_date),
+          pack_quantity: 1, // Packs purchased
+          units_per_pack: scanned.units_per_pack || 1,
+          rate_pack: scanned.purchase_price || 0, // Rate per pack
+          mrp_pack: scanned.mrp_pack || scanned.mrp || 0, // MRP per pack
+          confidence: scanned.confidence || 75,
+        },
+      ]);
+      toast.success(`Scanned: ${scanned.product_name || "Product detected"}`);
+    } else {
+      const billData = data.purchase_data;
+      if (billData.invoice_no) setInvoiceNo(billData.invoice_no);
+
+      const matchedSupplier = suppliers.find((s) =>
+        s.name.toLowerCase().includes((billData.supplier_name || "").toLowerCase())
+      );
+      if (matchedSupplier) setSelectedSupplier(matchedSupplier.id);
+
+      const mappedItems = (billData.items || []).map((item) => ({
+        id: Date.now() + Math.random(),
+        product_name: item.product_name || "",
+        manufacturer: item.manufacturer || "",
+        salt_composition: item.salt_composition || "",
+        pack_type: "Strip",
+        batch_no: item.batch_no || "",
+        hsn_no: item.hsn_no || "",
+        expiry_date: formatDateForInput(item.expiry_date),
+        pack_quantity: item.quantity || 1,
+        units_per_pack: 1,
+        rate_pack: item.rate_pack || 0,
+        mrp_pack: item.mrp || 0,
+        confidence: 85,
+      }));
+
+      setScannedItems((prev) => [...prev, ...mappedItems]);
+      toast.success(`Bill scanned: ${mappedItems.length} items detected`);
+    }
   };
 
   const handleUpdateItem = (id, field, value) => {
@@ -400,12 +465,27 @@ export default function ScannerPage() {
                     <Sparkles className="w-8 h-8 text-primary animate-pulse" />
                     <div className="absolute w-full h-full bg-primary/10 rounded-full animate-ping opacity-20"></div>
                   </div>
-                  <div>
-                    <h3 className="text-lg font-bold bg-gradient-to-r from-primary to-primary/50 bg-clip-text text-transparent animate-pulse">
-                      AI is analyzing images...
-                    </h3>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Extracting product details reliably
+                  <div className="w-full max-w-[280px] space-y-4">
+                    <div className="space-y-1">
+                      <div className="flex justify-between text-xs font-bold text-primary">
+                        <span className="uppercase tracking-wider">
+                          {scanProgress < 20 ? "Initializing..." : 
+                           scanProgress < 35 ? "Compressing..." : 
+                           scanProgress < 50 ? "Starting AI..." : 
+                           scanProgress < 85 ? "AI Extraction..." : 
+                           "Finalizing..."}
+                        </span>
+                        <span>{scanProgress}%</span>
+                      </div>
+                      <div className="w-full bg-primary/10 h-1.5 rounded-full overflow-hidden border border-primary/5">
+                        <div 
+                          className="bg-gradient-to-r from-primary to-primary/60 h-full transition-all duration-700 ease-out"
+                          style={{ width: `${scanProgress}%` }}
+                        ></div>
+                      </div>
+                    </div>
+                    <p className="text-[10px] text-muted-foreground uppercase tracking-widest text-center animate-pulse">
+                      Processing high-fidelity data
                     </p>
                   </div>
                 </div>
