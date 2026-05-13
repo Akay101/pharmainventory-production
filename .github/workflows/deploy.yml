@@ -9,7 +9,7 @@ jobs:
 deploy:
 runs-on: ubuntu-latest
 
-```
+
 steps:
   ####################################################
   # CHECKOUT CODE
@@ -70,4 +70,4 @@ steps:
       script: |
         cd ~
         ./deploy.sh
-```
+
