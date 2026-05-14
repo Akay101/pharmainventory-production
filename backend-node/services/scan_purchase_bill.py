@@ -14,23 +14,26 @@ def scan_bill_with_google(image_urls: list, api_key: str, max_retries=2):
     client = genai.Client(api_key=api_key)
 
     prompt = """
-You are analyzing a PHARMACY PURCHASE BILL (wholesale invoice). Extract ALL structured data by combining details visible across the multiple images.
+You are an expert at analyzing pharmaceutical purchase invoices. You are provided with images of a multi-page bill.
+Your goal is to extract EVERY SINGLE ITEM listed in the bill across ALL pages.
 
-CRITICAL INSTRUCTIONS FOR MISSING DATA:
-If "manufacturer" or "salt_composition" are NOT visible for any item, you MUST use your own internal medical knowledge to autofill them based on the "product_name". Do not leave them empty if you recognize the product!
-
-Rules:
-- Extract ALL rows from the table
-- Quantity should be numeric
-- If GST split into SGST/CGST combine them
-- Convert numbers to numeric format (no ₹ symbol)
-- IMPORTANT: If no images are provided, return success: false with an error message.
+CRITICAL INSTRUCTIONS:
+1. **Multi-page Awareness**: These images belong to the SAME bill. If Image 1 has items 1-16 and Image 2 has items 17-27, you MUST return a single list containing all 27 items.
+2. **Row-by-Row Extraction**: Process the table meticulously. Do not skip any rows, even if they appear on different pages.
+3. **Summary Verification**: Look for "No of Items", "Total Items", or a line count (e.g., "(27 Lines)") usually located in the summary section or footer. Ensure your extracted item count matches this number.
+4. **Data Enrichment**: If "manufacturer" or "salt_composition" are not printed, use your pharmaceutical knowledge to autofill them based on the "product_name".
+5. **Rules**:
+   - Quantity should be numeric.
+   - If GST is split (CGST/SGST), combine them into a single IGST percentage if possible, or just focus on extracting the items accurately.
+   - Convert all numbers to numeric format (no ₹ symbols).
+   - If no images are provided, return success: false.
 """
 
     contents = [prompt]
     for url in image_urls:
         try:
-            with urllib.request.urlopen(url) as response:
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req) as response:
                 image_data = response.read()
                 contents.append(
                     types.Part.from_bytes(
@@ -39,10 +42,10 @@ Rules:
                     )
                 )
         except Exception as e:
-            print(f"Failed to download image from {url}: {e}", file=sys.stderr)
+            print(f"Failed to download image from {url}. Error: {str(e)}", file=sys.stderr)
 
     if len(contents) <= 1:
-        raise Exception("No images could be retrieved for processing")
+        raise Exception(f"No images could be retrieved for processing. Tried: {', '.join(image_urls)}")
 
     for attempt in range(max_retries + 1):
         try:

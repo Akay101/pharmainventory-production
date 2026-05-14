@@ -25,7 +25,8 @@ CRITICAL INSTRUCTIONS:
     contents = [prompt]
     for url in image_urls:
         try:
-            with urllib.request.urlopen(url) as response:
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req) as response:
                 image_data = response.read()
                 contents.append(
                     types.Part.from_bytes(
@@ -34,12 +35,12 @@ CRITICAL INSTRUCTIONS:
                     )
                 )
         except Exception as e:
-            print(f"Failed to download image from {url}: {e}", file=sys.stderr)
+            print(f"Failed to download image from {url}. Error: {str(e)}", file=sys.stderr)
 
     if len(contents) <= 1:
          return {
             'success': False,
-            'error': 'No images could be retrieved for processing',
+            'error': f'No images could be retrieved for processing. Tried: {", ".join(image_urls)}',
             'error_category': 'image_error'
         }
 

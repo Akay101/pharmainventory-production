@@ -19,8 +19,8 @@ async function compressImage(inputPath) {
   );
 
   await sharp(inputPath)
-    .resize({ width: 1400, withoutEnlargement: true })
-    .webp({ quality: 75 })
+    .resize({ width: 1600, withoutEnlargement: true })
+    .webp({ quality: 80 })
     .toFile(outputPath);
 
   return outputPath;

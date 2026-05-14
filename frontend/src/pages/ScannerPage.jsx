@@ -30,6 +30,8 @@ import {
   Trash2,
   Edit2,
   Sparkles,
+  ChevronDown,
+  Search,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -47,6 +49,14 @@ export default function ScannerPage() {
   const [showSupplierSelect, setShowSupplierSelect] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [invoiceNo, setInvoiceNo] = useState("");
+  
+  // [Issue #Suppliers] Infinite Scroll & Search
+  const [supplierSearch, setSupplierSearch] = useState("");
+  const [supplierPage, setSupplierPage] = useState(1);
+  const [hasMoreSuppliers, setHasMoreSuppliers] = useState(true);
+  const [loadingSuppliers, setLoadingSuppliers] = useState(false);
+  const [isSupplierDropdownOpen, setIsSupplierDropdownOpen] = useState(false);
+  const supplierDropdownRef = useRef(null);
 
   const [scanMode, setScanMode] = useState("product"); // "product" | "bill"
   const [selectedFiles, setSelectedFiles] = useState([]);
@@ -66,14 +76,50 @@ export default function ScannerPage() {
     }
   }, []);
 
-  const fetchSuppliers = async () => {
+  const fetchSuppliers = async (page = 1, search = "", append = false) => {
+    if (loadingSuppliers) return;
+    setLoadingSuppliers(true);
     try {
-      const response = await axios.get(`${API}/suppliers`);
-      setSuppliers(response.data.suppliers || []);
+      const response = await axios.get(
+        `${API}/suppliers?page=${page}&limit=20&search=${search}`
+      );
+      const newSuppliers = response.data.suppliers || [];
+      
+      if (append) {
+        setSuppliers(prev => [...prev, ...newSuppliers]);
+      } else {
+        setSuppliers(newSuppliers);
+      }
+      
+      setHasMoreSuppliers(newSuppliers.length === 20);
+      setSupplierPage(page);
     } catch (error) {
       console.error("Failed to fetch suppliers");
+    } finally {
+      setLoadingSuppliers(false);
     }
   };
+
+  // Debounced search
+  useEffect(() => {
+    const delay = setTimeout(() => {
+      if (isSupplierDropdownOpen || supplierSearch) {
+        fetchSuppliers(1, supplierSearch, false);
+      }
+    }, 300);
+    return () => clearTimeout(delay);
+  }, [supplierSearch]);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (supplierDropdownRef.current && !supplierDropdownRef.current.contains(event.target)) {
+        setIsSupplierDropdownOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
   const formatDateForInput = (dateStr) => {
     if (!dateStr) return "";
@@ -875,20 +921,86 @@ export default function ScannerPage() {
                 </Button>
               ) : (
                 <div className="space-y-3">
-                  <div>
-                    <Label>Select Supplier *</Label>
-                    <select
-                      value={selectedSupplier}
-                      onChange={(e) => setSelectedSupplier(e.target.value)}
-                      className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm"
+                  <div className="relative" ref={supplierDropdownRef}>
+                    <Label className="mb-1.5 block">Select Supplier *</Label>
+                    <div 
+                      className={`w-full h-11 rounded-xl border ${isSupplierDropdownOpen ? 'border-primary ring-2 ring-primary/10' : 'border-border'} bg-background/50 backdrop-blur-sm px-4 flex items-center justify-between cursor-pointer transition-all hover:border-primary/50`}
+                      onClick={() => {
+                        setIsSupplierDropdownOpen(!isSupplierDropdownOpen);
+                        if (!isSupplierDropdownOpen && suppliers.length === 0) {
+                          fetchSuppliers(1, supplierSearch, false);
+                        }
+                      }}
                     >
-                      <option value="">Select a supplier...</option>
-                      {suppliers.map((supplier) => (
-                        <option key={supplier.id} value={supplier.id}>
-                          {supplier.name}
-                        </option>
-                      ))}
-                    </select>
+                      <span className={`text-sm ${!selectedSupplier ? 'text-muted-foreground' : 'font-medium'}`}>
+                        {selectedSupplier 
+                          ? suppliers.find(s => s.id === selectedSupplier)?.name || "Select Supplier"
+                          : "Choose a supplier..."
+                        }
+                      </span>
+                      <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform duration-200 ${isSupplierDropdownOpen ? 'rotate-180' : ''}`} />
+                    </div>
+
+                    {isSupplierDropdownOpen && (
+                      <div className="absolute z-[100] mt-2 w-full bg-card/95 backdrop-blur-xl border border-white/10 rounded-xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+                        <div className="p-2 border-b border-white/5">
+                          <div className="relative">
+                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+                            <Input 
+                              autoFocus
+                              placeholder="Search suppliers..." 
+                              className="pl-9 h-9 text-xs bg-white/5 border-none"
+                              value={supplierSearch}
+                              onChange={(e) => setSupplierSearch(e.target.value)}
+                              onClick={(e) => e.stopPropagation()}
+                            />
+                          </div>
+                        </div>
+                        
+                        <div 
+                          className="max-h-[240px] overflow-y-auto p-1 custom-scrollbar"
+                          onScroll={(e) => {
+                            const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
+                            if (scrollHeight - scrollTop <= clientHeight + 50 && hasMoreSuppliers && !loadingSuppliers) {
+                              fetchSuppliers(supplierPage + 1, supplierSearch, true);
+                            }
+                          }}
+                        >
+                          {suppliers.map((supplier) => (
+                            <div
+                              key={supplier.id}
+                              className={`flex items-center justify-between p-2.5 rounded-lg cursor-pointer transition-colors ${
+                                selectedSupplier === supplier.id 
+                                  ? 'bg-primary/20 text-primary' 
+                                  : 'hover:bg-white/5 text-foreground/80'
+                              }`}
+                              onClick={() => {
+                                setSelectedSupplier(supplier.id);
+                                setIsSupplierDropdownOpen(false);
+                              }}
+                            >
+                              <div className="flex flex-col">
+                                <span className="text-sm font-semibold">{supplier.name}</span>
+                                {supplier.phone && <span className="text-[10px] opacity-60 font-mono">{supplier.phone}</span>}
+                              </div>
+                              {selectedSupplier === supplier.id && <Check className="w-4 h-4 text-primary" />}
+                            </div>
+                          ))}
+                          
+                          {loadingSuppliers && (
+                            <div className="p-4 text-center">
+                              <div className="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin mx-auto"></div>
+                            </div>
+                          )}
+                          
+                          {!loadingSuppliers && suppliers.length === 0 && (
+                            <div className="p-8 text-center text-muted-foreground text-xs italic">
+                              No suppliers match "{supplierSearch}"
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   <div>

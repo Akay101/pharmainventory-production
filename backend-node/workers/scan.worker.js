@@ -33,6 +33,7 @@ const worker = new Worker(
 
     // Resolve R2 URLs
     const imageUrls = r2Keys.map((key) => `${R2_PUBLIC_URL}/${key}`);
+    console.log(`[Worker] Image URLs for job ${jobId}:`, imageUrls);
 
     // [Issue #7] Granular progress steps
     await job.updateProgress(10);
