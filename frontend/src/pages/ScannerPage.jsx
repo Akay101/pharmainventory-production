@@ -56,7 +56,9 @@ export default function ScannerPage() {
   const [hasMoreSuppliers, setHasMoreSuppliers] = useState(true);
   const [loadingSuppliers, setLoadingSuppliers] = useState(false);
   const [isSupplierDropdownOpen, setIsSupplierDropdownOpen] = useState(false);
+  const [highlightedSupplierIndex, setHighlightedSupplierIndex] = useState(-1);
   const supplierDropdownRef = useRef(null);
+  const supplierScrollRef = useRef(null);
 
   const [scanMode, setScanMode] = useState("product"); // "product" | "bill"
   const [selectedFiles, setSelectedFiles] = useState([]);
@@ -105,10 +107,69 @@ export default function ScannerPage() {
     const delay = setTimeout(() => {
       if (isSupplierDropdownOpen || supplierSearch) {
         fetchSuppliers(1, supplierSearch, false);
+        setHighlightedSupplierIndex(-1);
       }
     }, 300);
     return () => clearTimeout(delay);
   }, [supplierSearch]);
+
+  useEffect(() => {
+    if (!isSupplierDropdownOpen) {
+      setHighlightedSupplierIndex(-1);
+    }
+  }, [isSupplierDropdownOpen]);
+
+  // Handle keyboard navigation for supplier dropdown
+  const handleSupplierKeyDown = (e) => {
+    if (!isSupplierDropdownOpen) return;
+
+    switch (e.key) {
+      case "ArrowDown":
+        e.preventDefault();
+        setHighlightedSupplierIndex(prev => 
+          prev < suppliers.length - 1 ? prev + 1 : prev
+        );
+        break;
+      case "ArrowUp":
+        e.preventDefault();
+        setHighlightedSupplierIndex(prev => 
+          prev > 0 ? prev - 1 : prev
+        );
+        break;
+      case "Enter":
+        e.preventDefault();
+        if (highlightedSupplierIndex >= 0 && highlightedSupplierIndex < suppliers.length) {
+          const supplier = suppliers[highlightedSupplierIndex];
+          setSelectedSupplier(supplier.id);
+          setIsSupplierDropdownOpen(false);
+        }
+        break;
+      case "Escape":
+        setIsSupplierDropdownOpen(false);
+        break;
+      case "Tab":
+        setIsSupplierDropdownOpen(false);
+        break;
+    }
+  };
+
+  // Auto-scroll highlighted supplier into view
+  useEffect(() => {
+    if (highlightedSupplierIndex >= 0 && supplierScrollRef.current) {
+      const container = supplierScrollRef.current;
+      const highlightedElement = container.querySelector(`[data-index="${highlightedSupplierIndex}"]`);
+      if (highlightedElement) {
+        const containerRect = container.getBoundingClientRect();
+        const elementRect = highlightedElement.getBoundingClientRect();
+
+        if (elementRect.bottom > containerRect.bottom) {
+          container.scrollTop += elementRect.bottom - containerRect.bottom;
+        } else if (elementRect.top < containerRect.top) {
+          container.scrollTop -= containerRect.top - elementRect.top;
+        }
+      }
+    }
+  }, [highlightedSupplierIndex]);
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -931,6 +992,12 @@ export default function ScannerPage() {
                           fetchSuppliers(1, supplierSearch, false);
                         }
                       }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === "ArrowDown" || e.key === "ArrowUp") {
+                          setIsSupplierDropdownOpen(true);
+                        }
+                      }}
+                      tabIndex={0}
                     >
                       <span className={`text-sm ${!selectedSupplier ? 'text-muted-foreground' : 'font-medium'}`}>
                         {selectedSupplier 
@@ -952,12 +1019,14 @@ export default function ScannerPage() {
                               className="pl-9 h-9 text-xs bg-white/5 border-none"
                               value={supplierSearch}
                               onChange={(e) => setSupplierSearch(e.target.value)}
+                              onKeyDown={handleSupplierKeyDown}
                               onClick={(e) => e.stopPropagation()}
                             />
                           </div>
                         </div>
                         
                         <div 
+                          ref={supplierScrollRef}
                           className="max-h-[240px] overflow-y-auto p-1 custom-scrollbar"
                           onScroll={(e) => {
                             const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
@@ -966,18 +1035,22 @@ export default function ScannerPage() {
                             }
                           }}
                         >
-                          {suppliers.map((supplier) => (
+                          {suppliers.map((supplier, idx) => (
                             <div
                               key={supplier.id}
+                              data-index={idx}
                               className={`flex items-center justify-between p-2.5 rounded-lg cursor-pointer transition-colors ${
-                                selectedSupplier === supplier.id 
-                                  ? 'bg-primary/20 text-primary' 
-                                  : 'hover:bg-white/5 text-foreground/80'
+                                highlightedSupplierIndex === idx
+                                  ? 'bg-primary/20 text-primary'
+                                  : (selectedSupplier === supplier.id 
+                                    ? 'bg-primary/10 text-primary font-bold' 
+                                    : 'hover:bg-white/5 text-foreground/80')
                               }`}
                               onClick={() => {
                                 setSelectedSupplier(supplier.id);
                                 setIsSupplierDropdownOpen(false);
                               }}
+                              onMouseEnter={() => setHighlightedSupplierIndex(idx)}
                             >
                               <div className="flex flex-col">
                                 <span className="text-sm font-semibold">{supplier.name}</span>

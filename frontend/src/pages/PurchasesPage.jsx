@@ -78,6 +78,222 @@ import { getOS } from "../hooks/useKeyboard";
 
 const PACK_TYPES = ["Strip", "Bottle", "Tube", "Packet", "Box", "Unit"];
 
+// [Issue #Suppliers] Premium Searchable & Infinite Scroll Dropdown
+const SupplierSelector = ({ 
+  selectedId, 
+  onSelect, 
+  knownSuppliers = [],
+  placeholder = "Select Supplier",
+  showAllOption = false,
+  className = "",
+  disabled = false
+}) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
+  const [suppliers, setSuppliers] = useState([]);
+  const [hasMore, setHasMore] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [highlightedIndex, setHighlightedIndex] = useState(-1);
+  const dropdownRef = useRef(null);
+  const scrollContainerRef = useRef(null);
+
+  const fetchSuppliers = async (p = 1, s = "", append = false) => {
+    if (loading) return;
+    setLoading(true);
+    try {
+      const response = await axios.get(
+        `${API}/suppliers?page=${p}&limit=20&search=${encodeURIComponent(s)}`
+      );
+      const data = response.data.suppliers || [];
+      setSuppliers(prev => append ? [...prev, ...data] : data);
+      setHasMore(data.length === 20);
+      setPage(p);
+    } catch (err) {
+      console.error("Failed to fetch suppliers", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isOpen && suppliers.length === 0) {
+      fetchSuppliers(1, search, false);
+    }
+    if (!isOpen) {
+      setHighlightedIndex(-1);
+    }
+  }, [isOpen]);
+
+  useEffect(() => {
+    const delay = setTimeout(() => {
+      if (isOpen) {
+        fetchSuppliers(1, search, false);
+        setHighlightedIndex(-1);
+      }
+    }, 300);
+    return () => clearTimeout(delay);
+  }, [search]);
+
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  // Keyboard navigation
+  const handleKeyDown = (e) => {
+    if (!isOpen) {
+      if (e.key === "Enter" || e.key === "ArrowDown" || e.key === "ArrowUp") {
+        setIsOpen(true);
+      }
+      return;
+    }
+
+    const maxIndex = suppliers.length - 1;
+    const minIndex = showAllOption ? -1 : 0;
+
+    switch (e.key) {
+      case "ArrowDown":
+        e.preventDefault();
+        setHighlightedIndex(prev => (prev < maxIndex ? prev + 1 : prev));
+        break;
+      case "ArrowUp":
+        e.preventDefault();
+        setHighlightedIndex(prev => (prev > minIndex ? prev - 1 : prev));
+        break;
+      case "Enter":
+        e.preventDefault();
+        if (highlightedIndex === -1 && showAllOption) {
+          onSelect({ id: "all", name: "All Suppliers" });
+          setIsOpen(false);
+        } else if (highlightedIndex >= 0 && highlightedIndex < suppliers.length) {
+          onSelect(suppliers[highlightedIndex]);
+          setIsOpen(false);
+        }
+        break;
+      case "Escape":
+        setIsOpen(false);
+        break;
+      case "Tab":
+        setIsOpen(false);
+        break;
+    }
+  };
+
+  // Auto-scroll highlighted item into view
+  useEffect(() => {
+    if (highlightedIndex >= -1 && scrollContainerRef.current) {
+      const container = scrollContainerRef.current;
+      const highlightedElement = container.querySelector(`[data-index="${highlightedIndex}"]`);
+      if (highlightedElement) {
+        const containerRect = container.getBoundingClientRect();
+        const elementRect = highlightedElement.getBoundingClientRect();
+
+        if (elementRect.bottom > containerRect.bottom) {
+          container.scrollTop += elementRect.bottom - containerRect.bottom;
+        } else if (elementRect.top < containerRect.top) {
+          container.scrollTop -= containerRect.top - elementRect.top;
+        }
+      }
+    }
+  }, [highlightedIndex]);
+
+  // Combine local dropdown list with known suppliers from parent
+  const allSuppliers = [...suppliers];
+  if (Array.isArray(knownSuppliers)) {
+    knownSuppliers.forEach(ks => {
+      if (ks && ks.id && !allSuppliers.find(s => s.id === ks.id)) {
+        allSuppliers.push(ks);
+      }
+    });
+  }
+
+  const selectedSupplier = allSuppliers.find(s => s.id === selectedId);
+
+  return (
+    <div className={`relative ${className}`} ref={dropdownRef} onKeyDown={handleKeyDown}>
+      <div 
+        className={`flex h-10 w-full items-center justify-between rounded-md border border-input bg-background/50 backdrop-blur-sm px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer hover:border-primary/50 transition-all ${isOpen ? 'border-primary ring-2 ring-primary/10' : 'border-border'}`}
+        onClick={() => !disabled && setIsOpen(!isOpen)}
+        tabIndex={0}
+      >
+        <span className={`truncate ${!selectedId || selectedId === "" ? "text-muted-foreground" : "font-medium"}`}>
+          {selectedId === "all" ? "All Suppliers" : (selectedSupplier?.name || placeholder)}
+        </span>
+        <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} />
+      </div>
+
+      {isOpen && (
+        <div className="absolute z-[100] mt-2 max-h-60 w-full overflow-hidden rounded-xl border border-white/10 bg-card/95 backdrop-blur-xl text-popover-foreground shadow-2xl animate-in fade-in zoom-in-95 duration-200">
+          <div className="flex items-center border-b border-white/5 px-3">
+            <Search className="mr-2 h-4 w-4 shrink-0 opacity-50" />
+            <input
+              className="flex h-11 w-full rounded-md bg-transparent py-3 text-sm outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50"
+              placeholder="Search suppliers..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              autoFocus
+              onClick={(e) => e.stopPropagation()}
+            />
+          </div>
+          <div 
+            ref={scrollContainerRef}
+            className="max-h-[200px] overflow-y-auto p-1 custom-scrollbar"
+            onScroll={(e) => {
+              const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
+              if (scrollHeight - scrollTop <= clientHeight + 50 && hasMore && !loading) {
+                fetchSuppliers(page + 1, search, true);
+              }
+            }}
+          >
+            {showAllOption && (
+              <div
+                data-index="-1"
+                className={`relative flex w-full cursor-default select-none items-center rounded-lg py-2.5 pl-9 pr-2 text-sm outline-none transition-colors ${highlightedIndex === -1 ? 'bg-primary/10 text-primary' : (selectedId === "all" ? "bg-primary/20 text-primary font-bold" : "text-foreground/80 hover:bg-primary/5")}`}
+                onClick={() => { onSelect({ id: "all", name: "All Suppliers" }); setIsOpen(false); }}
+                onMouseEnter={() => setHighlightedIndex(-1)}
+              >
+                {selectedId === "all" && <Check className="absolute left-3 h-4 w-4" />}
+                All Suppliers
+              </div>
+            )}
+            {suppliers.map((s, idx) => (
+              <div
+                key={s.id}
+                data-index={idx}
+                className={`relative flex w-full cursor-default select-none items-center rounded-lg py-2.5 pl-9 pr-2 text-sm outline-none transition-colors ${highlightedIndex === idx ? 'bg-primary/10 text-primary' : (selectedId === s.id ? "bg-primary/20 text-primary font-bold" : "text-foreground/80 hover:bg-primary/5")}`}
+                onClick={() => { onSelect(s); setIsOpen(false); }}
+                onMouseEnter={() => setHighlightedIndex(idx)}
+              >
+                {selectedId === s.id && <Check className="absolute left-3 h-4 w-4" />}
+                <div className="flex flex-col overflow-hidden">
+                  <span className="truncate">{s.name}</span>
+                  {s.phone && <span className="text-[10px] opacity-60 font-mono">{s.phone}</span>}
+                </div>
+              </div>
+            ))}
+            {loading && (
+              <div className="p-4 text-center">
+                <Loader2 className="h-5 w-5 animate-spin text-primary mx-auto" />
+              </div>
+            )}
+            {!loading && suppliers.length === 0 && (
+              <div className="p-8 text-center text-xs text-muted-foreground italic">
+                No suppliers match "{search}"
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 export default function PurchasesPage() {
   // Data state
   const [purchases, setPurchases] = useState([]);
@@ -326,19 +542,29 @@ export default function PurchasesPage() {
     user?.id,
   ]);
 
+  // Ensure at least one item row is present when creating/viewing a new purchase
+  useEffect(() => {
+    if (showNewPurchase && purchaseItems.length === 0) {
+      const defaultRow = { ...emptyItem, id: `temp-${Date.now()}` };
+      setPurchaseItems([defaultRow]);
+      setTimeout(() => productInputRef.current?.focus(), 150);
+    }
+  }, [showNewPurchase, purchaseItems.length]);
+
   const createNewTab = () => {
     if (tabs.length >= 10) {
       toast.error("Maximum 10 tabs allowed");
       return;
     }
     const newId = uuidv4();
+    const defaultRow = { ...emptyItem, id: `temp-${Date.now()}` };
     const newTab = {
       id: newId,
       data: {
         selectedSupplier: "",
         invoiceNo: "",
         purchaseDate: new Date().toISOString().slice(0, 10),
-        purchaseItems: [],
+        purchaseItems: [defaultRow],
         paymentStatus: "Unpaid",
         amountPaid: "",
       },
@@ -348,10 +574,11 @@ export default function PurchasesPage() {
     setSelectedSupplier("");
     setInvoiceNo("");
     setPurchaseDate(new Date().toISOString().slice(0, 10));
-    setPurchaseItems([]);
+    setPurchaseItems([defaultRow]);
     setPaymentStatus("Unpaid");
     setAmountPaid("");
     setShowNewPurchase(true);
+    setTimeout(() => productInputRef.current?.focus(), 150);
   };
 
   const switchTab = (tabId) => {
@@ -581,8 +808,27 @@ export default function PurchasesPage() {
 
   const fetchData = async () => {
     try {
-      const [suppliersRes] = await Promise.all([axios.get(`${API}/suppliers`)]);
-      setSuppliers(suppliersRes.data.suppliers);
+      const initialSuppliers = [];
+      const supplierIdFromUrl = searchParams.get("supplier_id");
+      
+      if (supplierIdFromUrl && supplierIdFromUrl !== "all") {
+        try {
+          const res = await axios.get(`${API}/suppliers/${supplierIdFromUrl}`);
+          if (res.data?.supplier) initialSuppliers.push(res.data.supplier);
+        } catch (e) { 
+          console.error("Filter supplier fetch error", e); 
+        }
+      }
+
+      const suppliersRes = await axios.get(`${API}/suppliers?limit=50`);
+      const fetched = suppliersRes.data.suppliers || [];
+      
+      const combined = [...initialSuppliers];
+      fetched.forEach(f => {
+        if (!combined.find(c => c.id === f.id)) combined.push(f);
+      });
+
+      setSuppliers(combined);
       await fetchPurchases(1);
     } catch (error) {
       toast.error("Failed to load data");
@@ -614,7 +860,13 @@ export default function PurchasesPage() {
       createNewTab();
     } else {
       setShowNewPurchase(true);
-      setTimeout(() => document.getElementById("search-medicine-input")?.focus(), 100);
+      setTimeout(() => {
+        if (productInputRef.current) {
+          productInputRef.current.focus();
+        } else {
+          document.getElementById("search-medicine-input")?.focus();
+        }
+      }, 150);
     }
   };
 
@@ -1698,21 +1950,16 @@ export default function PurchasesPage() {
               <div className="space-y-6 pt-4">
                 <div className="space-y-2">
                   <Label>Supplier *</Label>
-                  <Select
-                    value={selectedSupplier}
-                    onValueChange={setSelectedSupplier}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select supplier" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {suppliers.map((supplier) => (
-                        <SelectItem key={supplier.id} value={supplier.id}>
-                          {supplier.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <SupplierSelector 
+                    selectedId={selectedSupplier}
+                    knownSuppliers={suppliers}
+                    onSelect={(s) => {
+                      setSelectedSupplier(s.id);
+                      if (!suppliers.find(x => x.id === s.id)) {
+                        setSuppliers(prev => [...prev, s]);
+                      }
+                    }}
+                  />
                 </div>
 
                 <div className="space-y-2">
@@ -1894,21 +2141,16 @@ export default function PurchasesPage() {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
               <div className="space-y-2 lg:col-span-1">
                 <Label>Supplier *</Label>
-                <Select
-                  value={selectedSupplier}
-                  onValueChange={setSelectedSupplier}
-                >
-                  <SelectTrigger data-testid="supplier-select">
-                    <SelectValue placeholder="Select supplier" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {suppliers.map((supplier) => (
-                      <SelectItem key={supplier.id} value={supplier.id}>
-                        {supplier.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <SupplierSelector 
+                  selectedId={selectedSupplier}
+                  knownSuppliers={suppliers}
+                  onSelect={(s) => {
+                    setSelectedSupplier(s.id);
+                    if (!suppliers.find(x => x.id === s.id)) {
+                      setSuppliers(prev => [...prev, s]);
+                    }
+                  }}
+                />
               </div>
               <div className="space-y-2 lg:col-span-1">
                 <Label>Invoice Number</Label>
@@ -2855,28 +3097,20 @@ export default function PurchasesPage() {
               <div className="grid grid-cols-3 gap-4">
                 <div className="space-y-2">
                   <Label>Supplier</Label>
-                  <Select
-                    value={editingPurchase.supplier_id}
-                    onValueChange={(v) => {
-                      const supplier = suppliers.find((s) => s.id === v);
+                  <SupplierSelector 
+                    selectedId={editingPurchase.supplier_id}
+                    knownSuppliers={suppliers}
+                    onSelect={(s) => {
                       setEditingPurchase((prev) => ({
                         ...prev,
-                        supplier_id: v,
-                        supplier_name: supplier?.name,
+                        supplier_id: s.id,
+                        supplier_name: s.name,
                       }));
+                      if (!suppliers.find(x => x.id === s.id)) {
+                        setSuppliers(prev => [...prev, s]);
+                      }
                     }}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {suppliers.map((supplier) => (
-                        <SelectItem key={supplier.id} value={supplier.id}>
-                          {supplier.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  />
                 </div>
                 <div className="space-y-2">
                   <Label>Invoice Number</Label>
@@ -3129,22 +3363,18 @@ export default function PurchasesPage() {
                 </div>
               </div>
               <div className="flex gap-2 flex-wrap">
-                <Select
-                  value={filterSupplier}
-                  onValueChange={handleSupplierFilterChange}
-                >
-                  <SelectTrigger className="w-48">
-                    <SelectValue placeholder="Filter by supplier" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Suppliers</SelectItem>
-                    {suppliers.map((supplier) => (
-                      <SelectItem key={supplier.id} value={supplier.id}>
-                        {supplier.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <SupplierSelector 
+                  selectedId={filterSupplier}
+                  knownSuppliers={suppliers}
+                  showAllOption={true}
+                  className="w-48"
+                  onSelect={(s) => {
+                    handleSupplierFilterChange(s.id);
+                    if (s.id !== "all" && !suppliers.find(x => x.id === s.id)) {
+                      setSuppliers(prev => [...prev, s]);
+                    }
+                  }}
+                />
                 <Input
                   type="date"
                   placeholder="Start date"
@@ -3589,7 +3819,7 @@ export default function PurchasesPage() {
           })
         }
       >
-        <AlertDialogContent>
+        <AlertDialogContent className="max-w-2xl w-[95%]">
           <AlertDialogHeader>
             <AlertDialogTitle>Delete Purchase</AlertDialogTitle>
             <AlertDialogDescription>
@@ -3597,21 +3827,21 @@ export default function PurchasesPage() {
               {deleteDialog.purchase?.supplier_name}?
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <AlertDialogFooter className="flex-col sm:flex-row gap-2">
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <div className="flex flex-col-reverse md:flex-row gap-2 justify-end mt-6">
+            <AlertDialogCancel className="w-full md:w-auto mt-0">Cancel</AlertDialogCancel>
             <AlertDialogAction
-              className="bg-destructive hover:bg-destructive/90 transition-colors"
-              onClick={() => handleDeleteWithoutStockMatchDialog()}
+              className="w-full md:w-auto bg-destructive hover:bg-destructive/90 transition-colors"
+              onClick={() => handleDeletePurchase(false)}
             >
               Force Delete (No Inventory Adjust)
             </AlertDialogAction>
             <AlertDialogAction
-              className="btn-primary"
+              className="w-full md:w-auto btn-primary"
               onClick={() => handleDeletePurchase(true)}
             >
               Delete & Decrease Stock
             </AlertDialogAction>
-          </AlertDialogFooter>
+          </div>
         </AlertDialogContent>
       </AlertDialog>
 

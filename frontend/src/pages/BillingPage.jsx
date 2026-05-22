@@ -151,6 +151,8 @@ export default function BillingPage() {
     open: false,
     itemId: null,
   });
+  const [showMrpWarning, setShowMrpWarning] = useState(false);
+  const [isEditModeWarning, setIsEditModeWarning] = useState(false);
 
   // Refs for keyboard navigation
   const productInputRef = useRef(null);
@@ -301,12 +303,22 @@ export default function BillingPage() {
     user?.id,
   ]);
 
+  // Ensure at least one item row is present when creating/viewing a new bill
+  useEffect(() => {
+    if (showNewBill && billItems.length === 0) {
+      const defaultRow = { ...emptyItem, id: `temp-${Date.now()}` };
+      setBillItems([defaultRow]);
+      setTimeout(() => productInputRef.current?.focus(), 150);
+    }
+  }, [showNewBill, billItems.length]);
+
   const createNewTab = () => {
     if (tabs.length >= 10) {
       toast.error("Maximum 10 tabs allowed");
       return;
     }
     const newId = uuidv4();
+    const defaultRow = { ...emptyItem, id: `temp-${Date.now()}` };
     const newTab = {
       id: newId,
       data: {
@@ -317,7 +329,7 @@ export default function BillingPage() {
           customer_email: "",
         },
         billingDate: new Date().toISOString().slice(0, 10),
-        billItems: [],
+        billItems: [defaultRow],
         billDiscount: 0,
         isPaid: true,
       },
@@ -331,7 +343,7 @@ export default function BillingPage() {
       customer_email: "",
     });
     setBillingDate(new Date().toISOString().slice(0, 10));
-    setBillItems([]);
+    setBillItems([defaultRow]);
     setBillDiscount(0);
     setIsPaid(true);
     setShowNewBill(true);
@@ -1022,7 +1034,7 @@ export default function BillingPage() {
     }
   };
 
-  const handleSubmitBill = async () => {
+  const handleSubmitBill = async (force = false) => {
     if (!customerInfo.customer_name || !customerInfo.customer_mobile) {
       toast.error("Please enter customer name and mobile");
       return;
@@ -1034,6 +1046,16 @@ export default function BillingPage() {
 
     if (validItems.length === 0) {
       toast.error("Please add at least one item with a product");
+      return;
+    }
+
+    const hasEmptyMrp = validItems.some(
+      (item) => !item.unit_price || parseFloat(item.unit_price) === 0
+    );
+
+    if (hasEmptyMrp && force !== true) {
+      setIsEditModeWarning(false);
+      setShowMrpWarning(true);
       return;
     }
 
@@ -1261,7 +1283,7 @@ export default function BillingPage() {
     }
   };
 
-  const handleSaveEditBill = async () => {
+  const handleSaveEditBill = async (force = false) => {
     if (!editingBillData) return;
 
     const validItems = editingBillItems.filter(
@@ -1270,6 +1292,16 @@ export default function BillingPage() {
 
     if (validItems.length === 0) {
       toast.error("Please add at least one item");
+      return;
+    }
+
+    const hasEmptyMrp = validItems.some(
+      (item) => !item.unit_price || parseFloat(item.unit_price) === 0
+    );
+
+    if (hasEmptyMrp && force !== true) {
+      setIsEditModeWarning(true);
+      setShowMrpWarning(true);
       return;
     }
 
@@ -1477,7 +1509,7 @@ export default function BillingPage() {
   }
 
   return (
-    <div className="space-y-6 animate-fade-in" data-testid="billing-page">
+    <div className={`space-y-6 animate-fade-in ${(showNewBill || editingBillId) ? "pb-32" : ""}`} data-testid="billing-page">
       {/* Restore Draft Dialog */}
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
@@ -1698,7 +1730,7 @@ export default function BillingPage() {
                       Cost/Unit
                     </TableHead>
                     <TableHead className="w-[80px] text-center font-bold text-foreground">
-                      MRP/Unit *
+                      MRP/Unit
                     </TableHead>
                     <TableHead className="w-[60px] text-center font-bold text-foreground">
                       Disc %
@@ -2371,7 +2403,7 @@ export default function BillingPage() {
                       Cost/Unit
                     </TableHead>
                     <TableHead className="w-[90px] text-center font-bold text-foreground">
-                      MRP/Unit *
+                      MRP/Unit
                     </TableHead>
                     <TableHead className="w-[70px] text-center font-bold text-foreground">
                       Disc %
@@ -3545,6 +3577,35 @@ export default function BillingPage() {
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
               Remove
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={showMrpWarning} onOpenChange={setShowMrpWarning}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Missing MRP/Unit</AlertDialogTitle>
+            <AlertDialogDescription>
+              {isEditModeWarning
+                ? "Are you sure that you want to update bill without entering MRP?"
+                : "Are you sure that you want to create bill without entering MRP?"}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setShowMrpWarning(false)}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                setShowMrpWarning(false);
+                if (isEditModeWarning) {
+                  handleSaveEditBill(true);
+                } else {
+                  handleSubmitBill(true);
+                }
+              }}
+              className="btn-primary"
+            >
+              Confirm
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

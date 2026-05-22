@@ -45,7 +45,7 @@ const storage = multer.diskStorage({
 
 const upload = multer({
   storage: storage,
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
+  limits: { fileSize: 20 * 1024 * 1024 }, // 20MB limit
   fileFilter: (req, file, cb) => {
     const allowedTypes = ["image/jpeg", "image/png", "image/webp"];
     if (allowedTypes.includes(file.mimetype)) {
@@ -481,7 +481,7 @@ router.put(
         );
 
         // [Issue #1] Handle Missing Inventory Record + Negative Protection
-        if (!updateResult?.value) {
+        if (!updateResult) {
           await session.abortTransaction();
           session.endSession();
           return res.status(404).json({
@@ -489,7 +489,7 @@ router.put(
           });
         }
 
-        if (updateResult.value.quantity < 0 || updateResult.value.available_quantity < 0) {
+        if (updateResult.quantity < 0 || updateResult.available_quantity < 0) {
           await session.abortTransaction();
           session.endSession();
           return res.status(400).json({
@@ -621,6 +621,8 @@ router.delete(
 
     try {
       const db = mongoose.connection.db;
+      const adjustInventory = req.query.delete_inventory !== "false";
+
       const purchase = await db.collection("purchases").findOne({
         id: req.params.purchase_id,
         pharmacy_id: req.user.pharmacy_id,
@@ -632,38 +634,40 @@ router.delete(
         return res.status(404).json({ detail: "Purchase not found" });
       }
 
-      // Reverse inventory
-      for (const item of purchase.items) {
-        const updateResult = await db.collection("inventory").findOneAndUpdate(
-          {
-            pharmacy_id: req.user.pharmacy_id,
-            product_name: item.product_name,
-            batch_no: item.batch_no,
-          },
-          {
-            $inc: {
-              quantity: -item.total_units,
-              available_quantity: -item.total_units,
+      // Reverse inventory if requested
+      if (adjustInventory) {
+        for (const item of purchase.items) {
+          const updateResult = await db.collection("inventory").findOneAndUpdate(
+            {
+              pharmacy_id: req.user.pharmacy_id,
+              product_name: item.product_name,
+              batch_no: item.batch_no,
             },
-          },
-          { session, returnDocument: "after" }
-        );
+            {
+              $inc: {
+                quantity: -item.total_units,
+                available_quantity: -item.total_units,
+              },
+            },
+            { session, returnDocument: "after" }
+          );
 
-        // [Issue #1] Handle Missing Inventory Record + Negative Protection
-        if (!updateResult?.value) {
-          await session.abortTransaction();
-          session.endSession();
-          return res.status(404).json({
-            detail: `Inventory record missing for ${item.product_name}. Cannot delete.`,
-          });
-        }
+          // [Issue #1] Handle Missing Inventory Record + Negative Protection
+          if (!updateResult) {
+            await session.abortTransaction();
+            session.endSession();
+            return res.status(404).json({
+              detail: `Inventory record missing for ${item.product_name}. Cannot delete.`,
+            });
+          }
 
-        if (updateResult.value.quantity < 0 || updateResult.value.available_quantity < 0) {
-          await session.abortTransaction();
-          session.endSession();
-          return res.status(400).json({
-            detail: `Delete failed: Inventory for ${item.product_name} would become negative.`,
-          });
+          if (updateResult.quantity < 0 || updateResult.available_quantity < 0) {
+            await session.abortTransaction();
+            session.endSession();
+            return res.status(400).json({
+              detail: `Delete failed: Inventory for ${item.product_name} would become negative.`,
+            });
+          }
         }
       }
 
@@ -686,7 +690,10 @@ router.delete(
 
       await session.commitTransaction();
       session.endSession();
-      res.json({ message: "Purchase deleted" });
+      res.json({
+        message: "Purchase deleted",
+        deleted_inventory_items: adjustInventory ? purchase.items.length : 0
+      });
     } catch (error) {
       await session.abortTransaction();
       session.endSession();
@@ -803,8 +810,13 @@ async function queueScan(req, res, type) {
     for (const compressedPath of compressedFiles) {
       try {
         const key = `scans/${jobId}/${path.basename(compressedPath)}`;
+        const ext = path.extname(compressedPath).toLowerCase();
+        let mimeType = 'image/jpeg';
+        if (ext === '.png') mimeType = 'image/png';
+        else if (ext === '.webp') mimeType = 'image/webp';
+
         const buffer = fs.readFileSync(compressedPath);
-        await uploadToR2(key, buffer, 'image/webp');
+        await uploadToR2(key, buffer, mimeType);
         r2Keys.push(key);
       } catch (r2Error) {
         console.error(`R2 upload failed for ${compressedPath}:`, r2Error);

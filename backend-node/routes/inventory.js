@@ -292,4 +292,42 @@ router.patch("/:id/add-quantity", auth, requireSubscription(), async (req, res, 
   }
 });
 
+// DELETE /api/inventory/:id
+router.delete("/:id", auth, requireSubscription(), async (req, res, next) => {
+  try {
+    const db = mongoose.connection.db;
+    const { id } = req.params;
+
+    const item = await db.collection("inventory").findOne({ id, pharmacy_id: req.user.pharmacy_id });
+    if (!item) {
+      return res.status(404).json({ detail: "Inventory item not found" });
+    }
+
+    const result = await db.collection("inventory").deleteOne({
+      id,
+      pharmacy_id: req.user.pharmacy_id,
+    });
+
+    if (result.deletedCount === 0) {
+      return res.status(404).json({ detail: "Inventory item not found" });
+    }
+
+    await logActivity(
+      db,
+      req.user.pharmacy_id,
+      req.user.id,
+      req.user.name,
+      "DELETE",
+      "INVENTORY",
+      id,
+      `Deleted inventory item of ${item.product_name} (Batch: ${item.batch_no})`,
+      "/inventory"
+    );
+
+    res.json({ message: "Inventory item deleted successfully" });
+  } catch (error) {
+    next(error);
+  }
+});
+
 module.exports = router;

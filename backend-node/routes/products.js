@@ -111,18 +111,51 @@ router.delete(
   async (req, res, next) => {
     try {
       const db = mongoose.connection.db;
-      const result = await db.collection("products").deleteOne({
-        id: req.params.product_id,
+      const productId = req.params.product_id;
+      const deleteInventory = req.query.delete_inventory === "true";
+
+      // Verify product exists and belongs to the pharmacy
+      const product = await db.collection("products").findOne({
+        id: productId,
         pharmacy_id: req.user.pharmacy_id,
       });
 
-      if (result.deletedCount === 0) {
+      if (!product) {
         return res.status(404).json({ detail: "Product not found" });
       }
 
-      await logActivity(db, req.user.pharmacy_id, req.user.id, req.user.name, "DELETE", "PRODUCTS", req.params.product_id, `Deleted Product`, `/inventory`);
+      // Delete associated inventory items if requested
+      let deletedInventoryItemsCount = 0;
+      if (deleteInventory) {
+        const inventoryResult = await db.collection("inventory").deleteMany({
+          product_id: productId,
+          pharmacy_id: req.user.pharmacy_id,
+        });
+        deletedInventoryItemsCount = inventoryResult.deletedCount;
+      }
 
-      res.json({ message: "Product deleted" });
+      // Delete the product itself
+      await db.collection("products").deleteOne({
+        id: productId,
+        pharmacy_id: req.user.pharmacy_id,
+      });
+
+      await logActivity(
+        db,
+        req.user.pharmacy_id,
+        req.user.id,
+        req.user.name,
+        "DELETE",
+        "PRODUCTS",
+        productId,
+        `Deleted Product ${product.name}`,
+        "/inventory"
+      );
+
+      res.json({
+        message: "Product deleted",
+        deleted_inventory_items: deletedInventoryItemsCount,
+      });
     } catch (error) {
       next(error);
     }

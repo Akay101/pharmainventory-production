@@ -13,15 +13,14 @@ async function compressImage(inputPath) {
     fs.mkdirSync(uploadDir, { recursive: true });
   }
 
+  const extension = path.extname(inputPath);
   const outputPath = path.join(
     uploadDir,
-    `comp-${Date.now()}-${Math.random().toString(36).substring(7)}.webp`
+    `raw-${Date.now()}-${Math.random().toString(36).substring(7)}${extension}`
   );
-
-  await sharp(inputPath)
-    .resize({ width: 1600, withoutEnlargement: true })
-    .webp({ quality: 80 })
-    .toFile(outputPath);
+  
+  // Direct copy with zero processing, zero compression, zero modification
+  fs.copyFileSync(inputPath, outputPath);
 
   return outputPath;
 }

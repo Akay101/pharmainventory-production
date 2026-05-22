@@ -13,13 +13,24 @@ import urllib.request
 def scan_image_with_google(image_urls: list, api_key: str, max_retries=2):
     client = genai.Client(api_key=api_key)
 
+   
     prompt = """Analyze the provided medicine/pharmaceutical product images. These are images of the SAME single product from different angles. Extract the product information by combining details visible across the multiple images.
 
-CRITICAL INSTRUCTIONS:
-1. Extract: product_name, manufacturer, salt_composition, batch_no, expiry_date, mrp, pack_type, units_per_pack, hsn_no.
-2. If "manufacturer" or "salt_composition" are NOT clearly visible, you MUST use your own medical knowledge to autofill them based on the "product_name".
-3. Provide a "confidence" score (0-100) based on how clearly you can read the data.
-4. IMPORTANT: If no images are provided or images are unreadable, you MUST return an error or low confidence result.
+Return a JSON object with these fields (use null if not visible except manufacturer and salt_composition because most of the bills dont have that so autofill only these fields in each item you identify in the bill):
+{
+  "product_name": "full product name",
+  "manufacturer": "manufacturer/company name. If not visible but you know it based on the product name, autofill it.",
+  "salt_composition": "active ingredients/composition. If not visible but you know it based on the product name, autofill it.",
+  "batch_no": "batch/lot number",
+  "expiry_date": "expiry date strictly in YYYY-MM-DD format (use last day of month if only MM/YY is given)",
+  "mrp": "MRP as number only (no currency symbol)",
+  "pack_size": "pack size description (e.g., '10 tablets', '100ml')",
+  "pack_type": "Strip/Bottle/Tube/Box/Vial/Syrup/Cream/Injection",
+  "units_per_pack": "number of units in pack as integer",
+  "hsn_no": "HSN code if visible"
+}
+
+Important: Only return valid JSON, no other text.
 """
 
     contents = [prompt]
@@ -28,10 +39,17 @@ CRITICAL INSTRUCTIONS:
             req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
             with urllib.request.urlopen(req) as response:
                 image_data = response.read()
+                mime_type = "image/webp"
+                url_lower = url.lower()
+                if url_lower.endswith(".jpg") or url_lower.endswith(".jpeg"):
+                    mime_type = "image/jpeg"
+                elif url_lower.endswith(".png"):
+                    mime_type = "image/png"
+                
                 contents.append(
                     types.Part.from_bytes(
                         data=image_data,
-                        mime_type="image/webp"
+                        mime_type=mime_type
                     )
                 )
         except Exception as e:
