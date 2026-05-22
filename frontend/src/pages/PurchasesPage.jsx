@@ -218,22 +218,22 @@ const SupplierSelector = ({
   return (
     <div className={`relative ${className}`} ref={dropdownRef} onKeyDown={handleKeyDown}>
       <div 
-        className={`flex h-10 w-full items-center justify-between rounded-md border border-input bg-background/50 backdrop-blur-sm px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer hover:border-primary/50 transition-all ${isOpen ? 'border-primary ring-2 ring-primary/10' : 'border-border'}`}
+        className={`flex h-10 w-full items-center justify-between rounded-xl border bg-background/50 backdrop-blur-sm px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer hover:border-primary/50 transition-all ${isOpen ? 'border-primary ring-2 ring-primary/10' : 'border-border/70'}`}
         onClick={() => !disabled && setIsOpen(!isOpen)}
         tabIndex={0}
       >
-        <span className={`truncate ${!selectedId || selectedId === "" ? "text-muted-foreground" : "font-medium"}`}>
+        <span className={`truncate ${!selectedId || selectedId === "" ? "text-muted-foreground/60" : "font-semibold text-foreground"}`}>
           {selectedId === "all" ? "All Suppliers" : (selectedSupplier?.name || placeholder)}
         </span>
         <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} />
       </div>
 
       {isOpen && (
-        <div className="absolute z-[100] mt-2 max-h-60 w-full overflow-hidden rounded-xl border border-white/10 bg-card/95 backdrop-blur-xl text-popover-foreground shadow-2xl animate-in fade-in zoom-in-95 duration-200">
-          <div className="flex items-center border-b border-white/5 px-3">
+        <div className="absolute z-[100] mt-2 max-h-60 w-full overflow-hidden rounded-xl border border-border/80 bg-card/95 backdrop-blur-xl text-popover-foreground shadow-2xl animate-in fade-in zoom-in-95 duration-200">
+          <div className="flex items-center border-b border-border/40 px-3">
             <Search className="mr-2 h-4 w-4 shrink-0 opacity-50" />
             <input
-              className="flex h-11 w-full rounded-md bg-transparent py-3 text-sm outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50"
+              className="flex h-11 w-full rounded-md bg-transparent py-3 text-sm outline-none placeholder:text-muted-foreground/60 disabled:cursor-not-allowed disabled:opacity-50"
               placeholder="Search suppliers..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
@@ -254,11 +254,11 @@ const SupplierSelector = ({
             {showAllOption && (
               <div
                 data-index="-1"
-                className={`relative flex w-full cursor-default select-none items-center rounded-lg py-2.5 pl-9 pr-2 text-sm outline-none transition-colors ${highlightedIndex === -1 ? 'bg-primary/10 text-primary' : (selectedId === "all" ? "bg-primary/20 text-primary font-bold" : "text-foreground/80 hover:bg-primary/5")}`}
+                className={`relative flex w-full cursor-default select-none items-center rounded-lg py-2.5 pl-9 pr-2 text-sm outline-none transition-colors ${highlightedIndex === -1 ? 'bg-primary/10 text-primary font-medium' : (selectedId === "all" ? "bg-primary/20 text-primary font-bold" : "text-foreground/80 hover:bg-primary/5")}`}
                 onClick={() => { onSelect({ id: "all", name: "All Suppliers" }); setIsOpen(false); }}
                 onMouseEnter={() => setHighlightedIndex(-1)}
               >
-                {selectedId === "all" && <Check className="absolute left-3 h-4 w-4" />}
+                {selectedId === "all" && <Check className="absolute left-3 h-4 w-4 text-primary" />}
                 All Suppliers
               </div>
             )}
@@ -266,11 +266,11 @@ const SupplierSelector = ({
               <div
                 key={s.id}
                 data-index={idx}
-                className={`relative flex w-full cursor-default select-none items-center rounded-lg py-2.5 pl-9 pr-2 text-sm outline-none transition-colors ${highlightedIndex === idx ? 'bg-primary/10 text-primary' : (selectedId === s.id ? "bg-primary/20 text-primary font-bold" : "text-foreground/80 hover:bg-primary/5")}`}
+                className={`relative flex w-full cursor-default select-none items-center rounded-lg py-2 pl-9 pr-2 text-sm outline-none transition-colors ${highlightedIndex === idx ? 'bg-primary/10 text-primary font-medium' : (selectedId === s.id ? "bg-primary/20 text-primary font-bold" : "text-foreground/80 hover:bg-primary/5")}`}
                 onClick={() => { onSelect(s); setIsOpen(false); }}
                 onMouseEnter={() => setHighlightedIndex(idx)}
               >
-                {selectedId === s.id && <Check className="absolute left-3 h-4 w-4" />}
+                {selectedId === s.id && <Check className="absolute left-3 h-4 w-4 text-primary" />}
                 <div className="flex flex-col overflow-hidden">
                   <span className="truncate">{s.name}</span>
                   {s.phone && <span className="text-[10px] opacity-60 font-mono">{s.phone}</span>}
@@ -1814,7 +1814,7 @@ export default function PurchasesPage() {
   }
 
   return (
-    <div className="space-y-6 animate-fade-in" data-testid="purchases-page">
+    <div className="space-y-6 animate-fade-in pb-24" data-testid="purchases-page">
       {/* Restore Draft Dialog */}
       <Dialog open={paymentDialog.open} onOpenChange={(open) => !open && setPaymentDialog({ open: false, purchase: null })}>
         <DialogContent>
@@ -2067,14 +2067,14 @@ export default function PurchasesPage() {
       {/* New Purchase - Inline Table Entry with UNIT-BASED fields */}
       {showNewPurchase && (
         <Card
-          className="border-primary/30 bg-primary/5 relative overflow-hidden"
+          className="glass bg-card/45 backdrop-blur-xl border border-primary/30 relative overflow-hidden shadow-2xl rounded-2xl"
           data-testid="new-purchase-form"
         >
           {isAiLoading && (
             <div className="absolute inset-0 z-[100] flex flex-col items-center justify-center bg-background/60 backdrop-blur-md transition-all duration-300">
               <div className="relative">
-                <div className="absolute inset-0 bg-indigo-500/20 blur-xl rounded-full"></div>
-                <Loader2 className="w-12 h-12 text-indigo-600 animate-spin relative z-10" />
+                <div className="absolute inset-0 bg-primary/20 blur-xl rounded-full"></div>
+                <Loader2 className="w-12 h-12 text-primary animate-spin relative z-10" />
               </div>
               <p className="mt-5 text-lg font-extrabold text-foreground tracking-wide animate-pulse">
                 Running AI Analysis...
@@ -2128,7 +2128,7 @@ export default function PurchasesPage() {
               <div
                 className={`flex justify-end pr-10 transition-all duration-300 overflow-hidden ${aiAutofillEnabled ? "max-h-12 opacity-100" : "max-h-0 opacity-0"}`}
               >
-                <div className="text-[11px] font-medium text-amber-600 bg-amber-50 dark:bg-amber-500/10 px-3 py-1.5 rounded-md border border-amber-200/50 dark:border-amber-500/20 flex items-center gap-1.5 shadow-sm">
+                <div className="text-[11px] font-medium text-amber-600 dark:text-amber-400 bg-amber-500/10 px-3 py-1.5 rounded-md border border-amber-500/20 flex items-center gap-1.5 shadow-sm backdrop-blur-sm">
                   <AlertCircle className="w-3.5 h-3.5" />
                   Generative AI may be inaccurate. Please review the autofilled
                   details below before saving.
@@ -2490,7 +2490,7 @@ export default function PurchasesPage() {
                               createPortal(
                                 <div
                                   data-suggestions-dropdown="true"
-                                  className="bg-card border border-border rounded-lg shadow-2xl overflow-y-auto z-[99999]"
+                                  className="bg-card/95 backdrop-blur-xl border border-border/80 rounded-xl shadow-2xl overflow-y-auto z-[99999]"
                                   style={{
                                     position: "fixed",
                                     top: dropdownPosition.top,
@@ -3349,7 +3349,7 @@ export default function PurchasesPage() {
       {/* Search and Filters */}
       {!showNewPurchase && editingPurchaseId === null && (
         <>
-          <Card className="p-4">
+          <Card className="glass bg-card/45 backdrop-blur-xl border border-border/70 shadow-lg rounded-2xl p-5">
             <div className="flex flex-col md:flex-row gap-4">
               <div className="flex-1">
                 <div className="relative">
@@ -3410,7 +3410,7 @@ export default function PurchasesPage() {
           </Card>
 
           {/* Purchases Table */}
-          <Card className="data-table">
+          <Card className="glass bg-card/35 backdrop-blur-xl border border-border/70 shadow-lg rounded-2xl overflow-hidden">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -3714,39 +3714,75 @@ export default function PurchasesPage() {
                 )}
               </TableBody>
             </Table>
-          </Card>
+            {/* Pagination */}
+            {pagination.total_pages > 1 && (
+              <div className="flex items-center justify-between px-6 py-4 border-t border-border/40 bg-muted/5">
+                <div className="text-xs font-bold text-muted-foreground/80">
+                  Showing {((pagination.page - 1) * pagination.limit) + 1} to{" "}
+                  {Math.min(pagination.page * pagination.limit, pagination.total)}{" "}
+                  of {pagination.total} purchases
+                </div>
 
-          {/* Pagination */}
-          {pagination.total_pages > 1 && (
-            <div className="flex items-center justify-between">
-              <p className="text-sm text-muted-foreground">
-                Showing {(pagination.page - 1) * pagination.limit + 1} to{" "}
-                {Math.min(pagination.page * pagination.limit, pagination.total)}{" "}
-                of {pagination.total} purchases
-              </p>
-              <div className="flex gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => fetchPurchases(pagination.page - 1)}
-                  disabled={pagination.page <= 1}
-                >
-                  <ChevronLeft className="w-4 h-4" />
-                </Button>
-                <span className="flex items-center px-3 text-sm">
-                  Page {pagination.page} of {pagination.total_pages}
-                </span>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => fetchPurchases(pagination.page + 1)}
-                  disabled={pagination.page >= pagination.total_pages}
-                >
-                  <ChevronRight className="w-4 h-4" />
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => fetchPurchases(pagination.page - 1)}
+                    disabled={pagination.page <= 1}
+                    className="h-8 text-xs font-bold border-border/80 hover:bg-muted rounded-lg"
+                  >
+                    <ChevronLeft className="h-3.5 w-3.5 mr-1 text-primary" />
+                    Previous
+                  </Button>
+
+                  <div className="flex items-center gap-1">
+                    {Array.from(
+                      { length: Math.min(5, pagination.total_pages) },
+                      (_, i) => {
+                        const pageNum =
+                          Math.max(
+                            1,
+                            Math.min(
+                              pagination.total_pages - 4,
+                              pagination.page - 2
+                            )
+                          ) + i;
+                        if (pageNum > pagination.total_pages) return null;
+                        return (
+                          <Button
+                            key={pageNum}
+                            variant={
+                              pageNum === pagination.page ? "default" : "outline"
+                            }
+                            size="sm"
+                            onClick={() => fetchPurchases(pageNum)}
+                            className={`w-8 h-8 p-0 text-xs font-bold rounded-lg border ${
+                              pageNum === pagination.page
+                                ? "bg-primary text-primary-foreground shadow-md shadow-primary/10 border-primary"
+                                : "border-border/80 hover:bg-muted"
+                            }`}
+                          >
+                            {pageNum}
+                          </Button>
+                        );
+                      }
+                    )}
+                  </div>
+
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => fetchPurchases(pagination.page + 1)}
+                    disabled={pagination.page >= pagination.total_pages}
+                    className="h-8 text-xs font-bold border-border/80 hover:bg-muted rounded-lg"
+                  >
+                    Next
+                    <ChevronRight className="h-3.5 w-3.5 ml-1 text-primary" />
+                  </Button>
+                </div>
               </div>
-            </div>
-          )}
+            )}
+          </Card>
         </>
       )}
 
@@ -4099,7 +4135,7 @@ export default function PurchasesPage() {
 
       {/* TABS & ACTION NAVBAR */}
       {(showNewPurchase || editingPurchaseId) && (
-        <div className="fixed bottom-0 left-0 md:left-[250px] right-0 z-[100] flex items-center justify-between bg-card/95 backdrop-blur-md border-t border-border shadow-[0_-8px_30px_rgba(0,0,0,0.12)] px-6 py-4 gap-4 overflow-x-auto scroller-hide overflow-y-hidden mb-0 transition-all duration-300">
+        <div className="fixed bottom-0 left-0 md:left-[250px] right-0 z-[100] flex items-center justify-between bg-card/85 backdrop-blur-xl border-t border-border/80 shadow-[0_-8px_30px_rgba(0,0,0,0.12)] px-6 py-4 gap-4 overflow-x-auto scroller-hide overflow-y-hidden mb-0 transition-all duration-300">
           <div className="flex items-center gap-2 overflow-x-auto scroller-hide">
             {showNewPurchase && tabs.map((tab, idx) => {
               const isActive = tab.id === activeTabId;
@@ -4115,7 +4151,7 @@ export default function PurchasesPage() {
                     variant={isActive ? "default" : "secondary"}
                     size="sm"
                     onClick={(e) => { e.preventDefault(); switchTab(tab.id); }}
-                    className={`pr-8 h-9 ${isActive ? "shadow-md ring-1 ring-primary/50" : "opacity-80 hover:opacity-100"}`}
+                    className={`pr-8 h-9 rounded-full transition-all duration-200 ${isActive ? "bg-primary text-primary-foreground shadow-md font-bold ring-1 ring-primary/50" : "bg-muted/65 hover:bg-muted/90 text-muted-foreground hover:text-foreground font-medium"}`}
                   >
                     <FileText className="w-3.5 h-3.5 mr-1.5 opacity-70" />
                     <span className="max-w-[120px] truncate">{tabName}</span>
@@ -4140,7 +4176,7 @@ export default function PurchasesPage() {
                 variant="outline"
                 size="sm"
                 onClick={createNewTab}
-                className="bg-primary/5 hover:bg-primary/10 border-primary/20 text-primary shrink-0 transition-colors shadow-sm h-9"
+                className="bg-primary/5 hover:bg-primary/10 border-primary/20 text-primary shrink-0 transition-colors shadow-sm h-9 rounded-full"
               >
                 <Plus className="w-4 h-4 mr-1" /> New Tab
               </Button>

@@ -607,9 +607,12 @@ router.get(
           };
         }
 
-        const totalAmount = (purchase.items || []).reduce((sum, item) => {
-          return sum + (item.pack_quantity || 1) * (item.pack_price || 0);
-        }, 0);
+        const totalAmount = typeof purchase.total_amount === "number" && purchase.total_amount > 0
+          ? purchase.total_amount
+          : (purchase.items || []).reduce((sum, item) => {
+              const itemTotal = item.item_total || (item.pack_quantity || item.quantity || 1) * (item.pack_price || item.purchase_price || 0);
+              return sum + (itemTotal || 0);
+            }, 0);
 
         supplierStats[supplierId].total_amount += totalAmount;
         supplierStats[supplierId].purchase_count += 1;

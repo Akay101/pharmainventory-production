@@ -36,7 +36,6 @@ import {
   PanelLeftClose,
   PanelLeft,
   Activity,
-  Keyboard,
 } from "lucide-react";
 
 import RecentActivitySidebar from "./RecentActivitySidebar";
@@ -57,32 +56,41 @@ const navItems = [
 
 const Sidebar = ({ mobile = false, onClose, collapsed = false, onToggle }) => {
   const { user, pharmacy, isAdmin } = useAuth();
+  const location = useLocation();
 
   const filteredItems = navItems.filter((item) => !item.adminOnly || isAdmin);
 
   return (
     <TooltipProvider delayDuration={0}>
-      <div className="flex flex-col h-full">
-        {/* Logo */}
-        <div className={`p-4 border-b border-white/5 ${collapsed ? 'px-2' : 'p-6'}`}>
-          <div className={`flex items-center ${collapsed ? 'justify-center' : 'gap-3'}`}>
+      <div className="flex flex-col h-full bg-zinc-950/10 dark:bg-zinc-950/30">
+        {/* Logo Section */}
+        <div className={`p-4 border-b border-border/40 ${collapsed ? "px-2" : "p-6"}`}>
+          <div className={`flex items-center ${collapsed ? "justify-center" : "gap-3"}`}>
             {pharmacy?.logo_url ? (
               <img
                 src={pharmacy.logo_url}
                 alt={pharmacy.name}
-                className={`rounded-lg object-cover ${collapsed ? 'w-8 h-8' : 'w-10 h-10'}`}
+                className={`rounded-xl object-cover border border-border/50 shadow-md shadow-primary/5 transition-transform duration-300 ${
+                  collapsed ? "w-8 h-8" : "w-10 h-10"
+                }`}
               />
             ) : (
-              <div className={`rounded-lg bg-primary/20 flex items-center justify-center ${collapsed ? 'w-8 h-8' : 'w-10 h-10'}`}>
-                <span className={`text-primary font-bold ${collapsed ? 'text-sm' : 'text-lg'}`}>P</span>
+              <div
+                className={`rounded-xl bg-primary flex items-center justify-center shadow-lg shadow-primary/20 transition-all duration-300 ${
+                  collapsed ? "w-9 h-9" : "w-10 h-10"
+                }`}
+              >
+                <span className={`text-primary-foreground font-black tracking-wider ${collapsed ? "text-base" : "text-lg"}`}>
+                  P
+                </span>
               </div>
             )}
             {!collapsed && (
-              <div>
-                <h1 className="font-bold text-lg text-foreground truncate max-w-[140px]">
+              <div className="min-w-0 flex-1">
+                <h1 className="font-extrabold text-base text-foreground truncate tracking-tight">
                   {pharmacy?.name || "Pharmalogy"}
                 </h1>
-                <p className="text-xs text-muted-foreground truncate max-w-[140px]">
+                <p className="text-[10px] font-semibold text-muted-foreground/80 truncate">
                   {pharmacy?.location}
                 </p>
               </div>
@@ -92,44 +100,52 @@ const Sidebar = ({ mobile = false, onClose, collapsed = false, onToggle }) => {
 
         {/* Collapse Toggle - Desktop only */}
         {!mobile && (
-          <div className={`px-2 py-2 border-b border-white/5 ${collapsed ? 'flex justify-center' : ''}`}>
+          <div className={`px-3 py-2 border-b border-border/40 ${collapsed ? "flex justify-center" : ""}`}>
             <Button
               variant="ghost"
               size="sm"
               onClick={onToggle}
-              className={`w-full ${collapsed ? 'px-2' : ''}`}
+              className={`w-full text-muted-foreground hover:text-foreground h-9 hover:bg-white/5 active:scale-[0.98] ${
+                collapsed ? "px-2" : "justify-start px-3"
+              }`}
               data-testid="sidebar-toggle"
             >
               {collapsed ? (
-                <PanelLeft className="w-4 h-4" />
+                <PanelLeft className="w-4 h-4 text-primary" />
               ) : (
-                <>
-                  <PanelLeftClose className="w-4 h-4 mr-2" />
-                  <span>Collapse</span>
-                </>
+                <div className="flex items-center gap-2">
+                  <PanelLeftClose className="w-4 h-4 text-primary" />
+                  <span className="text-xs font-bold uppercase tracking-wider">Collapse Sidebar</span>
+                </div>
               )}
             </Button>
           </div>
         )}
 
-        {/* Navigation */}
-        <nav className={`flex-1 p-2 space-y-1 overflow-y-auto ${collapsed ? 'px-1' : 'p-4'}`}>
-          {filteredItems.map((item) => (
-            collapsed ? (
+        {/* Navigation Section */}
+        <nav className={`flex-1 p-2 space-y-1.5 overflow-y-auto ${collapsed ? "px-1" : "p-4"}`}>
+          {filteredItems.map((item) => {
+            const isItemActive =
+              location.pathname === item.path ||
+              (item.path !== "/dashboard" && location.pathname.startsWith(item.path));
+
+            return collapsed ? (
               <Tooltip key={item.path}>
                 <TooltipTrigger asChild>
                   <NavLink
                     to={item.path}
                     onClick={onClose}
-                    className={({ isActive }) =>
-                      `sidebar-link justify-center px-2 ${isActive ? "active" : ""}`
-                    }
+                    className={`flex items-center justify-center w-10 h-10 mx-auto rounded-xl transition-all duration-250 cursor-pointer ${
+                      isItemActive
+                        ? "bg-primary text-primary-foreground shadow-lg shadow-primary/20 font-bold opacity-100"
+                        : "text-muted-foreground hover:text-foreground hover:bg-white/5 opacity-70 hover:opacity-100"
+                    }`}
                     data-testid={`nav-${item.path.slice(1)}`}
                   >
-                    <item.icon className="w-5 h-5" />
+                    <item.icon className={`w-5 h-5 shrink-0 ${isItemActive ? "text-primary-foreground" : "text-muted-foreground"}`} />
                   </NavLink>
                 </TooltipTrigger>
-                <TooltipContent side="right">
+                <TooltipContent side="right" className="font-bold text-xs">
                   {item.label}
                 </TooltipContent>
               </Tooltip>
@@ -138,54 +154,58 @@ const Sidebar = ({ mobile = false, onClose, collapsed = false, onToggle }) => {
                 key={item.path}
                 to={item.path}
                 onClick={onClose}
-                className={({ isActive }) =>
-                  `sidebar-link flex justify-between items-center group ${isActive ? "active" : ""}`
-                }
+                className={`sidebar-link flex justify-between items-center group py-2.5 px-4 transition-all duration-200 ${
+                  isItemActive ? "nav-item-active" : ""
+                }`}
                 data-testid={`nav-${item.path.slice(1)}`}
               >
                 <div className="flex items-center gap-3">
-                  <item.icon className="w-5 h-5 flex-shrink-0" />
-                  <span>{item.label}</span>
+                  <item.icon className="w-5 h-5 shrink-0" />
+                  <span className="text-sm font-semibold">{item.label}</span>
                 </div>
                 {item.shortcut && (
-                  <kbd className="opacity-0 group-hover:opacity-100 transition-opacity text-[10px] font-mono font-medium text-muted-foreground bg-black/5 dark:bg-white/10 px-1.5 py-0.5 rounded shadow-sm">
+                  <kbd className="opacity-0 group-hover:opacity-100 transition-opacity text-[9px] font-mono font-bold text-muted-foreground/60 bg-muted/80 dark:bg-white/10 px-1.5 py-0.5 rounded border border-border/30 shadow-sm uppercase">
                     {formatShortcut(item.shortcut)}
                   </kbd>
                 )}
               </NavLink>
-            )
-          ))}
+            );
+          })}
         </nav>
 
-        {/* User Info */}
-        <div className={`p-2 border-t border-white/5 ${collapsed ? 'px-1' : 'p-4'}`}>
+        {/* User Profile Container */}
+        <div className={`p-2 border-t border-border/40 ${collapsed ? "px-1" : "p-4"}`}>
           {collapsed ? (
             <Tooltip>
               <TooltipTrigger asChild>
-                <div className="flex justify-center">
-                  <Avatar className="w-8 h-8">
+                <div className="flex justify-center p-1 cursor-pointer">
+                  <Avatar className="w-8 h-8 ring-1 ring-border/50 shadow-md">
                     <AvatarImage src={user?.image_url} />
-                    <AvatarFallback className="bg-primary/20 text-primary text-sm">
+                    <AvatarFallback className="bg-primary/20 text-primary font-bold text-xs">
                       {user?.name?.charAt(0)?.toUpperCase()}
                     </AvatarFallback>
                   </Avatar>
                 </div>
               </TooltipTrigger>
-              <TooltipContent side="right">
-                {user?.name} ({user?.role})
+              <TooltipContent side="right" className="text-xs font-bold">
+                {user?.name} • {user?.role}
               </TooltipContent>
             </Tooltip>
           ) : (
-            <div className="flex items-center gap-3">
-              <Avatar className="w-9 h-9">
+            <div className="flex items-center gap-3 p-2.5 rounded-xl bg-card/40 border border-border/30 shadow-sm">
+              <Avatar className="w-9 h-9 ring-1 ring-border/50 shadow-md shrink-0">
                 <AvatarImage src={user?.image_url} />
-                <AvatarFallback className="bg-primary/20 text-primary">
+                <AvatarFallback className="bg-primary/20 text-primary font-bold">
                   {user?.name?.charAt(0)?.toUpperCase()}
                 </AvatarFallback>
               </Avatar>
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium truncate">{user?.name}</p>
-                <p className="text-xs text-muted-foreground">{user?.role}</p>
+                <p className="text-sm font-bold text-foreground truncate leading-tight">
+                  {user?.name}
+                </p>
+                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold bg-primary/10 text-primary uppercase tracking-wide mt-1">
+                  {user?.role}
+                </span>
               </div>
             </div>
           )}
@@ -200,34 +220,35 @@ export default function DashboardLayout() {
   const navigate = useNavigate();
   const [mobileOpen, setMobileOpen] = useState(false);
 
-  useKeyboardShortcut('b', () => navigate('/billing'), { alt: true });
-  useKeyboardShortcut('p', () => navigate('/purchases'), { alt: true });
-  useKeyboardShortcut('i', () => navigate('/inventory'), { alt: true });
-  useKeyboardShortcut('s', () => navigate('/suppliers'), { alt: true });
-  useKeyboardShortcut('c', () => navigate('/customers'), { alt: true });
+  useKeyboardShortcut("b", () => navigate("/billing"), { alt: true });
+  useKeyboardShortcut("p", () => navigate("/purchases"), { alt: true });
+  useKeyboardShortcut("i", () => navigate("/inventory"), { alt: true });
+  useKeyboardShortcut("s", () => navigate("/suppliers"), { alt: true });
+  useKeyboardShortcut("c", () => navigate("/customers"), { alt: true });
+  
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
-    const stored = localStorage.getItem('sidebarCollapsed');
-    return stored === 'true';
+    const stored = localStorage.getItem("sidebarCollapsed");
+    return stored === "true";
   });
 
   const [isDark, setIsDark] = useState(() => {
-    const stored = localStorage.getItem('theme');
-    return stored ? stored === 'dark' : true;
+    const stored = localStorage.getItem("theme");
+    return stored ? stored === "dark" : true;
   });
 
   const [activityOpen, setActivityOpen] = useState(() => {
-    const stored = localStorage.getItem('activityOpen');
-    return stored ? stored === 'true' : window.innerWidth >= 1024;
+    const stored = localStorage.getItem("activityOpen");
+    return stored ? stored === "true" : window.innerWidth >= 1024;
   });
 
-  // 🔄 Sync local state with DB settings when they load
+  // Sync settings when loaded
   useEffect(() => {
     if (settings) {
       if (settings.sidebar_collapsed !== undefined) {
         setSidebarCollapsed(settings.sidebar_collapsed);
       }
       if (settings.theme !== undefined) {
-        setIsDark(settings.theme === 'dark');
+        setIsDark(settings.theme === "dark");
       }
       if (settings.activity_sidebar_open !== undefined) {
         setActivityOpen(settings.activity_sidebar_open);
@@ -235,7 +256,7 @@ export default function DashboardLayout() {
     }
   }, [settings]);
 
-  useKeyboardShortcut('a', () => setActivityOpen(prev => !prev), { alt: true });
+  useKeyboardShortcut("a", () => setActivityOpen((prev) => !prev), { alt: true });
 
   const location = useLocation();
 
@@ -246,10 +267,10 @@ export default function DashboardLayout() {
       const interval = setInterval(() => {
         const el = document.getElementById(`record-${id}`);
         if (el) {
-          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          el.classList.add('bg-primary/20', 'transition-colors', 'duration-1000');
+          el.scrollIntoView({ behavior: "smooth", block: "center" });
+          el.classList.add("bg-primary/20", "transition-colors", "duration-1000");
           setTimeout(() => {
-            el.classList.remove('bg-primary/20');
+            el.classList.remove("bg-primary/20");
           }, 2000);
           clearInterval(interval);
         } else if (attempts > 10) {
@@ -257,40 +278,39 @@ export default function DashboardLayout() {
         }
         attempts++;
       }, 500);
-      
+
       return () => clearInterval(interval);
     }
   }, [location.state?.highlightId]);
 
   useEffect(() => {
-    // Apply theme to document
     if (isDark) {
-      document.documentElement.classList.remove('light');
-      localStorage.setItem('theme', 'dark');
+      document.documentElement.classList.remove("light");
+      localStorage.setItem("theme", "dark");
     } else {
-      document.documentElement.classList.add('light');
-      localStorage.setItem('theme', 'light');
+      document.documentElement.classList.add("light");
+      localStorage.setItem("theme", "light");
     }
   }, [isDark]);
 
   const toggleTheme = () => {
     const nextDark = !isDark;
     setIsDark(nextDark);
-    updateSetting('theme', nextDark ? 'dark' : 'light');
+    updateSetting("theme", nextDark ? "dark" : "light");
   };
 
   const toggleSidebar = () => {
     const nextCollapsed = !sidebarCollapsed;
     setSidebarCollapsed(nextCollapsed);
-    updateSetting('sidebar_collapsed', nextCollapsed);
-    localStorage.setItem('sidebarCollapsed', String(nextCollapsed));
+    updateSetting("sidebar_collapsed", nextCollapsed);
+    localStorage.setItem("sidebarCollapsed", String(nextCollapsed));
   };
 
   const toggleActivity = () => {
     const nextOpen = !activityOpen;
     setActivityOpen(nextOpen);
-    updateSetting('activity_sidebar_open', nextOpen);
-    localStorage.setItem('activityOpen', String(nextOpen));
+    updateSetting("activity_sidebar_open", nextOpen);
+    localStorage.setItem("activityOpen", String(nextOpen));
   };
 
   const handleLogout = () => {
@@ -299,89 +319,110 @@ export default function DashboardLayout() {
   };
 
   return (
-    <div className="min-h-screen bg-background flex" data-testid="dashboard-layout">
-      {/* Desktop Sidebar */}
-      <aside 
-        className={`border-r border-white/5 bg-card/30 backdrop-blur-xl hidden md:flex flex-col fixed h-full z-50 transition-all duration-300 ${
-          sidebarCollapsed ? 'w-16' : 'w-64'
+    <div className="min-h-screen bg-background flex select-none overflow-hidden" data-testid="dashboard-layout">
+      {/* Desktop Sidebar (Collapsible) */}
+      <aside
+        className={`border-r border-border/40 bg-card/25 backdrop-blur-xl hidden md:flex flex-col fixed h-full z-50 transition-all duration-300 ease-in-out ${
+          sidebarCollapsed ? "w-16" : "w-64"
         }`}
       >
         <Sidebar collapsed={sidebarCollapsed} onToggle={toggleSidebar} />
       </aside>
 
-      {/* Main Content */}
-      <div className={`flex-1 flex flex-col min-h-screen transition-all duration-300 ${
-        sidebarCollapsed ? 'md:ml-16' : 'md:ml-64'
-      }`}>
-        {/* Header */}
-        <header className="h-16 border-b border-white/5 bg-card/30 backdrop-blur-xl sticky top-0 z-40">
+      {/* Main Content Layout Wrapper */}
+      <div
+        className={`flex-1 flex flex-col min-h-screen transition-all duration-300 ease-in-out ${
+          sidebarCollapsed ? "md:ml-16" : "md:ml-64"
+        }`}
+      >
+        {/* Floating Glassy Header */}
+        <header className="h-16 border-b border-border/40 bg-card/25 backdrop-blur-xl sticky top-0 z-40 w-full transition-all">
           <div className="h-full px-4 md:px-6 flex items-center justify-between">
-            {/* Mobile Menu */}
+            {/* Mobile Menu Trigger */}
             <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
               <SheetTrigger asChild className="md:hidden">
-                <Button variant="ghost" size="icon" data-testid="mobile-menu-btn">
+                <Button variant="ghost" size="icon" className="hover:bg-muted" data-testid="mobile-menu-btn">
                   <Menu className="w-5 h-5" />
                 </Button>
               </SheetTrigger>
-              <SheetContent side="left" className="w-64 p-0 bg-card border-white/5">
+              <SheetContent side="left" className="w-64 p-0 bg-card border-r border-border/40">
                 <Sidebar mobile onClose={() => setMobileOpen(false)} />
               </SheetContent>
             </Sheet>
 
             <div className="hidden md:block" />
 
-            {/* Right Actions */}
-            <div className="flex items-center gap-2">
-              {/* Theme Toggle */}
-              <Button 
-                variant="ghost" 
-                size="icon" 
+            {/* Right Header Navigation Panel */}
+            <div className="flex items-center gap-3">
+              {/* Theme Toggle Button */}
+              <Button
+                variant="ghost"
+                size="icon"
                 onClick={toggleTheme}
                 data-testid="theme-toggle-btn"
-                className="relative"
+                className="relative hover:bg-muted transition-transform active:scale-95"
               >
                 {isDark ? (
-                  <Sun className="w-5 h-5 text-yellow-400" />
+                  <Sun className="w-5 h-5 text-amber-400 drop-shadow-[0_0_8px_rgba(251,191,36,0.3)]" />
                 ) : (
-                  <Moon className="w-5 h-5 text-purple-500" />
+                  <Moon className="w-5 h-5 text-violet-600 drop-shadow-[0_0_8px_rgba(124,58,237,0.2)]" />
                 )}
               </Button>
 
-              <Button variant="ghost" size="icon" className="relative" data-testid="notifications-btn">
+              {/* Notification Button */}
+              <Button variant="ghost" size="icon" className="relative hover:bg-muted" data-testid="notifications-btn">
                 <Bell className="w-5 h-5" />
-                <span className="absolute top-1 right-1 w-2 h-2 bg-destructive rounded-full"></span>
+                <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-destructive rounded-full shadow shadow-destructive/50 animate-pulse"></span>
               </Button>
 
-              <Button 
-                variant="ghost" 
-                size="icon" 
+              {/* Recent Activity Panel Toggle */}
+              <Button
+                variant="ghost"
+                size="icon"
                 onClick={toggleActivity}
-                className={`relative ${activityOpen ? 'bg-primary/10 text-primary' : ''}`}
-                title="Recent Activity"
+                className={`relative hover:bg-muted transition-all duration-200 ${
+                  activityOpen ? "bg-primary/10 text-primary hover:bg-primary/20" : ""
+                }`}
+                title="Recent Activity (Alt + A)"
               >
                 <Activity className="w-5 h-5" />
               </Button>
 
+              {/* User Dropdown Menu */}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" className="flex items-center gap-2" data-testid="user-menu-btn">
-                    <Avatar className="w-8 h-8">
+                  <Button
+                    variant="ghost"
+                    className="flex items-center gap-2 hover:bg-muted px-2 py-1.5 rounded-xl transition-all"
+                    data-testid="user-menu-btn"
+                  >
+                    <Avatar className="w-8 h-8 ring-1 ring-border/50 shadow-sm shrink-0">
                       <AvatarImage src={user?.image_url} />
-                      <AvatarFallback className="bg-primary/20 text-primary text-sm">
+                      <AvatarFallback className="bg-primary/20 text-primary text-xs font-bold">
                         {user?.name?.charAt(0)?.toUpperCase()}
                       </AvatarFallback>
                     </Avatar>
-                    <span className="hidden sm:inline text-sm">{user?.name}</span>
-                    <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                    <span className="hidden sm:inline text-sm font-bold text-foreground">
+                      {user?.name}
+                    </span>
+                    <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
                   </Button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-48">
-                  <DropdownMenuItem onClick={() => navigate("/settings")} data-testid="settings-dropdown">
-                    <Settings className="w-4 h-4 mr-2" />
+                <DropdownMenuContent align="end" className="w-48 mt-1 border border-border/40 shadow-xl rounded-xl">
+                  <DropdownMenuItem
+                    onClick={() => navigate("/settings")}
+                    data-testid="settings-dropdown"
+                    className="cursor-pointer font-medium py-2 rounded-lg"
+                  >
+                    <Settings className="w-4 h-4 mr-2 text-primary" />
                     Settings
                   </DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={handleLogout} className="text-destructive" data-testid="logout-btn">
+                  <DropdownMenuSeparator className="bg-border/40" />
+                  <DropdownMenuItem
+                    onClick={handleLogout}
+                    data-testid="logout-btn"
+                    className="text-destructive focus:text-destructive cursor-pointer font-medium py-2 rounded-lg"
+                  >
                     <LogOut className="w-4 h-4 mr-2" />
                     Logout
                   </DropdownMenuItem>
@@ -391,30 +432,32 @@ export default function DashboardLayout() {
           </div>
         </header>
 
-        {/* Page Content */}
+        {/* Inner Page View Controller */}
         <div className="flex-1 relative flex overflow-hidden">
           <main className="flex-1 p-4 md:p-6 lg:p-8 overflow-y-auto w-full">
             <Outlet />
           </main>
 
-          {/* Activity Sidebar Backdrop */}
+          {/* Activity Sidebar overlay backdrop */}
           {activityOpen && (
-            <div 
-              className="fixed inset-0 z-40 bg-background/40 backdrop-blur-sm transition-opacity" 
+            <div
+              className="fixed inset-0 z-45 bg-black/40 backdrop-blur-xs transition-opacity duration-300 md:hidden"
               onClick={() => setActivityOpen(false)}
             />
           )}
 
-          {/* Activity Sidebar overlay */}
-          <div className={`fixed right-0 top-0 bottom-0 z-50 shadow-2xl transition-transform duration-300 transform ${
-            activityOpen ? "translate-x-0" : "translate-x-full"
-          }`}>
+          {/* Activity Sidebar drawer panel overlay */}
+          <div
+            className={`fixed right-0 top-0 bottom-0 z-50 shadow-2xl transition-transform duration-300 ease-in-out transform ${
+              activityOpen ? "translate-x-0" : "translate-x-full"
+            }`}
+          >
             <RecentActivitySidebar open={activityOpen} onClose={() => setActivityOpen(false)} />
           </div>
         </div>
       </div>
 
-      {/* Global AI Agent Widget */}
+      {/* Global AI Agent Interface widget */}
       <AgentWidget user={user} />
     </div>
   );

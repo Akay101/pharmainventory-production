@@ -22,7 +22,8 @@ import {
   ArrowDownRight,
   Check,
   Truck,
-  CreditCard,
+  Calendar,
+  Layers,
 } from "lucide-react";
 import {
   AlertDialog,
@@ -77,46 +78,46 @@ const StatCard = ({
   color = "primary",
 }) => {
   const colorClasses = {
-    primary: "text-primary",
-    accent: "text-accent",
-    destructive: "text-destructive",
-    yellow: "text-yellow-500",
+    primary: "text-primary shadow-primary/5",
+    accent: "text-accent shadow-accent/5",
+    destructive: "text-destructive shadow-destructive/5",
+    yellow: "text-amber-500 shadow-amber-500/5",
+  };
+
+  const bgClasses = {
+    primary: "bg-primary/10 border-primary/20",
+    accent: "bg-accent/10 border-accent/20",
+    destructive: "bg-destructive/10 border-destructive/20",
+    yellow: "bg-amber-500/10 border-amber-500/20",
   };
 
   return (
-    <Card className="stat-card group hover:border-primary/20 transition-all duration-300">
-      <CardContent className="p-6">
-        <div className="flex items-start justify-between">
-          <div>
-            <p className="text-sm text-muted-foreground mb-1">{title}</p>
-            <p
-              className={`text-2xl font-bold font-mono ${colorClasses[color]}`}
-            >
-              {value}
-            </p>
-            {trend !== undefined && (
-              <div className="flex items-center gap-1 mt-2">
+    <Card className="group hover:border-primary/30 dark:hover:border-primary/20 transition-all duration-300 relative overflow-hidden bg-card/45 backdrop-blur-sm border-border/40 shadow-sm hover:shadow-md rounded-xl">
+      <div className="absolute top-0 left-0 w-full h-[1.5px] bg-gradient-to-r from-transparent via-primary/30 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+      <CardContent className="p-5 flex items-start justify-between">
+        <div className="space-y-1.5 min-w-0">
+          <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/80">{title}</p>
+          <p className="text-2xl font-black font-mono tracking-tight text-foreground truncate">
+            {value}
+          </p>
+          {trend !== undefined && (
+            <div className="flex items-center gap-1.5 pt-1">
+              <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                trend >= 0 ? "bg-primary/10 text-primary" : "bg-destructive/10 text-destructive"
+              }`}>
                 {trend >= 0 ? (
-                  <ArrowUpRight className="w-4 h-4 text-primary" />
+                  <ArrowUpRight className="w-3 h-3" />
                 ) : (
-                  <ArrowDownRight className="w-4 h-4 text-destructive" />
+                  <ArrowDownRight className="w-3 h-3" />
                 )}
-                <span
-                  className={`text-xs ${trend >= 0 ? "text-primary" : "text-destructive"}`}
-                >
-                  {Math.abs(trendValue || trend)}%
-                </span>
-                <span className="text-xs text-muted-foreground">
-                  vs last month
-                </span>
-              </div>
-            )}
-          </div>
-          <div
-            className={`p-3 rounded-xl bg-${color}/10 ${colorClasses[color]}`}
-          >
-            <Icon className="w-6 h-6" />
-          </div>
+                {Math.abs(trendValue || trend)}%
+              </span>
+              <span className="text-[10px] font-bold text-muted-foreground/60">vs last month</span>
+            </div>
+          )}
+        </div>
+        <div className={`p-3 rounded-2xl border transition-all duration-300 shadow-sm group-hover:scale-105 shrink-0 ${bgClasses[color]}`}>
+          <Icon className={`w-5 h-5 ${colorClasses[color]}`} />
         </div>
       </CardContent>
     </Card>
@@ -149,7 +150,7 @@ export default function DashboardPage() {
     supplierId: null,
     supplierName: "",
     amount: "0",
-    notes: ""
+    notes: "",
   });
   const [aiTips, setAiTips] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -214,7 +215,6 @@ export default function DashboardPage() {
     try {
       const response = await axios.post(`${API}/customers/${customerId}/clear-debt`);
       toast.success(response.data.message);
-      // Refresh dashboard data
       fetchDashboardData();
       setClearDebtDialog({ open: false, customerId: null, customerName: "" });
     } catch (error) {
@@ -230,7 +230,7 @@ export default function DashboardPage() {
       supplierId,
       supplierName,
       amount: "0",
-      notes: ""
+      notes: "",
     });
   };
 
@@ -238,7 +238,7 @@ export default function DashboardPage() {
     setSupplierClearDuesDialog({
       open: true,
       supplierId,
-      supplierName
+      supplierName,
     });
   };
 
@@ -281,10 +281,13 @@ export default function DashboardPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-center">
-          <div className="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-3"></div>
-          <p className="text-muted-foreground">Loading dashboard...</p>
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="text-center space-y-4">
+          <div className="relative w-12 h-12 mx-auto">
+            <div className="absolute inset-0 rounded-full border-4 border-primary/20"></div>
+            <div className="absolute inset-0 rounded-full border-4 border-primary border-t-transparent animate-spin"></div>
+          </div>
+          <p className="text-xs font-bold text-muted-foreground/80 uppercase tracking-widest animate-pulse">Loading Workspace Stats...</p>
         </div>
       </div>
     );
@@ -292,25 +295,26 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-6 animate-fade-in" data-testid="dashboard-page">
-      {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-bold">Dashboard</h1>
-          <p className="text-muted-foreground">
-            Welcome back! Here's what's happening at {pharmacy?.name}
+      {/* Header Panel */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-border/40 pb-5">
+        <div className="space-y-1">
+          <h1 className="text-2xl font-extrabold tracking-tight text-foreground">Dashboard</h1>
+          <p className="text-xs font-medium text-muted-foreground">
+            Welcome back! Here's what's happening at <span className="text-primary font-bold">{pharmacy?.name}</span>
           </p>
         </div>
         <Button
           variant="outline"
           onClick={fetchDashboardData}
           data-testid="refresh-dashboard-btn"
+          className="h-10 border-border hover:bg-muted font-bold text-xs uppercase tracking-wide px-4 rounded-xl shrink-0 self-start sm:self-center"
         >
-          <RefreshCw className="w-4 h-4 mr-2" />
-          Refresh
+          <RefreshCw className="w-3.5 h-3.5 mr-2 text-primary" />
+          Refresh Stats
         </Button>
       </div>
 
-      {/* Stats Grid */}
+      {/* Main Stats Grid */}
       <div className="dashboard-grid">
         <StatCard
           title="Today's Revenue"
@@ -327,7 +331,7 @@ export default function DashboardPage() {
         <StatCard
           title="Monthly Revenue"
           value={formatCurrency(stats?.month?.revenue)}
-          icon={Receipt}
+          icon={IndianRupee}
           color="accent"
         />
         <StatCard
@@ -338,7 +342,7 @@ export default function DashboardPage() {
         />
       </div>
 
-      {/* Second Row Stats */}
+      {/* Secondary Stats Row */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <StatCard
           title="Pending Payments"
@@ -350,9 +354,7 @@ export default function DashboardPage() {
           title="Low Stock Items"
           value={alerts.low_stock_alerts?.length || 0}
           icon={AlertTriangle}
-          color={
-            alerts.low_stock_alerts?.length > 0 ? "destructive" : "primary"
-          }
+          color={alerts.low_stock_alerts?.length > 0 ? "destructive" : "primary"}
         />
         <StatCard
           title="Expiring Soon"
@@ -362,50 +364,58 @@ export default function DashboardPage() {
         />
       </div>
 
-      {/* Charts Row */}
+      {/* Charts Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Sales Trend Chart */}
-        <Card className="bg-card/50 backdrop-blur-sm border-white/5">
-          <CardHeader>
-            <CardTitle className="text-lg">Sales Trend (30 Days)</CardTitle>
+        <Card className="bg-card/45 border-border/40 backdrop-blur-sm shadow-sm rounded-xl overflow-hidden">
+          <CardHeader className="border-b border-border/40 py-4">
+            <CardTitle className="text-sm font-bold tracking-tight text-foreground flex items-center gap-2">
+              <TrendingUp className="w-4 h-4 text-primary" />
+              Sales Trend (30 Days)
+            </CardTitle>
           </CardHeader>
-          <CardContent>
+          <CardContent className="p-6">
             <div className="h-64">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={salesTrend}>
-                  <CartesianGrid
-                    strokeDasharray="3 3"
-                    stroke="hsl(var(--border))"
-                  />
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.03)" vertical={false} />
                   <XAxis
                     dataKey="date"
                     stroke="hsl(var(--muted-foreground))"
-                    tick={{ fontSize: 12 }}
+                    tick={{ fontSize: 10, fontWeight: "bold" }}
+                    tickLine={false}
+                    axisLine={false}
                     tickFormatter={(value) => value.slice(5)}
                   />
                   <YAxis
                     stroke="hsl(var(--muted-foreground))"
-                    tick={{ fontSize: 12 }}
+                    tick={{ fontSize: 10, fontWeight: "bold" }}
+                    tickLine={false}
+                    axisLine={false}
                     tickFormatter={(value) => `₹${value / 1000}k`}
                   />
                   <Tooltip
-                    contentStyle={{
-                      backgroundColor: "hsl(var(--card))",
-                      border: "1px solid hsl(var(--border))",
-                      borderRadius: "8px",
+                    content={({ active, payload, label }) => {
+                      if (active && payload && payload.length) {
+                        return (
+                          <div className="bg-card/95 border border-border/50 rounded-xl p-3 shadow-xl backdrop-blur-md">
+                            <p className="text-[9px] font-bold text-muted-foreground/80 mb-1">{label}</p>
+                            <p className="text-xs font-black font-mono text-primary">
+                              ₹{payload[0].value.toLocaleString("en-IN")}
+                            </p>
+                          </div>
+                        );
+                      }
+                      return null;
                     }}
-                    formatter={(value) => [
-                      `₹${value.toLocaleString("en-IN")}`,
-                      "Revenue",
-                    ]}
                   />
                   <Line
                     type="monotone"
                     dataKey="revenue"
                     stroke="hsl(var(--primary))"
-                    strokeWidth={2}
+                    strokeWidth={3}
                     dot={false}
-                    activeDot={{ r: 4 }}
+                    activeDot={{ r: 5, strokeWidth: 0, fill: "hsl(var(--primary))" }}
                   />
                 </LineChart>
               </ResponsiveContainer>
@@ -413,51 +423,58 @@ export default function DashboardPage() {
           </CardContent>
         </Card>
 
-        {/* Top Products Chart */}
-        <Card className="bg-card/50 backdrop-blur-sm border-white/5">
-          <CardHeader>
-            <CardTitle className="text-lg">Top Selling Products</CardTitle>
+        {/* Top Selling Products Chart */}
+        <Card className="bg-card/45 border-border/40 backdrop-blur-sm shadow-sm rounded-xl overflow-hidden">
+          <CardHeader className="border-b border-border/40 py-4 flex flex-row items-center justify-between flex-wrap gap-2">
+            <div>
+              <CardTitle className="text-sm font-bold tracking-tight text-foreground flex items-center gap-2">
+                <Layers className="w-4 h-4 text-accent" />
+                Top Selling Products
+              </CardTitle>
+            </div>
             {user?.subscription_plan && (
-              <div className="text-sm text-muted-foreground mt-1">
-                Plan:{" "}
-                <span className="font-semibold">{user.subscription_plan}</span>{" "}
-                | Expiry:{" "}
-                {new Date(user.subscription_expiry).toLocaleDateString()}
-              </div>
+              <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[9px] font-bold bg-accent/15 text-accent border border-accent/20">
+                Plan: {user.subscription_plan}
+              </span>
             )}
           </CardHeader>
-          <CardContent>
+          <CardContent className="p-6">
             <div className="h-64">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={topProducts} layout="vertical">
-                  <CartesianGrid
-                    strokeDasharray="3 3"
-                    stroke="hsl(var(--border))"
-                  />
+                <BarChart data={topProducts} layout="vertical" barSize={12}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.03)" horizontal={false} />
                   <XAxis
                     type="number"
                     stroke="hsl(var(--muted-foreground))"
-                    tick={{ fontSize: 12 }}
+                    tick={{ fontSize: 10, fontWeight: "bold" }}
+                    tickLine={false}
+                    axisLine={false}
                     tickFormatter={(value) => `₹${value / 1000}k`}
                   />
                   <YAxis
-                    dataKey="name"
+                    dataKey="product_name"
                     type="category"
                     stroke="hsl(var(--muted-foreground))"
-                    tick={{ fontSize: 11 }}
+                    tick={{ fontSize: 9, fontWeight: "bold" }}
                     width={100}
-                    tickFormatter={(value) => value.slice(0, 15)}
+                    tickLine={false}
+                    axisLine={false}
+                    tickFormatter={(value) => (value && value.length > 15 ? `${value.slice(0, 13)}...` : (value || ""))}
                   />
                   <Tooltip
-                    contentStyle={{
-                      backgroundColor: "hsl(var(--card))",
-                      border: "1px solid hsl(var(--border))",
-                      borderRadius: "8px",
+                    content={({ active, payload }) => {
+                      if (active && payload && payload.length) {
+                        return (
+                          <div className="bg-card/95 border border-border/50 rounded-xl p-3 shadow-xl backdrop-blur-md">
+                            <p className="text-[9px] font-bold text-muted-foreground/80 mb-0.5 truncate max-w-[150px]">{payload[0].payload.product_name}</p>
+                            <p className="text-xs font-black font-mono text-accent">
+                              ₹{payload[0].value.toLocaleString("en-IN")}
+                            </p>
+                          </div>
+                        );
+                      }
+                      return null;
                     }}
-                    formatter={(value) => [
-                      `₹${value.toLocaleString("en-IN")}`,
-                      "Revenue",
-                    ]}
                   />
                   <Bar
                     dataKey="revenue"
@@ -471,27 +488,30 @@ export default function DashboardPage() {
         </Card>
       </div>
 
-      {/* Alerts and AI Tips Row */}
+      {/* Alerts and AI Insights Panel Row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Alerts */}
-        <Card className="bg-card/50 backdrop-blur-sm border-white/5">
-          <CardHeader className="flex flex-row items-center justify-between">
-            <CardTitle className="text-lg">Inventory Alerts</CardTitle>
+        {/* Inventory Alerts Card */}
+        <Card className="bg-card/45 border-border/40 backdrop-blur-sm shadow-sm rounded-xl overflow-hidden">
+          <CardHeader className="border-b border-border/40 py-4">
+            <CardTitle className="text-sm font-bold tracking-tight text-foreground flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-primary" />
+              Inventory Alerts
+            </CardTitle>
           </CardHeader>
-          <CardContent className="space-y-4">
+          <CardContent className="p-6 space-y-4">
             {/* Low Stock Alerts */}
             {alerts.low_stock_alerts?.length > 0 && (
-              <div className="alert-warning">
-                <h4 className="font-medium text-yellow-400 mb-2 flex items-center gap-2">
-                  <AlertTriangle className="w-4 h-4" />
+              <div className="p-4 rounded-xl border border-yellow-500/30 bg-yellow-500/[0.04] space-y-2">
+                <h4 className="font-bold text-yellow-500 text-xs uppercase tracking-wider flex items-center gap-2">
+                  <AlertTriangle className="w-3.5 h-3.5" />
                   Low Stock ({alerts.low_stock_alerts.length})
                 </h4>
-                <ul className="space-y-1 text-sm">
+                <ul className="space-y-1.5 text-xs">
                   {alerts.low_stock_alerts.slice(0, 5).map((item, i) => (
-                    <li key={i} className="flex justify-between">
-                      <span>{item.product_name}</span>
-                      <span className="font-mono text-yellow-400">
-                        {item.quantity} left
+                    <li key={i} className="flex justify-between items-center py-0.5 border-b border-yellow-500/10 last:border-0">
+                      <span className="font-medium text-foreground">{item.product_name}</span>
+                      <span className="font-mono font-bold text-yellow-500 bg-yellow-500/10 px-1.5 py-0.5 rounded text-[10px]">
+                        {item.quantity} units left
                       </span>
                     </li>
                   ))}
@@ -501,18 +521,20 @@ export default function DashboardPage() {
 
             {/* Expiry Alerts */}
             {alerts.expiry_alerts?.length > 0 && (
-              <div className="alert-danger">
-                <h4 className="font-medium text-destructive mb-2 flex items-center gap-2">
-                  <Clock className="w-4 h-4" />
+              <div className="p-4 rounded-xl border border-destructive/30 bg-destructive/[0.04] space-y-2">
+                <h4 className="font-bold text-destructive text-xs uppercase tracking-wider flex items-center gap-2">
+                  <Clock className="w-3.5 h-3.5" />
                   Expiring Soon ({alerts.expiry_alerts.length})
                 </h4>
-                <ul className="space-y-1 text-sm">
+                <ul className="space-y-1.5 text-xs">
                   {alerts.expiry_alerts.slice(0, 5).map((item, i) => (
-                    <li key={i} className="flex justify-between">
-                      <span>
-                        {item.product_name} ({item.batch_no})
-                      </span>
-                      <span className="font-mono text-destructive">
+                    <li key={i} className="flex justify-between items-center py-0.5 border-b border-destructive/10 last:border-0">
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-medium text-foreground">{item.product_name}</span>
+                        <span className="font-mono text-[9px] text-muted-foreground/70 uppercase">({item.batch_no})</span>
+                      </div>
+                      <span className="font-mono font-bold text-destructive flex items-center gap-1">
+                        <Calendar className="w-3 h-3" />
                         {item.expiry_date}
                       </span>
                     </li>
@@ -523,22 +545,22 @@ export default function DashboardPage() {
 
             {alerts.low_stock_alerts?.length === 0 &&
               alerts.expiry_alerts?.length === 0 && (
-                <div className="alert-success">
-                  <p className="text-primary flex items-center gap-2">
-                    <TrendingUp className="w-4 h-4" />
-                    All good! No alerts at the moment.
+                <div className="p-4 rounded-xl border border-primary/20 bg-primary/[0.04]">
+                  <p className="text-primary text-xs font-bold flex items-center gap-2">
+                    <Check className="w-4 h-4 text-primary" />
+                    All stock thresholds healthy. No alerts active.
                   </p>
                 </div>
               )}
           </CardContent>
         </Card>
 
-        {/* AI Tips */}
-        <Card className="bg-card/50 backdrop-blur-sm border-white/5">
-          <CardHeader className="flex flex-row items-center justify-between">
-            <CardTitle className="text-lg flex items-center gap-2">
-              <Sparkles className="w-5 h-5 text-accent" />
-              AI Business Tips
+        {/* AI Business Insights Card */}
+        <Card className="bg-card/45 border-border/40 backdrop-blur-sm shadow-sm rounded-xl overflow-hidden">
+          <CardHeader className="border-b border-border/40 py-4 flex flex-row items-center justify-between">
+            <CardTitle className="text-sm font-bold tracking-tight text-foreground flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-accent" />
+              AI Business Insights
             </CardTitle>
             <Button
               variant="ghost"
@@ -546,29 +568,33 @@ export default function DashboardPage() {
               onClick={fetchAiTips}
               disabled={tipsLoading}
               data-testid="get-ai-tips-btn"
+              className="h-8 border border-border/40 hover:bg-muted font-bold text-[10px] uppercase px-3 rounded-lg text-muted-foreground hover:text-foreground"
             >
               {tipsLoading ? (
-                <RefreshCw className="w-4 h-4 animate-spin" />
+                <RefreshCw className="w-3 h-3 animate-spin text-accent" />
               ) : (
-                "Get Tips"
+                "Get Analysis"
               )}
             </Button>
           </CardHeader>
-          <CardContent>
+          <CardContent className="p-6">
             {aiTips ? (
-              <div className="prose prose-invert prose-sm max-w-none">
-                <div className="whitespace-pre-wrap text-muted-foreground">
+              <div className="prose prose-invert prose-xs max-w-none">
+                <div className="whitespace-pre-wrap text-muted-foreground text-xs leading-relaxed font-medium bg-muted/20 p-4 border border-border/30 rounded-xl">
                   {aiTips.tips}
                 </div>
-                <p className="text-xs text-muted-foreground/50 mt-4">
+                <p className="text-[9px] text-muted-foreground/45 mt-3 font-semibold text-right">
                   Generated: {new Date(aiTips.generated_at).toLocaleString()}
                 </p>
               </div>
             ) : (
               <div className="text-center py-8">
-                <Sparkles className="w-10 h-10 mx-auto text-accent/50 mb-3" />
-                <p className="text-muted-foreground text-sm">
-                  Click "Get Tips" to receive AI-powered business insights
+                <div className="w-10 h-10 rounded-full bg-accent/10 flex items-center justify-center mx-auto mb-3 shadow shadow-accent/5">
+                  <Sparkles className="w-5 h-5 text-accent animate-pulse" />
+                </div>
+                <p className="text-xs font-bold text-foreground">Awaiting Input Data</p>
+                <p className="text-[10px] text-muted-foreground/60 max-w-[240px] mx-auto mt-1 leading-relaxed">
+                  Trigger analysis to generate custom reports and stock optimizations.
                 </p>
               </div>
             )}
@@ -576,81 +602,84 @@ export default function DashboardPage() {
         </Card>
       </div>
 
-      {/* Debt Summary */}
+      {/* Debt summary Ledger Card */}
       {debtSummary && debtSummary.total_debt > 0 && (
-        <Card className="bg-card/50 backdrop-blur-sm border-white/5 overflow-hidden">
-          <CardHeader className="border-b border-white/5 bg-white/5">
-            <CardTitle className="text-lg">Payment Receivables</CardTitle>
+        <Card className="bg-card/45 border-border/40 backdrop-blur-sm shadow-sm rounded-xl overflow-hidden">
+          <CardHeader className="border-b border-border/40 py-4 bg-muted/20">
+            <CardTitle className="text-sm font-bold tracking-tight text-foreground flex items-center gap-2">
+              <Receipt className="w-4 h-4 text-amber-500" />
+              Receivables Ledger (Customers)
+            </CardTitle>
           </CardHeader>
           <CardContent className="p-0">
-            <div className="grid grid-cols-1 md:grid-cols-4 divide-y md:divide-y-0 md:divide-x divide-white/10 border-b border-white/5">
-              <div className="p-6 bg-yellow-500/5">
-                <p className="text-sm text-yellow-500/70 mb-1 font-medium">
+            <div className="grid grid-cols-1 sm:grid-cols-4 divide-y sm:divide-y-0 sm:divide-x divide-border/40 border-b border-border/40 bg-muted/[0.05]">
+              <div className="p-5 bg-amber-500/[0.02]">
+                <p className="text-[10px] text-amber-500 font-bold uppercase tracking-wider mb-1">
                   Total Outstanding
                 </p>
-                <p className="text-2xl font-bold font-mono text-yellow-500">
+                <p className="text-xl font-bold font-mono text-amber-500">
                   {formatCurrency(debtSummary.total_debt)}
                 </p>
               </div>
-              <div className="p-6 bg-destructive/5">
-                <p className="text-sm text-destructive/70 mb-1 font-medium font-medium">Overdue</p>
-                <p className="text-2xl font-bold font-mono text-destructive">
+              <div className="p-5 bg-destructive/[0.02]">
+                <p className="text-[10px] text-destructive font-bold uppercase tracking-wider mb-1">Overdue Amount</p>
+                <p className="text-xl font-bold font-mono text-destructive">
                   {formatCurrency(debtSummary.overdue_amount)}
                 </p>
               </div>
-              <div className="p-6">
-                <p className="text-sm text-muted-foreground mb-1">Unpaid Bills</p>
-                <p className="text-2xl font-bold font-mono">
+              <div className="p-5">
+                <p className="text-[10px] text-muted-foreground/80 font-bold uppercase tracking-wider mb-1">Unpaid Invoices</p>
+                <p className="text-xl font-bold font-mono text-foreground">
                   {debtSummary.total_unpaid_bills}
                 </p>
               </div>
-              <div className="p-6">
-                <p className="text-sm text-muted-foreground mb-1 font-medium">Overdue Bills</p>
-                <p className="text-2xl font-bold font-mono text-destructive/80">
+              <div className="p-5">
+                <p className="text-[10px] text-muted-foreground/80 font-bold uppercase tracking-wider mb-1">Overdue Count</p>
+                <p className="text-xl font-bold font-mono text-destructive/80">
                   {debtSummary.overdue_count}
                 </p>
               </div>
             </div>
 
             {debtSummary.top_debtors?.length > 0 && (
-              <div className="p-6">
-                <h4 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-4">
-                  Top Debtors
+              <div className="p-6 space-y-4">
+                <h4 className="text-[10px] font-bold text-muted-foreground/85 uppercase tracking-widest">
+                  Top Outstanding Debts
                 </h4>
-                <div className="space-y-3">
+                <div className="space-y-2.5">
                   {debtSummary.top_debtors.map((debtor, i) => (
                     <div
                       key={i}
-                      className="flex items-center justify-between p-4 rounded-xl bg-white/5 border border-white/5 hover:border-primary/20 transition-all group"
+                      className="flex items-center justify-between p-3.5 rounded-xl bg-card/25 border border-border/40 hover:border-primary/20 transition-all group shadow-sm hover:shadow-black/5"
                     >
-                      <div className="flex items-center gap-4">
-                        <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold">
-                          {debtor.name.charAt(0)}
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-9 h-9 rounded-full bg-primary/10 text-primary border border-primary/25 flex items-center justify-center font-extrabold text-xs shadow-sm shrink-0">
+                          {debtor.name.charAt(0).toUpperCase()}
                         </div>
-                        <div>
-                          <p className="font-semibold">{debtor.name}</p>
-                          <p className="text-xs text-muted-foreground">
+                        <div className="min-w-0">
+                          <p className="font-bold text-xs text-foreground truncate">{debtor.name}</p>
+                          <p className="text-[10px] text-muted-foreground font-semibold">
                             {debtor.bills_count} unpaid bills
                           </p>
                         </div>
                       </div>
                       
-                      <div className="flex items-center gap-6">
+                      <div className="flex items-center gap-4 shrink-0">
                         <div className="text-right">
-                          <p className="font-mono font-bold text-yellow-500">
+                          <p className="font-mono font-bold text-xs text-amber-500">
                             {formatCurrency(debtor.total_debt)}
                           </p>
-                          <p className="text-[10px] text-muted-foreground uppercase">Outstanding</p>
+                          <p className="text-[8px] text-muted-foreground/60 uppercase font-bold tracking-wider">Balance</p>
                         </div>
                         
                         <Button
                           size="sm"
                           variant="outline"
-                          className="w-10 h-10 p-0 rounded-full border-primary/20 hover:bg-primary hover:text-primary-foreground group-hover:border-primary transition-all"
+                          className="w-8 h-8 p-0 rounded-lg border-primary/20 text-primary hover:bg-primary hover:text-primary-foreground group-hover:border-primary transition-all duration-300"
                           onClick={() => handleClearDebt(debtor.id, debtor.name)}
-                          title="Mark as Paid"
+                          title="Mark Invoice as Settled"
                         >
-                          <Check className="w-5 h-5" />
+                          <Check className="w-4 h-4 stroke-[3]" />
                         </Button>
                       </div>
                     </div>
@@ -662,80 +691,81 @@ export default function DashboardPage() {
         </Card>
       )}
 
-      {/* Supplier Dues Summary */}
+      {/* Supplier payables ledger card */}
       {supplierDues && supplierDues.total_due > 0 && (
-        <Card className="bg-card/50 backdrop-blur-sm border-white/5 overflow-hidden">
-          <CardHeader className="border-b border-white/5 bg-white/5">
-            <CardTitle className="text-lg">Payment Due (Suppliers)</CardTitle>
+        <Card className="bg-card/45 border-border/40 backdrop-blur-sm shadow-sm rounded-xl overflow-hidden">
+          <CardHeader className="border-b border-border/40 py-4 bg-muted/20">
+            <CardTitle className="text-sm font-bold tracking-tight text-foreground flex items-center gap-2">
+              <Truck className="w-4 h-4 text-primary" />
+              Payables Ledger (Suppliers)
+            </CardTitle>
           </CardHeader>
           <CardContent className="p-0">
-            <div className="grid grid-cols-1 md:grid-cols-4 divide-y md:divide-y-0 md:divide-x divide-white/10 border-b border-white/5">
-              <div className="p-6 bg-primary/5">
-                <p className="text-sm text-primary/70 mb-1 font-medium">
+            <div className="grid grid-cols-1 sm:grid-cols-4 divide-y sm:divide-y-0 sm:divide-x divide-border/40 border-b border-border/40 bg-muted/[0.05]">
+              <div className="p-5 bg-primary/[0.02]">
+                <p className="text-[10px] text-primary font-bold uppercase tracking-wider mb-1">
                   Total Outstanding
                 </p>
-                <p className="text-2xl font-bold font-mono text-primary">
+                <p className="text-xl font-bold font-mono text-primary">
                   {formatCurrency(supplierDues.total_due)}
                 </p>
               </div>
-              <div className="p-6 bg-destructive/5">
-                <p className="text-sm text-destructive/70 mb-1 font-medium">Overdue Dues</p>
-                <p className="text-2xl font-bold font-mono text-destructive">
+              <div className="p-5 bg-destructive/[0.02]">
+                <p className="text-[10px] text-destructive font-bold uppercase tracking-wider mb-1">Overdue Dues</p>
+                <p className="text-xl font-bold font-mono text-destructive">
                   {formatCurrency(supplierDues.overdue_due)}
                 </p>
               </div>
-              <div className="p-6">
-                <p className="text-sm text-muted-foreground mb-1">Unpaid Purchases</p>
-                <p className="text-2xl font-bold font-mono">
+              <div className="p-5">
+                <p className="text-[10px] text-muted-foreground/80 font-bold uppercase tracking-wider mb-1">Unpaid Invoices</p>
+                <p className="text-xl font-bold font-mono text-foreground">
                   {supplierDues.unpaid_purchases_count}
                 </p>
               </div>
-              <div className="p-6">
-                <p className="text-sm text-muted-foreground mb-1 font-medium text-destructive/70 px-2 rounded-full border border-destructive/20 inline-block">Overdue Purchases</p>
-                <div className="mt-1">
-                  <p className="text-2xl font-bold font-mono text-destructive/80 inline-block">
-                    {supplierDues.overdue_count}
-                  </p>
-                </div>
+              <div className="p-5">
+                <p className="text-[10px] text-muted-foreground/80 font-bold uppercase tracking-wider mb-1">Overdue Count</p>
+                <p className="text-xl font-bold font-mono text-destructive/80">
+                  {supplierDues.overdue_count}
+                </p>
               </div>
             </div>
 
             {supplierDues.top_suppliers?.length > 0 && (
-              <div className="p-6">
-                <h4 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-4">
-                  Top Suppliers to Pay
+              <div className="p-6 space-y-4">
+                <h4 className="text-[10px] font-bold text-muted-foreground/85 uppercase tracking-widest">
+                  Top Pending Supplier Invoices
                 </h4>
-                <div className="space-y-3">
+                <div className="space-y-2.5">
                   {supplierDues.top_suppliers.map((supplier, i) => (
                     <div
                       key={i}
-                      className="flex items-center justify-between p-4 rounded-xl bg-white/5 border border-white/5 hover:border-primary/20 transition-all group"
+                      className="flex items-center justify-between p-3.5 rounded-xl bg-card/25 border border-border/40 hover:border-primary/20 transition-all group shadow-sm hover:shadow-black/5"
                     >
-                      <div className="flex items-center gap-4">
-                        <div className="w-10 h-10 rounded-full bg-accent/10 flex items-center justify-center text-accent font-bold">
-                          <Truck className="w-5 h-5" />
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-9 h-9 rounded-full bg-accent/10 text-accent border border-accent/25 flex items-center justify-center shadow-sm shrink-0">
+                          <Truck className="w-4 h-4" />
                         </div>
-                        <div>
-                          <p className="font-semibold">{supplier.name}</p>
-                          <p className="text-xs text-muted-foreground">
+                        <div className="min-w-0">
+                          <p className="font-bold text-xs text-foreground truncate">{supplier.name}</p>
+                          <p className="text-[10px] text-muted-foreground font-semibold">
                             {supplier.purchase_count} unpaid purchases
                           </p>
                         </div>
                       </div>
                       
-                      <div className="flex items-center gap-4">
-                        <div className="text-right mr-4">
-                          <p className="font-mono font-bold text-primary">
+                      <div className="flex items-center gap-4 shrink-0">
+                        <div className="text-right">
+                          <p className="font-mono font-bold text-xs text-primary">
                             {formatCurrency(supplier.total_debt)}
                           </p>
-                          <p className="text-[10px] text-muted-foreground uppercase">Outstanding</p>
+                          <p className="text-[8px] text-muted-foreground/60 uppercase font-bold tracking-wider">Outstanding</p>
                         </div>
                         
-                        <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-all duration-300">
                           <Button 
                             variant="outline" 
                             size="sm" 
-                            className="bg-white/5 border-white/10 hover:bg-primary/20 hover:text-primary hover:border-primary"
+                            className="h-8 text-[10px] font-bold border-border/60 hover:bg-primary/20 hover:text-primary hover:border-primary px-3 rounded-lg"
                             onClick={() => handleSupplierPartialPayment(supplier.id, supplier.name)}
                           >
                             Pay Part
@@ -743,10 +773,10 @@ export default function DashboardPage() {
                           <Button 
                             variant="outline" 
                             size="sm" 
-                            className="bg-primary/10 border-primary/20 text-primary hover:bg-primary hover:text-primary-foreground"
+                            className="h-8 text-[10px] font-bold bg-primary/10 border-primary/20 text-primary hover:bg-primary hover:text-primary-foreground px-3 rounded-lg"
                             onClick={() => handleSupplierClearDues(supplier.id, supplier.name)}
                           >
-                            Fully Paid
+                            Fully Settled
                           </Button>
                         </div>
                       </div>
@@ -766,22 +796,26 @@ export default function DashboardPage() {
           !open && setClearDebtDialog({ ...clearDebtDialog, open: false })
         }
       >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Clear Customer Debt?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This will mark all unpaid bills for{" "}
-              <span className="font-bold text-foreground">
+        <AlertDialogContent className="rounded-2xl border border-border/40 shadow-2xl max-w-md">
+          <AlertDialogHeader className="space-y-2">
+            <AlertDialogTitle className="font-extrabold text-base tracking-tight text-foreground flex items-center gap-2">
+              <Receipt className="w-5 h-5 text-amber-500" />
+              Settle Customer Account
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-xs leading-relaxed text-muted-foreground font-medium">
+              This action registers cash completion for all outstanding items on{" "}
+              <span className="font-extrabold text-foreground bg-muted/60 px-1.5 py-0.5 rounded">
                 {clearDebtDialog.customerName}
-              </span>{" "}
-              as paid and clear their outstanding balance. This action cannot be
-              undone.
+              </span>. 
+              The customer's active outstanding balance will reset to zero. This ledger write is permanent.
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={clearingDebt}>Cancel</AlertDialogCancel>
+          <AlertDialogFooter className="mt-4 gap-2">
+            <AlertDialogCancel className="h-10 text-xs font-bold border-border/80 hover:bg-muted rounded-xl" disabled={clearingDebt}>
+              Cancel
+            </AlertDialogCancel>
             <AlertDialogAction
-              className="bg-primary hover:bg-primary/90"
+              className="bg-primary hover:bg-primary/95 text-primary-foreground h-10 text-xs font-bold shadow-md shadow-primary/10 rounded-xl"
               onClick={(e) => {
                 e.preventDefault();
                 confirmClearDebt();
@@ -789,12 +823,12 @@ export default function DashboardPage() {
               disabled={clearingDebt}
             >
               {clearingDebt ? (
-                <>
-                  <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                <span className="flex items-center justify-center gap-1.5">
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
                   Processing...
-                </>
+                </span>
               ) : (
-                "Yes, Clear Debt"
+                <span>Yes, Settle Debt</span>
               )}
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -806,46 +840,52 @@ export default function DashboardPage() {
         open={supplierPartialPaymentDialog.open} 
         onOpenChange={(open) => !open && setSupplierPartialPaymentDialog({ ...supplierPartialPaymentDialog, open: false })}
       >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Register Partial Supplier Payment</DialogTitle>
+        <DialogContent className="rounded-2xl border border-border/40 shadow-2xl max-w-md p-6">
+          <DialogHeader className="border-b border-border/40 pb-4">
+            <DialogTitle className="font-extrabold text-base tracking-tight text-foreground flex items-center gap-2">
+              <Truck className="w-5 h-5 text-primary" />
+              Partial Supplier Payment
+            </DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-3">
-            <div className="space-y-2">
-              <Label>Paying to: {supplierPartialPaymentDialog.supplierName}</Label>
+            <div className="p-3 bg-muted/20 border border-border/40 rounded-xl">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/60">Supplier Name</span>
+              <p className="text-sm font-extrabold text-foreground mt-0.5">{supplierPartialPaymentDialog.supplierName}</p>
             </div>
             <div className="space-y-2">
-              <Label>Amount Paid (₹)</Label>
+              <Label className="text-xs font-bold text-muted-foreground/80">Amount Paid (₹)</Label>
               <Input 
                 type="number" 
                 min="0" 
                 step="0.01" 
-                placeholder="Enter amount"
+                placeholder="0.00"
                 value={supplierPartialPaymentDialog.amount} 
                 onChange={(e) => setSupplierPartialPaymentDialog({ ...supplierPartialPaymentDialog, amount: e.target.value })} 
+                className="h-10 text-sm font-bold border-border/80 focus:border-primary bg-card/25"
               />
-              <p className="text-[10px] text-muted-foreground">This amount will be applied to the oldest unpaid purchases first (FIFO).</p>
+              <p className="text-[9px] text-muted-foreground/60 font-semibold leading-relaxed">This amount will clear purchases in First-In First-Out (FIFO) chronological sequence.</p>
             </div>
             <div className="space-y-2">
-              <Label>Reference Notes</Label>
+              <Label className="text-xs font-bold text-muted-foreground/80">Reference Notes</Label>
               <Input 
-                placeholder="Check #, UPI Ref, etc." 
+                placeholder="Check #, UPI transaction ID, bank details..." 
                 value={supplierPartialPaymentDialog.notes} 
                 onChange={(e) => setSupplierPartialPaymentDialog({ ...supplierPartialPaymentDialog, notes: e.target.value })} 
+                className="h-10 text-sm border-border/80 focus:border-primary bg-card/25"
               />
             </div>
             <Button 
               onClick={confirmSupplierPartialPayment} 
               disabled={clearingDebt} 
-              className="w-full btn-primary"
+              className="w-full btn-primary h-10 text-xs font-bold bg-primary hover:bg-primary/95 text-primary-foreground shadow-md shadow-primary/10 rounded-xl mt-2"
             >
               {clearingDebt ? (
-                <>
-                  <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                <span className="flex items-center justify-center gap-1.5">
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
                   Processing...
-                </>
+                </span>
               ) : (
-                "Confirm Payment"
+                <span>Confirm Payment</span>
               )}
             </Button>
           </div>
@@ -859,18 +899,24 @@ export default function DashboardPage() {
           !open && setSupplierClearDuesDialog({ ...supplierClearDuesDialog, open: false })
         }
       >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Clear All Dues for {supplierClearDuesDialog.supplierName}?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Are you sure you want to clear all outstanding dues for this supplier? 
-              This will mark all unpaid purchases as fully paid. This action cannot be undone.
+        <AlertDialogContent className="rounded-2xl border border-border/40 shadow-2xl max-w-md">
+          <AlertDialogHeader className="space-y-2">
+            <AlertDialogTitle className="font-extrabold text-base tracking-tight text-foreground flex items-center gap-2">
+              <Truck className="w-5 h-5 text-primary" />
+              Settle Supplier Dues
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-xs leading-relaxed text-muted-foreground font-medium">
+              This action confirms full payment reconciliation for outstanding balances on{" "}
+              <span className="font-extrabold text-foreground bg-muted/60 px-1.5 py-0.5 rounded">
+                {supplierClearDuesDialog.supplierName}
+              </span>.
+              All unpaid invoice items will flag as settled. This action is irreversible.
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={clearingDebt}>Cancel</AlertDialogCancel>
+          <AlertDialogFooter className="mt-4 gap-2">
+            <AlertDialogCancel className="h-10 text-xs font-bold border-border/80 hover:bg-muted rounded-xl" disabled={clearingDebt}>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              className="bg-primary hover:bg-primary/90"
+              className="bg-primary hover:bg-primary/95 text-primary-foreground h-10 text-xs font-bold shadow-md shadow-primary/10 rounded-xl"
               onClick={(e) => {
                 e.preventDefault();
                 confirmSupplierClearAllDues();
@@ -878,12 +924,12 @@ export default function DashboardPage() {
               disabled={clearingDebt}
             >
               {clearingDebt ? (
-                <>
-                  <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                <span className="flex items-center justify-center gap-1.5">
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
                   Processing...
-                </>
+                </span>
               ) : (
-                "Yes, Clear All Dues"
+                <span>Yes, Settle All Dues</span>
               )}
             </AlertDialogAction>
           </AlertDialogFooter>

@@ -189,8 +189,14 @@ export default function InventoryPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="text-center space-y-4">
+          <div className="relative w-12 h-12 mx-auto">
+            <div className="absolute inset-0 rounded-full border-4 border-primary/20"></div>
+            <div className="absolute inset-0 rounded-full border-4 border-primary border-t-transparent animate-spin"></div>
+          </div>
+          <p className="text-xs font-bold text-muted-foreground/80 uppercase tracking-widest animate-pulse">Loading Inventory...</p>
+        </div>
       </div>
     );
   }
@@ -198,67 +204,72 @@ export default function InventoryPage() {
   return (
     <div className="space-y-6 animate-fade-in" data-testid="inventory-page">
       {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-bold">Inventory</h1>
-          <p className="text-muted-foreground">
-            {pagination.total} items in stock
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-border/40 pb-5">
+        <div className="space-y-1">
+          <h1 className="text-2xl font-extrabold tracking-tight text-foreground">Inventory</h1>
+          <p className="text-xs font-medium text-muted-foreground">
+            <span className="text-primary font-extrabold">{pagination.total}</span> items in stock
           </p>
         </div>
 
         <Dialog open={productDialog} onOpenChange={setProductDialog}>
           <DialogTrigger asChild>
-            <Button className="btn-primary" data-testid="add-product-btn">
-              <Plus className="w-4 h-4 mr-2" />
+            <Button className="bg-primary hover:bg-primary/95 text-primary-foreground h-10 text-xs font-bold shadow-md shadow-primary/10 rounded-xl px-4 flex items-center gap-2" data-testid="add-product-btn">
+              <Plus className="w-4 h-4" />
               Add Product
             </Button>
           </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Add New Product</DialogTitle>
+          <DialogContent className="rounded-2xl border border-border/40 shadow-2xl max-w-md p-6">
+            <DialogHeader className="border-b border-border/40 pb-4">
+              <DialogTitle className="font-extrabold text-base tracking-tight text-foreground flex items-center gap-2">
+                <Plus className="w-5 h-5 text-primary" />
+                Add New Product
+              </DialogTitle>
             </DialogHeader>
             <div className="space-y-4 pt-4">
               <div className="space-y-2">
-                <Label>Product Name *</Label>
+                <Label className="text-xs font-bold text-muted-foreground/80">Product Name *</Label>
                 <Input
                   placeholder="Paracetamol 500mg"
                   value={newProduct.name}
                   onChange={(e) => setNewProduct({ ...newProduct, name: e.target.value })}
                   data-testid="product-name-input"
+                  className="h-10 text-sm font-bold border-border/80 focus:border-primary bg-card/25"
                 />
               </div>
 
               <div className="space-y-2">
-                <Label>Category</Label>
+                <Label className="text-xs font-bold text-muted-foreground/80">Category</Label>
                 <Select
                   value={newProduct.category}
                   onValueChange={(v) => setNewProduct({ ...newProduct, category: v })}
                 >
-                  <SelectTrigger data-testid="product-category-select">
+                  <SelectTrigger data-testid="product-category-select" className="h-10 text-sm border-border/80 bg-card/25">
                     <SelectValue />
                   </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="medicine">Medicine</SelectItem>
-                    <SelectItem value="cosmetic">Cosmetic</SelectItem>
-                    <SelectItem value="consumable">Consumable</SelectItem>
-                    <SelectItem value="equipment">Equipment</SelectItem>
-                    <SelectItem value="other">Other</SelectItem>
+                  <SelectContent className="border border-border/40 shadow-xl rounded-xl">
+                    <SelectItem value="medicine" className="font-medium">Medicine</SelectItem>
+                    <SelectItem value="cosmetic" className="font-medium">Cosmetic</SelectItem>
+                    <SelectItem value="consumable" className="font-medium">Consumable</SelectItem>
+                    <SelectItem value="equipment" className="font-medium">Equipment</SelectItem>
+                    <SelectItem value="other" className="font-medium">Other</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
 
               <div className="space-y-2">
-                <Label>HSN Number</Label>
+                <Label className="text-xs font-bold text-muted-foreground/80">HSN Number</Label>
                 <Input
                   placeholder="30049099"
                   value={newProduct.hsn_no}
                   onChange={(e) => setNewProduct({ ...newProduct, hsn_no: e.target.value })}
                   data-testid="product-hsn-input"
+                  className="h-10 text-sm font-bold border-border/80 focus:border-primary bg-card/25"
                 />
               </div>
 
               <div className="space-y-2">
-                <Label>Low Stock Threshold</Label>
+                <Label className="text-xs font-bold text-muted-foreground/80">Low Stock Threshold</Label>
                 <Input
                   type="number"
                   placeholder="10"
@@ -267,10 +278,11 @@ export default function InventoryPage() {
                     setNewProduct({ ...newProduct, low_stock_threshold: parseInt(e.target.value) || 10 })
                   }
                   data-testid="product-threshold-input"
+                  className="h-10 text-sm font-bold border-border/80 focus:border-primary bg-card/25"
                 />
               </div>
 
-              <Button onClick={handleCreateProduct} className="w-full btn-primary" data-testid="save-product-btn">
+              <Button onClick={handleCreateProduct} className="w-full bg-primary hover:bg-primary/95 text-primary-foreground h-10 text-xs font-bold shadow-md shadow-primary/10 rounded-xl mt-2" data-testid="save-product-btn">
                 Create Product
               </Button>
             </div>
@@ -279,38 +291,46 @@ export default function InventoryPage() {
       </div>
 
       {/* Filters */}
-      <Card className="bg-card/50 backdrop-blur-sm border-white/5">
+      <Card className="bg-card/45 backdrop-blur-sm border border-border/40 shadow-sm rounded-xl overflow-hidden">
         <CardContent className="p-4">
-          <div className="flex flex-col md:flex-row gap-4">
-            <div className="flex-1 relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          <div className="flex flex-col md:flex-row gap-4 items-center">
+            <div className="flex-1 relative w-full">
+              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground/60" />
               <Input
                 placeholder="Search by product name or batch..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="pl-10"
+                className="pl-10 h-10 text-sm border-border/80 focus:border-primary bg-card/25 rounded-xl"
                 data-testid="inventory-search"
               />
             </div>
 
-            <div className="flex gap-2">
+            <div className="flex gap-2 w-full md:w-auto shrink-0 justify-end">
               <Button
                 variant={showLowStock ? "default" : "outline"}
                 onClick={() => setShowLowStock(!showLowStock)}
-                className={showLowStock ? "bg-yellow-500/20 text-yellow-500 border-yellow-500/50" : ""}
+                className={`h-10 text-xs font-bold px-4 rounded-xl border ${
+                  showLowStock 
+                    ? "bg-amber-500/10 text-amber-500 border-amber-500/30 hover:bg-amber-500/20" 
+                    : "border-border/80 hover:bg-muted"
+                }`}
                 data-testid="low-stock-filter-btn"
               >
-                <AlertTriangle className="w-4 h-4 mr-2" />
+                <AlertTriangle className="w-3.5 h-3.5 mr-2" />
                 Low Stock
               </Button>
 
               <Button
                 variant={showExpiringSoon ? "default" : "outline"}
                 onClick={() => setShowExpiringSoon(!showExpiringSoon)}
-                className={showExpiringSoon ? "bg-destructive/20 text-destructive border-destructive/50" : ""}
+                className={`h-10 text-xs font-bold px-4 rounded-xl border ${
+                  showExpiringSoon 
+                    ? "bg-destructive/10 text-destructive border-destructive/30 hover:bg-destructive/20" 
+                    : "border-border/80 hover:bg-muted"
+                }`}
                 data-testid="expiring-filter-btn"
               >
-                <AlertTriangle className="w-4 h-4 mr-2" />
+                <AlertTriangle className="w-3.5 h-3.5 mr-2" />
                 Expiring Soon
               </Button>
               
@@ -322,6 +342,7 @@ export default function InventoryPage() {
                     setShowLowStock(false);
                     setShowExpiringSoon(false);
                   }}
+                  className="h-10 text-xs font-bold px-4 rounded-xl border border-border/80 hover:bg-muted"
                 >
                   Clear
                 </Button>
@@ -332,158 +353,162 @@ export default function InventoryPage() {
       </Card>
 
       {/* Inventory Table */}
-      <Card className="data-table">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>
-                <Button
-                  variant="ghost"
-                  onClick={() => handleSort("product_name")}
-                  className="h-auto p-0 font-medium hover:bg-transparent"
-                >
-                  Product
-                  <ArrowUpDown className="ml-2 h-4 w-4" />
-                </Button>
-              </TableHead>
-              <TableHead>MFG.</TableHead>
-              <TableHead>Batch</TableHead>
-              <TableHead>Pack Type</TableHead>
-              <TableHead>
-                <Button
-                  variant="ghost"
-                  onClick={() => handleSort("expiry_date")}
-                  className="h-auto p-0 font-medium hover:bg-transparent"
-                >
-                  Expiry
-                  <ArrowUpDown className="ml-2 h-4 w-4" />
-                </Button>
-              </TableHead>
-              <TableHead className="text-right">
-                <Button
-                  variant="ghost"
-                  onClick={() => handleSort("available_quantity")}
-                  className="h-auto p-0 font-medium hover:bg-transparent"
-                >
-                  Available Stock
-                  <ArrowUpDown className="ml-2 h-4 w-4" />
-                </Button>
-              </TableHead>
-              <TableHead className="text-right">Cost/Unit</TableHead>
-              <TableHead className="text-right">
-                <Button
-                  variant="ghost"
-                  onClick={() => handleSort("mrp")}
-                  className="h-auto p-0 font-medium hover:bg-transparent"
-                >
-                  MRP/Unit
-                  <ArrowUpDown className="ml-2 h-4 w-4" />
-                </Button>
-              </TableHead>
-              <TableHead className="text-right">Stock Value</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead className="w-12"></TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {inventory.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={11} className="text-center py-8 text-muted-foreground">
-                  <Package className="w-10 h-10 mx-auto mb-2 opacity-50" />
-                  No inventory items found
-                </TableCell>
+      <Card className="bg-card/45 border border-border/40 backdrop-blur-sm shadow-sm rounded-xl overflow-hidden">
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader className="border-b border-border/40 bg-muted/20">
+              <TableRow className="hover:bg-transparent">
+                <TableHead className="font-bold text-xs text-muted-foreground uppercase tracking-wider h-11">
+                  <Button
+                    variant="ghost"
+                    onClick={() => handleSort("product_name")}
+                    className="h-auto p-0 font-bold text-xs uppercase tracking-wider hover:bg-transparent hover:text-foreground text-muted-foreground"
+                  >
+                    Product
+                    <ArrowUpDown className="ml-1.5 h-3.5 w-3.5 text-primary" />
+                  </Button>
+                </TableHead>
+                <TableHead className="font-bold text-xs text-muted-foreground uppercase tracking-wider h-11">MFG.</TableHead>
+                <TableHead className="font-bold text-xs text-muted-foreground uppercase tracking-wider h-11">Batch</TableHead>
+                <TableHead className="font-bold text-xs text-muted-foreground uppercase tracking-wider h-11">Pack Type</TableHead>
+                <TableHead className="font-bold text-xs text-muted-foreground uppercase tracking-wider h-11">
+                  <Button
+                    variant="ghost"
+                    onClick={() => handleSort("expiry_date")}
+                    className="h-auto p-0 font-bold text-xs uppercase tracking-wider hover:bg-transparent hover:text-foreground text-muted-foreground"
+                  >
+                    Expiry
+                    <ArrowUpDown className="ml-1.5 h-3.5 w-3.5 text-primary" />
+                  </Button>
+                </TableHead>
+                <TableHead className="font-bold text-xs text-muted-foreground uppercase tracking-wider h-11 text-right">
+                  <Button
+                    variant="ghost"
+                    onClick={() => handleSort("available_quantity")}
+                    className="h-auto p-0 font-bold text-xs uppercase tracking-wider hover:bg-transparent hover:text-foreground text-muted-foreground ml-auto"
+                  >
+                    Available Stock
+                    <ArrowUpDown className="ml-1.5 h-3.5 w-3.5 text-primary" />
+                  </Button>
+                </TableHead>
+                <TableHead className="font-bold text-xs text-muted-foreground uppercase tracking-wider h-11 text-right">Cost/Unit</TableHead>
+                <TableHead className="font-bold text-xs text-muted-foreground uppercase tracking-wider h-11 text-right">
+                  <Button
+                    variant="ghost"
+                    onClick={() => handleSort("mrp")}
+                    className="h-auto p-0 font-bold text-xs uppercase tracking-wider hover:bg-transparent hover:text-foreground text-muted-foreground ml-auto"
+                  >
+                    MRP/Unit
+                    <ArrowUpDown className="ml-1.5 h-3.5 w-3.5 text-primary" />
+                  </Button>
+                </TableHead>
+                <TableHead className="font-bold text-xs text-muted-foreground uppercase tracking-wider h-11 text-right">Stock Value</TableHead>
+                <TableHead className="font-bold text-xs text-muted-foreground uppercase tracking-wider h-11">Status</TableHead>
+                <TableHead className="w-12 h-11"></TableHead>
               </TableRow>
-            ) : (
-              inventory.map((item) => {
-                const availableUnits = item.available_quantity || 0;
-                const unitsPerPack = item.units_per_pack || 1;
-                const packType = item.pack_type || "Strip";
-                const costPerUnit = item.purchase_price || 0;
-                const mrpPerUnit = item.mrp || 0;
-                const stockValue = availableUnits * costPerUnit;
-                
-                // Calculate packs + loose units display
-                const fullPacks = Math.floor(availableUnits / unitsPerPack);
-                const looseUnits = availableUnits % unitsPerPack;
-                
-                // Format the display
-                let stockDisplay = "";
-                if (unitsPerPack > 1) {
-                  if (fullPacks > 0 && looseUnits > 0) {
-                    stockDisplay = `${fullPacks} ${packType}${fullPacks > 1 ? 's' : ''} + ${looseUnits} units`;
-                  } else if (fullPacks > 0) {
-                    stockDisplay = `${fullPacks} ${packType}${fullPacks > 1 ? 's' : ''}`;
+            </TableHeader>
+            <TableBody>
+              {inventory.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={11} className="text-center py-10 text-muted-foreground">
+                    <Package className="w-10 h-10 mx-auto mb-2 opacity-55 text-muted-foreground/60" />
+                    <p className="text-xs font-bold uppercase tracking-widest text-muted-foreground/60">No inventory items found</p>
+                  </TableCell>
+                </TableRow>
+              ) : (
+                inventory.map((item) => {
+                  const availableUnits = item.available_quantity || 0;
+                  const unitsPerPack = item.units_per_pack || 1;
+                  const packType = item.pack_type || "Strip";
+                  const costPerUnit = item.purchase_price || 0;
+                  const mrpPerUnit = item.mrp || 0;
+                  const stockValue = availableUnits * costPerUnit;
+                  
+                  // Calculate packs + loose units display
+                  const fullPacks = Math.floor(availableUnits / unitsPerPack);
+                  const looseUnits = availableUnits % unitsPerPack;
+                  
+                  // Format the display
+                  let stockDisplay = "";
+                  if (unitsPerPack > 1) {
+                    if (fullPacks > 0 && looseUnits > 0) {
+                      stockDisplay = `${fullPacks} ${packType}${fullPacks > 1 ? 's' : ''} + ${looseUnits} units`;
+                    } else if (fullPacks > 0) {
+                      stockDisplay = `${fullPacks} ${packType}${fullPacks > 1 ? 's' : ''}`;
+                    } else {
+                      stockDisplay = `${looseUnits} units`;
+                    }
                   } else {
-                    stockDisplay = `${looseUnits} units`;
+                    stockDisplay = `${availableUnits} units`;
                   }
-                } else {
-                  stockDisplay = `${availableUnits} units`;
-                }
-                
-                return (
-                  <TableRow key={item.id} id={`record-${item.id}`} data-testid={`inventory-row-${item.id}`}>
-                    <TableCell className="font-medium">{item.product_name}</TableCell>
-                    <TableCell className="text-sm text-muted-foreground">{item.manufacturer || "-"}</TableCell>
-                    <TableCell className="font-mono text-sm">{item.batch_no}</TableCell>
-                    <TableCell className="text-sm">{packType}</TableCell>
-                    <TableCell className="font-mono text-sm">{item.expiry_date}</TableCell>
-                    <TableCell className="text-right">
-                      <div className="font-mono font-medium text-primary">{stockDisplay}</div>
-                      <div className="text-xs text-muted-foreground">({availableUnits} total units)</div>
-                    </TableCell>
-                    <TableCell className="text-right font-mono">₹{costPerUnit.toFixed(2)}</TableCell>
-                    <TableCell className="text-right font-mono">₹{mrpPerUnit.toFixed(2)}</TableCell>
-                    <TableCell className="text-right font-mono text-muted-foreground">₹{stockValue.toFixed(2)}</TableCell>
-                    <TableCell>
-                      {availableUnits === 0 ? (
-                        <Badge variant="destructive">Out of Stock</Badge>
-                      ) : isExpired(item.expiry_date) ? (
-                        <Badge variant="destructive">Expired</Badge>
-                      ) : isExpiringSoon(item.expiry_date) ? (
-                        <Badge className="bg-yellow-500/20 text-yellow-500 border-yellow-500/50">
-                          Expiring Soon
-                        </Badge>
-                      ) : availableUnits <= 10 ? (
-                        <Badge className="bg-orange-500/20 text-orange-500 border-orange-500/50">
-                          Low Stock
-                        </Badge>
-                      ) : (
-                        <Badge className="bg-primary/20 text-primary border-primary/50">In Stock</Badge>
-                      )}
-                    </TableCell>
-                    <TableCell className="flex gap-2">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="text-primary hover:text-primary hover:bg-primary/10"
-                        onClick={() => setAddStockDialog({ open: true, item, quantityToAdd: "" })}
-                        title="Add Stock"
-                        data-testid={`add-stock-${item.id}`}
-                      >
-                        <Plus className="w-4 h-4" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                        onClick={() => setDeleteDialog({ open: true, item, type: "inventory" })}
-                        data-testid={`delete-inventory-${item.id}`}
-                        title="Delete Item"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                );
-              })
-            )}
-          </TableBody>
-        </Table>
+                  
+                  return (
+                    <TableRow key={item.id} id={`record-${item.id}`} data-testid={`inventory-row-${item.id}`} className="hover:bg-muted/15 border-b border-border/40 transition-colors">
+                      <TableCell className="font-bold text-sm text-foreground">{item.product_name}</TableCell>
+                      <TableCell className="text-xs font-semibold text-muted-foreground">{item.manufacturer || "-"}</TableCell>
+                      <TableCell className="font-mono text-xs font-semibold text-muted-foreground">{item.batch_no}</TableCell>
+                      <TableCell className="text-xs font-semibold text-muted-foreground">{packType}</TableCell>
+                      <TableCell className="font-mono text-xs font-semibold text-muted-foreground">{item.expiry_date}</TableCell>
+                      <TableCell className="text-right">
+                        <div className="font-mono text-xs font-bold text-primary">{stockDisplay}</div>
+                        <div className="text-[10px] font-semibold text-muted-foreground/60">({availableUnits} total units)</div>
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-xs font-bold text-foreground">₹{costPerUnit.toFixed(2)}</TableCell>
+                      <TableCell className="text-right font-mono text-xs font-bold text-foreground">₹{mrpPerUnit.toFixed(2)}</TableCell>
+                      <TableCell className="text-right font-mono text-xs font-semibold text-muted-foreground">₹{stockValue.toFixed(2)}</TableCell>
+                      <TableCell>
+                        {availableUnits === 0 ? (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-destructive/10 text-destructive border border-destructive/20">Out of Stock</span>
+                        ) : isExpired(item.expiry_date) ? (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-destructive/10 text-destructive border border-destructive/20">Expired</span>
+                        ) : isExpiringSoon(item.expiry_date) ? (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/10 text-amber-500 border border-amber-500/20">
+                            Expiring Soon
+                          </span>
+                        ) : availableUnits <= 10 ? (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-orange-500/10 text-orange-500 border border-orange-500/20">
+                            Low Stock
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-primary/10 text-primary border border-primary/20">In Stock</span>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex gap-1 justify-end">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="text-primary hover:text-primary hover:bg-primary/10 rounded-lg h-8 w-8 shrink-0"
+                            onClick={() => setAddStockDialog({ open: true, item, quantityToAdd: "" })}
+                            title="Add Stock"
+                            data-testid={`add-stock-${item.id}`}
+                          >
+                            <Plus className="w-4 h-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="text-destructive hover:text-destructive hover:bg-destructive/10 rounded-lg h-8 w-8 shrink-0"
+                            onClick={() => setDeleteDialog({ open: true, item, type: "inventory" })}
+                            data-testid={`delete-inventory-${item.id}`}
+                            title="Delete Item"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })
+              )}
+            </TableBody>
+          </Table>
+        </div>
         
         {/* Pagination */}
         {pagination.total_pages > 1 && (
-          <div className="flex items-center justify-between px-4 py-3 border-t">
-            <div className="text-sm text-muted-foreground">
+          <div className="flex items-center justify-between px-6 py-4 border-t border-border/40 bg-muted/5">
+            <div className="text-xs font-bold text-muted-foreground/80">
               Showing {((pagination.page - 1) * pagination.limit) + 1} to {Math.min(pagination.page * pagination.limit, pagination.total)} of {pagination.total} items
             </div>
             
@@ -493,8 +518,9 @@ export default function InventoryPage() {
                 size="sm"
                 onClick={() => fetchInventory(pagination.page - 1)}
                 disabled={pagination.page <= 1}
+                className="h-8 text-xs font-bold border-border/80 hover:bg-muted rounded-lg"
               >
-                <ChevronLeft className="h-4 w-4" />
+                <ChevronLeft className="h-3.5 w-3.5 mr-1 text-primary" />
                 Previous
               </Button>
               
@@ -508,7 +534,11 @@ export default function InventoryPage() {
                       variant={pageNum === pagination.page ? "default" : "outline"}
                       size="sm"
                       onClick={() => fetchInventory(pageNum)}
-                      className="w-8 h-8 p-0"
+                      className={`w-8 h-8 p-0 text-xs font-bold rounded-lg border ${
+                        pageNum === pagination.page
+                          ? "bg-primary text-primary-foreground shadow-md shadow-primary/10 border-primary"
+                          : "border-border/80 hover:bg-muted"
+                      }`}
                     >
                       {pageNum}
                     </Button>
@@ -521,9 +551,10 @@ export default function InventoryPage() {
                 size="sm"
                 onClick={() => fetchInventory(pagination.page + 1)}
                 disabled={pagination.page >= pagination.total_pages}
+                className="h-8 text-xs font-bold border-border/80 hover:bg-muted rounded-lg"
               >
                 Next
-                <ChevronRight className="h-4 w-4" />
+                <ChevronRight className="h-3.5 w-3.5 ml-1 text-primary" />
               </Button>
             </div>
           </div>
@@ -531,31 +562,34 @@ export default function InventoryPage() {
       </Card>
 
       {/* Products List */}
-      <Card className="bg-card/50 backdrop-blur-sm border-white/5">
-        <CardHeader>
-          <CardTitle className="text-lg">Products Catalog ({products.length})</CardTitle>
+      <Card className="bg-card/45 border border-border/40 backdrop-blur-sm shadow-sm rounded-xl overflow-hidden">
+        <CardHeader className="border-b border-border/40 py-4">
+          <CardTitle className="text-sm font-extrabold text-foreground flex items-center gap-2">
+            <Package className="w-4 h-4 text-primary" />
+            Products Catalog ({products.length})
+          </CardTitle>
         </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+        <CardContent className="p-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {products.slice(0, 12).map((product) => (
               <div
                 key={product.id}
-                className="p-3 rounded-lg bg-muted/30 border border-white/5 hover:border-primary/20 transition-colors"
+                className="p-4 rounded-xl bg-card/20 border border-border/40 hover:border-primary/30 dark:hover:border-primary/20 transition-all duration-300 group relative overflow-hidden"
               >
                 <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
+                  <div className="w-10 h-10 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform duration-300">
                     <Package className="w-5 h-5 text-primary" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="font-medium truncate">{product.name}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {product.category} • Threshold: {product.low_stock_threshold}
+                    <p className="font-bold text-sm text-foreground truncate">{product.name}</p>
+                    <p className="text-[10px] font-bold text-muted-foreground/80 mt-0.5 uppercase tracking-wide">
+                      {product.category} • THRESHOLD: {product.low_stock_threshold}
                     </p>
                   </div>
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                    className="text-destructive hover:text-destructive hover:bg-destructive/10 rounded-lg shrink-0"
                     onClick={() => setDeleteDialog({ open: true, item: product, type: "product" })}
                     data-testid={`delete-product-${product.id}`}
                   >
@@ -570,89 +604,94 @@ export default function InventoryPage() {
 
       {/* Delete Confirmation Dialog */}
       <AlertDialog open={deleteDialog.open} onOpenChange={(open) => setDeleteDialog({ ...deleteDialog, open })}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>
+        <AlertDialogContent className="rounded-2xl border border-border/40 shadow-2xl max-w-md">
+          <AlertDialogHeader className="space-y-2">
+            <AlertDialogTitle className="font-extrabold text-base tracking-tight text-foreground flex items-center gap-2">
+              <Trash2 className="w-5 h-5 text-destructive" />
               {deleteDialog.type === "inventory" ? "Delete Inventory Item" : "Delete Product"}
             </AlertDialogTitle>
-            <AlertDialogDescription>
+            <AlertDialogDescription className="text-xs leading-relaxed text-muted-foreground font-medium">
               {deleteDialog.type === "inventory" ? (
                 <>
-                  Are you sure you want to delete <strong>{deleteDialog.item?.product_name}</strong> (Batch: {deleteDialog.item?.batch_no})?
+                  Are you sure you want to delete <strong className="text-foreground">{deleteDialog.item?.product_name}</strong> (Batch: {deleteDialog.item?.batch_no})?
                   <br /><br />
-                  This will remove {deleteDialog.item?.available_quantity} units from inventory.
+                  This will remove <span className="font-bold text-foreground">{deleteDialog.item?.available_quantity}</span> units from inventory.
                 </>
               ) : (
                 <>
-                  Are you sure you want to delete the product <strong>{deleteDialog.item?.name}</strong>?
+                  Are you sure you want to delete the product <strong className="text-foreground">{deleteDialog.item?.name}</strong>?
                   <br /><br />
                   This may affect related inventory items.
                 </>
               )}
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <AlertDialogFooter className="flex-col sm:flex-row gap-2">
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogFooter className="mt-4 gap-2 flex-col sm:flex-row">
+            <AlertDialogCancel className="h-10 text-xs font-bold border-border/80 hover:bg-muted rounded-xl">
+              Cancel
+            </AlertDialogCancel>
             {deleteDialog.type === "inventory" ? (
               <AlertDialogAction
                 onClick={handleDeleteInventoryItem}
-                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                className="bg-destructive hover:bg-destructive/95 text-destructive-foreground h-10 text-xs font-bold shadow-md rounded-xl"
               >
                 Delete Item
               </AlertDialogAction>
             ) : (
-              <>
+              <div className="flex flex-col sm:flex-row gap-2">
                 <AlertDialogAction
                   onClick={() => handleDeleteProduct(false)}
-                  className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                  className="bg-destructive/80 hover:bg-destructive/90 text-destructive-foreground h-10 text-xs font-bold shadow-md rounded-xl"
                 >
-                    Delete Product Only
-                  </AlertDialogAction>
-                  <AlertDialogAction
-                    onClick={() => handleDeleteProduct(true)}
-                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                  >
-                    Delete with Inventory
-                  </AlertDialogAction>
-                </>
-              )}
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
+                  Delete Product Only
+                </AlertDialogAction>
+                <AlertDialogAction
+                  onClick={() => handleDeleteProduct(true)}
+                  className="bg-destructive hover:bg-destructive/95 text-destructive-foreground h-10 text-xs font-bold shadow-md rounded-xl"
+                >
+                  Delete with Inventory
+                </AlertDialogAction>
+              </div>
+            )}
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
-        {/* Add Stock Dialog */}
-        <Dialog open={addStockDialog.open} onOpenChange={(open) => setAddStockDialog({ ...addStockDialog, open })}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Quick Add Stock</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-4 pt-4">
-              <div className="p-3 bg-muted/50 rounded-lg border border-border">
-                <p className="text-sm">
-                  <strong>{addStockDialog.item?.product_name}</strong>
-                  <br/>
-                  <span className="text-muted-foreground">Batch: {addStockDialog.item?.batch_no}</span>
-                  <br/>
-                  <span className="text-primary font-medium mt-1 inline-block">Current Stock: {addStockDialog.item?.available_quantity} units</span>
-                </p>
+      {/* Add Stock Dialog */}
+      <Dialog open={addStockDialog.open} onOpenChange={(open) => setAddStockDialog({ ...addStockDialog, open })}>
+        <DialogContent className="rounded-2xl border border-border/40 shadow-2xl max-w-md p-6">
+          <DialogHeader className="border-b border-border/40 pb-4">
+            <DialogTitle className="font-extrabold text-base tracking-tight text-foreground flex items-center gap-2">
+              <Plus className="w-5 h-5 text-primary" />
+              Quick Add Stock
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 pt-4">
+            <div className="p-3 bg-muted/20 border border-border/40 rounded-xl">
+              <p className="text-sm font-extrabold text-foreground">{addStockDialog.item?.product_name}</p>
+              <div className="flex items-center gap-4 mt-1.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground/80">
+                <span>Batch: {addStockDialog.item?.batch_no}</span>
+                <span>Current Stock: {addStockDialog.item?.available_quantity} units</span>
               </div>
-              <div className="space-y-2">
-                <Label>Quantity to Add (Units) *</Label>
-                <Input
-                  type="number"
-                  placeholder="e.g. 50"
-                  value={addStockDialog.quantityToAdd}
-                  onChange={(e) => setAddStockDialog({ ...addStockDialog, quantityToAdd: e.target.value })}
-                  min="1"
-                  autoFocus
-                />
-              </div>
-              <Button onClick={handleAddStock} className="w-full btn-primary font-bold">
-                Update Stock
-              </Button>
             </div>
-          </DialogContent>
-        </Dialog>
-      </div>
-    );
-  }
+            <div className="space-y-2">
+              <Label className="text-xs font-bold text-muted-foreground/80">Quantity to Add (Units) *</Label>
+              <Input
+                type="number"
+                placeholder="e.g. 50"
+                value={addStockDialog.quantityToAdd}
+                onChange={(e) => setAddStockDialog({ ...addStockDialog, quantityToAdd: e.target.value })}
+                min="1"
+                autoFocus
+                className="h-10 text-sm font-bold border-border/80 focus:border-primary bg-card/25"
+              />
+            </div>
+            <Button onClick={handleAddStock} className="w-full bg-primary hover:bg-primary/95 text-primary-foreground h-10 text-xs font-bold shadow-md shadow-primary/10 rounded-xl mt-2">
+              Update Stock
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}

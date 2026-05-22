@@ -480,18 +480,18 @@ export default function ScannerPage() {
   if (!isAuthenticated) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center p-4">
-        <Card className="w-full max-w-md">
-          <CardHeader className="text-center">
-            <CardTitle className="text-2xl text-primary">
+        <Card className="w-full max-w-md glass bg-card/45 backdrop-blur-xl border border-border/70 shadow-2xl rounded-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-300">
+          <CardHeader className="text-center pb-2">
+            <CardTitle className="text-3xl font-extrabold bg-gradient-to-r from-primary to-primary/80 bg-clip-text text-transparent">
               Smart Scanner
             </CardTitle>
-            <p className="text-muted-foreground">
+            <p className="text-sm text-muted-foreground mt-2">
               Please login to use the scanner
             </p>
           </CardHeader>
-          <CardContent>
+          <CardContent className="pt-4">
             <Button
-              className="w-full btn-primary"
+              className="w-full btn-primary h-11 rounded-xl shadow-lg shadow-primary/20 hover:shadow-primary/30 transition-all font-bold text-sm"
               onClick={() => navigate("/login")}
             >
               Go to Login
@@ -503,27 +503,31 @@ export default function ScannerPage() {
   }
 
   return (
-    <div className="min-h-screen bg-background" data-testid="scanner-page">
+    <div className="min-h-screen bg-background pb-20" data-testid="scanner-page">
       {/* Header */}
-      <div className="sticky top-0 z-50 bg-card/95 backdrop-blur border-b border-white/10 px-4 py-3">
+      <div className="sticky top-0 z-50 bg-card/45 backdrop-blur-xl border-b border-border/70 px-4 py-3 shadow-sm">
         <div className="flex items-center justify-between max-w-lg mx-auto">
           <Button
             variant="ghost"
             size="icon"
+            className="rounded-full hover:bg-primary/10 hover:text-primary transition-all duration-200"
             onClick={() => navigate("/purchases")}
           >
             <ArrowLeft className="w-5 h-5" />
           </Button>
-          <h1 className="text-lg font-bold text-primary">Smart Scanner</h1>
-          <Badge variant="outline" className="text-primary border-primary">
-            {scannedItems.length} items
+          <h1 className="text-lg font-bold bg-gradient-to-r from-primary to-primary/80 bg-clip-text text-transparent flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-primary animate-pulse" />
+            Smart Scanner
+          </h1>
+          <Badge className="bg-primary/10 hover:bg-primary/20 text-primary border-primary/20 transition-all rounded-full px-3 py-1 font-semibold text-xs">
+            {scannedItems.length} {scannedItems.length === 1 ? "item" : "items"}
           </Badge>
         </div>
       </div>
 
       <div className="max-w-lg mx-auto p-4 space-y-4">
         {/* Scan Button Area */}
-        <Card className="bg-gradient-to-br from-primary/10 to-primary/5 border-primary/20">
+        <Card className="glass bg-card/45 backdrop-blur-xl border border-border/70 shadow-xl rounded-2xl overflow-hidden">
           <CardContent className="p-6">
             {/* Hidden Inputs */}
             <input
@@ -545,48 +549,61 @@ export default function ScannerPage() {
             />
 
             <div className="text-center space-y-4">
-              {/* Mode Toggle */}
-              <div className="flex justify-center gap-2 mb-4">
-                <Button
-                  variant={scanMode === "product" ? "default" : "outline"}
+              {/* Mode Toggle Capsule */}
+              <div className="inline-flex p-1 bg-muted/40 dark:bg-muted/20 backdrop-blur-md rounded-full border border-border/50 max-w-md mx-auto mb-2">
+                <button
+                  type="button"
+                  className={`px-4 py-2 text-xs font-semibold rounded-full transition-all duration-300 ${
+                    scanMode === "product"
+                      ? "bg-background text-primary shadow-sm scale-[1.02]"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
                   onClick={() => {
                     setScanMode("product");
                     setSelectedFiles([]);
                     setPreviewUrls([]);
                   }}
-                  size="sm"
                   disabled={scanning}
                 >
                   Scan Products
-                </Button>
+                </button>
 
-                <Button
-                  variant={scanMode === "bill" ? "default" : "outline"}
+                <button
+                  type="button"
+                  className={`px-4 py-2 text-xs font-semibold rounded-full transition-all duration-300 ${
+                    scanMode === "bill"
+                      ? "bg-background text-primary shadow-sm scale-[1.02]"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
                   onClick={() => {
                     setScanMode("bill");
                     setSelectedFiles([]);
                     setPreviewUrls([]);
                   }}
-                  size="sm"
                   disabled={scanning}
                 >
                   Scan Purchase Bill
-                </Button>
+                </button>
               </div>
 
               {scanning ? (
-                <div className="flex flex-col items-center justify-center space-y-6 py-6">
+                <div className="flex flex-col items-center justify-center space-y-6 py-8">
                   {/* Glowing AI Spinner */}
-                  <div className="relative w-24 h-24 flex items-center justify-center">
-                    <div className="absolute w-full h-full rounded-full border-t-2 border-r-2 border-primary animate-spin duration-1000"></div>
-                    <div className="absolute w-16 h-16 rounded-full border-b-2 border-l-2 border-primary/50 animate-[spin_1.5s_linear_infinite_reverse]"></div>
-                    <Sparkles className="w-8 h-8 text-primary animate-pulse" />
-                    <div className="absolute w-full h-full bg-primary/10 rounded-full animate-ping opacity-20"></div>
+                  <div className="relative w-28 h-28 flex items-center justify-center">
+                    {/* Ring animations */}
+                    <div className="absolute w-full h-full rounded-full border-2 border-primary/20"></div>
+                    <div className="absolute w-full h-full rounded-full border-t-2 border-primary animate-spin duration-1000"></div>
+                    <div className="absolute w-20 h-20 rounded-full border-2 border-primary/10"></div>
+                    <div className="absolute w-20 h-20 rounded-full border-b-2 border-primary/60 animate-[spin_2s_linear_infinite_reverse]"></div>
+                    <div className="absolute w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center shadow-lg shadow-primary/20">
+                      <Sparkles className="w-6 h-6 text-primary animate-pulse" />
+                    </div>
+                    <div className="absolute w-full h-full bg-primary/5 rounded-full animate-ping opacity-15"></div>
                   </div>
-                  <div className="w-full max-w-[280px] space-y-4">
-                    <div className="space-y-1">
-                      <div className="flex justify-between text-xs font-bold text-primary">
-                        <span className="uppercase tracking-wider">
+                  <div className="w-full max-w-[280px] space-y-3">
+                    <div className="space-y-1.5">
+                      <div className="flex justify-between text-xs font-bold text-primary tracking-wide">
+                        <span className="uppercase">
                           {scanProgress < 20
                             ? "Initializing..."
                             : scanProgress < 35
@@ -599,9 +616,9 @@ export default function ScannerPage() {
                         </span>
                         <span>{scanProgress}%</span>
                       </div>
-                      <div className="w-full bg-primary/10 h-1.5 rounded-full overflow-hidden border border-primary/5">
+                      <div className="w-full bg-primary/10 h-2 rounded-full overflow-hidden border border-primary/5 p-[1px]">
                         <div
-                          className="bg-gradient-to-r from-primary to-primary/60 h-full transition-all duration-700 ease-out"
+                          className="bg-gradient-to-r from-primary to-primary/60 h-full rounded-full transition-all duration-700 ease-out shadow-sm"
                           style={{ width: `${scanProgress}%` }}
                         ></div>
                       </div>
@@ -613,36 +630,47 @@ export default function ScannerPage() {
                 </div>
               ) : (
                 <>
-                  <div className="w-16 h-16 mx-auto rounded-full bg-primary/10 flex items-center justify-center mb-2">
-                    <Camera className="w-8 h-8 text-primary" />
-                  </div>
+                  {/* Upload Area */}
+                  <div 
+                    onClick={() =>
+                      scanMode === "product"
+                        ? fileInputRef.current?.click()
+                        : billInputRef.current?.click()
+                    }
+                    className="border-2 border-dashed border-border/80 hover:border-primary/50 bg-muted/20 dark:bg-muted/10 rounded-2xl p-8 cursor-pointer transition-all duration-300 hover:scale-[1.01] hover:shadow-inner group"
+                  >
+                    <div className="w-14 h-14 mx-auto rounded-full bg-primary/10 group-hover:bg-primary/20 flex items-center justify-center mb-4 transition-all duration-300 group-hover:scale-110 shadow-sm">
+                      <Camera className="w-6 h-6 text-primary group-hover:text-primary-foreground transition-all duration-300" />
+                    </div>
 
-                  {scanMode === "product" ? (
-                    <>
-                      <h2 className="text-xl font-bold">Scan Product Images</h2>
-                      <p className="text-sm text-muted-foreground mb-4">
-                        Upload one or multiple images for a{" "}
-                        <b>single product</b> to extract complete details
-                        (front, back, batch info).
-                      </p>
-                    </>
-                  ) : (
-                    <>
-                      <h2 className="text-xl font-bold">Scan Invoice Images</h2>
-                      <p className="text-sm text-muted-foreground mb-4">
-                        Upload all pages or portions of a{" "}
-                        <b>single purchase bill</b>.
-                      </p>
-                    </>
-                  )}
+                    {scanMode === "product" ? (
+                      <>
+                        <h2 className="text-base font-bold text-foreground mb-1 group-hover:text-primary transition-colors">
+                          Scan Product Images
+                        </h2>
+                        <p className="text-xs text-muted-foreground max-w-sm mx-auto leading-relaxed">
+                          Drag and drop or click to upload images of a <b>single product</b> (front, back, composition) to automatically extract complete details.
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <h2 className="text-base font-bold text-foreground mb-1 group-hover:text-primary transition-colors">
+                          Scan Invoice Images
+                        </h2>
+                        <p className="text-xs text-muted-foreground max-w-sm mx-auto leading-relaxed">
+                          Drag and drop or click to upload all pages of a <b>single purchase bill</b>.
+                        </p>
+                      </>
+                    )}
+                  </div>
 
                   {/* Staged Images Preview */}
                   {previewUrls.length > 0 && (
-                    <div className="flex flex-wrap gap-2 justify-center mb-4 mt-4 bg-muted/30 p-3 rounded-lg border border-white/5">
+                    <div className="flex flex-wrap gap-3 justify-center mb-4 mt-6 bg-muted/30 dark:bg-muted/10 p-4 rounded-xl border border-border/40 shadow-inner">
                       {previewUrls.map((url, i) => (
                         <div
                           key={i}
-                          className="relative group w-16 h-16 rounded-md overflow-hidden ring-1 ring-border shadow-sm"
+                          className="relative group w-20 h-20 rounded-xl overflow-hidden ring-2 ring-border hover:ring-primary/50 shadow-md transition-all duration-200 hover:scale-105"
                         >
                           <img
                             src={url}
@@ -650,49 +678,59 @@ export default function ScannerPage() {
                             className="w-full h-full object-cover"
                           />
                           <button
-                            className="absolute top-0 right-0 p-1 bg-black/60 text-white hover:bg-destructive rounded-bl-sm backdrop-blur-sm transition-colors"
-                            onClick={() => handleRemoveFile(i)}
+                            type="button"
+                            className="absolute top-1 right-1 p-1 bg-black/60 hover:bg-destructive text-white rounded-full backdrop-blur-sm transition-all duration-200 opacity-90 hover:opacity-100 scale-90"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleRemoveFile(i);
+                            }}
                           >
-                            <X className="w-3 h-3" />
+                            <X className="w-3.5 h-3.5" />
                           </button>
                         </div>
                       ))}
                       <button
-                        className="w-16 h-16 flex flex-col items-center justify-center border border-dashed border-primary/50 text-primary hover:bg-primary/10 transition-colors rounded-md text-xs font-medium"
+                        type="button"
+                        className="w-20 h-20 flex flex-col items-center justify-center border-2 border-dashed border-primary/40 text-primary hover:text-primary-foreground hover:bg-primary/20 hover:border-primary transition-all duration-200 rounded-xl text-xs font-semibold bg-primary/5"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (scanMode === "product") {
+                            fileInputRef.current?.click();
+                          } else {
+                            billInputRef.current?.click();
+                          }
+                        }}
+                      >
+                        <Plus className="w-5 h-5 mb-1 animate-pulse" />
+                        Add More
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Actions */}
+                  <div className="mt-6">
+                    {selectedFiles.length === 0 ? (
+                      <Button
+                        className="btn-primary w-full h-11 rounded-xl shadow-lg shadow-primary/20 hover:shadow-primary/30 text-sm font-semibold transition-all duration-300"
                         onClick={() =>
                           scanMode === "product"
                             ? fileInputRef.current?.click()
                             : billInputRef.current?.click()
                         }
                       >
-                        <Plus className="w-4 h-4 mb-1" />
-                        Add
-                      </button>
-                    </div>
-                  )}
-
-                  {/* Actions */}
-                  {selectedFiles.length === 0 ? (
-                    <Button
-                      className="btn-primary"
-                      onClick={() =>
-                        scanMode === "product"
-                          ? fileInputRef.current?.click()
-                          : billInputRef.current?.click()
-                      }
-                    >
-                      <Upload className="w-4 h-4 mr-2" />
-                      Select Images
-                    </Button>
-                  ) : (
-                    <Button
-                      className="btn-primary w-full animate-in fade-in slide-in-from-bottom-2"
-                      onClick={handleConfirmAndAnalyze}
-                    >
-                      <Sparkles className="w-4 h-4 mr-2" />
-                      Confirm & Extract Details
-                    </Button>
-                  )}
+                        <Upload className="w-4 h-4 mr-2" />
+                        Select Images
+                      </Button>
+                    ) : (
+                      <Button
+                        className="btn-primary w-full h-11 rounded-xl shadow-lg shadow-primary/25 hover:shadow-primary/35 text-sm font-bold animate-in fade-in slide-in-from-bottom-2 duration-300"
+                        onClick={handleConfirmAndAnalyze}
+                      >
+                        <Sparkles className="w-4 h-4 mr-2 animate-bounce" />
+                        Confirm & Extract Details
+                      </Button>
+                    )}
+                  </div>
                 </>
               )}
             </div>
@@ -701,10 +739,15 @@ export default function ScannerPage() {
 
         {/* Scanned Items List */}
         {scannedItems.length > 0 && (
-          <div className="space-y-3">
-            <h3 className="font-semibold text-sm text-muted-foreground">
-              SCANNED ITEMS ({scannedItems.length})
-            </h3>
+          <div className="space-y-4">
+            <div className="flex items-center justify-between px-1">
+              <h3 className="font-bold text-xs text-muted-foreground uppercase tracking-widest">
+                Scanned Items ({scannedItems.length})
+              </h3>
+              <span className="text-[10px] text-muted-foreground/80 font-medium italic">
+                * Edit fields if required
+              </span>
+            </div>
 
             {scannedItems.map((item) => {
               const { totalUnits, rateUnit, mrpUnit, totalAmount } =
@@ -713,43 +756,50 @@ export default function ScannerPage() {
               return (
                 <Card
                   key={item.id}
-                  className="bg-card/50 backdrop-blur border-white/10"
+                  className="glass bg-card/45 backdrop-blur-xl border border-border/70 shadow-lg rounded-2xl overflow-hidden transition-all duration-200 hover:shadow-xl hover:border-primary/35"
                 >
-                  <CardContent className="p-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-2">
-                          {item.confidence >= 70 ? (
-                            <Badge className="bg-primary/20 text-primary text-xs">
-                              {item.confidence}% match
-                            </Badge>
-                          ) : (
-                            <Badge className="bg-yellow-500/20 text-yellow-500 text-xs">
-                              Review needed
-                            </Badge>
-                          )}
-                          <span className="text-xs text-muted-foreground">
-                            Total: {totalUnits} units | ₹
-                            {totalAmount.toFixed(2)}
+                  <CardContent className="p-5">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex-1 min-w-0 space-y-4">
+                        <div className="flex items-center justify-between flex-wrap gap-2">
+                          <div className="flex items-center gap-2">
+                            {item.confidence >= 70 ? (
+                              <Badge className="bg-emerald-500/10 hover:bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 text-[10px] font-bold rounded-full px-2.5 py-0.5">
+                                {item.confidence}% match
+                              </Badge>
+                            ) : (
+                              <Badge className="bg-amber-500/10 hover:bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/20 text-[10px] font-bold rounded-full px-2.5 py-0.5">
+                                Review needed
+                              </Badge>
+                            )}
+                          </div>
+                          <span className="text-xs text-muted-foreground font-semibold bg-muted/40 dark:bg-muted/20 px-2.5 py-1 rounded-full border border-border/30">
+                            Total: {totalUnits} {totalUnits === 1 ? "unit" : "units"} | <span className="text-primary">₹{totalAmount.toFixed(2)}</span>
                           </span>
                         </div>
 
-                        <Input
-                          value={item.product_name}
-                          onChange={(e) =>
-                            handleUpdateItem(
-                              item.id,
-                              "product_name",
-                              e.target.value
-                            )
-                          }
-                          className="font-medium mb-2"
-                          placeholder="Product Name *"
-                        />
+                        {/* Product Name Input */}
+                        <div className="space-y-1.5">
+                          <Label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/80">
+                            Product Name *
+                          </Label>
+                          <Input
+                            value={item.product_name}
+                            onChange={(e) =>
+                              handleUpdateItem(
+                                item.id,
+                                "product_name",
+                                e.target.value
+                              )
+                            }
+                            className="font-semibold text-sm h-10 rounded-xl bg-background/50 border-border focus:ring-2 focus:ring-primary/20 focus:border-primary"
+                            placeholder="Enter Product Name"
+                          />
+                        </div>
 
-                        <div className="grid grid-cols-2 gap-2 text-sm mb-2">
-                          <div>
-                            <Label className="text-xs text-muted-foreground">
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="space-y-1.5">
+                            <Label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/80">
                               Manufacturer
                             </Label>
                             <Input
@@ -761,12 +811,12 @@ export default function ScannerPage() {
                                   e.target.value
                                 )
                               }
-                              className="h-8 text-sm"
-                              placeholder="Manufacturer"
+                              className="h-9 text-xs rounded-xl bg-background/50 border-border"
+                              placeholder="e.g. Cipla"
                             />
                           </div>
-                          <div>
-                            <Label className="text-xs text-muted-foreground">
+                          <div className="space-y-1.5">
+                            <Label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/80">
                               Salt/Composition
                             </Label>
                             <Input
@@ -778,40 +828,43 @@ export default function ScannerPage() {
                                   e.target.value
                                 )
                               }
-                              className="h-8 text-sm"
-                              placeholder="Salt Composition"
+                              className="h-9 text-xs rounded-xl bg-background/50 border-border"
+                              placeholder="Active Ingredients"
                             />
                           </div>
                         </div>
 
-                        <div className="grid grid-cols-3 gap-2 text-sm mb-2">
-                          <div>
-                            <Label className="text-xs text-muted-foreground">
+                        <div className="grid grid-cols-3 gap-3">
+                          <div className="space-y-1.5">
+                            <Label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/80">
                               Pack Type
                             </Label>
-                            <select
-                              value={item.pack_type || "Strip"}
-                              onChange={(e) =>
-                                handleUpdateItem(
-                                  item.id,
-                                  "pack_type",
-                                  e.target.value
-                                )
-                              }
-                              className="w-full h-8 rounded-md border border-input bg-background px-2 text-sm"
-                            >
-                              <option value="Strip">Strip</option>
-                              <option value="Bottle">Bottle</option>
-                              <option value="Tube">Tube</option>
-                              <option value="Box">Box</option>
-                              <option value="Vial">Vial</option>
-                              <option value="Syrup">Syrup</option>
-                              <option value="Cream">Cream</option>
-                              <option value="Injection">Injection</option>
-                            </select>
+                            <div className="relative">
+                              <select
+                                value={item.pack_type || "Strip"}
+                                onChange={(e) =>
+                                  handleUpdateItem(
+                                    item.id,
+                                    "pack_type",
+                                    e.target.value
+                                  )
+                                }
+                                className="w-full h-9 rounded-xl border border-border bg-background/50 px-3 text-xs focus:ring-2 focus:ring-primary/20 focus:border-primary appearance-none cursor-pointer pr-8"
+                              >
+                                <option value="Strip">Strip</option>
+                                <option value="Bottle">Bottle</option>
+                                <option value="Tube">Tube</option>
+                                <option value="Box">Box</option>
+                                <option value="Vial">Vial</option>
+                                <option value="Syrup">Syrup</option>
+                                <option value="Cream">Cream</option>
+                                <option value="Injection">Injection</option>
+                              </select>
+                              <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground/80 pointer-events-none" />
+                            </div>
                           </div>
-                          <div>
-                            <Label className="text-xs text-muted-foreground">
+                          <div className="space-y-1.5">
+                            <Label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/80">
                               Batch
                             </Label>
                             <Input
@@ -823,12 +876,12 @@ export default function ScannerPage() {
                                   e.target.value
                                 )
                               }
-                              className="h-8 text-sm"
+                              className="h-9 text-xs rounded-xl bg-background/50 border-border"
                               placeholder="Batch No"
                             />
                           </div>
-                          <div>
-                            <Label className="text-xs text-muted-foreground">
+                          <div className="space-y-1.5">
+                            <Label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/80">
                               HSN
                             </Label>
                             <Input
@@ -840,15 +893,15 @@ export default function ScannerPage() {
                                   e.target.value
                                 )
                               }
-                              className="h-8 text-sm"
+                              className="h-9 text-xs rounded-xl bg-background/50 border-border font-mono"
                               placeholder="HSN Code"
                             />
                           </div>
                         </div>
 
-                        <div className="grid grid-cols-2 gap-2 text-sm mb-2">
-                          <div>
-                            <Label className="text-xs text-muted-foreground">
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="space-y-1.5">
+                            <Label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/80">
                               Expiry Date
                             </Label>
                             <Input
@@ -861,11 +914,11 @@ export default function ScannerPage() {
                                   e.target.value
                                 )
                               }
-                              className="h-8 text-sm"
+                              className="h-9 text-xs rounded-xl bg-background/50 border-border"
                             />
                           </div>
-                          <div>
-                            <Label className="text-xs text-muted-foreground">
+                          <div className="space-y-1.5">
+                            <Label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/80">
                               Units/Pack
                             </Label>
                             <Input
@@ -878,15 +931,15 @@ export default function ScannerPage() {
                                   e.target.value
                                 )
                               }
-                              className="h-8 text-sm"
+                              className="h-9 text-xs rounded-xl bg-background/50 border-border"
                               min="1"
                             />
                           </div>
                         </div>
 
-                        <div className="grid grid-cols-3 gap-2 text-sm">
-                          <div>
-                            <Label className="text-xs text-muted-foreground">
+                        <div className="grid grid-cols-3 gap-3">
+                          <div className="space-y-1.5">
+                            <Label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/80">
                               Qty (Packs) *
                             </Label>
                             <Input
@@ -899,62 +952,68 @@ export default function ScannerPage() {
                                   e.target.value
                                 )
                               }
-                              className="h-8 text-sm"
+                              className="h-9 text-xs rounded-xl bg-background/50 border-border"
                               min="1"
                             />
                           </div>
-                          <div>
-                            <Label className="text-xs text-muted-foreground">
+                          <div className="space-y-1.5">
+                            <Label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/80">
                               Rate/Pack
                             </Label>
-                            <Input
-                              type="number"
-                              value={item.rate_pack || ""}
-                              onChange={(e) =>
-                                handleUpdateItem(
-                                  item.id,
-                                  "rate_pack",
-                                  e.target.value
-                                )
-                              }
-                              className="h-8 text-sm"
-                              step="0.01"
-                              placeholder="₹"
-                            />
+                            <div className="relative">
+                              <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">₹</span>
+                              <Input
+                                type="number"
+                                value={item.rate_pack || ""}
+                                onChange={(e) =>
+                                  handleUpdateItem(
+                                    item.id,
+                                    "rate_pack",
+                                    e.target.value
+                                  )
+                                }
+                                className="h-9 pl-6 text-xs rounded-xl bg-background/50 border-border"
+                                step="0.01"
+                                placeholder="0.00"
+                              />
+                            </div>
                           </div>
-                          <div>
-                            <Label className="text-xs text-muted-foreground">
+                          <div className="space-y-1.5">
+                            <Label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/80">
                               MRP/Pack
                             </Label>
-                            <Input
-                              type="number"
-                              value={item.mrp_pack || ""}
-                              onChange={(e) =>
-                                handleUpdateItem(
-                                  item.id,
-                                  "mrp_pack",
-                                  e.target.value
-                                )
-                              }
-                              className="h-8 text-sm"
-                              step="0.01"
-                              placeholder="₹"
-                            />
+                            <div className="relative">
+                              <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">₹</span>
+                              <Input
+                                type="number"
+                                value={item.mrp_pack || ""}
+                                onChange={(e) =>
+                                  handleUpdateItem(
+                                    item.id,
+                                    "mrp_pack",
+                                    e.target.value
+                                  )
+                                }
+                                className="h-9 pl-6 text-xs rounded-xl bg-background/50 border-border"
+                                step="0.01"
+                                placeholder="0.00"
+                              />
+                            </div>
                           </div>
                         </div>
 
                         {(rateUnit > 0 || mrpUnit > 0) && (
-                          <p className="text-xs text-muted-foreground mt-2">
-                            Rate/Unit: ₹{rateUnit.toFixed(2)} | MRP/Unit: ₹
-                            {mrpUnit.toFixed(2)}
-                          </p>
+                          <div className="pt-2 border-t border-border/40 flex justify-between text-[11px] text-muted-foreground/90">
+                            <span>Rate/Unit: <b>₹{rateUnit.toFixed(2)}</b></span>
+                            <span>MRP/Unit: <b>₹{mrpUnit.toFixed(2)}</b></span>
+                          </div>
                         )}
                       </div>
 
                       <Button
                         variant="ghost"
                         size="icon"
-                        className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                        className="text-destructive hover:text-destructive-foreground hover:bg-destructive/10 rounded-full h-8 w-8 transition-colors shrink-0"
                         onClick={() => handleRemoveItem(item.id)}
                       >
                         <Trash2 className="w-4 h-4" />
@@ -969,21 +1028,21 @@ export default function ScannerPage() {
 
         {/* Add to Purchase Button */}
         {scannedItems.length > 0 && (
-          <Card className="bg-card/50 backdrop-blur border-white/10 sticky bottom-4">
+          <Card className="glass bg-card/75 backdrop-blur-xl border border-border/80 sticky bottom-4 z-40 shadow-2xl rounded-2xl overflow-hidden animate-in fade-in slide-in-from-bottom-5 duration-300">
             <CardContent className="p-4">
               {!showSupplierSelect ? (
                 <Button
-                  className="w-full btn-primary"
+                  className="w-full btn-primary h-11 text-sm font-bold rounded-xl shadow-lg shadow-primary/20 hover:shadow-primary/30 transition-all duration-300"
                   onClick={() => setShowSupplierSelect(true)}
                   data-testid="add-purchase-btn"
                 >
                   <ShoppingCart className="w-4 h-4 mr-2" />
-                  Create Purchase ({scannedItems.length} items)
+                  Create Purchase ({scannedItems.length} {scannedItems.length === 1 ? "item" : "items"})
                 </Button>
               ) : (
-                <div className="space-y-3">
+                <div className="space-y-4">
                   <div className="relative" ref={supplierDropdownRef}>
-                    <Label className="mb-1.5 block">Select Supplier *</Label>
+                    <Label className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-muted-foreground/80">Select Supplier *</Label>
                     <div 
                       className={`w-full h-11 rounded-xl border ${isSupplierDropdownOpen ? 'border-primary ring-2 ring-primary/10' : 'border-border'} bg-background/50 backdrop-blur-sm px-4 flex items-center justify-between cursor-pointer transition-all hover:border-primary/50`}
                       onClick={() => {
@@ -999,24 +1058,24 @@ export default function ScannerPage() {
                       }}
                       tabIndex={0}
                     >
-                      <span className={`text-sm ${!selectedSupplier ? 'text-muted-foreground' : 'font-medium'}`}>
+                      <span className={`text-sm ${!selectedSupplier ? 'text-muted-foreground' : 'font-semibold'}`}>
                         {selectedSupplier 
                           ? suppliers.find(s => s.id === selectedSupplier)?.name || "Select Supplier"
                           : "Choose a supplier..."
                         }
                       </span>
-                      <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform duration-200 ${isSupplierDropdownOpen ? 'rotate-180' : ''}`} />
+                      <ChevronDown className={`w-4 h-4 text-muted-foreground/80 transition-transform duration-200 ${isSupplierDropdownOpen ? 'rotate-180' : ''}`} />
                     </div>
 
                     {isSupplierDropdownOpen && (
-                      <div className="absolute z-[100] mt-2 w-full bg-card/95 backdrop-blur-xl border border-white/10 rounded-xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-                        <div className="p-2 border-b border-white/5">
+                      <div className="absolute bottom-full mb-2 left-0 z-[100] w-full bg-card/95 backdrop-blur-xl border border-border/80 rounded-xl shadow-2xl overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-200">
+                        <div className="p-2 border-b border-border/50">
                           <div className="relative">
                             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
                             <Input 
                               autoFocus
                               placeholder="Search suppliers..." 
-                              className="pl-9 h-9 text-xs bg-white/5 border-none"
+                              className="pl-9 h-9 text-xs bg-muted/40 border-none rounded-lg focus-visible:ring-1 focus-visible:ring-primary/30"
                               value={supplierSearch}
                               onChange={(e) => setSupplierSearch(e.target.value)}
                               onKeyDown={handleSupplierKeyDown}
@@ -1027,7 +1086,7 @@ export default function ScannerPage() {
                         
                         <div 
                           ref={supplierScrollRef}
-                          className="max-h-[240px] overflow-y-auto p-1 custom-scrollbar"
+                          className="max-h-[200px] overflow-y-auto p-1 custom-scrollbar"
                           onScroll={(e) => {
                             const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
                             if (scrollHeight - scrollTop <= clientHeight + 50 && hasMoreSuppliers && !loadingSuppliers) {
@@ -1041,10 +1100,10 @@ export default function ScannerPage() {
                               data-index={idx}
                               className={`flex items-center justify-between p-2.5 rounded-lg cursor-pointer transition-colors ${
                                 highlightedSupplierIndex === idx
-                                  ? 'bg-primary/20 text-primary'
+                                  ? 'bg-primary/20 text-primary font-medium'
                                   : (selectedSupplier === supplier.id 
                                     ? 'bg-primary/10 text-primary font-bold' 
-                                    : 'hover:bg-white/5 text-foreground/80')
+                                    : 'hover:bg-muted/50 text-foreground/80')
                               }`}
                               onClick={() => {
                                 setSelectedSupplier(supplier.id);
@@ -1067,7 +1126,7 @@ export default function ScannerPage() {
                           )}
                           
                           {!loadingSuppliers && suppliers.length === 0 && (
-                            <div className="p-8 text-center text-muted-foreground text-xs italic">
+                            <div className="p-6 text-center text-muted-foreground text-xs italic">
                               No suppliers match "{supplierSearch}"
                             </div>
                           )}
@@ -1076,26 +1135,26 @@ export default function ScannerPage() {
                     )}
                   </div>
 
-                  <div>
-                    <Label>Invoice No (Optional)</Label>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-bold uppercase tracking-wider text-muted-foreground/80">Invoice No (Optional)</Label>
                     <Input
                       value={invoiceNo}
                       onChange={(e) => setInvoiceNo(e.target.value)}
-                      placeholder="Invoice Number"
-                      className="h-10"
+                      placeholder="Enter Invoice Number"
+                      className="h-10 rounded-xl bg-background/50 border-border"
                     />
                   </div>
 
-                  <div className="flex gap-2">
+                  <div className="flex gap-3 pt-2">
                     <Button
                       variant="outline"
-                      className="flex-1"
+                      className="flex-1 h-10 rounded-xl border-border hover:bg-muted/40 font-semibold"
                       onClick={() => setShowSupplierSelect(false)}
                     >
                       Cancel
                     </Button>
                     <Button
-                      className="flex-1 btn-primary"
+                      className="flex-1 btn-primary h-10 rounded-xl font-bold"
                       onClick={handleCreatePurchase}
                       disabled={submitting || !selectedSupplier}
                     >
@@ -1119,15 +1178,33 @@ export default function ScannerPage() {
         )}
 
         {/* Tips */}
-        <Card className="bg-muted/30 border-white/5">
-          <CardContent className="p-4">
-            <h4 className="font-medium mb-2 text-sm">Tips for Best Results</h4>
-            <ul className="text-xs text-muted-foreground space-y-1">
-              <li>• Ensure good lighting on the product label</li>
-              <li>• Capture the full product name and details</li>
-              <li>• Include batch number and expiry date in frame</li>
-              <li>• Quantity must be entered manually</li>
-              <li>• Review and edit detected fields as needed</li>
+        <Card className="glass bg-card/25 backdrop-blur-md border border-border/50 shadow-md rounded-2xl overflow-hidden">
+          <CardContent className="p-5">
+            <h4 className="font-semibold mb-3 text-sm text-primary flex items-center gap-1.5">
+              <Sparkles className="w-4 h-4 animate-pulse" />
+              Tips for Best Results
+            </h4>
+            <ul className="text-xs text-muted-foreground space-y-2 leading-relaxed">
+              <li className="flex items-start gap-2">
+                <span className="text-primary font-bold">•</span>
+                <span>Ensure good lighting on the product label.</span>
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="text-primary font-bold">•</span>
+                <span>Capture the full product name and details.</span>
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="text-primary font-bold">•</span>
+                <span>Include batch number and expiry date in frame.</span>
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="text-primary font-bold">•</span>
+                <span>Quantity must be entered manually.</span>
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="text-primary font-bold">•</span>
+                <span>Review and edit detected fields as needed.</span>
+              </li>
             </ul>
           </CardContent>
         </Card>

@@ -15,18 +15,19 @@ import {
   FileEdit,
   Trash2,
   PlusCircle,
-  Clock
+  Clock,
+  Loader2,
 } from "lucide-react";
 import { Button } from "./ui/button";
 
 const MODULE_CONFIG = {
-  BILLING: { icon: Receipt, color: "text-blue-500", bg: "bg-blue-500/10", border: "border-blue-500/20" },
-  PURCHASES: { icon: ShoppingCart, color: "text-purple-500", bg: "bg-purple-500/10", border: "border-purple-500/20" },
+  BILLING: { icon: Receipt, color: "text-sky-500", bg: "bg-sky-500/10", border: "border-sky-500/20" },
+  PURCHASES: { icon: ShoppingCart, color: "text-violet-500", bg: "bg-violet-500/10", border: "border-violet-500/20" },
   CUSTOMERS: { icon: Users, color: "text-emerald-500", bg: "bg-emerald-500/10", border: "border-emerald-500/20" },
   SUPPLIERS: { icon: Truck, color: "text-amber-500", bg: "bg-amber-500/10", border: "border-amber-500/20" },
   INVENTORY: { icon: Package, color: "text-indigo-500", bg: "bg-indigo-500/10", border: "border-indigo-500/20" },
   PRODUCTS: { icon: Package, color: "text-rose-500", bg: "bg-rose-500/10", border: "border-rose-500/20" },
-  USERS: { icon: Users, color: "text-cyan-500", bg: "bg-cyan-500/10", border: "border-cyan-500/20" }
+  USERS: { icon: Users, color: "text-cyan-500", bg: "bg-cyan-500/10", border: "border-cyan-500/20" },
 };
 
 const MODULE_OPTIONS = ["ALL", "BILLING", "PURCHASES", "CUSTOMERS", "SUPPLIERS", "INVENTORY", "PRODUCTS", "USERS"];
@@ -78,7 +79,7 @@ export default function RecentActivitySidebar({ open, onClose }) {
       threshold: 0,
     });
     if (observerRef.current) observer.observe(observerRef.current);
-    
+
     return () => {
       if (observerRef.current) observer.unobserve(observerRef.current);
     };
@@ -91,14 +92,15 @@ export default function RecentActivitySidebar({ open, onClose }) {
     const fetchActivities = async (pageNum) => {
       try {
         if (pageNum === 1) setLoading(true);
-        const url = filterModule === "ALL" 
-          ? `${API}/activities?limit=30&page=${pageNum}` 
-          : `${API}/activities?limit=30&page=${pageNum}&module=${filterModule}`;
-        
+        const url =
+          filterModule === "ALL"
+            ? `${API}/activities?limit=30&page=${pageNum}`
+            : `${API}/activities?limit=30&page=${pageNum}&module=${filterModule}`;
+
         const res = await axios.get(url, {
-          headers: { Authorization: `Bearer ${token}` }
+          headers: { Authorization: `Bearer ${token}` },
         });
-        
+
         if (pageNum === 1) {
           setActivities(res.data.activities);
         } else {
@@ -115,14 +117,15 @@ export default function RecentActivitySidebar({ open, onClose }) {
     fetchActivities(page);
   }, [page, open, token, pharmacy, filterModule]);
 
-  // Real-time polling / event listening (reset to page 1 to ensure freshness)
+  // Real-time polling (reset to page 1 to ensure freshness)
   useEffect(() => {
     if (!open) return;
     const fetchLatest = async () => {
       try {
-        const url = filterModule === "ALL" 
-          ? `${API}/activities?limit=30&page=1` 
-          : `${API}/activities?limit=30&page=1&module=${filterModule}`;
+        const url =
+          filterModule === "ALL"
+            ? `${API}/activities?limit=30&page=1`
+            : `${API}/activities?limit=30&page=1&module=${filterModule}`;
         const res = await axios.get(url, { headers: { Authorization: `Bearer ${token}` } });
         setActivities(res.data.activities);
         setPage(1);
@@ -131,7 +134,7 @@ export default function RecentActivitySidebar({ open, onClose }) {
         console.error(e);
       }
     };
-    
+
     const interval = setInterval(fetchLatest, 30000);
     window.addEventListener("activity-updated", fetchLatest);
     return () => {
@@ -147,66 +150,84 @@ export default function RecentActivitySidebar({ open, onClose }) {
   }, [filterModule]);
 
   return (
-    <div className={`w-80 h-full bg-card/90 backdrop-blur-3xl flex flex-col transition-all duration-300`}>
-      <div className="p-4 border-b border-white/5 flex items-center justify-between bg-card/30 backdrop-blur-md z-10 w-full md:h-16 shrink-0">
+    <div className="w-80 h-full bg-card/90 dark:bg-zinc-950/85 backdrop-blur-2xl border-l border-border/40 flex flex-col transition-all duration-300">
+      {/* Sidebar Header */}
+      <div className="p-4 md:h-16 border-b border-border/40 flex items-center justify-between bg-card/30 shrink-0 z-10">
         <div className="flex items-center gap-2">
-          <Activity className="w-5 h-5 text-primary" />
-          <h2 className="font-semibold text-foreground tracking-tight">Recent Activity</h2>
+          <div className="p-1.5 rounded-lg bg-primary/10 text-primary shadow shadow-primary/5">
+            <Activity className="w-4 h-4" />
+          </div>
+          <h2 className="font-bold text-sm text-foreground tracking-tight">Recent Activity</h2>
         </div>
-        <Button variant="ghost" size="icon" onClick={onClose} className="">
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={onClose}
+          className="h-8 w-8 hover:bg-muted text-muted-foreground hover:text-foreground rounded-lg transition-transform active:scale-90"
+        >
           <X className="w-4 h-4" />
         </Button>
       </div>
 
-      <div className="flex px-4 py-2 gap-2 overflow-x-auto custom-scrollbar border-b border-white/5 shrink-0 bg-card/20 backdrop-blur-md">
+      {/* Module Horizontal Filters */}
+      <div className="flex px-4 py-2.5 gap-2 overflow-x-auto shrink-0 border-b border-border/30 bg-card/15 backdrop-blur-xs select-none scrollbar-none">
         {MODULE_OPTIONS.map((mod) => (
           <button
             key={mod}
             onClick={() => setFilterModule(mod)}
-            className={`px-3 py-1 rounded-full text-[11px] font-medium whitespace-nowrap transition-colors border ${
+            className={`px-3 py-1 rounded-full text-[10px] font-bold tracking-wide uppercase whitespace-nowrap transition-all duration-200 border ${
               filterModule === mod
-                ? "bg-primary text-primary-foreground border-primary"
-                : "bg-white/5 border-white/10 hover:bg-white/10 text-muted-foreground hover:text-foreground"
+                ? "bg-primary text-primary-foreground border-primary shadow-sm shadow-primary/10"
+                : "bg-muted/45 border-border/50 hover:bg-muted hover:border-border text-muted-foreground hover:text-foreground active:scale-95"
             }`}
           >
-            {mod.charAt(0) + mod.slice(1).toLowerCase()}
+            {mod === "ALL" ? "All Logs" : mod.toLowerCase()}
           </button>
         ))}
       </div>
 
-      <div className="flex-1 overflow-y-auto overscroll-contain p-4 custom-scrollbar">
+      {/* Timeline Scrollable Content */}
+      <div className="flex-1 overflow-y-auto overscroll-contain p-4 scrollbar-thin scrollbar-thumb-muted">
         {loading && activities.length === 0 ? (
-          <div className="flex flex-col gap-4 animate-pulse">
-            {[1, 2, 3, 4, 5].map((i) => (
-              <div key={i} className="flex gap-3">
-                <div className="w-8 h-8 rounded-full bg-muted min-w-[32px]"></div>
+          <div className="space-y-5 animate-pulse">
+            {[1, 2, 3, 4, 5, 6].map((i) => (
+              <div key={i} className="flex gap-4">
+                <div className="w-8 h-8 rounded-full bg-muted min-w-[32px] shrink-0"></div>
                 <div className="space-y-2 flex-1 pt-1">
-                  <div className="h-4 bg-muted rounded w-3/4"></div>
-                  <div className="h-3 bg-muted rounded w-1/2"></div>
+                  <div className="h-3.5 bg-muted rounded w-5/6"></div>
+                  <div className="h-2.5 bg-muted rounded w-2/5"></div>
                 </div>
               </div>
             ))}
           </div>
         ) : activities.length === 0 ? (
-          <div className="text-center text-muted-foreground flex flex-col items-center justify-center h-40">
-            <Clock className="w-8 h-8 opacity-20 mb-2" />
-            <p className="text-sm">No recent activity found.</p>
+          <div className="text-center text-muted-foreground flex flex-col items-center justify-center h-48 py-8">
+            <div className="w-10 h-10 rounded-full bg-muted/40 flex items-center justify-center mb-3">
+              <Clock className="w-5 h-5 opacity-40" />
+            </div>
+            <p className="text-xs font-semibold">No recent activity found.</p>
+            <p className="text-[10px] opacity-60 mt-1">Actions in modules will appear here.</p>
           </div>
         ) : (
           <div className="relative">
-            {/* Git Graph Vertical Line */}
-            <div className="absolute top-4 bottom-4 left-4 w-[2px] bg-gradient-to-b from-white/10 via-white/10 to-transparent"></div>
-            
-            <div className="space-y-6 relative">
-              {activities.map((activity, idx) => {
-                const config = MODULE_CONFIG[activity.module] || { icon: Activity, color: "text-muted-foreground", bg: "bg-muted", border: "border-muted" };
+            {/* Timeline Vertical Thread Line */}
+            <div className="absolute top-4 bottom-4 left-4 w-[1.5px] bg-gradient-to-b from-primary/30 via-border/60 to-transparent pointer-events-none"></div>
+
+            <div className="space-y-5 relative">
+              {activities.map((activity) => {
+                const config = MODULE_CONFIG[activity.module] || {
+                  icon: Activity,
+                  color: "text-muted-foreground",
+                  bg: "bg-muted",
+                  border: "border-muted",
+                };
                 const ModuleIcon = config.icon;
                 const ActionIcon = ACTION_ICONS[activity.type] || Activity;
-                
+
                 return (
-                  <div 
-                    key={activity.id} 
-                    className="flex gap-4 group cursor-pointer transition-all hover:bg-white/5 p-2 -mx-2 rounded-xl"
+                  <div
+                    key={activity.id}
+                    className="flex gap-4 group cursor-pointer transition-all duration-200 hover:bg-white/[0.04] p-2.5 -mx-2.5 rounded-xl border border-transparent hover:border-border/30 shadow-sm hover:shadow-black/5"
                     onClick={() => {
                       if (activity.link) {
                         navigate(activity.link, { state: { highlightId: activity.entity_id } });
@@ -214,46 +235,66 @@ export default function RecentActivitySidebar({ open, onClose }) {
                       }
                     }}
                   >
-                    {/* Timeline Node */}
+                    {/* Timeline Bubble Node */}
                     <div className="relative flex flex-col items-center">
-                      <div className={`w-8 h-8 rounded-full flex items-center justify-center ${config.bg} ${config.border} border shadow-sm z-10 relative group-hover:scale-110 transition-transform`}>
-                        <ModuleIcon className={`w-4 h-4 ${config.color}`} />
+                      <div
+                        className={`w-8 h-8 rounded-full flex items-center justify-center ${config.bg} ${config.border} border shadow-sm z-10 shrink-0 group-hover:scale-105 transition-transform duration-300`}
+                      >
+                        <ModuleIcon className={`w-3.5 h-3.5 ${config.color}`} />
                       </div>
                     </div>
 
-                    {/* Content */}
+                    {/* Timeline Item Description Body */}
                     <div className="flex-1 pt-0.5 min-w-0">
-                      <div className="flex items-start justify-between gap-1 mb-1">
-                        <p className="text-sm font-medium text-foreground leading-tight line-clamp-2">
-                          {activity.description}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
-                        <span className={`flex items-center gap-1 font-medium ${activity.type === 'DELETE' ? 'text-rose-500/80' : activity.type === 'UPDATE' ? 'text-amber-500/80' : 'text-emerald-500/80'}`}>
-                          <ActionIcon className="w-3 h-3" />
+                      <p className="text-xs font-bold text-foreground leading-normal line-clamp-2 mb-1.5 transition-colors group-hover:text-primary">
+                        {activity.description}
+                      </p>
+                      
+                      {/* Meta Footer */}
+                      <div className="flex items-center gap-2 text-[10px] text-muted-foreground/80 font-semibold mb-2">
+                        <span
+                          className={`inline-flex items-center gap-1 font-bold ${
+                            activity.type === "DELETE"
+                              ? "text-rose-500/90"
+                              : activity.type === "UPDATE"
+                              ? "text-amber-500/90"
+                              : "text-emerald-500/90"
+                          }`}
+                        >
+                          <ActionIcon className="w-2.5 h-2.5" />
                           {activity.type}
                         </span>
                         <span>•</span>
-                        <span>{formatDistanceToNow(new Date(activity.created_at), { addSuffix: true })}</span>
+                        <span className="font-medium text-[9px] opacity-70">
+                          {formatDistanceToNow(new Date(activity.created_at), { addSuffix: true })}
+                        </span>
                       </div>
-                      <div className="mt-1.5 flex items-center gap-1.5 z-10 relative">
+
+                      {/* User Badge */}
+                      <div className="flex items-center gap-1.5">
                         {activity.user_image ? (
-                          <img src={activity.user_image} alt={activity.user_name || "User"} className="w-5 h-5 rounded-full object-cover shadow-sm bg-primary/10 border border-primary/20" />
+                          <img
+                            src={activity.user_image}
+                            alt={activity.user_name || "User"}
+                            className="w-4 h-4 rounded-full object-cover shadow-sm bg-primary/10 border border-primary/20"
+                          />
                         ) : (
-                          <div className="w-5 h-5 rounded-full bg-primary/20 flex items-center justify-center text-[10px] font-bold text-primary border border-primary/20">
-                            {activity.user_name ? activity.user_name.charAt(0).toUpperCase() : 'S'}
+                          <div className="w-4 h-4 rounded-full bg-primary/20 flex items-center justify-center text-[9px] font-bold text-primary border border-primary/20">
+                            {activity.user_name ? activity.user_name.charAt(0).toUpperCase() : "S"}
                           </div>
                         )}
-                        <span className="text-xs text-muted-foreground/80 font-medium">{activity.user_name || 'System'}</span>
+                        <span className="text-[10px] text-muted-foreground font-semibold">
+                          {activity.user_name || "System"}
+                        </span>
                       </div>
                     </div>
                   </div>
                 );
               })}
-              
+
               {hasMore && (
-                <div ref={observerRef} className="h-12 flex items-center justify-center pb-4 mt-2">
-                  <div className="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin"></div>
+                <div ref={observerRef} className="h-10 flex items-center justify-center pb-2 mt-1">
+                  <Loader2 className="w-4 h-4 text-primary animate-spin" />
                 </div>
               )}
             </div>

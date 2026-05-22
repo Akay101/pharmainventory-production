@@ -63,8 +63,8 @@ div[style*="Made with Emergent"] {
     --accent-foreground: 0 0% 100%;
     --destructive: 0 84% 60%;
     --destructive-foreground: 0 0% 100%;
-    --border: 270 20% 88%;
-    --input: 270 20% 88%;
+    --border: 270 15% 82%;
+    --input: 270 15% 82%;
     --ring: 270 70% 50%;
     --chart-1: 270 70% 50%;
     --chart-2: 280 80% 55%;
@@ -218,6 +218,36 @@ select {
 .sidebar-link:not(.nav-item-active) {
   @apply opacity-70 hover:opacity-100;
 }
+
+/* 🌟 Light Mode Border Clarity Overrides */
+.light .border-border\/40 {
+  border-color: hsl(var(--border) / 0.7) !important;
+}
+.light .border-border\/30 {
+  border-color: hsl(var(--border) / 0.55) !important;
+}
+.light .divide-border\/40 > :not([hidden]) ~ :not([hidden]) {
+  border-color: hsl(var(--border) / 0.7) !important;
+}
+.light .border-r\/40 {
+  border-right-color: hsl(var(--border) / 0.7) !important;
+}
+.light .border-b\/40 {
+  border-bottom-color: hsl(var(--border) / 0.7) !important;
+}
+.light .border-t\/40 {
+  border-top-color: hsl(var(--border) / 0.7) !important;
+}
+.light .bg-card\/25 {
+  border-color: hsl(var(--border) / 0.7) !important;
+}
+.light .bg-card\/40 {
+  border-color: hsl(var(--border) / 0.8) !important;
+}
+.light .bg-card\/45 {
+  border-color: hsl(var(--border) / 0.7) !important;
+}
+
 
 
 
