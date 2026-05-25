@@ -65,6 +65,7 @@ jobs:
           host: ${{ secrets.PREPROD_SERVER_HOST }}
           username: ubuntu
           key: ${{ secrets.PREPROD_SERVER_SSH_KEY }}
+          command_timeout: 30m
           script: |
             cd ~
             bash deploy-preprod.sh
