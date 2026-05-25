@@ -449,7 +449,7 @@ router.put(
     session.startTransaction();
 
     try {
-      const { items, purchase_date, invoice_no, supplier_id, supplier_name } = req.body;
+      const { items, purchase_date, invoice_no, supplier_id, supplier_name, payment_status, amount_paid } = req.body;
       const db = mongoose.connection.db;
 
       const purchase = await db.collection("purchases").findOne({
@@ -463,38 +463,70 @@ router.put(
         return res.status(404).json({ detail: "Purchase not found" });
       }
 
-      // Reverse old inventory
-      for (const oldItem of purchase.items) {
-        const updateResult = await db.collection("inventory").findOneAndUpdate(
-          {
-            pharmacy_id: req.user.pharmacy_id,
-            product_name: oldItem.product_name,
-            batch_no: oldItem.batch_no,
-          },
-          {
-            $inc: {
-              quantity: -oldItem.total_units,
-              available_quantity: -oldItem.total_units,
-            },
-          },
-          { session, returnDocument: "after" }
-        );
+      // Check if items changed
+      let itemsChanged = false;
+      if (!purchase.items || purchase.items.length !== items.length) {
+        itemsChanged = true;
+      } else {
+        for (let i = 0; i < purchase.items.length; i++) {
+          const oldItem = purchase.items[i];
+          const newItem = items[i];
 
-        // [Issue #1] Handle Missing Inventory Record + Negative Protection
-        if (!updateResult) {
-          await session.abortTransaction();
-          session.endSession();
-          return res.status(404).json({
-            detail: `Inventory record missing for ${oldItem.product_name}. Cannot update.`,
-          });
+          const newPackQty = parseInt(newItem.pack_quantity) || parseInt(newItem.quantity) || 1;
+          const newUnitsPerPack = parseInt(newItem.units_per_pack) || parseInt(newItem.units) || 1;
+          const newPackPrice = parseFloat(newItem.pack_price) || parseFloat(newItem.rate_pack) || 0;
+          const newMrpPerUnit = parseFloat(newItem.mrp_per_unit) || parseFloat(newItem.mrp_unit) || 0;
+
+          if (
+            oldItem.product_name !== newItem.product_name ||
+            oldItem.batch_no !== newItem.batch_no ||
+            oldItem.pack_quantity !== newPackQty ||
+            oldItem.units_per_pack !== newUnitsPerPack ||
+            oldItem.pack_price !== newPackPrice ||
+            oldItem.mrp_per_unit !== newMrpPerUnit
+          ) {
+            itemsChanged = true;
+            break;
+          }
         }
+      }
 
-        if (updateResult.quantity < 0 || updateResult.available_quantity < 0) {
-          await session.abortTransaction();
-          session.endSession();
-          return res.status(400).json({
-            detail: `Update failed: Inventory for ${oldItem.product_name} would become negative.`,
-          });
+      const updateInventory = req.query.update_inventory !== "false" && itemsChanged;
+
+      if (updateInventory) {
+        // Reverse old inventory
+        for (const oldItem of purchase.items) {
+          const updateResult = await db.collection("inventory").findOneAndUpdate(
+            {
+              pharmacy_id: req.user.pharmacy_id,
+              product_name: oldItem.product_name,
+              batch_no: oldItem.batch_no,
+            },
+            {
+              $inc: {
+                quantity: -oldItem.total_units,
+                available_quantity: -oldItem.total_units,
+              },
+            },
+            { session, returnDocument: "after" }
+          );
+
+          // [Issue #1] Handle Missing Inventory Record + Negative Protection
+          if (!updateResult) {
+            await session.abortTransaction();
+            session.endSession();
+            return res.status(404).json({
+              detail: `Inventory record missing for ${oldItem.product_name}. Cannot update.`,
+            });
+          }
+
+          if (updateResult.quantity < 0 || updateResult.available_quantity < 0) {
+            await session.abortTransaction();
+            session.endSession();
+            return res.status(400).json({
+              detail: `Update failed: Inventory for ${oldItem.product_name} would become negative.`,
+            });
+          }
         }
       }
 
@@ -529,39 +561,52 @@ router.put(
           item_total: itemTotal,
         });
 
-        // Add to inventory
-        const existingInventory = await db.collection("inventory").findOne({
-          pharmacy_id: req.user.pharmacy_id,
-          product_name: item.product_name,
-          batch_no: item.batch_no,
-        }, { session });
-
-        if (existingInventory) {
-          await db.collection("inventory").updateOne(
-            { id: existingInventory.id },
-            {
-              $inc: { quantity: totalUnits, available_quantity: totalUnits },
-              $set: { purchase_price: pricePerUnit, mrp: mrpPerUnit },
-            },
-            { session }
-          );
-        } else {
-          await db.collection("inventory").insertOne({
-            id: uuidv4(),
+        if (updateInventory) {
+          // Add to inventory
+          const existingInventory = await db.collection("inventory").findOne({
             pharmacy_id: req.user.pharmacy_id,
-            product_id: item.product_id,
             product_name: item.product_name,
             batch_no: item.batch_no,
-            expiry_date: item.expiry_date,
-            quantity: totalUnits,
-            available_quantity: totalUnits,
-            units_per_pack: unitsPerPack,
-            purchase_price: pricePerUnit,
-            mrp: mrpPerUnit,
-            purchase_id: req.params.purchase_id,
-            created_at: new Date().toISOString(),
           }, { session });
+
+          if (existingInventory) {
+            await db.collection("inventory").updateOne(
+              { id: existingInventory.id },
+              {
+                $inc: { quantity: totalUnits, available_quantity: totalUnits },
+                $set: { purchase_price: pricePerUnit, mrp: mrpPerUnit },
+              },
+              { session }
+            );
+          } else {
+            await db.collection("inventory").insertOne({
+              id: uuidv4(),
+              pharmacy_id: req.user.pharmacy_id,
+              product_id: item.product_id,
+              product_name: item.product_name,
+              batch_no: item.batch_no,
+              expiry_date: item.expiry_date,
+              quantity: totalUnits,
+              available_quantity: totalUnits,
+              units_per_pack: unitsPerPack,
+              purchase_price: pricePerUnit,
+              mrp: mrpPerUnit,
+              purchase_id: req.params.purchase_id,
+              created_at: new Date().toISOString(),
+            }, { session });
+          }
         }
+      }
+
+      const finalStatus = payment_status !== undefined ? payment_status : (purchase.payment_status || "Unpaid");
+      let finalAmountPaid = purchase.amount_paid || 0;
+      if (payment_status !== undefined) {
+        finalAmountPaid = amount_paid !== undefined ? parseFloat(amount_paid) : finalAmountPaid;
+      }
+      if (finalStatus === "Paid") {
+        finalAmountPaid = totalAmount;
+      } else if (finalStatus === "Unpaid") {
+        finalAmountPaid = 0;
       }
 
       const updatePayload = {
@@ -569,6 +614,8 @@ router.put(
         total_amount: totalAmount,
         purchase_date: purchase_date || purchase.purchase_date,
         invoice_no: invoice_no || purchase.invoice_no,
+        payment_status: finalStatus,
+        amount_paid: finalAmountPaid,
         updated_at: new Date().toISOString(),
       };
 

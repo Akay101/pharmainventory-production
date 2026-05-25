@@ -347,6 +347,7 @@ export default function BillingPage() {
     setBillDiscount(0);
     setIsPaid(true);
     setShowNewBill(true);
+    setTimeout(() => productInputRef.current?.focus(), 150);
   };
 
   const switchTab = (tabId) => {
@@ -370,6 +371,7 @@ export default function BillingPage() {
     setBillDiscount(target.data.billDiscount || 0);
     setIsPaid(target.data.isPaid !== false);
     setShowNewBill(true);
+    setTimeout(() => productInputRef.current?.focus(), 150);
   };
 
   const closeTab = (tabId) => {
@@ -703,10 +705,7 @@ export default function BillingPage() {
       createNewTab();
     } else {
       setShowNewBill(true);
-      setTimeout(
-        () => document.getElementById("search-inventory-input")?.focus(),
-        100
-      );
+      setTimeout(() => productInputRef.current?.focus(), 150);
     }
   };
 
@@ -1717,7 +1716,7 @@ export default function BillingPage() {
 
             {/* Items Table - Inline Editable */}
             <div className="border border-border/70 rounded-xl overflow-hidden shadow-sm bg-background/50 backdrop-blur-md mt-4">
-              <Table wrapperClassName="h-[350px]">
+              <Table wrapperClassName="max-h-[300px]">
                 <TableHeader className="sticky top-0 bg-muted/90 backdrop-blur-md z-[50] border-b border-border/80">
                   <TableRow className="hover:bg-transparent border-b border-border/80">
                     <TableHead className="w-[180px] font-bold text-foreground/80 text-xs uppercase tracking-wider">
@@ -2410,7 +2409,7 @@ export default function BillingPage() {
 
             {/* Items Table - Inline Editable */}
             <div className="border border-border/70 rounded-xl overflow-hidden shadow-sm bg-background/50 backdrop-blur-md mt-4">
-              <Table wrapperClassName="h-[350px]">
+              <Table wrapperClassName="max-h-[300px]">
                 <TableHeader className="sticky top-0 bg-muted/90 backdrop-blur-md z-[50] border-b border-border/80">
                   <TableRow className="hover:bg-transparent border-b border-border/80">
                     <TableHead className="w-[180px] font-bold text-foreground/80 text-xs uppercase tracking-wider">
@@ -3747,7 +3746,7 @@ export default function BillingPage() {
       </AlertDialog>
 
       {/* TABS & ACTION NAVBAR */}
-      {(showNewBill || editingBillId) && (
+      {(showNewBill || editingBillId) && createPortal(
         <div className="fixed bottom-0 left-0 md:left-[250px] right-0 z-[100] flex items-center justify-between bg-card/95 backdrop-blur-md border-t border-border shadow-[0_-8px_30px_rgba(0,0,0,0.12)] px-6 py-4 gap-4 overflow-x-auto scroller-hide overflow-y-hidden mb-0 transition-all duration-300">
           <div className="flex items-center gap-2 overflow-x-auto scroller-hide">
             {showNewBill &&
@@ -3861,7 +3860,8 @@ export default function BillingPage() {
               </Button>
             )}
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

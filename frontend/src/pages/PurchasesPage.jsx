@@ -79,14 +79,14 @@ import { getOS } from "../hooks/useKeyboard";
 const PACK_TYPES = ["Strip", "Bottle", "Tube", "Packet", "Box", "Unit"];
 
 // [Issue #Suppliers] Premium Searchable & Infinite Scroll Dropdown
-const SupplierSelector = ({ 
-  selectedId, 
-  onSelect, 
+const SupplierSelector = ({
+  selectedId,
+  onSelect,
   knownSuppliers = [],
   placeholder = "Select Supplier",
   showAllOption = false,
   className = "",
-  disabled = false
+  disabled = false,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -106,7 +106,7 @@ const SupplierSelector = ({
         `${API}/suppliers?page=${p}&limit=20&search=${encodeURIComponent(s)}`
       );
       const data = response.data.suppliers || [];
-      setSuppliers(prev => append ? [...prev, ...data] : data);
+      setSuppliers((prev) => (append ? [...prev, ...data] : data));
       setHasMore(data.length === 20);
       setPage(p);
     } catch (err) {
@@ -160,18 +160,21 @@ const SupplierSelector = ({
     switch (e.key) {
       case "ArrowDown":
         e.preventDefault();
-        setHighlightedIndex(prev => (prev < maxIndex ? prev + 1 : prev));
+        setHighlightedIndex((prev) => (prev < maxIndex ? prev + 1 : prev));
         break;
       case "ArrowUp":
         e.preventDefault();
-        setHighlightedIndex(prev => (prev > minIndex ? prev - 1 : prev));
+        setHighlightedIndex((prev) => (prev > minIndex ? prev - 1 : prev));
         break;
       case "Enter":
         e.preventDefault();
         if (highlightedIndex === -1 && showAllOption) {
           onSelect({ id: "all", name: "All Suppliers" });
           setIsOpen(false);
-        } else if (highlightedIndex >= 0 && highlightedIndex < suppliers.length) {
+        } else if (
+          highlightedIndex >= 0 &&
+          highlightedIndex < suppliers.length
+        ) {
           onSelect(suppliers[highlightedIndex]);
           setIsOpen(false);
         }
@@ -189,7 +192,9 @@ const SupplierSelector = ({
   useEffect(() => {
     if (highlightedIndex >= -1 && scrollContainerRef.current) {
       const container = scrollContainerRef.current;
-      const highlightedElement = container.querySelector(`[data-index="${highlightedIndex}"]`);
+      const highlightedElement = container.querySelector(
+        `[data-index="${highlightedIndex}"]`
+      );
       if (highlightedElement) {
         const containerRect = container.getBoundingClientRect();
         const elementRect = highlightedElement.getBoundingClientRect();
@@ -206,26 +211,36 @@ const SupplierSelector = ({
   // Combine local dropdown list with known suppliers from parent
   const allSuppliers = [...suppliers];
   if (Array.isArray(knownSuppliers)) {
-    knownSuppliers.forEach(ks => {
-      if (ks && ks.id && !allSuppliers.find(s => s.id === ks.id)) {
+    knownSuppliers.forEach((ks) => {
+      if (ks && ks.id && !allSuppliers.find((s) => s.id === ks.id)) {
         allSuppliers.push(ks);
       }
     });
   }
 
-  const selectedSupplier = allSuppliers.find(s => s.id === selectedId);
+  const selectedSupplier = allSuppliers.find((s) => s.id === selectedId);
 
   return (
-    <div className={`relative ${className}`} ref={dropdownRef} onKeyDown={handleKeyDown}>
-      <div 
-        className={`flex h-10 w-full items-center justify-between rounded-xl border bg-background/50 backdrop-blur-sm px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer hover:border-primary/50 transition-all ${isOpen ? 'border-primary ring-2 ring-primary/10' : 'border-border/70'}`}
+    <div
+      className={`relative ${className}`}
+      ref={dropdownRef}
+      onKeyDown={handleKeyDown}
+    >
+      <div
+        className={`flex h-10 w-full items-center justify-between rounded-xl border bg-background/50 backdrop-blur-sm px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer hover:border-primary/50 transition-all ${isOpen ? "border-primary ring-2 ring-primary/10" : "border-border/70"}`}
         onClick={() => !disabled && setIsOpen(!isOpen)}
         tabIndex={0}
       >
-        <span className={`truncate ${!selectedId || selectedId === "" ? "text-muted-foreground/60" : "font-semibold text-foreground"}`}>
-          {selectedId === "all" ? "All Suppliers" : (selectedSupplier?.name || placeholder)}
+        <span
+          className={`truncate ${!selectedId || selectedId === "" ? "text-muted-foreground/60" : "font-semibold text-foreground"}`}
+        >
+          {selectedId === "all"
+            ? "All Suppliers"
+            : selectedSupplier?.name || placeholder}
         </span>
-        <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} />
+        <ChevronDown
+          className={`h-4 w-4 text-muted-foreground transition-transform duration-200 ${isOpen ? "rotate-180" : ""}`}
+        />
       </div>
 
       {isOpen && (
@@ -241,12 +256,16 @@ const SupplierSelector = ({
               onClick={(e) => e.stopPropagation()}
             />
           </div>
-          <div 
+          <div
             ref={scrollContainerRef}
             className="max-h-[200px] overflow-y-auto p-1 custom-scrollbar"
             onScroll={(e) => {
               const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
-              if (scrollHeight - scrollTop <= clientHeight + 50 && hasMore && !loading) {
+              if (
+                scrollHeight - scrollTop <= clientHeight + 50 &&
+                hasMore &&
+                !loading
+              ) {
                 fetchSuppliers(page + 1, search, true);
               }
             }}
@@ -254,11 +273,16 @@ const SupplierSelector = ({
             {showAllOption && (
               <div
                 data-index="-1"
-                className={`relative flex w-full cursor-default select-none items-center rounded-lg py-2.5 pl-9 pr-2 text-sm outline-none transition-colors ${highlightedIndex === -1 ? 'bg-primary/10 text-primary font-medium' : (selectedId === "all" ? "bg-primary/20 text-primary font-bold" : "text-foreground/80 hover:bg-primary/5")}`}
-                onClick={() => { onSelect({ id: "all", name: "All Suppliers" }); setIsOpen(false); }}
+                className={`relative flex w-full cursor-default select-none items-center rounded-lg py-2.5 pl-9 pr-2 text-sm outline-none transition-colors ${highlightedIndex === -1 ? "bg-primary/10 text-primary font-medium" : selectedId === "all" ? "bg-primary/20 text-primary font-bold" : "text-foreground/80 hover:bg-primary/5"}`}
+                onClick={() => {
+                  onSelect({ id: "all", name: "All Suppliers" });
+                  setIsOpen(false);
+                }}
                 onMouseEnter={() => setHighlightedIndex(-1)}
               >
-                {selectedId === "all" && <Check className="absolute left-3 h-4 w-4 text-primary" />}
+                {selectedId === "all" && (
+                  <Check className="absolute left-3 h-4 w-4 text-primary" />
+                )}
                 All Suppliers
               </div>
             )}
@@ -266,14 +290,23 @@ const SupplierSelector = ({
               <div
                 key={s.id}
                 data-index={idx}
-                className={`relative flex w-full cursor-default select-none items-center rounded-lg py-2 pl-9 pr-2 text-sm outline-none transition-colors ${highlightedIndex === idx ? 'bg-primary/10 text-primary font-medium' : (selectedId === s.id ? "bg-primary/20 text-primary font-bold" : "text-foreground/80 hover:bg-primary/5")}`}
-                onClick={() => { onSelect(s); setIsOpen(false); }}
+                className={`relative flex w-full cursor-default select-none items-center rounded-lg py-2 pl-9 pr-2 text-sm outline-none transition-colors ${highlightedIndex === idx ? "bg-primary/10 text-primary font-medium" : selectedId === s.id ? "bg-primary/20 text-primary font-bold" : "text-foreground/80 hover:bg-primary/5"}`}
+                onClick={() => {
+                  onSelect(s);
+                  setIsOpen(false);
+                }}
                 onMouseEnter={() => setHighlightedIndex(idx)}
               >
-                {selectedId === s.id && <Check className="absolute left-3 h-4 w-4 text-primary" />}
+                {selectedId === s.id && (
+                  <Check className="absolute left-3 h-4 w-4 text-primary" />
+                )}
                 <div className="flex flex-col overflow-hidden">
                   <span className="truncate">{s.name}</span>
-                  {s.phone && <span className="text-[10px] opacity-60 font-mono">{s.phone}</span>}
+                  {s.phone && (
+                    <span className="text-[10px] opacity-60 font-mono">
+                      {s.phone}
+                    </span>
+                  )}
                 </div>
               </div>
             ))}
@@ -335,11 +368,20 @@ export default function PurchasesPage() {
   const [expandedPurchase, setExpandedPurchase] = useState(null);
 
   // Add Partial Payment dialog
-  const [paymentDialog, setPaymentDialog] = useState({ open: false, purchase: null });
+  const [paymentDialog, setPaymentDialog] = useState({
+    open: false,
+    purchase: null,
+  });
   const [newPaymentAmount, setNewPaymentAmount] = useState("");
   const [newPaymentNotes, setNewPaymentNotes] = useState("");
-  const [pdfConfirmDialog, setPdfConfirmDialog] = useState({ open: false, purchaseId: null });
-  const [removeConfirmDialog, setRemoveConfirmDialog] = useState({ open: false, itemId: null });
+  const [pdfConfirmDialog, setPdfConfirmDialog] = useState({
+    open: false,
+    purchaseId: null,
+  });
+  const [removeConfirmDialog, setRemoveConfirmDialog] = useState({
+    open: false,
+    itemId: null,
+  });
 
   // Your existing state and refs are correct
   // Replace your current dropdownPosition state and updateDropdownPosition with this:
@@ -359,8 +401,6 @@ export default function PurchasesPage() {
 
   const inputRefs = useRef({});
 
-
-
   const updateDropdownPosition = (itemId) => {
     const inputElement = inputRefs.current[itemId];
     if (!inputElement) return;
@@ -378,15 +418,15 @@ export default function PurchasesPage() {
   // Bulletproof positioning sync
   useEffect(() => {
     if (!activeItemId || !showSuggestions) return;
-    
+
     let rafId;
     const updatePosition = () => {
       updateDropdownPosition(activeItemId);
       rafId = requestAnimationFrame(updatePosition);
     };
-    
+
     rafId = requestAnimationFrame(updatePosition);
-    
+
     return () => cancelAnimationFrame(rafId);
   }, [activeItemId, showSuggestions]);
   // Delete dialog
@@ -444,7 +484,9 @@ export default function PurchasesPage() {
   });
   const [searchQuery, setSearchQuery] = useState("");
   const [searchParams, setSearchParams] = useSearchParams();
-  const [filterSupplier, setFilterSupplier] = useState(searchParams.get("supplier_id") || "all");
+  const [filterSupplier, setFilterSupplier] = useState(
+    searchParams.get("supplier_id") || "all"
+  );
 
   const handleSupplierFilterChange = (val) => {
     setFilterSupplier(val);
@@ -493,7 +535,9 @@ export default function PurchasesPage() {
           setActiveTabId(active.id);
           setSelectedSupplier(active.data.selectedSupplier || "");
           setInvoiceNo(active.data.invoiceNo || "");
-          setPurchaseDate(active.data.purchaseDate || new Date().toISOString().slice(0, 10));
+          setPurchaseDate(
+            active.data.purchaseDate || new Date().toISOString().slice(0, 10)
+          );
           setPurchaseItems(active.data.purchaseItems || []);
           setPaymentStatus(active.data.paymentStatus || "Unpaid");
           setAmountPaid(active.data.amountPaid || "");
@@ -584,12 +628,14 @@ export default function PurchasesPage() {
   const switchTab = (tabId) => {
     const target = tabs.find((t) => t.id === tabId);
     if (!target) return;
-    
+
     // Save current active tab specifically before switching if needed (already handled by effect, but let's ensure states are swapped)
     setActiveTabId(tabId);
     setSelectedSupplier(target.data.selectedSupplier || "");
     setInvoiceNo(target.data.invoiceNo || "");
-    setPurchaseDate(target.data.purchaseDate || new Date().toISOString().slice(0, 10));
+    setPurchaseDate(
+      target.data.purchaseDate || new Date().toISOString().slice(0, 10)
+    );
     setPurchaseItems(target.data.purchaseItems || []);
     setPaymentStatus(target.data.paymentStatus || "Unpaid");
     setAmountPaid(target.data.amountPaid || "");
@@ -599,9 +645,9 @@ export default function PurchasesPage() {
   const closeTab = (tabId) => {
     const isClosingActive = tabId === activeTabId;
     const remainingTabs = tabs.filter((t) => t.id !== tabId);
-    
+
     setTabs(remainingTabs);
-    
+
     if (remainingTabs.length > 0) {
       if (isClosingActive) {
         const next = remainingTabs[0];
@@ -617,7 +663,7 @@ export default function PurchasesPage() {
       setAmountPaid("");
       setShowNewPurchase(false);
     }
-    
+
     if (user?.id) {
       localStorage.setItem(
         `pharmalogy_purchase_drafts_${user.id}`,
@@ -636,22 +682,46 @@ export default function PurchasesPage() {
   // Keep refs updated
   useEffect(() => {
     handlersRef.current = {
-      handleStartNewPurchase, handleSubmitPurchase, handleSaveEditPurchase,
-      handleCancelAddItem, handleCancelNewPurchase,
-      handleAddNewRow, setShowShortcuts, showNewPurchase, newItemRow, editingPurchaseId
+      handleStartNewPurchase,
+      handleSubmitPurchase,
+      handleSaveEditPurchase,
+      handleCancelAddItem,
+      handleCancelNewPurchase,
+      handleAddNewRow,
+      setShowShortcuts,
+      showNewPurchase,
+      newItemRow,
+      editingPurchaseId,
     };
   });
 
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e) => {
-      const isInput = ['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target?.tagName);
-      if (isInput && !e.ctrlKey && !e.metaKey && !e.altKey && e.key !== 'Escape' && e.key !== 'Enter') return;
+      const isInput = ["INPUT", "TEXTAREA", "SELECT"].includes(
+        e.target?.tagName
+      );
+      if (
+        isInput &&
+        !e.ctrlKey &&
+        !e.metaKey &&
+        !e.altKey &&
+        e.key !== "Escape" &&
+        e.key !== "Enter"
+      )
+        return;
 
       const {
-        handleStartNewPurchase, handleSubmitPurchase, handleSaveEditPurchase,
-        handleCancelAddItem, handleCancelNewPurchase, 
-        handleAddNewRow, setShowShortcuts, showNewPurchase, newItemRow, editingPurchaseId
+        handleStartNewPurchase,
+        handleSubmitPurchase,
+        handleSaveEditPurchase,
+        handleCancelAddItem,
+        handleCancelNewPurchase,
+        handleAddNewRow,
+        setShowShortcuts,
+        showNewPurchase,
+        newItemRow,
+        editingPurchaseId,
       } = handlersRef.current;
 
       if (!handleStartNewPurchase) return;
@@ -662,7 +732,10 @@ export default function PurchasesPage() {
         handleStartNewPurchase();
       }
       // Alt+S or Cmd+Enter - Save purchase
-      if ((((e.altKey && (e.key === "s" || e.code === "KeyS")) || ((e.ctrlKey || e.metaKey) && (e.key === "Enter" || e.code === "Enter"))))) {
+      if (
+        (e.altKey && (e.key === "s" || e.code === "KeyS")) ||
+        ((e.ctrlKey || e.metaKey) && (e.key === "Enter" || e.code === "Enter"))
+      ) {
         if (showNewPurchase) {
           e.preventDefault();
           handleSubmitPurchase();
@@ -810,22 +883,22 @@ export default function PurchasesPage() {
     try {
       const initialSuppliers = [];
       const supplierIdFromUrl = searchParams.get("supplier_id");
-      
+
       if (supplierIdFromUrl && supplierIdFromUrl !== "all") {
         try {
           const res = await axios.get(`${API}/suppliers/${supplierIdFromUrl}`);
           if (res.data?.supplier) initialSuppliers.push(res.data.supplier);
-        } catch (e) { 
-          console.error("Filter supplier fetch error", e); 
+        } catch (e) {
+          console.error("Filter supplier fetch error", e);
         }
       }
 
       const suppliersRes = await axios.get(`${API}/suppliers?limit=50`);
       const fetched = suppliersRes.data.suppliers || [];
-      
+
       const combined = [...initialSuppliers];
-      fetched.forEach(f => {
-        if (!combined.find(c => c.id === f.id)) combined.push(f);
+      fetched.forEach((f) => {
+        if (!combined.find((c) => c.id === f.id)) combined.push(f);
       });
 
       setSuppliers(combined);
@@ -1067,7 +1140,9 @@ export default function PurchasesPage() {
 
   const confirmRemoveItem = () => {
     if (!removeConfirmDialog.itemId) return;
-    setPurchaseItems((prev) => prev.filter((item) => item.id !== removeConfirmDialog.itemId));
+    setPurchaseItems((prev) =>
+      prev.filter((item) => item.id !== removeConfirmDialog.itemId)
+    );
     setRemoveConfirmDialog({ open: false, itemId: null });
   };
 
@@ -1136,7 +1211,7 @@ export default function PurchasesPage() {
         if (item.id !== itemId) return item;
 
         const updated = { ...item, [field]: value };
-        
+
         if (field === "rate_pack" || field === "total_amount") {
           updated._is_auto_filled_rate = false;
         }
@@ -1178,7 +1253,11 @@ export default function PurchasesPage() {
     // }
   };
   // Optimize: Check price history silently (used onBlur and immediately on auto-fill)
-  const checkPriceHistorySilent = async (itemId, productName, currentPriceParam) => {
+  const checkPriceHistorySilent = async (
+    itemId,
+    productName,
+    currentPriceParam
+  ) => {
     const currentPrice = parseFloat(currentPriceParam);
     if (!productName || !currentPrice || currentPrice <= 0) return;
 
@@ -1198,9 +1277,9 @@ export default function PurchasesPage() {
       } else {
         // Clear alert if it's fine now
         setPriceAlerts((prev) => {
-           const updated = { ...prev };
-           delete updated[itemId];
-           return updated;
+          const updated = { ...prev };
+          delete updated[itemId];
+          return updated;
         });
       }
     } catch (error) {
@@ -1353,7 +1432,11 @@ export default function PurchasesPage() {
     );
 
     // Call silent ping immediately so if the loaded price is high, it highlights!
-    checkPriceHistorySilent(itemId, medicine.product_name || medicine.name, ratePackFixed);
+    checkPriceHistorySilent(
+      itemId,
+      medicine.product_name || medicine.name,
+      ratePackFixed
+    );
 
     setSearchMedicine("");
     setMedicineSuggestions([]);
@@ -1492,7 +1575,12 @@ export default function PurchasesPage() {
           hsn_no: item.hsn_no || null,
         })),
         payment_status: paymentStatus,
-        amount_paid: paymentStatus === "Partial" ? parseFloat(amountPaid) || 0 : (paymentStatus === "Paid" ? undefined /* backend handles total */ : 0),
+        amount_paid:
+          paymentStatus === "Partial"
+            ? parseFloat(amountPaid) || 0
+            : paymentStatus === "Paid"
+              ? undefined /* backend handles total */
+              : 0,
       };
 
       if (editingPurchaseId) {
@@ -1760,7 +1848,9 @@ export default function PurchasesPage() {
 
   useEffect(() => {
     if (showSuggestions && highlightedSuggestionIndex >= 0) {
-      const el = document.getElementById(`purchases-suggestion-${highlightedSuggestionIndex}`);
+      const el = document.getElementById(
+        `purchases-suggestion-${highlightedSuggestionIndex}`
+      );
       if (el) el.scrollIntoView({ block: "nearest" });
     }
   }, [highlightedSuggestionIndex, showSuggestions]);
@@ -1773,10 +1863,13 @@ export default function PurchasesPage() {
     }
     setSubmitting(true);
     try {
-      await axios.post(`${API}/purchases/${paymentDialog.purchase.id}/payments`, {
-        amount: parseFloat(newPaymentAmount),
-        notes: newPaymentNotes,
-      });
+      await axios.post(
+        `${API}/purchases/${paymentDialog.purchase.id}/payments`,
+        {
+          amount: parseFloat(newPaymentAmount),
+          notes: newPaymentNotes,
+        }
+      );
       toast.success("Payment added successfully");
       setPaymentDialog({ open: false, purchase: null });
       setNewPaymentAmount("");
@@ -1791,9 +1884,10 @@ export default function PurchasesPage() {
 
   const handleMarkAsPaid = async (purchase) => {
     try {
-      const remainingAmount = purchase.total_amount - (purchase.amount_paid || 0);
+      const remainingAmount =
+        purchase.total_amount - (purchase.amount_paid || 0);
       if (remainingAmount <= 0) return;
-      
+
       await axios.post(`${API}/purchases/${purchase.id}/payments`, {
         amount: remainingAmount,
         notes: "Marked as Paid in Full",
@@ -1814,9 +1908,17 @@ export default function PurchasesPage() {
   }
 
   return (
-    <div className="space-y-6 animate-fade-in pb-24" data-testid="purchases-page">
+    <div
+      className="space-y-6 animate-fade-in pb-24"
+      data-testid="purchases-page"
+    >
       {/* Restore Draft Dialog */}
-      <Dialog open={paymentDialog.open} onOpenChange={(open) => !open && setPaymentDialog({ open: false, purchase: null })}>
+      <Dialog
+        open={paymentDialog.open}
+        onOpenChange={(open) =>
+          !open && setPaymentDialog({ open: false, purchase: null })
+        }
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Add Partial Payment</DialogTitle>
@@ -1834,7 +1936,11 @@ export default function PurchasesPage() {
               />
               {paymentDialog.purchase && (
                 <p className="text-xs text-muted-foreground">
-                  Remaining Balance: ₹{(paymentDialog.purchase.total_amount - (paymentDialog.purchase.amount_paid || 0)).toFixed(2)}
+                  Remaining Balance: ₹
+                  {(
+                    paymentDialog.purchase.total_amount -
+                    (paymentDialog.purchase.amount_paid || 0)
+                  ).toFixed(2)}
                 </p>
               )}
             </div>
@@ -1870,19 +1976,19 @@ export default function PurchasesPage() {
             <div className="flex justify-between items-center p-2 bg-muted/30 rounded">
               <span>New Purchase</span>
               <kbd className="px-2 py-1 bg-muted rounded text-xs font-mono">
-                {getOS() === 'mac' ? '⌥ + N' : 'Alt + N'}
+                {getOS() === "mac" ? "⌥ + N" : "Alt + N"}
               </kbd>
             </div>
             <div className="flex justify-between items-center p-2 bg-muted/30 rounded">
               <span>Add Item</span>
               <kbd className="px-2 py-1 bg-muted rounded text-xs font-mono">
-                {getOS() === 'mac' ? '⌥ + A' : 'Alt + A'}
+                {getOS() === "mac" ? "⌥ + A" : "Alt + A"}
               </kbd>
             </div>
             <div className="flex justify-between items-center p-2 bg-muted/30 rounded">
               <span>Save Purchase</span>
               <kbd className="px-2 py-1 bg-muted rounded text-xs font-mono">
-                {getOS() === 'mac' ? '⌘ + Enter' : 'Ctrl + Enter'}
+                {getOS() === "mac" ? "⌘ + Enter" : "Ctrl + Enter"}
               </kbd>
             </div>
             <div className="flex justify-between items-center p-2 bg-muted/30 rounded">
@@ -1926,7 +2032,7 @@ export default function PurchasesPage() {
             Shortcuts
           </Button>
 
-          <Button
+          {/* <Button
             variant="outline"
             className="bg-gradient-to-r from-primary/10 to-primary/5 border-primary/30 hover:border-primary/50"
             onClick={() => window.open("/scan", "_blank")}
@@ -1934,7 +2040,7 @@ export default function PurchasesPage() {
           >
             <Upload className="w-4 h-4 mr-2" />
             Scan
-          </Button>
+          </Button> */}
 
           <Dialog open={csvDialog} onOpenChange={setCsvDialog}>
             <DialogTrigger asChild>
@@ -1950,13 +2056,13 @@ export default function PurchasesPage() {
               <div className="space-y-6 pt-4">
                 <div className="space-y-2">
                   <Label>Supplier *</Label>
-                  <SupplierSelector 
+                  <SupplierSelector
                     selectedId={selectedSupplier}
                     knownSuppliers={suppliers}
                     onSelect={(s) => {
                       setSelectedSupplier(s.id);
-                      if (!suppliers.find(x => x.id === s.id)) {
-                        setSuppliers(prev => [...prev, s]);
+                      if (!suppliers.find((x) => x.id === s.id)) {
+                        setSuppliers((prev) => [...prev, s]);
                       }
                     }}
                   />
@@ -2059,7 +2165,7 @@ export default function PurchasesPage() {
             data-testid="add-purchase-btn"
           >
             <Plus className="w-4 h-4 mr-2" />
-            {getOS() === 'mac' ? 'New (⌥N)' : 'New (Alt+N)'}
+            {getOS() === "mac" ? "New (⌥N)" : "New (Alt+N)"}
           </Button>
         </div>
       </div>
@@ -2141,13 +2247,13 @@ export default function PurchasesPage() {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
               <div className="space-y-2 lg:col-span-1">
                 <Label>Supplier *</Label>
-                <SupplierSelector 
+                <SupplierSelector
                   selectedId={selectedSupplier}
                   knownSuppliers={suppliers}
                   onSelect={(s) => {
                     setSelectedSupplier(s.id);
-                    if (!suppliers.find(x => x.id === s.id)) {
-                      setSuppliers(prev => [...prev, s]);
+                    if (!suppliers.find((x) => x.id === s.id)) {
+                      setSuppliers((prev) => [...prev, s]);
                     }
                   }}
                 />
@@ -2192,23 +2298,27 @@ export default function PurchasesPage() {
               <div className="space-y-2 lg:col-span-2">
                 <Label>Payment Status</Label>
                 <div className="flex bg-muted/50 p-1 rounded-lg">
-                  {['Unpaid', 'Partial', 'Paid'].map(status => (
+                  {["Unpaid", "Partial", "Paid"].map((status) => (
                     <button
                       key={status}
                       type="button"
                       onClick={() => setPaymentStatus(status)}
                       className={`flex-1 text-xs font-semibold py-1.5 px-3 rounded-md transition-all ${
-                        paymentStatus === status 
-                        ? (status === 'Paid' ? 'bg-green-500 text-white shadow-sm' : status === 'Unpaid' ? 'bg-red-500 text-white shadow-sm' : 'bg-yellow-500 text-white shadow-sm')
-                        : 'text-muted-foreground hover:bg-background/50'
+                        paymentStatus === status
+                          ? status === "Paid"
+                            ? "bg-green-500 text-white shadow-sm"
+                            : status === "Unpaid"
+                              ? "bg-red-500 text-white shadow-sm"
+                              : "bg-yellow-500 text-white shadow-sm"
+                          : "text-muted-foreground hover:bg-background/50"
                       }`}
                     >
-                      {status === 'Paid' ? 'Fully Paid' : status}
+                      {status === "Paid" ? "Fully Paid" : status}
                     </button>
                   ))}
                 </div>
               </div>
-              
+
               {paymentStatus === "Partial" && (
                 <div className="space-y-2 lg:col-span-2">
                   <Label>Initial Amount Paid (₹)</Label>
@@ -2221,11 +2331,13 @@ export default function PurchasesPage() {
                       const val = e.target.value;
                       const numericVal = parseFloat(val);
                       if (numericVal && numericVal >= totalAmount) {
-                         setPaymentStatus("Paid");
-                         setAmountPaid("");
-                         toast.success("Amount covers total. Marked as Fully Paid.");
+                        setPaymentStatus("Paid");
+                        setAmountPaid("");
+                        toast.success(
+                          "Amount covers total. Marked as Fully Paid."
+                        );
                       } else {
-                         setAmountPaid(val);
+                        setAmountPaid(val);
                       }
                     }}
                     placeholder="e.g. 500"
@@ -2233,7 +2345,10 @@ export default function PurchasesPage() {
                   />
                   {amountPaid && (
                     <p className="text-[11px] text-muted-foreground">
-                      Remaining: <span className="font-bold text-red-400">₹{(totalAmount - parseFloat(amountPaid)).toFixed(2)}</span>
+                      Remaining:{" "}
+                      <span className="font-bold text-red-400">
+                        ₹{(totalAmount - parseFloat(amountPaid)).toFixed(2)}
+                      </span>
                     </p>
                   )}
                 </div>
@@ -2242,232 +2357,232 @@ export default function PurchasesPage() {
 
             {/* Items Table - Inline Editable with enhanced fields */}
             <div className="border border-border rounded-lg relative overflow-hidden">
-                <Table wrapperClassName="h-[350px]">
-                  <TableHeader className="sticky top-0 bg-muted/95 backdrop-blur z-[50]">
-                    <TableRow>
-                      <TableHead className="w-[150px] font-bold text-foreground">
-                        Product *
-                      </TableHead>
-                      <TableHead className="w-[100px] font-bold text-foreground">
-                        MFG.
-                      </TableHead>
-                      <TableHead className="w-[100px] font-bold text-foreground">
-                        Salt
-                      </TableHead>
-                      <TableHead className="w-[80px] font-bold text-foreground">
-                        Pack Type
-                      </TableHead>
-                      <TableHead className="w-[80px] font-bold text-foreground">
-                        Batch
-                      </TableHead>
-                      <TableHead className="w-[80px] font-bold text-foreground">
-                        HSN
-                      </TableHead>
-                      <TableHead className="w-[100px] font-bold text-foreground">
-                        Expiry
-                      </TableHead>
-                      <TableHead className="w-[60px] text-center font-bold text-foreground">
-                        Qty *
-                      </TableHead>
-                      <TableHead className="w-[60px] text-center font-bold text-foreground">
-                        Units
-                      </TableHead>
-                      <TableHead className="w-[60px] text-center font-bold text-foreground">
-                        T.Units
-                      </TableHead>
-                      <TableHead className="w-[80px] text-center font-bold text-foreground">
-                        Rate(Pack)*
-                      </TableHead>
+              <Table wrapperClassName="h-[350px]">
+                <TableHeader className="sticky top-0 bg-muted/95 backdrop-blur z-[50]">
+                  <TableRow>
+                    <TableHead className="w-[150px] font-bold text-foreground">
+                      Product *
+                    </TableHead>
+                    <TableHead className="w-[100px] font-bold text-foreground">
+                      MFG.
+                    </TableHead>
+                    <TableHead className="w-[100px] font-bold text-foreground">
+                      Salt
+                    </TableHead>
+                    <TableHead className="w-[80px] font-bold text-foreground">
+                      Pack Type
+                    </TableHead>
+                    <TableHead className="w-[80px] font-bold text-foreground">
+                      Batch
+                    </TableHead>
+                    <TableHead className="w-[80px] font-bold text-foreground">
+                      HSN
+                    </TableHead>
+                    <TableHead className="w-[100px] font-bold text-foreground">
+                      Expiry
+                    </TableHead>
+                    <TableHead className="w-[60px] text-center font-bold text-foreground">
+                      Qty *
+                    </TableHead>
+                    <TableHead className="w-[60px] text-center font-bold text-foreground">
+                      Units
+                    </TableHead>
+                    <TableHead className="w-[60px] text-center font-bold text-foreground">
+                      T.Units
+                    </TableHead>
+                    <TableHead className="w-[80px] text-center font-bold text-foreground">
+                      Rate(Pack)*
+                    </TableHead>
 
-                      <TableHead className="w-[80px] text-center font-bold text-foreground">
-                        MRP(Pack)
-                      </TableHead>
-                      <TableHead className="w-[70px] text-center font-bold text-foreground">
-                        MRP/Unit
-                      </TableHead>
-                      <TableHead className="w-[80px] text-center font-bold text-foreground">
-                        Total *
-                      </TableHead>
-                      <TableHead className="w-[70px] text-center font-bold text-foreground">
-                        Actions
-                      </TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {/* Editable Item Rows */}
-                    {purchaseItems.map((item, index) => {
-                      const qty =
-                        parseInt(item.quantity) ||
-                        parseInt(item.pack_quantity) ||
-                        1;
-                      const units =
-                        parseInt(item.units) ||
-                        parseInt(item.units_per_pack) ||
-                        1;
-                      const ratePack =
-                        parseFloat(item.rate_pack) ||
-                        parseFloat(item.pack_price) ||
-                        0;
-                      const mrpPack =
-                        parseFloat(item.mrp_pack) ||
-                        parseFloat(item.mrp_per_unit) * units ||
-                        0;
-                      const totalUnits = qty * units;
-                      const mrpUnit = units > 0 ? mrpPack / units : 0;
-                      const totalAmount =
-                        parseFloat(item.total_amount) || qty * ratePack;
+                    <TableHead className="w-[80px] text-center font-bold text-foreground">
+                      MRP(Pack)
+                    </TableHead>
+                    <TableHead className="w-[70px] text-center font-bold text-foreground">
+                      MRP/Unit
+                    </TableHead>
+                    <TableHead className="w-[80px] text-center font-bold text-foreground">
+                      Total *
+                    </TableHead>
+                    <TableHead className="w-[70px] text-center font-bold text-foreground">
+                      Actions
+                    </TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {/* Editable Item Rows */}
+                  {purchaseItems.map((item, index) => {
+                    const qty =
+                      parseInt(item.quantity) ||
+                      parseInt(item.pack_quantity) ||
+                      1;
+                    const units =
+                      parseInt(item.units) ||
+                      parseInt(item.units_per_pack) ||
+                      1;
+                    const ratePack =
+                      parseFloat(item.rate_pack) ||
+                      parseFloat(item.pack_price) ||
+                      0;
+                    const mrpPack =
+                      parseFloat(item.mrp_pack) ||
+                      parseFloat(item.mrp_per_unit) * units ||
+                      0;
+                    const totalUnits = qty * units;
+                    const mrpUnit = units > 0 ? mrpPack / units : 0;
+                    const totalAmount =
+                      parseFloat(item.total_amount) || qty * ratePack;
 
-                      return (
-                        <TableRow
-                          key={item.id || index}
-                          className={`bg-primary/5 ${
-                            priceAlerts[item.id] ? "animate-row-alert" : ""
-                          }`}
+                    return (
+                      <TableRow
+                        key={item.id || index}
+                        className={`bg-primary/5 ${
+                          priceAlerts[item.id] ? "animate-row-alert" : ""
+                        }`}
+                      >
+                        <TableCell
+                          className="relative"
+                          style={{ overflow: "visible" }}
                         >
-                          <TableCell
-                            className="relative"
-                            style={{ overflow: "visible" }}
-                          >
-                            <div className="flex items-center gap-2">
-                              <Input
-                                ref={(el) => {
-                                  setInputRef(el, item.id);
-                                  if (index === purchaseItems.length - 1) {
-                                    productInputRef.current = el;
-                                  }
-                                }}
-                                value={item.product_name || ""}
-                                onChange={(e) => {
-                                  handleItemFieldChange(
-                                    item.id,
-                                    "product_name",
-                                    e.target.value
+                          <div className="flex items-center gap-2">
+                            <Input
+                              ref={(el) => {
+                                setInputRef(el, item.id);
+                                if (index === purchaseItems.length - 1) {
+                                  productInputRef.current = el;
+                                }
+                              }}
+                              value={item.product_name || ""}
+                              onChange={(e) => {
+                                handleItemFieldChange(
+                                  item.id,
+                                  "product_name",
+                                  e.target.value
+                                );
+                                setHighlightedSuggestionIndex(-1);
+                              }}
+                              onFocus={() => {
+                                setSearchMedicine(item.product_name || "");
+                                setShowSuggestions(true);
+                                setActiveItemId(item.id);
+                                setHighlightedSuggestionIndex(-1);
+                              }}
+                              onBlur={(e) => {
+                                // Check if focus is moving to the suggestions dropdown
+                                const relatedTarget = e.relatedTarget;
+                                const isMovingToSuggestions =
+                                  relatedTarget?.closest?.(
+                                    "[data-suggestions-dropdown]"
                                   );
-                                  setHighlightedSuggestionIndex(-1);
-                                }}
-                                onFocus={() => {
-                                  setSearchMedicine(item.product_name || "");
-                                  setShowSuggestions(true);
-                                  setActiveItemId(item.id);
-                                  setHighlightedSuggestionIndex(-1);
-                                }}
-                                onBlur={(e) => {
-                                  // Check if focus is moving to the suggestions dropdown
-                                  const relatedTarget = e.relatedTarget;
-                                  const isMovingToSuggestions =
-                                    relatedTarget?.closest?.(
-                                      "[data-suggestions-dropdown]"
-                                    );
 
-                                  if (!isMovingToSuggestions) {
-                                    setTimeout(() => {
-                                      if (
-                                        aiAutofillEnabled &&
-                                        item.product_name &&
-                                        item.product_name.length > 2 &&
-                                        !item._inventoryMeta &&
-                                        !item.salt_composition && 
-                                        !item.manufacturer
-                                      ) {
-                                        handleSelectAiMedicineForItem(
-                                          item.id,
-                                          item.product_name
-                                        );
-                                      }
-                                      setShowSuggestions(false);
-                                      setActiveItemId(null);
-                                      setHighlightedSuggestionIndex(-1);
-                                    }, 200);
-                                  }
-                                }}
-                                onKeyDown={(e) => {
-                                  const hasAiOption = searchMedicine.length > 1;
-                                  const maxIndex = hasAiOption
-                                    ? medicineSuggestions.length
-                                    : medicineSuggestions.length - 1;
-
-                                  if (
-                                    !showSuggestions ||
-                                    (medicineSuggestions.length === 0 &&
-                                      !hasAiOption)
-                                  )
-                                    return;
-
-                                  if (e.key === "ArrowDown") {
-                                    e.preventDefault();
-                                    setHighlightedSuggestionIndex((prev) =>
-                                      prev < maxIndex ? prev + 1 : prev
-                                    );
-                                  } else if (e.key === "ArrowUp") {
-                                    e.preventDefault();
-                                    setHighlightedSuggestionIndex((prev) =>
-                                      prev > 0 ? prev - 1 : -1
-                                    );
-                                  } else if (
-                                    e.key === "Enter" &&
-                                    highlightedSuggestionIndex >= 0
-                                  ) {
-                                    e.preventDefault();
+                                if (!isMovingToSuggestions) {
+                                  setTimeout(() => {
                                     if (
-                                      highlightedSuggestionIndex ===
-                                      medicineSuggestions.length
+                                      aiAutofillEnabled &&
+                                      item.product_name &&
+                                      item.product_name.length > 2 &&
+                                      !item._inventoryMeta &&
+                                      !item.salt_composition &&
+                                      !item.manufacturer
                                     ) {
-                                      // Trigger AI explicitly
                                       handleSelectAiMedicineForItem(
                                         item.id,
-                                        searchMedicine
-                                      );
-                                    } else {
-                                      handleSelectMedicineForItem(
-                                        item.id,
-                                        medicineSuggestions[
-                                          highlightedSuggestionIndex
-                                        ]
+                                        item.product_name
                                       );
                                     }
-                                    setHighlightedSuggestionIndex(-1);
-                                  } else if (e.key === "Escape") {
                                     setShowSuggestions(false);
+                                    setActiveItemId(null);
                                     setHighlightedSuggestionIndex(-1);
-                                  }
-                                }}
-                                placeholder="Search..."
-                                className={`h-8 text-xs ${
-                                  item._inventoryMeta
-                                    ? item._inventoryMeta.stock_status ===
-                                      "In Stock"
-                                      ? "border-blue-300 bg-blue-50/30"
-                                      : "border-orange-300 bg-orange-50/30"
-                                    : ""
-                                }`}
-                                data-testid={`item-name-${index}`}
-                                autoComplete="off"
-                              />
+                                  }, 200);
+                                }
+                              }}
+                              onKeyDown={(e) => {
+                                const hasAiOption = searchMedicine.length > 1;
+                                const maxIndex = hasAiOption
+                                  ? medicineSuggestions.length
+                                  : medicineSuggestions.length - 1;
 
-                              {/* Inventory Indicator Icon */}
-                              {item._inventoryMeta && (
-                                <CustomTooltip
-                                  position="top"
-                                  text={
+                                if (
+                                  !showSuggestions ||
+                                  (medicineSuggestions.length === 0 &&
+                                    !hasAiOption)
+                                )
+                                  return;
+
+                                if (e.key === "ArrowDown") {
+                                  e.preventDefault();
+                                  setHighlightedSuggestionIndex((prev) =>
+                                    prev < maxIndex ? prev + 1 : prev
+                                  );
+                                } else if (e.key === "ArrowUp") {
+                                  e.preventDefault();
+                                  setHighlightedSuggestionIndex((prev) =>
+                                    prev > 0 ? prev - 1 : -1
+                                  );
+                                } else if (
+                                  e.key === "Enter" &&
+                                  highlightedSuggestionIndex >= 0
+                                ) {
+                                  e.preventDefault();
+                                  if (
+                                    highlightedSuggestionIndex ===
+                                    medicineSuggestions.length
+                                  ) {
+                                    // Trigger AI explicitly
+                                    handleSelectAiMedicineForItem(
+                                      item.id,
+                                      searchMedicine
+                                    );
+                                  } else {
+                                    handleSelectMedicineForItem(
+                                      item.id,
+                                      medicineSuggestions[
+                                        highlightedSuggestionIndex
+                                      ]
+                                    );
+                                  }
+                                  setHighlightedSuggestionIndex(-1);
+                                } else if (e.key === "Escape") {
+                                  setShowSuggestions(false);
+                                  setHighlightedSuggestionIndex(-1);
+                                }
+                              }}
+                              placeholder="Search..."
+                              className={`h-8 text-xs ${
+                                item._inventoryMeta
+                                  ? item._inventoryMeta.stock_status ===
+                                    "In Stock"
+                                    ? "border-blue-300 bg-blue-50/30"
+                                    : "border-orange-300 bg-orange-50/30"
+                                  : ""
+                              }`}
+                              data-testid={`item-name-${index}`}
+                              autoComplete="off"
+                            />
+
+                            {/* Inventory Indicator Icon */}
+                            {item._inventoryMeta && (
+                              <CustomTooltip
+                                position="top"
+                                text={
+                                  item._inventoryMeta.stock_status ===
+                                  "In Stock"
+                                    ? `✅ In Stock: ${item._inventoryMeta.available_quantity} units\nBatch: ${item._inventoryMeta.batch_no || "N/A"}\nLast Supplier: ${item._inventoryMeta.last_supplier || "Unknown"}`
+                                    : `⚠️ Out of Stock\nLast Supplier: ${item._inventoryMeta.last_supplier || "Unknown"}`
+                                }
+                              >
+                                <Package
+                                  className={`w-4 h-4 ${
                                     item._inventoryMeta.stock_status ===
                                     "In Stock"
-                                      ? `✅ In Stock: ${item._inventoryMeta.available_quantity} units\nBatch: ${item._inventoryMeta.batch_no || "N/A"}\nLast Supplier: ${item._inventoryMeta.last_supplier || "Unknown"}`
-                                      : `⚠️ Out of Stock\nLast Supplier: ${item._inventoryMeta.last_supplier || "Unknown"}`
-                                  }
-                                >
-                                  <Package
-                                    className={`w-4 h-4 ${
-                                      item._inventoryMeta.stock_status ===
-                                      "In Stock"
-                                        ? "text-blue-500"
-                                        : "text-orange-500"
-                                    }`}
-                                  />
-                                </CustomTooltip>
-                              )}
+                                      ? "text-blue-500"
+                                      : "text-orange-500"
+                                  }`}
+                                />
+                              </CustomTooltip>
+                            )}
 
-                              {/* Fuzzy Match Warning */}
-                              {/* {item._inventoryMeta?.match_quality ===
+                            {/* Fuzzy Match Warning */}
+                            {/* {item._inventoryMeta?.match_quality ===
                                 "fuzzy" && (
                                 <CustomTooltip
                                   position="top"
@@ -2478,34 +2593,34 @@ export default function PurchasesPage() {
                                   </span>
                                 </CustomTooltip>
                               )} */}
-                            </div>
+                          </div>
 
-                            {/* ========================================== */}
-                            {/* SUGGESTIONS DROPDOWN VIA PORTAL            */}
-                            {/* ========================================== */}
-                            {showSuggestions &&
-                              activeItemId === item.id &&
-                              (medicineSuggestions.length > 0 ||
-                                searchMedicine.length > 1) &&
-                              createPortal(
-                                <div
-                                  data-suggestions-dropdown="true"
-                                  className="bg-card/95 backdrop-blur-xl border border-border/80 rounded-xl shadow-2xl overflow-y-auto z-[99999]"
-                                  style={{
-                                    position: "fixed",
-                                    top: dropdownPosition.top,
-                                    left: dropdownPosition.left,
-                                    width: dropdownPosition.width || 480,
-                                    maxHeight: "300px",
-                                    overscrollBehavior: "contain",
-                                    WebkitOverflowScrolling: "touch",
-                                  }}
-                                  onScroll={handleScrollSuggestions}
-                                >
-                                  {/* Match Quality Summary */}
-                                  {medicineSuggestions[0]?.matchQuality && (
-                                    <div className="px-3 py-2 bg-muted/50 border-b border-border text-xs text-muted-foreground flex gap-3 sticky top-0">
-                                      {/* <span>
+                          {/* ========================================== */}
+                          {/* SUGGESTIONS DROPDOWN VIA PORTAL            */}
+                          {/* ========================================== */}
+                          {showSuggestions &&
+                            activeItemId === item.id &&
+                            (medicineSuggestions.length > 0 ||
+                              searchMedicine.length > 1) &&
+                            createPortal(
+                              <div
+                                data-suggestions-dropdown="true"
+                                className="bg-card/95 backdrop-blur-xl border border-border/80 rounded-xl shadow-2xl overflow-y-auto z-[99999]"
+                                style={{
+                                  position: "fixed",
+                                  top: dropdownPosition.top,
+                                  left: dropdownPosition.left,
+                                  width: dropdownPosition.width || 480,
+                                  maxHeight: "300px",
+                                  overscrollBehavior: "contain",
+                                  WebkitOverflowScrolling: "touch",
+                                }}
+                                onScroll={handleScrollSuggestions}
+                              >
+                                {/* Match Quality Summary */}
+                                {medicineSuggestions[0]?.matchQuality && (
+                                  <div className="px-3 py-2 bg-muted/50 border-b border-border text-xs text-muted-foreground flex gap-3 sticky top-0">
+                                    {/* <span>
                                         Exact:{" "}
                                         {
                                           medicineSuggestions.filter(
@@ -2513,15 +2628,15 @@ export default function PurchasesPage() {
                                           ).length
                                         }
                                       </span> */}
-                                      <span>
-                                        Good:{" "}
-                                        {
-                                          medicineSuggestions.filter(
-                                            (m) => m.matchQuality === "good"
-                                          ).length
-                                        }
-                                      </span>
-                                      {/* <span>
+                                    <span>
+                                      Good:{" "}
+                                      {
+                                        medicineSuggestions.filter(
+                                          (m) => m.matchQuality === "good"
+                                        ).length
+                                      }
+                                    </span>
+                                    {/* <span>
                                         Fuzzy:{" "}
                                         {
                                           medicineSuggestions.filter(
@@ -2529,532 +2644,557 @@ export default function PurchasesPage() {
                                           ).length
                                         }
                                       </span> */}
-                                    </div>
-                                  )}
+                                  </div>
+                                )}
 
-                                  {medicineSuggestions.map((medicine, idx) => (
-                                    <div
-                                      key={idx}
-                                      id={`purchases-suggestion-${idx}`}
-                                      className={`p-3 cursor-pointer border-b border-border last:border-0 ${
-                                        highlightedSuggestionIndex === idx
-                                          ? "bg-primary/20"
-                                          : "hover:bg-primary/10"
-                                      }`}
-                                      // In your suggestion items, prevent mousedown from causing blur
-                                      onMouseDown={(e) => {
-                                        e.preventDefault(); // ← This prevents the blur from firing at all!
-                                        handleSelectMedicineForItem(
-                                          item.id,
-                                          medicine
-                                        );
-                                        setHighlightedSuggestionIndex(-1);
-                                      }}
-                                      onMouseEnter={() =>
-                                        setHighlightedSuggestionIndex(idx)
-                                      }
-                                    >
-                                      {/* Header: Name + Source Badge + Match Quality */}
-                                      <div className="flex items-center justify-between mb-1">
-                                        <div className="font-medium text-sm flex items-center gap-2 flex-wrap">
-                                          {medicine.name}
+                                {medicineSuggestions.map((medicine, idx) => (
+                                  <div
+                                    key={idx}
+                                    id={`purchases-suggestion-${idx}`}
+                                    className={`p-3 cursor-pointer border-b border-border last:border-0 ${
+                                      highlightedSuggestionIndex === idx
+                                        ? "bg-primary/20"
+                                        : "hover:bg-primary/10"
+                                    }`}
+                                    // In your suggestion items, prevent mousedown from causing blur
+                                    onMouseDown={(e) => {
+                                      e.preventDefault(); // ← This prevents the blur from firing at all!
+                                      handleSelectMedicineForItem(
+                                        item.id,
+                                        medicine
+                                      );
+                                      setHighlightedSuggestionIndex(-1);
+                                    }}
+                                    onMouseEnter={() =>
+                                      setHighlightedSuggestionIndex(idx)
+                                    }
+                                  >
+                                    {/* Header: Name + Source Badge + Match Quality */}
+                                    <div className="flex items-center justify-between mb-1">
+                                      <div className="font-medium text-sm flex items-center gap-2 flex-wrap">
+                                        {medicine.name}
 
-                                          {/* Source Badge */}
-                                          {medicine.source === "inventory" && (
-                                            <span className="text-[10px] px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded-full font-medium">
-                                              Inventory
-                                            </span>
-                                          )}
-                                          {medicine.source === "global" && (
-                                            <span className="text-[10px] px-1.5 py-0.5 bg-gray-100 text-gray-600 rounded-full font-medium">
-                                              Not in Inventory
-                                            </span>
-                                          )}
+                                        {/* Source Badge */}
+                                        {medicine.source === "inventory" && (
+                                          <span className="text-[10px] px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded-full font-medium">
+                                            Inventory
+                                          </span>
+                                        )}
+                                        {medicine.source === "global" && (
+                                          <span className="text-[10px] px-1.5 py-0.5 bg-gray-100 text-gray-600 rounded-full font-medium">
+                                            Not in Inventory
+                                          </span>
+                                        )}
 
-                                          {/* Match Quality Indicator */}
-                                          {/* {medicine.matchQuality ===
+                                        {/* Match Quality Indicator */}
+                                        {/* {medicine.matchQuality ===
                                             "exact" && (
                                             <span className="text-[10px] px-1.5 py-0.5 bg-green-100 text-green-700 rounded-full">
                                               Exact
                                             </span>
                                           )} */}
-                                          {/* {medicine.matchQuality ===
+                                        {/* {medicine.matchQuality ===
                                             "fuzzy" && (
                                             <span className="text-[10px] px-1.5 py-0.5 bg-yellow-100 text-yellow-700 rounded-full">
                                               Fuzzy
                                             </span>
                                           )} */}
-                                        </div>
+                                      </div>
 
-                                        {/* Fuzzy Score */}
-                                        {/* {medicine.fuzzyScore &&
+                                      {/* Fuzzy Score */}
+                                      {/* {medicine.fuzzyScore &&
                                           medicine.fuzzyScore < 90 && (
                                             <span className="text-[10px] text-muted-foreground">
                                               {Math.round(medicine.fuzzyScore)}%
                                               match
                                             </span>
                                           )} */}
-                                      </div>
+                                    </div>
 
-                                      {/* Manufacturer & Composition */}
-                                      <div className="text-xs text-muted-foreground">
-                                        <span>
-                                          {medicine.manufacturer ||
-                                            medicine.manufacturer_name}
+                                    {/* Manufacturer & Composition */}
+                                    <div className="text-xs text-muted-foreground">
+                                      <span>
+                                        {medicine.manufacturer ||
+                                          medicine.manufacturer_name}
+                                      </span>
+                                      {(medicine.salt_composition ||
+                                        medicine.short_composition1) && (
+                                        <span className="ml-2 text-primary/70">
+                                          (
+                                          {(
+                                            medicine.salt_composition ||
+                                            medicine.short_composition1
+                                          )?.slice(0, 35)}
+                                          ...)
                                         </span>
-                                        {(medicine.salt_composition ||
-                                          medicine.short_composition1) && (
-                                          <span className="ml-2 text-primary/70">
-                                            (
-                                            {(
-                                              medicine.salt_composition ||
-                                              medicine.short_composition1
-                                            )?.slice(0, 35)}
-                                            ...)
+                                      )}
+                                    </div>
+
+                                    {/* Inventory-Specific Info */}
+                                    {medicine.source === "inventory" && (
+                                      <div className="mt-2 flex items-center gap-2 flex-wrap text-xs">
+                                        <span
+                                          className={`px-2 py-0.5 rounded font-medium ${
+                                            medicine.stock_status === "In Stock"
+                                              ? "bg-green-500/20 text-green-700"
+                                              : "bg-red-500/20 text-red-700"
+                                          }`}
+                                        >
+                                          {medicine.stock_status}:{" "}
+                                          {medicine.available_quantity || 0}{" "}
+                                          units
+                                        </span>
+
+                                        {medicine.batch_no && (
+                                          <span className="text-muted-foreground">
+                                            Batch: {medicine.batch_no}
                                           </span>
                                         )}
-                                      </div>
 
-                                      {/* Inventory-Specific Info */}
-                                      {medicine.source === "inventory" && (
-                                        <div className="mt-2 flex items-center gap-2 flex-wrap text-xs">
+                                        {medicine.expiry_date && (
                                           <span
-                                            className={`px-2 py-0.5 rounded font-medium ${
-                                              medicine.stock_status ===
-                                              "In Stock"
-                                                ? "bg-green-500/20 text-green-700"
-                                                : "bg-red-500/20 text-red-700"
+                                            className={`${
+                                              new Date(medicine.expiry_date) <
+                                              new Date(
+                                                Date.now() +
+                                                  90 * 24 * 60 * 60 * 1000
+                                              )
+                                                ? "text-orange-600 font-medium"
+                                                : "text-muted-foreground"
                                             }`}
                                           >
-                                            {medicine.stock_status}:{" "}
-                                            {medicine.available_quantity || 0}{" "}
-                                            units
-                                          </span>
-
-                                          {medicine.batch_no && (
-                                            <span className="text-muted-foreground">
-                                              Batch: {medicine.batch_no}
-                                            </span>
-                                          )}
-
-                                          {medicine.expiry_date && (
-                                            <span
-                                              className={`${
-                                                new Date(medicine.expiry_date) <
-                                                new Date(
-                                                  Date.now() +
-                                                    90 * 24 * 60 * 60 * 1000
-                                                )
-                                                  ? "text-orange-600 font-medium"
-                                                  : "text-muted-foreground"
-                                              }`}
-                                            >
-                                              Exp: {medicine.expiry_date}
-                                              {new Date(medicine.expiry_date) <
-                                                new Date() && " ⚠️ Expired"}
-                                            </span>
-                                          )}
-                                        </div>
-                                      )}
-
-                                      {/* Pricing Info Row */}
-                                      <div className="mt-2 flex items-center gap-3 text-xs">
-                                        {medicine.source === "inventory" ? (
-                                          <>
-                                            <span className="font-mono font-medium text-primary">
-                                              Purchase: ₹
-                                              {Number(
-                                                medicine.purchase_price || 0
-                                              ).toFixed(2)}
-                                              /unit
-                                            </span>
-                                            <span className="font-mono text-muted-foreground">
-                                              MRP: ₹
-                                              {Number(
-                                                medicine.mrp_per_unit ||
-                                                  medicine.mrp ||
-                                                  0
-                                              ).toFixed(2)}
-                                            </span>
-                                            {medicine.supplier_name && (
-                                              <span className="text-blue-600">
-                                                Last: {medicine.supplier_name}
-                                              </span>
-                                            )}
-                                          </>
-                                        ) : (
-                                          <span className="font-mono font-medium text-primary">
-                                            MRP: ₹{medicine["price(₹)"] || 0} •{" "}
-                                            {medicine.pack_size_label || "N/A"}
+                                            Exp: {medicine.expiry_date}
+                                            {new Date(medicine.expiry_date) <
+                                              new Date() && " ⚠️ Expired"}
                                           </span>
                                         )}
                                       </div>
+                                    )}
+
+                                    {/* Pricing Info Row */}
+                                    <div className="mt-2 flex items-center gap-3 text-xs">
+                                      {medicine.source === "inventory" ? (
+                                        <>
+                                          <span className="font-mono font-medium text-primary">
+                                            Purchase: ₹
+                                            {Number(
+                                              medicine.purchase_price || 0
+                                            ).toFixed(2)}
+                                            /unit
+                                          </span>
+                                          <span className="font-mono text-muted-foreground">
+                                            MRP: ₹
+                                            {Number(
+                                              medicine.mrp_per_unit ||
+                                                medicine.mrp ||
+                                                0
+                                            ).toFixed(2)}
+                                          </span>
+                                          {medicine.supplier_name && (
+                                            <span className="text-blue-600">
+                                              Last: {medicine.supplier_name}
+                                            </span>
+                                          )}
+                                        </>
+                                      ) : (
+                                        <span className="font-mono font-medium text-primary">
+                                          MRP: ₹{medicine["price(₹)"] || 0} •{" "}
+                                          {medicine.pack_size_label || "N/A"}
+                                        </span>
+                                      )}
                                     </div>
-                                  ))}
-                                  {loadingSuggestions && (
-                                    <div className="p-3 text-center border-t border-border">
-                                      <Loader2 className="w-5 h-5 animate-spin mx-auto text-muted-foreground" />
+                                  </div>
+                                ))}
+                                {loadingSuggestions && (
+                                  <div className="p-3 text-center border-t border-border">
+                                    <Loader2 className="w-5 h-5 animate-spin mx-auto text-muted-foreground" />
+                                  </div>
+                                )}
+
+                                {/* AI Fallback Option */}
+                                {!loadingSuggestions &&
+                                  searchMedicine.length > 1 && (
+                                    <div
+                                      className={`p-3 cursor-pointer border-t border-indigo-100 dark:border-indigo-500/20 bg-indigo-50/50 dark:bg-indigo-500/10 hover:bg-indigo-100/50 dark:hover:bg-indigo-500/20 transition-colors ${
+                                        highlightedSuggestionIndex ===
+                                        medicineSuggestions.length
+                                          ? "bg-indigo-100/80 dark:bg-indigo-500/30"
+                                          : ""
+                                      }`}
+                                      onMouseDown={(e) => {
+                                        e.preventDefault();
+                                        handleSelectAiMedicineForItem(
+                                          item.id,
+                                          searchMedicine
+                                        );
+                                      }}
+                                      onMouseEnter={() =>
+                                        setHighlightedSuggestionIndex(
+                                          medicineSuggestions.length
+                                        )
+                                      }
+                                    >
+                                      <div className="flex items-center gap-2 text-indigo-700 dark:text-indigo-400 font-semibold text-sm">
+                                        <div className="p-1.5 bg-indigo-100 dark:bg-indigo-500/20 rounded-md shadow-sm">
+                                          ✨
+                                        </div>
+                                        <span>
+                                          Get AI facts for{" "}
+                                          <span className="font-bold underline decoration-indigo-300 dark:decoration-indigo-600 underline-offset-2">
+                                            "{searchMedicine}"
+                                          </span>
+                                        </span>
+                                      </div>
+                                      <p className="text-[10.5px] font-medium text-indigo-500/80 dark:text-indigo-400/70 mt-1 ml-9">
+                                        Bypass search and instantly extract
+                                        properties
+                                      </p>
                                     </div>
                                   )}
-
-                                  {/* AI Fallback Option */}
-                                  {!loadingSuggestions &&
-                                    searchMedicine.length > 1 && (
-                                      <div
-                                        className={`p-3 cursor-pointer border-t border-indigo-100 dark:border-indigo-500/20 bg-indigo-50/50 dark:bg-indigo-500/10 hover:bg-indigo-100/50 dark:hover:bg-indigo-500/20 transition-colors ${
-                                          highlightedSuggestionIndex ===
-                                          medicineSuggestions.length
-                                            ? "bg-indigo-100/80 dark:bg-indigo-500/30"
-                                            : ""
-                                        }`}
-                                        onMouseDown={(e) => {
-                                          e.preventDefault();
-                                          handleSelectAiMedicineForItem(
-                                            item.id,
-                                            searchMedicine
-                                          );
-                                        }}
-                                        onMouseEnter={() =>
-                                          setHighlightedSuggestionIndex(
-                                            medicineSuggestions.length
-                                          )
-                                        }
-                                      >
-                                        <div className="flex items-center gap-2 text-indigo-700 dark:text-indigo-400 font-semibold text-sm">
-                                          <div className="p-1.5 bg-indigo-100 dark:bg-indigo-500/20 rounded-md shadow-sm">
-                                            ✨
-                                          </div>
-                                          <span>
-                                            Get AI facts for{" "}
-                                            <span className="font-bold underline decoration-indigo-300 dark:decoration-indigo-600 underline-offset-2">
-                                              "{searchMedicine}"
-                                            </span>
-                                          </span>
-                                        </div>
-                                        <p className="text-[10.5px] font-medium text-indigo-500/80 dark:text-indigo-400/70 mt-1 ml-9">
-                                          Bypass search and instantly extract
-                                          properties
-                                        </p>
-                                      </div>
-                                    )}
-                                </div>,
-                                document.body
-                              )}
-                          </TableCell>
-                          <TableCell>
-                            <Input
-                              value={item.manufacturer || ""}
-                              onChange={(e) =>
-                                handleItemFieldChange(
-                                  item.id,
-                                  "manufacturer",
-                                  e.target.value
-                                )
-                              }
-                              placeholder="MFG"
-                              className="h-8 text-xs"
-                            />
-                          </TableCell>
-                          <TableCell>
-                            <Button
-                              id={`add-salt-${item.id}`}
-                              type="button"
-                              variant="outline"
-                              className="h-8 text-xs w-20 justify-start truncate"
-                              onClick={() =>
-                                setSaltDialog({
-                                  open: true,
-                                  itemId: item.id,
-                                  value: item.salt_composition || "",
-                                })
-                              }
-                            >
-                              {item.salt_composition
-                                ? item.salt_composition.length > 7
-                                  ? item.salt_composition.slice(0, 7) + "..."
-                                  : item.salt_composition
-                                : "Add Salt"}
-                            </Button>
-                          </TableCell>
-
-                          <TableCell>
-                            <Select
-                              value={item.pack_type || "Strip"}
-                              onValueChange={(v) =>
-                                handleItemFieldChange(item.id, "pack_type", v)
-                              }
-                            >
-                              <SelectTrigger className="h-8 text-xs">
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {PACK_TYPES.map((type) => (
-                                  <SelectItem key={type} value={type}>
-                                    {type}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          </TableCell>
-                          <TableCell>
-                            <Input
-                              id={`batch-${item.id}`}
-                              value={item.batch_no || ""}
-                              onChange={(e) =>
-                                handleItemFieldChange(
-                                  item.id,
-                                  "batch_no",
-                                  e.target.value
-                                )
-                              }
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter") {
-                                  e.preventDefault();
-                                  document.getElementById(`hsn-${item.id}`)?.focus({ preventScroll: true });
-                                }
-                              }}
-                              placeholder="Batch"
-                              className="h-8 text-xs"
-                            />
-                          </TableCell>
-                          <TableCell>
-                            <Input
-                              id={`hsn-${item.id}`}
-                              value={item.hsn_no || ""}
-                              onChange={(e) =>
-                                handleItemFieldChange(
-                                  item.id,
-                                  "hsn_no",
-                                  e.target.value
-                                )
-                              }
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter") {
-                                  e.preventDefault();
-                                  document.getElementById(`expiry-${item.id}`)?.focus({ preventScroll: true });
-                                }
-                              }}
-                              placeholder="HSN"
-                              className="h-8 text-xs"
-                            />
-                          </TableCell>
-                          <TableCell>
-                            <Input
-                              id={`expiry-${item.id}`}
-                              type="date"
-                              value={item.expiry_date || ""}
-                              onChange={(e) =>
-                                handleItemFieldChange(
-                                  item.id,
-                                  "expiry_date",
-                                  e.target.value
-                                )
-                              }
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter") {
-                                  e.preventDefault();
-                                  document.getElementById(`qty-${item.id}`)?.focus({ preventScroll: true });
-                                }
-                              }}
-                              className="h-8 text-xs"
-                            />
-                          </TableCell>
-                          <TableCell>
-                            <Input
-                              id={`qty-${item.id}`}
-                              type="number"
-                              value={item.quantity || item.pack_quantity || ""}
-                              onChange={(e) =>
-                                handleItemFieldChangeWithCalc(
-                                  item.id,
-                                  "quantity",
-                                  e.target.value
-                                )
-                              }
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter") {
-                                  e.preventDefault();
-                                  document.getElementById(`units-${item.id}`)?.focus({ preventScroll: true });
-                                }
-                              }}
-                              placeholder="1"
-                              className="h-8 text-xs text-center w-14"
-                              min="1"
-                            />
-                          </TableCell>
-                          <TableCell>
-                            <Input
-                              id={`units-${item.id}`}
-                              type="number"
-                              value={item.units || item.units_per_pack || ""}
-                              onChange={(e) =>
-                                handleItemFieldChange(
-                                  item.id,
-                                  "units",
-                                  e.target.value
-                                )
-                              }
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter") {
-                                  e.preventDefault();
-                                  document.getElementById(`rate-${item.id}`)?.focus({ preventScroll: true });
-                                }
-                              }}
-                              placeholder="1"
-                              className="h-8 text-xs text-center w-14"
-                              min="1"
-                            />
-                          </TableCell>
-                          <TableCell className="text-center font-mono text-xs font-medium text-primary">
-                            {totalUnits}
-                          </TableCell>
-                          <TableCell
-                            className="relative"
-                            style={{ position: "relative" }}
+                              </div>,
+                              document.body
+                            )}
+                        </TableCell>
+                        <TableCell>
+                          <Input
+                            value={item.manufacturer || ""}
+                            onChange={(e) =>
+                              handleItemFieldChange(
+                                item.id,
+                                "manufacturer",
+                                e.target.value
+                              )
+                            }
+                            placeholder="MFG"
+                            className="h-8 text-xs"
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <Button
+                            id={`add-salt-${item.id}`}
+                            type="button"
+                            variant="outline"
+                            className="h-8 text-xs w-20 justify-start truncate"
+                            onClick={() =>
+                              setSaltDialog({
+                                open: true,
+                                itemId: item.id,
+                                value: item.salt_composition || "",
+                              })
+                            }
                           >
-                            <div className="flex items-center gap-2">
-                              <Input
-                                id={`rate-${item.id}`}
-                                type="number"
-                                step="0.01"
-                                value={item.rate_pack || item.pack_price || ""}
-                                onChange={(e) =>
-                                  handleItemFieldChangeWithCalc(
-                                    item.id,
-                                    "rate_pack",
-                                    e.target.value
-                                  )
-                                }
-                                onBlur={() => checkPriceHistorySilent(item.id, item.product_name, item.rate_pack || item.pack_price)}
-                                onKeyDown={(e) => {
-                                  if (e.key === "Enter") {
-                                    e.preventDefault();
-                                    document.getElementById(`mrp-${item.id}`)?.focus({ preventScroll: true });
-                                  }
-                                }}
-                                placeholder="₹"
-                                className={`h-8 text-xs text-center w-28 pr-6 ${
-                                  priceAlerts[item.id]
-                                    ? "border-yellow-500 bg-yellow-500/10"
-                                    : ""
-                                }`}
-                              />
+                            {item.salt_composition
+                              ? item.salt_composition.length > 7
+                                ? item.salt_composition.slice(0, 7) + "..."
+                                : item.salt_composition
+                              : "Add Salt"}
+                          </Button>
+                        </TableCell>
 
-                              {(item.rate_pack || item.pack_price) && (
-                                <button
-                                  id={`price-history-${item.id}`}
-                                  type="button"
-                                  onClick={() => {
-                                    const currentRate =
-                                      parseFloat(item.rate_pack) ||
-                                      parseFloat(item.pack_price) ||
-                                      0;
-
-                                    if (!item.product_name) {
-                                      toast.error("Enter product name first");
-                                      return;
-                                    }
-
-                                    checkPriceHistory(
-                                      item.id,
-                                      item.product_name,
-                                      currentRate
-                                    );
-                                  }}
-                                  className="absolute right-1 top-1/2 -translate-y-1/2 text-primary hover:text-primary/70"
-                                  title="Compare with past rates"
-                                >
-                                  <CustomTooltip
-                                    position="top"
-                                    text="Compare with past rates"
-                                  >
-                                    <ArrowUpDown className={`w-4 h-4 ${priceAlerts[item.id] ? "text-yellow-500 animate-icon-alert cursor-pointer" : ""}`} />
-                                  </CustomTooltip>
-                                </button>
-                              )}
-                            </div>
-                          </TableCell>
-
-                          <TableCell>
-                            <Input
-                              id={`mrp-${item.id}`}
-                              type="number"
-                              step="0.01"
-                              value={item.mrp_pack || ""}
-                              onChange={(e) =>
-                                handleItemFieldChange(
-                                  item.id,
-                                  "mrp_pack",
-                                  e.target.value
-                                )
+                        <TableCell>
+                          <Select
+                            value={item.pack_type || "Strip"}
+                            onValueChange={(v) =>
+                              handleItemFieldChange(item.id, "pack_type", v)
+                            }
+                          >
+                            <SelectTrigger className="h-8 text-xs">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {PACK_TYPES.map((type) => (
+                                <SelectItem key={type} value={type}>
+                                  {type}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </TableCell>
+                        <TableCell>
+                          <Input
+                            id={`batch-${item.id}`}
+                            value={item.batch_no || ""}
+                            onChange={(e) =>
+                              handleItemFieldChange(
+                                item.id,
+                                "batch_no",
+                                e.target.value
+                              )
+                            }
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                document
+                                  .getElementById(`hsn-${item.id}`)
+                                  ?.focus({ preventScroll: true });
                               }
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter") {
-                                  e.preventDefault();
-                                  document.getElementById(`total-${item.id}`)?.focus({ preventScroll: true });
-                                }
-                              }}
-                              placeholder="₹"
-                              className="h-8 w-28 text-xs text-center"
-                            />
-                          </TableCell>
-                          <TableCell className="text-center font-mono text-xs text-muted-foreground">
-                            {mrpPack && units ? `₹${mrpUnit.toFixed(2)}` : "-"}
-                          </TableCell>
-                          <TableCell>
+                            }}
+                            placeholder="Batch"
+                            className="h-8 text-xs"
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <Input
+                            id={`hsn-${item.id}`}
+                            value={item.hsn_no || ""}
+                            onChange={(e) =>
+                              handleItemFieldChange(
+                                item.id,
+                                "hsn_no",
+                                e.target.value
+                              )
+                            }
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                document
+                                  .getElementById(`expiry-${item.id}`)
+                                  ?.focus({ preventScroll: true });
+                              }
+                            }}
+                            placeholder="HSN"
+                            className="h-8 text-xs"
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <Input
+                            id={`expiry-${item.id}`}
+                            type="date"
+                            value={item.expiry_date || ""}
+                            onChange={(e) =>
+                              handleItemFieldChange(
+                                item.id,
+                                "expiry_date",
+                                e.target.value
+                              )
+                            }
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                document
+                                  .getElementById(`qty-${item.id}`)
+                                  ?.focus({ preventScroll: true });
+                              }
+                            }}
+                            className="h-8 text-xs"
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <Input
+                            id={`qty-${item.id}`}
+                            type="number"
+                            value={item.quantity || item.pack_quantity || ""}
+                            onChange={(e) =>
+                              handleItemFieldChangeWithCalc(
+                                item.id,
+                                "quantity",
+                                e.target.value
+                              )
+                            }
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                document
+                                  .getElementById(`units-${item.id}`)
+                                  ?.focus({ preventScroll: true });
+                              }
+                            }}
+                            placeholder="1"
+                            className="h-8 text-xs text-center w-14"
+                            min="1"
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <Input
+                            id={`units-${item.id}`}
+                            type="number"
+                            value={item.units || item.units_per_pack || ""}
+                            onChange={(e) =>
+                              handleItemFieldChange(
+                                item.id,
+                                "units",
+                                e.target.value
+                              )
+                            }
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                document
+                                  .getElementById(`rate-${item.id}`)
+                                  ?.focus({ preventScroll: true });
+                              }
+                            }}
+                            placeholder="1"
+                            className="h-8 text-xs text-center w-14"
+                            min="1"
+                          />
+                        </TableCell>
+                        <TableCell className="text-center font-mono text-xs font-medium text-primary">
+                          {totalUnits}
+                        </TableCell>
+                        <TableCell
+                          className="relative"
+                          style={{ position: "relative" }}
+                        >
+                          <div className="flex items-center gap-2">
                             <Input
-                              id={`total-${item.id}`}
+                              id={`rate-${item.id}`}
                               type="number"
                               step="0.01"
-                              value={item.total_amount || ""}
+                              value={item.rate_pack || item.pack_price || ""}
                               onChange={(e) =>
                                 handleItemFieldChangeWithCalc(
                                   item.id,
-                                  "total_amount",
+                                  "rate_pack",
                                   e.target.value
+                                )
+                              }
+                              onBlur={() =>
+                                checkPriceHistorySilent(
+                                  item.id,
+                                  item.product_name,
+                                  item.rate_pack || item.pack_price
                                 )
                               }
                               onKeyDown={(e) => {
                                 if (e.key === "Enter") {
                                   e.preventDefault();
-                                  if (index === purchaseItems.length - 1) {
-                                    handleAddNewRow();
-                                  } else {
-                                    document.querySelector(`[data-testid="item-name-${index + 1}"]`)?.focus({ preventScroll: true });
-                                  }
+                                  document
+                                    .getElementById(`mrp-${item.id}`)
+                                    ?.focus({ preventScroll: true });
                                 }
                               }}
                               placeholder="₹"
-                              className="h-8 w-28 text-xs text-center "
+                              className={`h-8 text-xs text-center w-28 pr-6 ${
+                                priceAlerts[item.id]
+                                  ? "border-yellow-500 bg-yellow-500/10"
+                                  : ""
+                              }`}
                             />
-                          </TableCell>
-                          <TableCell>
-                            <Button
-                              size="icon"
-                              variant="ghost"
-                              className="h-7 w-7 text-muted-foreground hover:text-destructive"
-                              onClick={() => handleRemoveItem(item.id)}
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
 
-                    {purchaseItems.length === 0 && (
-                      <TableRow>
-                        <TableCell
-                          colSpan={15}
-                          className="text-center py-8 text-muted-foreground"
-                        >
-                          <Package className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                          No items. Click "Add Item" to add a row.
+                            {(item.rate_pack || item.pack_price) && (
+                              <button
+                                id={`price-history-${item.id}`}
+                                type="button"
+                                onClick={() => {
+                                  const currentRate =
+                                    parseFloat(item.rate_pack) ||
+                                    parseFloat(item.pack_price) ||
+                                    0;
+
+                                  if (!item.product_name) {
+                                    toast.error("Enter product name first");
+                                    return;
+                                  }
+
+                                  checkPriceHistory(
+                                    item.id,
+                                    item.product_name,
+                                    currentRate
+                                  );
+                                }}
+                                className="absolute right-1 top-1/2 -translate-y-1/2 text-primary hover:text-primary/70"
+                                title="Compare with past rates"
+                              >
+                                <CustomTooltip
+                                  position="top"
+                                  text="Compare with past rates"
+                                >
+                                  <ArrowUpDown
+                                    className={`w-4 h-4 ${priceAlerts[item.id] ? "text-yellow-500 animate-icon-alert cursor-pointer" : ""}`}
+                                  />
+                                </CustomTooltip>
+                              </button>
+                            )}
+                          </div>
+                        </TableCell>
+
+                        <TableCell>
+                          <Input
+                            id={`mrp-${item.id}`}
+                            type="number"
+                            step="0.01"
+                            value={item.mrp_pack || ""}
+                            onChange={(e) =>
+                              handleItemFieldChange(
+                                item.id,
+                                "mrp_pack",
+                                e.target.value
+                              )
+                            }
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                document
+                                  .getElementById(`total-${item.id}`)
+                                  ?.focus({ preventScroll: true });
+                              }
+                            }}
+                            placeholder="₹"
+                            className="h-8 w-28 text-xs text-center"
+                          />
+                        </TableCell>
+                        <TableCell className="text-center font-mono text-xs text-muted-foreground">
+                          {mrpPack && units ? `₹${mrpUnit.toFixed(2)}` : "-"}
+                        </TableCell>
+                        <TableCell>
+                          <Input
+                            id={`total-${item.id}`}
+                            type="number"
+                            step="0.01"
+                            value={item.total_amount || ""}
+                            onChange={(e) =>
+                              handleItemFieldChangeWithCalc(
+                                item.id,
+                                "total_amount",
+                                e.target.value
+                              )
+                            }
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                if (index === purchaseItems.length - 1) {
+                                  handleAddNewRow();
+                                } else {
+                                  document
+                                    .querySelector(
+                                      `[data-testid="item-name-${index + 1}"]`
+                                    )
+                                    ?.focus({ preventScroll: true });
+                                }
+                              }
+                            }}
+                            placeholder="₹"
+                            className="h-8 w-28 text-xs text-center "
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                            onClick={() => handleRemoveItem(item.id)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
                         </TableCell>
                       </TableRow>
-                    )}
-                  </TableBody>
-                </Table>
+                    );
+                  })}
+
+                  {purchaseItems.length === 0 && (
+                    <TableRow>
+                      <TableCell
+                        colSpan={15}
+                        className="text-center py-8 text-muted-foreground"
+                      >
+                        <Package className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                        No items. Click "Add Item" to add a row.
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
             </div>
 
             {/* Hint for unit-based system */}
@@ -3363,15 +3503,18 @@ export default function PurchasesPage() {
                 </div>
               </div>
               <div className="flex gap-2 flex-wrap">
-                <SupplierSelector 
+                <SupplierSelector
                   selectedId={filterSupplier}
                   knownSuppliers={suppliers}
                   showAllOption={true}
                   className="w-48"
                   onSelect={(s) => {
                     handleSupplierFilterChange(s.id);
-                    if (s.id !== "all" && !suppliers.find(x => x.id === s.id)) {
-                      setSuppliers(prev => [...prev, s]);
+                    if (
+                      s.id !== "all" &&
+                      !suppliers.find((x) => x.id === s.id)
+                    ) {
+                      setSuppliers((prev) => [...prev, s]);
                     }
                   }}
                 />
@@ -3504,12 +3647,16 @@ export default function PurchasesPage() {
                         {purchase.items?.length || 0} items
                       </TableCell>
                       <TableCell className="text-center">
-                        <span className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
-                          purchase.payment_status === 'Paid' ? 'bg-green-500/10 text-green-500 border border-green-500/20' :
-                          purchase.payment_status === 'Partial' ? 'bg-yellow-500/10 text-yellow-500 border border-yellow-500/20' :
-                          'bg-red-500/10 text-red-400 border border-red-500/20'
-                        }`}>
-                          {purchase.payment_status || 'Unpaid'}
+                        <span
+                          className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                            purchase.payment_status === "Paid"
+                              ? "bg-green-500/10 text-green-500 border border-green-500/20"
+                              : purchase.payment_status === "Partial"
+                                ? "bg-yellow-500/10 text-yellow-500 border border-yellow-500/20"
+                                : "bg-red-500/10 text-red-400 border border-red-500/20"
+                          }`}
+                        >
+                          {purchase.payment_status || "Unpaid"}
                         </span>
                       </TableCell>
                       <TableCell className="text-right font-mono text-primary">
@@ -3642,16 +3789,28 @@ export default function PurchasesPage() {
                                 <CreditCard className="w-4 h-4 text-primary" />
                                 Payment History
                               </h4>
-                              {purchase.payments && purchase.payments.length > 0 ? (
+                              {purchase.payments &&
+                              purchase.payments.length > 0 ? (
                                 <div className="space-y-4">
                                   {purchase.payments.map((payment, i) => (
-                                    <div key={i} className="flex relative pl-5 before:absolute before:left-[7px] before:top-5 before:bottom-[-20px] last:before:hidden before:w-[2px] before:bg-muted-foreground/20">
+                                    <div
+                                      key={i}
+                                      className="flex relative pl-5 before:absolute before:left-[7px] before:top-5 before:bottom-[-20px] last:before:hidden before:w-[2px] before:bg-muted-foreground/20"
+                                    >
                                       <div className="absolute left-0 top-1.5 w-[16px] h-[16px] rounded-full bg-primary/20 flex items-center justify-center ring-4 ring-background">
                                         <div className="w-[8px] h-[8px] rounded-full bg-primary"></div>
                                       </div>
                                       <div>
-                                        <p className="text-sm font-bold text-foreground">₹{payment.amount.toFixed(2)}</p>
-                                        <p className="text-xs text-muted-foreground font-medium">{new Date(payment.date).toLocaleString()} <span className="mx-1">•</span> {payment.notes || "Partial Payment"}</p>
+                                        <p className="text-sm font-bold text-foreground">
+                                          ₹{payment.amount.toFixed(2)}
+                                        </p>
+                                        <p className="text-xs text-muted-foreground font-medium">
+                                          {new Date(
+                                            payment.date
+                                          ).toLocaleString()}{" "}
+                                          <span className="mx-1">•</span>{" "}
+                                          {payment.notes || "Partial Payment"}
+                                        </p>
                                       </div>
                                     </div>
                                   ))}
@@ -3662,41 +3821,81 @@ export default function PurchasesPage() {
                                 </div>
                               )}
                             </div>
-                            
+
                             <div className="w-full md:w-72 bg-muted/30 p-4 rounded-md border border-border/50 flex flex-col justify-center shadow-inner">
-                               <div className="flex justify-between items-center mb-1">
-                                 <span className="text-sm text-muted-foreground">Total Billed:</span>
-                                 <span className="text-sm font-mono font-medium">₹{purchase.total_amount?.toFixed(2)}</span>
-                               </div>
-                               <div className="flex justify-between items-center mb-3">
-                                 <span className="text-sm text-muted-foreground">Amount Paid:</span>
-                                 <span className="text-sm font-mono font-medium text-green-500">₹{(purchase.amount_paid || 0).toFixed(2)}</span>
-                               </div>
-                               <div className="flex justify-between items-center pt-2 border-t border-border mb-4">
-                                 <span className="text-sm font-bold">Remaining:</span>
-                                 <span className="text-base font-mono font-bold text-red-500">₹{Math.max(0, purchase.total_amount - (purchase.amount_paid || 0)).toFixed(2)}</span>
-                               </div>
-                               
-                               <div className="flex gap-2">
-                                 {purchase.payment_status !== "Paid" && (
-                                   <>
-                                     <Button size="sm" className="flex-1 btn-primary" onClick={(e) => { e.stopPropagation(); setPaymentDialog({ open: true, purchase }); }}>
-                                       Pay Part
-                                     </Button>
-                                     <Button size="sm" variant="outline" className="flex-1 hover:bg-green-50 hover:text-green-600 hover:border-green-200" onClick={(e) => { e.stopPropagation(); handleMarkAsPaid(purchase); }}>
-                                       Mark Paid
-                                     </Button>
-                                   </>
-                                 )}
-                                 {purchase.payment_status === "Paid" && (
-                                   <Button size="sm" variant="secondary" className="w-full text-green-600 border-green-200 bg-green-50/50" disabled>
-                                     <CheckCircle2 className="w-4 h-4 mr-1.5" /> Fully Paid
-                                   </Button>
-                                 )}
-                               </div>
+                              <div className="flex justify-between items-center mb-1">
+                                <span className="text-sm text-muted-foreground">
+                                  Total Billed:
+                                </span>
+                                <span className="text-sm font-mono font-medium">
+                                  ₹{purchase.total_amount?.toFixed(2)}
+                                </span>
+                              </div>
+                              <div className="flex justify-between items-center mb-3">
+                                <span className="text-sm text-muted-foreground">
+                                  Amount Paid:
+                                </span>
+                                <span className="text-sm font-mono font-medium text-green-500">
+                                  ₹{(purchase.amount_paid || 0).toFixed(2)}
+                                </span>
+                              </div>
+                              <div className="flex justify-between items-center pt-2 border-t border-border mb-4">
+                                <span className="text-sm font-bold">
+                                  Remaining:
+                                </span>
+                                <span className="text-base font-mono font-bold text-red-500">
+                                  ₹
+                                  {Math.max(
+                                    0,
+                                    purchase.total_amount -
+                                      (purchase.amount_paid || 0)
+                                  ).toFixed(2)}
+                                </span>
+                              </div>
+
+                              <div className="flex gap-2">
+                                {purchase.payment_status !== "Paid" && (
+                                  <>
+                                    <Button
+                                      size="sm"
+                                      className="flex-1 btn-primary"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setPaymentDialog({
+                                          open: true,
+                                          purchase,
+                                        });
+                                      }}
+                                    >
+                                      Pay Part
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      className="flex-1 hover:bg-green-50 hover:text-green-600 hover:border-green-200"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleMarkAsPaid(purchase);
+                                      }}
+                                    >
+                                      Mark Paid
+                                    </Button>
+                                  </>
+                                )}
+                                {purchase.payment_status === "Paid" && (
+                                  <Button
+                                    size="sm"
+                                    variant="secondary"
+                                    className="w-full text-green-600 border-green-200 bg-green-50/50"
+                                    disabled
+                                  >
+                                    <CheckCircle2 className="w-4 h-4 mr-1.5" />{" "}
+                                    Fully Paid
+                                  </Button>
+                                )}
+                              </div>
                             </div>
                           </div>
-
                         </TableCell>
                       </TableRow>
                     )}
@@ -3718,8 +3917,11 @@ export default function PurchasesPage() {
             {pagination.total_pages > 1 && (
               <div className="flex items-center justify-between px-6 py-4 border-t border-border/40 bg-muted/5">
                 <div className="text-xs font-bold text-muted-foreground/80">
-                  Showing {((pagination.page - 1) * pagination.limit) + 1} to{" "}
-                  {Math.min(pagination.page * pagination.limit, pagination.total)}{" "}
+                  Showing {(pagination.page - 1) * pagination.limit + 1} to{" "}
+                  {Math.min(
+                    pagination.page * pagination.limit,
+                    pagination.total
+                  )}{" "}
                   of {pagination.total} purchases
                 </div>
 
@@ -3752,7 +3954,9 @@ export default function PurchasesPage() {
                           <Button
                             key={pageNum}
                             variant={
-                              pageNum === pagination.page ? "default" : "outline"
+                              pageNum === pagination.page
+                                ? "default"
+                                : "outline"
                             }
                             size="sm"
                             onClick={() => fetchPurchases(pageNum)}
@@ -3792,7 +3996,10 @@ export default function PurchasesPage() {
         onOpenChange={(open) => {
           if (!open) {
             const idToFocus = saltDialog.itemId;
-            setTimeout(() => document.getElementById(`add-salt-${idToFocus}`)?.focus(), 50);
+            setTimeout(
+              () => document.getElementById(`add-salt-${idToFocus}`)?.focus(),
+              50
+            );
           }
           setSaltDialog((prev) => ({ ...prev, open }));
         }}
@@ -3821,7 +4028,11 @@ export default function PurchasesPage() {
               onClick={() => {
                 const idToFocus = saltDialog.itemId;
                 setSaltDialog({ open: false, itemId: null, value: "" });
-                setTimeout(() => document.getElementById(`add-salt-${idToFocus}`)?.focus(), 50);
+                setTimeout(
+                  () =>
+                    document.getElementById(`add-salt-${idToFocus}`)?.focus(),
+                  50
+                );
               }}
             >
               Cancel
@@ -3836,7 +4047,11 @@ export default function PurchasesPage() {
                   saltDialog.value
                 );
                 setSaltDialog({ open: false, itemId: null, value: "" });
-                setTimeout(() => document.getElementById(`add-salt-${idToFocus}`)?.focus(), 50);
+                setTimeout(
+                  () =>
+                    document.getElementById(`add-salt-${idToFocus}`)?.focus(),
+                  50
+                );
               }}
             >
               Save
@@ -3864,7 +4079,9 @@ export default function PurchasesPage() {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <div className="flex flex-col-reverse md:flex-row gap-2 justify-end mt-6">
-            <AlertDialogCancel className="w-full md:w-auto mt-0">Cancel</AlertDialogCancel>
+            <AlertDialogCancel className="w-full md:w-auto mt-0">
+              Cancel
+            </AlertDialogCancel>
             <AlertDialogAction
               className="w-full md:w-auto bg-destructive hover:bg-destructive/90 transition-colors"
               onClick={() => handleDeletePurchase(false)}
@@ -3891,7 +4108,8 @@ export default function PurchasesPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Generate Purchase PDF</AlertDialogTitle>
             <AlertDialogDescription>
-              Would you like to generate and view a PDF receipt for this newly recorded purchase?
+              Would you like to generate and view a PDF receipt for this newly
+              recorded purchase?
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -3915,7 +4133,11 @@ export default function PurchasesPage() {
         onOpenChange={(open) => {
           if (!open) {
             const idToFocus = priceHistoryDialog.itemId;
-            setTimeout(() => document.getElementById(`price-history-${idToFocus}`)?.focus(), 50);
+            setTimeout(
+              () =>
+                document.getElementById(`price-history-${idToFocus}`)?.focus(),
+              50
+            );
           }
           setPriceHistoryDialog({ open, itemId: null, data: null });
         }}
@@ -4115,18 +4337,27 @@ export default function PurchasesPage() {
           )}
         </DialogContent>
       </Dialog>
-      
-      <AlertDialog open={removeConfirmDialog.open} onOpenChange={(open) => setRemoveConfirmDialog({ ...removeConfirmDialog, open })}>
+
+      <AlertDialog
+        open={removeConfirmDialog.open}
+        onOpenChange={(open) =>
+          setRemoveConfirmDialog({ ...removeConfirmDialog, open })
+        }
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Remove Item</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to remove this item from the purchase invoice?
+              Are you sure you want to remove this item from the purchase
+              invoice?
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={confirmRemoveItem} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+            <AlertDialogAction
+              onClick={confirmRemoveItem}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
               Remove
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -4134,96 +4365,108 @@ export default function PurchasesPage() {
       </AlertDialog>
 
       {/* TABS & ACTION NAVBAR */}
-      {(showNewPurchase || editingPurchaseId) && (
-        <div className="fixed bottom-0 left-0 md:left-[250px] right-0 z-[100] flex items-center justify-between bg-card/85 backdrop-blur-xl border-t border-border/80 shadow-[0_-8px_30px_rgba(0,0,0,0.12)] px-6 py-4 gap-4 overflow-x-auto scroller-hide overflow-y-hidden mb-0 transition-all duration-300">
-          <div className="flex items-center gap-2 overflow-x-auto scroller-hide">
-            {showNewPurchase && tabs.map((tab, idx) => {
-              const isActive = tab.id === activeTabId;
-              let tabName = `Tab ${idx + 1}`;
-              if (tab.data?.purchaseItems?.length > 0) {
-                const firstProduct = tab.data.purchaseItems[0].product_name || "Unknown";
-                const extra = tab.data.purchaseItems.length - 1;
-                tabName = extra > 0 ? `${firstProduct} +${extra}` : firstProduct;
-              }
-              return (
-                <div key={tab.id} className="relative group shrink-0">
-                  <Button
-                    variant={isActive ? "default" : "secondary"}
-                    size="sm"
-                    onClick={(e) => { e.preventDefault(); switchTab(tab.id); }}
-                    className={`pr-8 h-9 rounded-full transition-all duration-200 ${isActive ? "bg-primary text-primary-foreground shadow-md font-bold ring-1 ring-primary/50" : "bg-muted/65 hover:bg-muted/90 text-muted-foreground hover:text-foreground font-medium"}`}
-                  >
-                    <FileText className="w-3.5 h-3.5 mr-1.5 opacity-70" />
-                    <span className="max-w-[120px] truncate">{tabName}</span>
-                  </Button>
-                  {tabs.length > 0 && (
-                    <div
-                      className="absolute right-1.5 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center rounded-full bg-background/50 hover:bg-destructive hover:text-destructive-foreground cursor-pointer transition-colors"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        closeTab(tab.id);
-                      }}
-                    >
-                      <X className="w-3 h-3" />
+      {(showNewPurchase || editingPurchaseId) &&
+        createPortal(
+          <div className="fixed bottom-0 left-0 md:left-[250px] right-0 z-[100] flex items-center justify-between bg-card/85 backdrop-blur-xl border-t border-border/80 shadow-[0_-8px_30px_rgba(0,0,0,0.12)] px-6 py-4 gap-4 overflow-x-auto scroller-hide overflow-y-hidden mb-0 transition-all duration-300">
+            <div className="flex items-center gap-2 overflow-x-auto scroller-hide">
+              {showNewPurchase &&
+                tabs.map((tab, idx) => {
+                  const isActive = tab.id === activeTabId;
+                  let tabName = `Tab ${idx + 1}`;
+                  if (tab.data?.purchaseItems?.length > 0) {
+                    const firstProduct =
+                      tab.data.purchaseItems[0].product_name || "Unknown";
+                    const extra = tab.data.purchaseItems.length - 1;
+                    tabName =
+                      extra > 0 ? `${firstProduct} +${extra}` : firstProduct;
+                  }
+                  return (
+                    <div key={tab.id} className="relative group shrink-0">
+                      <Button
+                        variant={isActive ? "default" : "secondary"}
+                        size="sm"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          switchTab(tab.id);
+                        }}
+                        className={`pr-8 h-9 rounded-full transition-all duration-200 ${isActive ? "bg-primary text-primary-foreground shadow-md font-bold ring-1 ring-primary/50" : "bg-muted/65 hover:bg-muted/90 text-muted-foreground hover:text-foreground font-medium"}`}
+                      >
+                        <FileText className="w-3.5 h-3.5 mr-1.5 opacity-70" />
+                        <span className="max-w-[120px] truncate">
+                          {tabName}
+                        </span>
+                      </Button>
+                      {tabs.length > 0 && (
+                        <div
+                          className="absolute right-1.5 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center rounded-full bg-background/50 hover:bg-destructive hover:text-destructive-foreground cursor-pointer transition-colors"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            closeTab(tab.id);
+                          }}
+                        >
+                          <X className="w-3 h-3" />
+                        </div>
+                      )}
                     </div>
-                  )}
-                </div>
-              );
-            })}
-            {showNewPurchase && tabs.length < 10 && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={createNewTab}
-                className="bg-primary/5 hover:bg-primary/10 border-primary/20 text-primary shrink-0 transition-colors shadow-sm h-9 rounded-full"
-              >
-                <Plus className="w-4 h-4 mr-1" /> New Tab
-              </Button>
-            )}
-            {editingPurchaseId && (
-              <div className="flex items-center gap-2 px-3 py-1 bg-yellow-500/10 border border-yellow-500/20 rounded-md text-yellow-600 text-sm font-medium">
-                <Edit2 className="w-4 h-4" />
-                Editing Purchase #{editingPurchaseId}
-              </div>
-            )}
-          </div>
-
-          <div className="flex items-center gap-3 shrink-0 ml-auto border-l border-border pl-6">
-            <Button 
-                variant="ghost" 
-                onClick={handleCancelNewPurchase}
-                className="text-muted-foreground hover:text-foreground"
-            >
-              Cancel (Esc)
-            </Button>
-            
-            <Button
-              onClick={handleSubmitPurchase}
-              disabled={
-                submitting ||
-                purchaseItems.filter((i) => i.product_name).length === 0
-              }
-              className="btn-primary shadow-lg shadow-primary/20 min-w-[160px]"
-            >
-              {submitting ? (
-                <>
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  Saving...
-                </>
-              ) : (
-                <div className="flex items-center gap-2">
-                  <Save className="w-4 h-4" />
-                  <span>{editingPurchaseId ? "Update Purchase" : "Save Purchase"}</span>
-                  <kbd className="hidden sm:inline-block ml-1 opacity-70 text-[9px] font-mono border border-white/20 px-1 rounded">
-                    {getOS() === 'mac' ? '⌘Enter' : 'Ctrl+Enter'}
-                  </kbd>
+                  );
+                })}
+              {showNewPurchase && tabs.length < 10 && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={createNewTab}
+                  className="bg-primary/5 hover:bg-primary/10 border-primary/20 text-primary shrink-0 transition-colors shadow-sm h-9 rounded-full"
+                >
+                  <Plus className="w-4 h-4 mr-1" /> New Tab
+                </Button>
+              )}
+              {editingPurchaseId && (
+                <div className="flex items-center gap-2 px-3 py-1 bg-yellow-500/10 border border-yellow-500/20 rounded-md text-yellow-600 text-sm font-medium">
+                  <Edit2 className="w-4 h-4" />
+                  Editing Purchase #{editingPurchaseId}
                 </div>
               )}
-            </Button>
-          </div>
-        </div>
-      )}
+            </div>
+
+            <div className="flex items-center gap-3 shrink-0 ml-auto border-l border-border pl-6">
+              <Button
+                variant="ghost"
+                onClick={handleCancelNewPurchase}
+                className="text-muted-foreground hover:text-foreground"
+              >
+                Cancel (Esc)
+              </Button>
+
+              <Button
+                onClick={handleSubmitPurchase}
+                disabled={
+                  submitting ||
+                  purchaseItems.filter((i) => i.product_name).length === 0
+                }
+                className="btn-primary shadow-lg shadow-primary/20 min-w-[160px]"
+              >
+                {submitting ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Saving...
+                  </>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <Save className="w-4 h-4" />
+                    <span>
+                      {editingPurchaseId ? "Update Purchase" : "Save Purchase"}
+                    </span>
+                    <kbd className="hidden sm:inline-block ml-1 opacity-70 text-[9px] font-mono border border-white/20 px-1 rounded">
+                      {getOS() === "mac" ? "⌘Enter" : "Ctrl+Enter"}
+                    </kbd>
+                  </div>
+                )}
+              </Button>
+            </div>
+          </div>,
+          document.body
+        )}
     </div>
   );
 }

@@ -44,11 +44,31 @@ import AgentWidget from "./Agent/AgentWidget";
 
 const navItems = [
   { path: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { path: "/inventory", label: "Inventory", icon: Package, shortcut: ["alt", "i"] },
-  { path: "/purchases", label: "Purchases", icon: ShoppingCart, shortcut: ["alt", "p"] },
+  {
+    path: "/inventory",
+    label: "Inventory",
+    icon: Package,
+    shortcut: ["alt", "i"],
+  },
+  {
+    path: "/purchases",
+    label: "Purchases",
+    icon: ShoppingCart,
+    shortcut: ["alt", "p"],
+  },
   { path: "/billing", label: "Billing", icon: Receipt, shortcut: ["alt", "b"] },
-  { path: "/suppliers", label: "Suppliers", icon: Truck, shortcut: ["alt", "s"] },
-  { path: "/customers", label: "Customers", icon: Users, shortcut: ["alt", "c"] },
+  {
+    path: "/suppliers",
+    label: "Suppliers",
+    icon: Truck,
+    shortcut: ["alt", "s"],
+  },
+  {
+    path: "/customers",
+    label: "Customers",
+    icon: Users,
+    shortcut: ["alt", "c"],
+  },
   { path: "/users", label: "Users", icon: UserCog, adminOnly: true },
   { path: "/reports", label: "Reports", icon: BarChart3 },
   { path: "/settings", label: "Settings", icon: Settings },
@@ -64,8 +84,12 @@ const Sidebar = ({ mobile = false, onClose, collapsed = false, onToggle }) => {
     <TooltipProvider delayDuration={0}>
       <div className="flex flex-col h-full bg-zinc-950/10 dark:bg-zinc-950/30">
         {/* Logo Section */}
-        <div className={`p-4 border-b border-border/40 ${collapsed ? "px-2" : "p-6"}`}>
-          <div className={`flex items-center ${collapsed ? "justify-center" : "gap-3"}`}>
+        <div
+          className={`p-4 border-b border-border/40 ${collapsed ? "px-2" : "p-6"}`}
+        >
+          <div
+            className={`flex items-center ${collapsed ? "justify-center" : "gap-3"}`}
+          >
             {pharmacy?.logo_url ? (
               <img
                 src={pharmacy.logo_url}
@@ -80,7 +104,9 @@ const Sidebar = ({ mobile = false, onClose, collapsed = false, onToggle }) => {
                   collapsed ? "w-9 h-9" : "w-10 h-10"
                 }`}
               >
-                <span className={`text-primary-foreground font-black tracking-wider ${collapsed ? "text-base" : "text-lg"}`}>
+                <span
+                  className={`text-primary-foreground font-black tracking-wider ${collapsed ? "text-base" : "text-lg"}`}
+                >
                   P
                 </span>
               </div>
@@ -88,7 +114,7 @@ const Sidebar = ({ mobile = false, onClose, collapsed = false, onToggle }) => {
             {!collapsed && (
               <div className="min-w-0 flex-1">
                 <h1 className="font-extrabold text-base text-foreground truncate tracking-tight">
-                  {pharmacy?.name || "Pharmalogy"}
+                  {pharmacy?.name || "Test Instance"}
                 </h1>
                 <p className="text-[10px] font-semibold text-muted-foreground/80 truncate">
                   {pharmacy?.location}
@@ -100,7 +126,9 @@ const Sidebar = ({ mobile = false, onClose, collapsed = false, onToggle }) => {
 
         {/* Collapse Toggle - Desktop only */}
         {!mobile && (
-          <div className={`px-3 py-2 border-b border-border/40 ${collapsed ? "flex justify-center" : ""}`}>
+          <div
+            className={`px-3 py-2 border-b border-border/40 ${collapsed ? "flex justify-center" : ""}`}
+          >
             <Button
               variant="ghost"
               size="sm"
@@ -115,7 +143,9 @@ const Sidebar = ({ mobile = false, onClose, collapsed = false, onToggle }) => {
               ) : (
                 <div className="flex items-center gap-2">
                   <PanelLeftClose className="w-4 h-4 text-primary" />
-                  <span className="text-xs font-bold uppercase tracking-wider">Collapse Sidebar</span>
+                  <span className="text-xs font-bold uppercase tracking-wider">
+                    Collapse Sidebar
+                  </span>
                 </div>
               )}
             </Button>
@@ -123,11 +153,14 @@ const Sidebar = ({ mobile = false, onClose, collapsed = false, onToggle }) => {
         )}
 
         {/* Navigation Section */}
-        <nav className={`flex-1 p-2 space-y-1.5 overflow-y-auto ${collapsed ? "px-1" : "p-4"}`}>
+        <nav
+          className={`flex-1 p-2 space-y-1.5 overflow-y-auto ${collapsed ? "px-1" : "p-4"}`}
+        >
           {filteredItems.map((item) => {
             const isItemActive =
               location.pathname === item.path ||
-              (item.path !== "/dashboard" && location.pathname.startsWith(item.path));
+              (item.path !== "/dashboard" &&
+                location.pathname.startsWith(item.path));
 
             return collapsed ? (
               <Tooltip key={item.path}>
@@ -142,7 +175,9 @@ const Sidebar = ({ mobile = false, onClose, collapsed = false, onToggle }) => {
                     }`}
                     data-testid={`nav-${item.path.slice(1)}`}
                   >
-                    <item.icon className={`w-5 h-5 shrink-0 ${isItemActive ? "text-primary-foreground" : "text-muted-foreground"}`} />
+                    <item.icon
+                      className={`w-5 h-5 shrink-0 ${isItemActive ? "text-primary-foreground" : "text-muted-foreground"}`}
+                    />
                   </NavLink>
                 </TooltipTrigger>
                 <TooltipContent side="right" className="font-bold text-xs">
@@ -174,7 +209,9 @@ const Sidebar = ({ mobile = false, onClose, collapsed = false, onToggle }) => {
         </nav>
 
         {/* User Profile Container */}
-        <div className={`p-2 border-t border-border/40 ${collapsed ? "px-1" : "p-4"}`}>
+        <div
+          className={`p-2 border-t border-border/40 ${collapsed ? "px-1" : "p-4"}`}
+        >
           {collapsed ? (
             <Tooltip>
               <TooltipTrigger asChild>
@@ -225,7 +262,7 @@ export default function DashboardLayout() {
   useKeyboardShortcut("i", () => navigate("/inventory"), { alt: true });
   useKeyboardShortcut("s", () => navigate("/suppliers"), { alt: true });
   useKeyboardShortcut("c", () => navigate("/customers"), { alt: true });
-  
+
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     const stored = localStorage.getItem("sidebarCollapsed");
     return stored === "true";
@@ -256,7 +293,9 @@ export default function DashboardLayout() {
     }
   }, [settings]);
 
-  useKeyboardShortcut("a", () => setActivityOpen((prev) => !prev), { alt: true });
+  useKeyboardShortcut("a", () => setActivityOpen((prev) => !prev), {
+    alt: true,
+  });
 
   const location = useLocation();
 
@@ -268,7 +307,11 @@ export default function DashboardLayout() {
         const el = document.getElementById(`record-${id}`);
         if (el) {
           el.scrollIntoView({ behavior: "smooth", block: "center" });
-          el.classList.add("bg-primary/20", "transition-colors", "duration-1000");
+          el.classList.add(
+            "bg-primary/20",
+            "transition-colors",
+            "duration-1000"
+          );
           setTimeout(() => {
             el.classList.remove("bg-primary/20");
           }, 2000);
@@ -319,7 +362,10 @@ export default function DashboardLayout() {
   };
 
   return (
-    <div className="min-h-screen bg-background flex select-none overflow-hidden" data-testid="dashboard-layout">
+    <div
+      className="min-h-screen bg-background flex select-none overflow-hidden"
+      data-testid="dashboard-layout"
+    >
       {/* Desktop Sidebar (Collapsible) */}
       <aside
         className={`border-r border-border/40 bg-card/25 backdrop-blur-xl hidden md:flex flex-col fixed h-full z-50 transition-all duration-300 ease-in-out ${
@@ -341,11 +387,19 @@ export default function DashboardLayout() {
             {/* Mobile Menu Trigger */}
             <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
               <SheetTrigger asChild className="md:hidden">
-                <Button variant="ghost" size="icon" className="hover:bg-muted" data-testid="mobile-menu-btn">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="hover:bg-muted"
+                  data-testid="mobile-menu-btn"
+                >
                   <Menu className="w-5 h-5" />
                 </Button>
               </SheetTrigger>
-              <SheetContent side="left" className="w-64 p-0 bg-card border-r border-border/40">
+              <SheetContent
+                side="left"
+                className="w-64 p-0 bg-card border-r border-border/40"
+              >
                 <Sidebar mobile onClose={() => setMobileOpen(false)} />
               </SheetContent>
             </Sheet>
@@ -370,7 +424,12 @@ export default function DashboardLayout() {
               </Button>
 
               {/* Notification Button */}
-              <Button variant="ghost" size="icon" className="relative hover:bg-muted" data-testid="notifications-btn">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="relative hover:bg-muted"
+                data-testid="notifications-btn"
+              >
                 <Bell className="w-5 h-5" />
                 <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-destructive rounded-full shadow shadow-destructive/50 animate-pulse"></span>
               </Button>
@@ -381,7 +440,9 @@ export default function DashboardLayout() {
                 size="icon"
                 onClick={toggleActivity}
                 className={`relative hover:bg-muted transition-all duration-200 ${
-                  activityOpen ? "bg-primary/10 text-primary hover:bg-primary/20" : ""
+                  activityOpen
+                    ? "bg-primary/10 text-primary hover:bg-primary/20"
+                    : ""
                 }`}
                 title="Recent Activity (Alt + A)"
               >
@@ -408,7 +469,10 @@ export default function DashboardLayout() {
                     <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
                   </Button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-48 mt-1 border border-border/40 shadow-xl rounded-xl">
+                <DropdownMenuContent
+                  align="end"
+                  className="w-48 mt-1 border border-border/40 shadow-xl rounded-xl"
+                >
                   <DropdownMenuItem
                     onClick={() => navigate("/settings")}
                     data-testid="settings-dropdown"
@@ -448,11 +512,14 @@ export default function DashboardLayout() {
 
           {/* Activity Sidebar drawer panel overlay */}
           <div
-            className={`fixed right-0 top-0 bottom-0 z-50 shadow-2xl transition-transform duration-300 ease-in-out transform ${
+            className={`fixed right-0 top-0 bottom-0 z-50 shadow-2xl transition-transform duration-300 ease-in-out transform activity-sidebar ${
               activityOpen ? "translate-x-0" : "translate-x-full"
             }`}
           >
-            <RecentActivitySidebar open={activityOpen} onClose={() => setActivityOpen(false)} />
+            <RecentActivitySidebar
+              open={activityOpen}
+              onClose={() => setActivityOpen(false)}
+            />
           </div>
         </div>
       </div>

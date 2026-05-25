@@ -183,7 +183,7 @@ export default function RegisterPage() {
             <Activity className="w-5 h-5 text-primary-foreground" />
           </div>
           <span className="font-extrabold text-xl tracking-tight text-foreground bg-gradient-to-r from-foreground to-foreground/80 bg-clip-text">
-            Pharmalogy
+            Pharmacy - Test Instance
           </span>
         </div>
 
@@ -197,7 +197,8 @@ export default function RegisterPage() {
               </span>
             </h1>
             <p className="text-muted-foreground text-sm font-medium leading-relaxed">
-              Create your account and workspace parameters in three simple steps.
+              Create your account and workspace parameters in three simple
+              steps.
             </p>
           </div>
 
@@ -224,7 +225,11 @@ export default function RegisterPage() {
                           : "bg-muted text-muted-foreground/60 border border-border"
                     }`}
                   >
-                    {isCompleted ? <Check className="w-4 h-4 stroke-[3]" /> : i + 1}
+                    {isCompleted ? (
+                      <Check className="w-4 h-4 stroke-[3]" />
+                    ) : (
+                      i + 1
+                    )}
                   </div>
                   <div className="space-y-0.5">
                     <h3
@@ -245,9 +250,12 @@ export default function RegisterPage() {
                           : "text-muted-foreground/50"
                       }`}
                     >
-                      {i === 0 && "Provide credentials for your secure administrator login."}
-                      {i === 1 && "Configure names, licensing, and database properties."}
-                      {i === 2 && "Authenticate your email using the verification code."}
+                      {i === 0 &&
+                        "Provide credentials for your secure administrator login."}
+                      {i === 1 &&
+                        "Configure names, licensing, and database properties."}
+                      {i === 2 &&
+                        "Authenticate your email using the verification code."}
                     </p>
                   </div>
                 </div>
@@ -258,7 +266,8 @@ export default function RegisterPage() {
 
         {/* Footer */}
         <div className="text-[10px] text-muted-foreground/50 font-medium relative z-10">
-          © {new Date().getFullYear()} Pharmalogy Inc. All rights reserved.
+          © {new Date().getFullYear()} Krishna medicose Inc. All rights
+          reserved.
         </div>
       </div>
 
@@ -275,7 +284,7 @@ export default function RegisterPage() {
             </div>
             <div>
               <h2 className="text-2xl font-black tracking-tight text-foreground">
-                Pharmalogy
+                Pharmacy management
               </h2>
               <p className="text-muted-foreground text-xs font-semibold">
                 Setup your pharmacy store workspace
@@ -322,7 +331,10 @@ export default function RegisterPage() {
             {step === 0 && (
               <div className="space-y-5 animate-in fade-in duration-300">
                 <div className="space-y-2">
-                  <Label htmlFor="name" className="text-xs font-bold uppercase tracking-wider text-muted-foreground/80">
+                  <Label
+                    htmlFor="name"
+                    className="text-xs font-bold uppercase tracking-wider text-muted-foreground/80"
+                  >
                     Full Name *
                   </Label>
                   <div className="relative group">
@@ -343,7 +355,10 @@ export default function RegisterPage() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="email" className="text-xs font-bold uppercase tracking-wider text-muted-foreground/80">
+                  <Label
+                    htmlFor="email"
+                    className="text-xs font-bold uppercase tracking-wider text-muted-foreground/80"
+                  >
                     Email Address *
                   </Label>
                   <div className="relative group">
@@ -365,7 +380,10 @@ export default function RegisterPage() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="mobile" className="text-xs font-bold uppercase tracking-wider text-muted-foreground/80">
+                  <Label
+                    htmlFor="mobile"
+                    className="text-xs font-bold uppercase tracking-wider text-muted-foreground/80"
+                  >
                     Mobile Number *
                   </Label>
                   <div className="relative group">
@@ -387,7 +405,10 @@ export default function RegisterPage() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="password" className="text-xs font-bold uppercase tracking-wider text-muted-foreground/80">
+                  <Label
+                    htmlFor="password"
+                    className="text-xs font-bold uppercase tracking-wider text-muted-foreground/80"
+                  >
                     Password *
                   </Label>
                   <div className="relative group">
@@ -427,7 +448,10 @@ export default function RegisterPage() {
             {step === 1 && (
               <div className="space-y-5 animate-in fade-in duration-300">
                 <div className="space-y-2">
-                  <Label htmlFor="pharmacyName" className="text-xs font-bold uppercase tracking-wider text-muted-foreground/80">
+                  <Label
+                    htmlFor="pharmacyName"
+                    className="text-xs font-bold uppercase tracking-wider text-muted-foreground/80"
+                  >
                     Pharmacy Name *
                   </Label>
                   <div className="relative group">
@@ -439,7 +463,10 @@ export default function RegisterPage() {
                       placeholder="City Pharmacy"
                       value={formData.pharmacyName}
                       onChange={(e) =>
-                        setFormData({ ...formData, pharmacyName: e.target.value })
+                        setFormData({
+                          ...formData,
+                          pharmacyName: e.target.value,
+                        })
                       }
                       data-testid="register-pharmacy-name-input"
                       className="pl-10 h-11 border-border/80 focus-visible:ring-1 focus-visible:ring-primary focus-visible:border-primary transition-all bg-card/25"
@@ -448,7 +475,10 @@ export default function RegisterPage() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="location" className="text-xs font-bold uppercase tracking-wider text-muted-foreground/80">
+                  <Label
+                    htmlFor="location"
+                    className="text-xs font-bold uppercase tracking-wider text-muted-foreground/80"
+                  >
                     Location *
                   </Label>
                   <div className="relative group">
@@ -469,7 +499,10 @@ export default function RegisterPage() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="licenseNo" className="text-xs font-bold uppercase tracking-wider text-muted-foreground/80">
+                  <Label
+                    htmlFor="licenseNo"
+                    className="text-xs font-bold uppercase tracking-wider text-muted-foreground/80"
+                  >
                     License Number (Optional)
                   </Label>
                   <div className="relative group">
@@ -490,7 +523,10 @@ export default function RegisterPage() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="yearsOld" className="text-xs font-bold uppercase tracking-wider text-muted-foreground/80">
+                  <Label
+                    htmlFor="yearsOld"
+                    className="text-xs font-bold uppercase tracking-wider text-muted-foreground/80"
+                  >
                     Years in Business (Optional)
                   </Label>
                   <div className="relative group">
@@ -536,7 +572,11 @@ export default function RegisterPage() {
                           {fallbackOtp}
                         </p>
                         <p className="text-[10px] text-muted-foreground/85 leading-normal pt-1">
-                          Configure Brevo account whitelist for IP <code className="font-mono bg-muted/60 px-1 py-0.5 rounded text-foreground">34.16.56.64</code>.
+                          Configure Brevo account whitelist for IP{" "}
+                          <code className="font-mono bg-muted/60 px-1 py-0.5 rounded text-foreground">
+                            34.16.56.64
+                          </code>
+                          .
                         </p>
                       </div>
                     </div>
@@ -550,12 +590,30 @@ export default function RegisterPage() {
                       data-testid="otp-input"
                     >
                       <InputOTPGroup className="gap-1.5">
-                        <InputOTPSlot index={0} className="w-10 h-12 sm:w-12 sm:h-14 text-base border border-border/80 rounded-lg bg-card/25" />
-                        <InputOTPSlot index={1} className="w-10 h-12 sm:w-12 sm:h-14 text-base border border-border/80 rounded-lg bg-card/25" />
-                        <InputOTPSlot index={2} className="w-10 h-12 sm:w-12 sm:h-14 text-base border border-border/80 rounded-lg bg-card/25" />
-                        <InputOTPSlot index={3} className="w-10 h-12 sm:w-12 sm:h-14 text-base border border-border/80 rounded-lg bg-card/25" />
-                        <InputOTPSlot index={4} className="w-10 h-12 sm:w-12 sm:h-14 text-base border border-border/80 rounded-lg bg-card/25" />
-                        <InputOTPSlot index={5} className="w-10 h-12 sm:w-12 sm:h-14 text-base border border-border/80 rounded-lg bg-card/25" />
+                        <InputOTPSlot
+                          index={0}
+                          className="w-10 h-12 sm:w-12 sm:h-14 text-base border border-border/80 rounded-lg bg-card/25"
+                        />
+                        <InputOTPSlot
+                          index={1}
+                          className="w-10 h-12 sm:w-12 sm:h-14 text-base border border-border/80 rounded-lg bg-card/25"
+                        />
+                        <InputOTPSlot
+                          index={2}
+                          className="w-10 h-12 sm:w-12 sm:h-14 text-base border border-border/80 rounded-lg bg-card/25"
+                        />
+                        <InputOTPSlot
+                          index={3}
+                          className="w-10 h-12 sm:w-12 sm:h-14 text-base border border-border/80 rounded-lg bg-card/25"
+                        />
+                        <InputOTPSlot
+                          index={4}
+                          className="w-10 h-12 sm:w-12 sm:h-14 text-base border border-border/80 rounded-lg bg-card/25"
+                        />
+                        <InputOTPSlot
+                          index={5}
+                          className="w-10 h-12 sm:w-12 sm:h-14 text-base border border-border/80 rounded-lg bg-card/25"
+                        />
                       </InputOTPGroup>
                     </InputOTP>
                   </div>

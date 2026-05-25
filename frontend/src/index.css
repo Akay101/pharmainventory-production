@@ -321,3 +321,22 @@ select {
 [data-debug-wrapper="true"] {
   display: contents !important;
 }
+
+/* Under Development Banner Layout Offsets */
+body {
+  padding-top: 28px !important;
+}
+/* Desktop sidebar container */
+aside.fixed {
+  top: 28px !important;
+  height: calc(100vh - 28px) !important;
+}
+/* Main layout top header navigation bar */
+header.sticky.top-0 {
+  top: 28px !important;
+}
+/* Recent activity drawer sidebar */
+div.activity-sidebar.fixed {
+  top: 28px !important;
+  height: calc(100vh - 28px) !important;
+}

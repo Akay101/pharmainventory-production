@@ -69,7 +69,9 @@ app.use("/api/chat", require("./routes/chat"));
 
 // Bull Board Setup (Protected with Basic Auth)
 if (!process.env.ADMIN_PASSWORD) {
-  console.error("CRITICAL ERROR: ADMIN_PASSWORD environment variable is missing.");
+  console.error(
+    "CRITICAL ERROR: ADMIN_PASSWORD environment variable is missing."
+  );
   process.exit(1);
 }
 
@@ -93,20 +95,26 @@ startCronJobs();
 
 // Swagger Documentation setup
 try {
-  const swaggerUi = require('swagger-ui-express');
-  const swaggerDocument = require('./swagger-output.json');
-  app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument, {
-    customSiteTitle: "Pharmalogy API Explorer",
-    customCss: '.swagger-ui .topbar { display: none }',
-    explorer: true
-  }));
+  const swaggerUi = require("swagger-ui-express");
+  const swaggerDocument = require("./swagger-output.json");
+  app.use(
+    "/api-docs",
+    swaggerUi.serve,
+    swaggerUi.setup(swaggerDocument, {
+      customSiteTitle: "Pharmacy API Explorer",
+      customCss: ".swagger-ui .topbar { display: none }",
+      explorer: true,
+    })
+  );
 } catch (error) {
-  console.log("Swagger documentation not generated. Run 'npm run swagger' to generate.");
+  console.log(
+    "Swagger documentation not generated. Run 'npm run swagger' to generate."
+  );
 }
 
 // Root API endpoint
 app.get("/api/", (req, res) => {
-  res.json({ message: "Pharmalogy API - Node.js/Express", version: "2.0.0" });
+  res.json({ message: "Pharmacy API - Node.js/Express", version: "2.0.0" });
 });
 
 // Health check endpoints

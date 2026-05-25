@@ -64,7 +64,7 @@ export default function LoginPage() {
             <Activity className="w-5 h-5 text-primary-foreground" />
           </div>
           <span className="font-extrabold text-xl tracking-tight text-foreground bg-gradient-to-r from-foreground to-foreground/80 bg-clip-text">
-            Pharmalogy
+            Test Instance - Pharmacy management software
           </span>
         </div>
 
@@ -136,7 +136,8 @@ export default function LoginPage() {
 
         {/* Footer */}
         <div className="text-xs text-muted-foreground/60 font-medium relative z-10">
-          © {new Date().getFullYear()} Pharmalogy Inc. All rights reserved.
+          © {new Date().getFullYear()} Krishna Medicose Inc. All rights
+          reserved.
         </div>
       </div>
 
@@ -153,7 +154,7 @@ export default function LoginPage() {
             </div>
             <div>
               <h2 className="text-2xl font-black tracking-tight text-foreground">
-                Pharmalogy
+                Test Instance - Pharmacy management software
               </h2>
               <p className="text-muted-foreground text-xs font-semibold">
                 Sign in to manage your pharmacy

@@ -81,11 +81,15 @@ const AuthProvider = ({ children }) => {
     try {
       // Optimistic update
       setSettings((prev) => ({ ...prev, [key]: value }));
-      
-      await axios.post(`${API}/settings/update`, { key, value }, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      
+
+      await axios.post(
+        `${API}/settings/update`,
+        { key, value },
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+
       // Refresh definitions as well
       const response = await axios.get(`${API}/settings`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -185,8 +189,8 @@ let isRedirecting = false;
 axios.interceptors.response.use(
   (response) => {
     const method = response.config?.method?.toLowerCase();
-    if (['post', 'put', 'delete', 'patch'].includes(method)) {
-      window.dispatchEvent(new Event('activity-updated'));
+    if (["post", "put", "delete", "patch"].includes(method)) {
+      window.dispatchEvent(new Event("activity-updated"));
     }
     return response;
   },
@@ -240,6 +244,18 @@ axios.interceptors.response.use(
 function App() {
   return (
     <AuthProvider>
+      <div
+        id="under-development-banner"
+        style={{ height: "28px" }}
+        className="fixed top-0 left-0 right-0 bg-amber-600 text-white text-center text-[10px] sm:text-xs font-semibold select-none flex items-center justify-center gap-1.5 z-[999999] border-b border-amber-500/20 shadow-sm px-4"
+      >
+        <span>⚠️</span>
+        <span className="truncate">
+          You are currently using the under development version of the
+          application which may have bugs and performance issues so please
+          contact support team in case of errors
+        </span>
+      </div>
       <BrowserRouter>
         <NavigationHandler />
         <Routes>
@@ -250,7 +266,7 @@ function App() {
           <Route path="/payment-success" element={<PaymentSuccessPage />} />
 
           {/* Scanner Route - Standalone for mobile */}
-          <Route path="/scan" element={<ScannerPage />} />
+          {/* <Route path="/scan" element={<ScannerPage />} /> */}
 
           {/* Protected Routes */}
           <Route
