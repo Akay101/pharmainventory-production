@@ -2032,7 +2032,7 @@ export default function PurchasesPage() {
             Shortcuts
           </Button>
 
-          {/* <Button
+          <Button
             variant="outline"
             className="bg-gradient-to-r from-primary/10 to-primary/5 border-primary/30 hover:border-primary/50"
             onClick={() => window.open("/scan", "_blank")}
@@ -2040,7 +2040,7 @@ export default function PurchasesPage() {
           >
             <Upload className="w-4 h-4 mr-2" />
             Scan
-          </Button> */}
+          </Button>
 
           <Dialog open={csvDialog} onOpenChange={setCsvDialog}>
             <DialogTrigger asChild>

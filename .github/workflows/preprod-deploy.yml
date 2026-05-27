@@ -68,4 +68,4 @@ jobs:
           command_timeout: 30m
           script: |
             cd ~
-            bash deploy-preprod.sh
+            deploy-preprod.sh

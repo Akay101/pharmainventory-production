@@ -266,7 +266,7 @@ function App() {
           <Route path="/payment-success" element={<PaymentSuccessPage />} />
 
           {/* Scanner Route - Standalone for mobile */}
-          {/* <Route path="/scan" element={<ScannerPage />} /> */}
+          <Route path="/scan" element={<ScannerPage />} />
 
           {/* Protected Routes */}
           <Route
