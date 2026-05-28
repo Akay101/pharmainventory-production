@@ -17,6 +17,60 @@ const upload = multer({ storage: multer.memoryStorage() });
 const generateOTP = () =>
   Math.floor(100000 + Math.random() * 900000).toString();
 
+// GET /api/users/me - Get current user profile and pharmacy details
+router.get("/me", auth, async (req, res, next) => {
+  try {
+    const db = mongoose.connection.db;
+    let pharmacy = null;
+    
+    if (req.user.pharmacy_id) {
+      pharmacy = await db
+        .collection("pharmacies")
+        .findOne({ id: req.user.pharmacy_id }, { projection: { _id: 0 } });
+    }
+
+    const normalizedPharmacy = pharmacy ? {
+      id: pharmacy.id || null,
+      name: pharmacy.name || "",
+      location: pharmacy.location || "",
+      license_no: pharmacy.license_no || "",
+      years_old: pharmacy.years_old || null,
+      logo_url: pharmacy.logo_url || null,
+      contact: pharmacy.contact || "",
+      pan: pharmacy.pan || "",
+      bank_name: pharmacy.bank_name || "",
+      bank_ifsc: pharmacy.bank_ifsc || "",
+      bank_acc_no: pharmacy.bank_acc_no || "",
+      bank_holder: pharmacy.bank_holder || "",
+      upi_id: pharmacy.upi_id || "",
+      gst_no: pharmacy.gst_no || "",
+      created_at: pharmacy.created_at || null
+    } : {
+      id: null,
+      name: "",
+      location: "",
+      license_no: "",
+      years_old: null,
+      logo_url: null,
+      contact: "",
+      pan: "",
+      bank_name: "",
+      bank_ifsc: "",
+      bank_acc_no: "",
+      bank_holder: "",
+      upi_id: "",
+      gst_no: ""
+    };
+
+    res.json({
+      user: req.user,
+      pharmacy: normalizedPharmacy,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 // POST /api/users - Create new user (admin only)
 router.post(
   "/",

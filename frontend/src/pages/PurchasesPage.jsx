@@ -517,6 +517,8 @@ export default function PurchasesPage() {
     rate_pack: "", // Rate per pack (purchase price per pack)
     total_amount: "", // Total amount (user can enter this OR rate_pack)
     mrp_pack: "", // MRP per pack (user enters this, MRP/Unit is auto-calculated)
+    cgst: "", // CGST (%)
+    sgst: "", // SGST (%)
     _is_auto_filled_rate: true, // Prevent price history ping until manually edited
   };
 
@@ -1217,26 +1219,35 @@ export default function PurchasesPage() {
         }
 
         const qty =
-          parseInt(updated.quantity) || parseInt(updated.pack_quantity) || 1;
+          parseInt(field === "quantity" ? value : (updated.quantity || updated.pack_quantity)) || 1;
+        const ratePack =
+          parseFloat(field === "rate_pack" ? value : (updated.rate_pack || updated.pack_price)) || 0;
+        const cgstVal =
+          parseFloat(field === "cgst" ? value : updated.cgst) || 0;
+        const sgstVal =
+          parseFloat(field === "sgst" ? value : updated.sgst) || 0;
 
-        if (field === "rate_pack" && value !== "") {
-          // User entered rate_pack, calculate total_amount
-          const ratePack = parseFloat(value) || 0;
-          updated.total_amount = (qty * ratePack).toFixed(2);
-        } else if (field === "total_amount" && value !== "") {
-          // User entered total_amount, calculate rate_pack
-          const totalAmt = parseFloat(value) || 0;
-          updated.rate_pack = qty > 0 ? (totalAmt / qty).toFixed(2) : "0";
-        } else if (field === "quantity" && value !== "") {
-          // Quantity changed, recalculate based on which field has value
-          const newQty = parseInt(value) || 1;
-          if (updated.rate_pack && updated.rate_pack !== "") {
-            const ratePack = parseFloat(updated.rate_pack) || 0;
-            updated.total_amount = (newQty * ratePack).toFixed(2);
-          } else if (updated.total_amount && updated.total_amount !== "") {
-            const totalAmt = parseFloat(updated.total_amount) || 0;
-            updated.rate_pack =
-              newQty > 0 ? (totalAmt / newQty).toFixed(2) : "0";
+        const base = qty * ratePack;
+
+        if (
+          field === "cgst" ||
+          field === "sgst" ||
+          field === "quantity" ||
+          field === "rate_pack"
+        ) {
+          // Recalculate total_amount to include GST
+          updated.total_amount = (base * (1 + (cgstVal + sgstVal) / 100)).toFixed(2);
+        } else if (field === "total_amount") {
+          const newTotal = parseFloat(value) || 0;
+          if (base > 0) {
+            const totalTaxRate = ((newTotal - base) / base) * 100;
+            const halfTax = Math.max(0, parseFloat((totalTaxRate / 2).toFixed(2)));
+            updated.cgst = String(halfTax);
+            updated.sgst = String(halfTax);
+          } else {
+            updated.rate_pack = qty > 0 ? (newTotal / qty).toFixed(2) : "0";
+            updated.cgst = "0";
+            updated.sgst = "0";
           }
         }
 
@@ -1398,6 +1409,9 @@ export default function PurchasesPage() {
       "";
 
     const ratePackFixed = ratePack.toFixed(2);
+    const cgstVal = isInventory && medicine.cgst !== undefined ? parseFloat(medicine.cgst) || 0 : 0;
+    const sgstVal = isInventory && medicine.sgst !== undefined ? parseFloat(medicine.sgst) || 0 : 0;
+
     setPurchaseItems((prev) =>
       prev.map((item) => {
         if (item.id !== itemId) return item;
@@ -1413,7 +1427,9 @@ export default function PurchasesPage() {
           units: String(unitsPerPack),
           rate_pack: ratePackFixed,
           mrp_pack: mrpPack.toFixed(2),
-          total_amount: (qty * ratePack).toFixed(2),
+          total_amount: (qty * ratePack * (1 + (cgstVal + sgstVal) / 100)).toFixed(2),
+          cgst: isInventory && medicine.cgst !== undefined ? String(medicine.cgst) : "",
+          sgst: isInventory && medicine.sgst !== undefined ? String(medicine.sgst) : "",
           _is_auto_filled_rate: true,
 
           // Store inventory metadata for visual indicators
@@ -1573,6 +1589,8 @@ export default function PurchasesPage() {
           mrp_per_unit:
             (parseFloat(item.mrp_pack) || 0) / (parseInt(item.units) || 1),
           hsn_no: item.hsn_no || null,
+          cgst: parseFloat(item.cgst) || 0,
+          sgst: parseFloat(item.sgst) || 0,
         })),
         payment_status: paymentStatus,
         amount_paid:
@@ -1660,7 +1678,11 @@ export default function PurchasesPage() {
       rate_pack: item.pack_price || 0,
       mrp_pack:
         item.mrp_pack || (item.mrp_per_unit || 0) * (item.units_per_pack || 1),
-      total_amount: (item.pack_quantity || 1) * (item.pack_price || 0),
+      total_amount: item.item_total !== undefined && item.item_total !== null
+        ? String(item.item_total)
+        : ((item.pack_quantity || item.quantity || 1) * (item.pack_price || 0) * (1 + ((parseFloat(item.cgst) || 0) + (parseFloat(item.sgst) || 0)) / 100)).toFixed(2),
+      cgst: item.cgst !== undefined ? item.cgst : "",
+      sgst: item.sgst !== undefined ? item.sgst : "",
     }));
 
     setPurchaseItems(mappedItems);
@@ -1824,13 +1846,9 @@ export default function PurchasesPage() {
     }
   };
 
-  // Calculate total - based on pack prices
+  // Calculate total - based on row totals (which include CGST/SGST and manual overrides)
   const totalAmount = purchaseItems.reduce((sum, item) => {
-    const qty =
-      parseFloat(item.quantity) || parseFloat(item.pack_quantity) || 0;
-    const ratePack =
-      parseFloat(item.rate_pack) || parseFloat(item.pack_price) || 0;
-    return sum + qty * ratePack;
+    return sum + (parseFloat(item.total_amount) || 0);
   }, 0);
 
   // Calculate total units
@@ -2380,6 +2398,12 @@ export default function PurchasesPage() {
                     </TableHead>
                     <TableHead className="w-[100px] font-bold text-foreground">
                       Expiry
+                    </TableHead>
+                    <TableHead className="w-[70px] text-center font-bold text-foreground">
+                      CGST (%)
+                    </TableHead>
+                    <TableHead className="w-[70px] text-center font-bold text-foreground">
+                      SGST (%)
                     </TableHead>
                     <TableHead className="w-[60px] text-center font-bold text-foreground">
                       Qty *
@@ -2972,11 +2996,63 @@ export default function PurchasesPage() {
                               if (e.key === "Enter") {
                                 e.preventDefault();
                                 document
-                                  .getElementById(`qty-${item.id}`)
+                                  .getElementById(`cgst-${item.id}`)
                                   ?.focus({ preventScroll: true });
                               }
                             }}
                             className="h-8 text-xs"
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <Input
+                            id={`cgst-${item.id}`}
+                            type="number"
+                            step="0.01"
+                            value={item.cgst !== undefined ? item.cgst : ""}
+                            onChange={(e) =>
+                              handleItemFieldChangeWithCalc(
+                                item.id,
+                                "cgst",
+                                e.target.value
+                              )
+                            }
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                document
+                                  .getElementById(`sgst-${item.id}`)
+                                  ?.focus({ preventScroll: true });
+                              }
+                            }}
+                            placeholder="0"
+                            className="h-8 text-xs text-center w-14"
+                            min="0"
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <Input
+                            id={`sgst-${item.id}`}
+                            type="number"
+                            step="0.01"
+                            value={item.sgst !== undefined ? item.sgst : ""}
+                            onChange={(e) =>
+                              handleItemFieldChangeWithCalc(
+                                item.id,
+                                "sgst",
+                                e.target.value
+                              )
+                            }
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                document
+                                  .getElementById(`qty-${item.id}`)
+                                  ?.focus({ preventScroll: true });
+                              }
+                            }}
+                            placeholder="0"
+                            className="h-8 text-xs text-center w-14"
+                            min="0"
                           />
                         </TableCell>
                         <TableCell>
@@ -3185,7 +3261,7 @@ export default function PurchasesPage() {
                   {purchaseItems.length === 0 && (
                     <TableRow>
                       <TableCell
-                        colSpan={15}
+                        colSpan={17}
                         className="text-center py-8 text-muted-foreground"
                       >
                         <Package className="w-8 h-8 mx-auto mb-2 opacity-50" />
@@ -3726,6 +3802,12 @@ export default function PurchasesPage() {
                                   <TableHead className="text-center">
                                     MRP/Unit
                                   </TableHead>
+                                  <TableHead className="text-center">
+                                    CGST %
+                                  </TableHead>
+                                  <TableHead className="text-center">
+                                    SGST %
+                                  </TableHead>
                                   <TableHead className="text-right">
                                     Total
                                   </TableHead>
@@ -3771,6 +3853,12 @@ export default function PurchasesPage() {
                                       </TableCell>
                                       <TableCell className="text-center">
                                         ₹{mrpPerUnit.toFixed(2)}
+                                      </TableCell>
+                                      <TableCell className="text-center font-mono">
+                                        {item.cgst !== undefined ? `${item.cgst}%` : "0%"}
+                                      </TableCell>
+                                      <TableCell className="text-center font-mono">
+                                        {item.sgst !== undefined ? `${item.sgst}%` : "0%"}
                                       </TableCell>
                                       <TableCell className="text-right font-mono">
                                         ₹{total.toFixed(2)}

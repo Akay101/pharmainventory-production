@@ -41,6 +41,7 @@ import {
 import RecentActivitySidebar from "./RecentActivitySidebar";
 import { useKeyboardShortcut, formatShortcut } from "../hooks/useKeyboard";
 import AgentWidget from "./Agent/AgentWidget";
+import PlanBadge from "./PlanBadge";
 
 const navItems = [
   { path: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -293,7 +294,7 @@ export default function DashboardLayout() {
     }
   }, [settings]);
 
-  useKeyboardShortcut("a", () => setActivityOpen((prev) => !prev), {
+  useKeyboardShortcut("a", () => toggleActivity(), {
     alt: true,
   });
 
@@ -356,6 +357,12 @@ export default function DashboardLayout() {
     localStorage.setItem("activityOpen", String(nextOpen));
   };
 
+  const closeActivity = () => {
+    setActivityOpen(false);
+    updateSetting("activity_sidebar_open", false);
+    localStorage.setItem("activityOpen", "false");
+  };
+
   const handleLogout = () => {
     logout();
     navigate("/login");
@@ -408,6 +415,10 @@ export default function DashboardLayout() {
 
             {/* Right Header Navigation Panel */}
             <div className="flex items-center gap-3">
+              {user?.subscription_plan && (
+                <PlanBadge plan={user.subscription_plan} />
+              )}
+
               {/* Theme Toggle Button */}
               <Button
                 variant="ghost"
@@ -506,7 +517,7 @@ export default function DashboardLayout() {
           {activityOpen && (
             <div
               className="fixed inset-0 z-45 bg-black/40 backdrop-blur-xs transition-opacity duration-300 md:hidden"
-              onClick={() => setActivityOpen(false)}
+              onClick={closeActivity}
             />
           )}
 
@@ -518,7 +529,7 @@ export default function DashboardLayout() {
           >
             <RecentActivitySidebar
               open={activityOpen}
-              onClose={() => setActivityOpen(false)}
+              onClose={closeActivity}
             />
           </div>
         </div>

@@ -274,7 +274,9 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
       const totalUnits = packQty * unitsPerPack;
       const pricePerUnit =
         unitsPerPack > 0 ? packPrice / unitsPerPack : packPrice;
-      const itemTotal = packQty * packPrice;
+      const cgst = parseFloat(item.cgst) || 0;
+      const sgst = parseFloat(item.sgst) || 0;
+      const itemTotal = packQty * packPrice * (1 + (cgst + sgst) / 100);
       totalAmount += itemTotal;
 
       const processedItem = {
@@ -299,6 +301,8 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
           : null,
         hsn_no: item.hsn_no || null,
         item_total: itemTotal,
+        cgst: parseFloat(item.cgst) || 0,
+        sgst: parseFloat(item.sgst) || 0,
       };
       processedItems.push(processedItem);
 
@@ -324,6 +328,8 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
               pack_price: packPrice,
               mrp_pack: mrpPerUnit ? mrpPerUnit * unitsPerPack : null,
               expiry_date: item.expiry_date,
+              cgst: parseFloat(item.cgst) || 0,
+              sgst: parseFloat(item.sgst) || 0,
             },
           },
           { session }
@@ -349,6 +355,8 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
           mrp: mrpPerUnit,
           pack_price: packPrice,
           mrp_pack: mrpPerUnit ? mrpPerUnit * unitsPerPack : null,
+          cgst: parseFloat(item.cgst) || 0,
+          sgst: parseFloat(item.sgst) || 0,
           purchase_id: purchaseId,
           supplier_id: supplier_id,
           created_at: new Date().toISOString(),
@@ -547,7 +555,9 @@ router.put(
         const totalUnits = packQty * unitsPerPack;
         const pricePerUnit =
           unitsPerPack > 0 ? packPrice / unitsPerPack : packPrice;
-        const itemTotal = packQty * packPrice;
+        const cgst = parseFloat(item.cgst) || 0;
+        const sgst = parseFloat(item.sgst) || 0;
+        const itemTotal = packQty * packPrice * (1 + (cgst + sgst) / 100);
         totalAmount += itemTotal;
 
         processedItems.push({
@@ -559,6 +569,8 @@ router.put(
           total_units: totalUnits,
           price_per_unit: pricePerUnit,
           item_total: itemTotal,
+          cgst: parseFloat(item.cgst) || 0,
+          sgst: parseFloat(item.sgst) || 0,
         });
 
         if (updateInventory) {
@@ -574,7 +586,12 @@ router.put(
               { id: existingInventory.id },
               {
                 $inc: { quantity: totalUnits, available_quantity: totalUnits },
-                $set: { purchase_price: pricePerUnit, mrp: mrpPerUnit },
+                $set: {
+                  purchase_price: pricePerUnit,
+                  mrp: mrpPerUnit,
+                  cgst: parseFloat(item.cgst) || 0,
+                  sgst: parseFloat(item.sgst) || 0,
+                },
               },
               { session }
             );
@@ -591,6 +608,8 @@ router.put(
               units_per_pack: unitsPerPack,
               purchase_price: pricePerUnit,
               mrp: mrpPerUnit,
+              cgst: parseFloat(item.cgst) || 0,
+              sgst: parseFloat(item.sgst) || 0,
               purchase_id: req.params.purchase_id,
               created_at: new Date().toISOString(),
             }, { session });

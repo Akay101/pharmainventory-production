@@ -174,6 +174,26 @@ router.get("/insights", auth, requireSubscription(), async (req, res, next) => {
   }
 });
 
+// GET /api/bills/doctors
+router.get("/doctors", auth, requireSubscription(), async (req, res, next) => {
+  try {
+    const db = mongoose.connection.db;
+    const { search } = req.query;
+    const query = { pharmacy_id: req.user.pharmacy_id };
+    if (search) {
+      query.name = { $regex: search, $options: "i" };
+    }
+    const doctors = await db
+      .collection("doctors")
+      .find(query, { projection: { _id: 0 } })
+      .sort({ name: 1 })
+      .toArray();
+    res.json({ doctors });
+  } catch (error) {
+    next(error);
+  }
+});
+
 // POST /api/bills
 router.post("/", auth, requireSubscription(), async (req, res, next) => {
   try {
@@ -182,6 +202,7 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
       customer_name,
       customer_mobile,
       customer_email,
+      doctor,
       items,
       discount_percent = 0,
       notes,
@@ -209,7 +230,9 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
 
       const itemSubtotal = quantity * unitPrice;
       const itemDiscount = itemSubtotal * (discountPercent / 100);
-      const itemTotal = itemSubtotal - itemDiscount;
+      const cgst = parseFloat(item.cgst) || 0;
+      const sgst = parseFloat(item.sgst) || 0;
+      const itemTotal = item.item_total !== undefined ? parseFloat(item.item_total) : (itemSubtotal - itemDiscount);
       const itemProfit = (unitPrice - purchasePrice) * quantity - itemDiscount;
 
       subtotal += itemTotal;
@@ -227,6 +250,8 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
         item_total: itemTotal,
         profit: itemProfit,
         is_manual: !item.inventory_id, // Mark as manual if no inventory_id
+        cgst: parseFloat(item.cgst) || 0,
+        sgst: parseFloat(item.sgst) || 0,
       });
 
       // Update inventory only for items from inventory (not manual entries)
@@ -325,12 +350,31 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
       due_date: due_date || null,
       payment_date: is_paid ? new Date().toISOString() : null,
       notes: notes || null,
+      doctor: doctor || null,
       pdf_url: null,
       created_by: req.user.id,
       created_at: new Date().toISOString(),
     };
 
     await db.collection("bills").insertOne(billData);
+
+    // Upsert doctor to pharmacy list
+    if (doctor && doctor.trim()) {
+      const docName = doctor.trim();
+      await db.collection("doctors").updateOne(
+        { pharmacy_id: req.user.pharmacy_id, name: { $regex: new RegExp(`^${docName.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}$`, 'i') } },
+        {
+          $setOnInsert: {
+            id: uuidv4(),
+            pharmacy_id: req.user.pharmacy_id,
+            name: docName,
+            created_at: new Date().toISOString()
+          }
+        },
+        { upsert: true }
+      );
+    }
+
     const { _id, ...bill } = billData;
     await logActivity(db, req.user.pharmacy_id, req.user.id, req.user.name, "CREATE", "BILLING", billId, `Created Bill ${billNo} for ₹${totalAmount}`, `/billing`);
 
@@ -369,6 +413,7 @@ router.put("/:bill_id", auth, requireSubscription(), async (req, res, next) => {
       customer_name,
       customer_mobile,
       customer_email,
+      doctor,
       items,
       discount_percent = 0,
       notes,
@@ -415,7 +460,9 @@ router.put("/:bill_id", auth, requireSubscription(), async (req, res, next) => {
 
       const itemSubtotal = quantity * unitPrice;
       const itemDiscount = itemSubtotal * (discountPercent / 100);
-      const itemTotal = itemSubtotal - itemDiscount;
+      const cgst = parseFloat(item.cgst) || 0;
+      const sgst = parseFloat(item.sgst) || 0;
+      const itemTotal = item.item_total !== undefined ? parseFloat(item.item_total) : (itemSubtotal - itemDiscount);
       const itemProfit = (unitPrice - purchasePrice) * quantity - itemDiscount;
 
       subtotal += itemTotal;
@@ -433,6 +480,8 @@ router.put("/:bill_id", auth, requireSubscription(), async (req, res, next) => {
         item_total: itemTotal,
         profit: itemProfit,
         is_manual: !item.inventory_id,
+        cgst: parseFloat(item.cgst) || 0,
+        sgst: parseFloat(item.sgst) || 0,
       });
 
       // Deduct inventory if item linked to inventory
@@ -547,12 +596,30 @@ router.put("/:bill_id", auth, requireSubscription(), async (req, res, next) => {
       due_date: due_date || null,
       payment_date: is_paid ? new Date().toISOString() : null,
       notes: notes || null,
+      doctor: doctor || null,
       updated_at: new Date().toISOString(),
     };
 
     await db
       .collection("bills")
       .updateOne({ id: req.params.bill_id }, { $set: updates });
+
+    // Upsert doctor to pharmacy list
+    if (doctor && doctor.trim()) {
+      const docName = doctor.trim();
+      await db.collection("doctors").updateOne(
+        { pharmacy_id: req.user.pharmacy_id, name: { $regex: new RegExp(`^${docName.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}$`, 'i') } },
+        {
+          $setOnInsert: {
+            id: uuidv4(),
+            pharmacy_id: req.user.pharmacy_id,
+            name: docName,
+            created_at: new Date().toISOString()
+          }
+        },
+        { upsert: true }
+      );
+    }
       
     await logActivity(db, req.user.pharmacy_id, req.user.id, req.user.name, "UPDATE", "BILLING", req.params.bill_id, `Updated Bill ${bill.bill_no}`, `/billing`);
 
@@ -687,9 +754,42 @@ router.post(
         return res.status(404).json({ detail: "Bill not found" });
       }
 
-      const pharmacy = await db
+      const pharmacyDoc = await db
         .collection("pharmacies")
         .findOne({ id: req.user.pharmacy_id }, { projection: { _id: 0 } });
+
+      const pharmacy = pharmacyDoc ? {
+        id: pharmacyDoc.id || null,
+        name: pharmacyDoc.name || "",
+        location: pharmacyDoc.location || "",
+        license_no: pharmacyDoc.license_no || "",
+        years_old: pharmacyDoc.years_old || null,
+        logo_url: pharmacyDoc.logo_url || null,
+        contact: pharmacyDoc.contact || "",
+        pan: pharmacyDoc.pan || "",
+        bank_name: pharmacyDoc.bank_name || "",
+        bank_ifsc: pharmacyDoc.bank_ifsc || "",
+        bank_acc_no: pharmacyDoc.bank_acc_no || "",
+        bank_holder: pharmacyDoc.bank_holder || "",
+        upi_id: pharmacyDoc.upi_id || "",
+        gst_no: pharmacyDoc.gst_no || "",
+        created_at: pharmacyDoc.created_at || null
+      } : {
+        id: null,
+        name: "",
+        location: "",
+        license_no: "",
+        years_old: null,
+        logo_url: null,
+        contact: "",
+        pan: "",
+        bank_name: "",
+        bank_ifsc: "",
+        bank_acc_no: "",
+        bank_holder: "",
+        upi_id: "",
+        gst_no: ""
+      };
 
       // Generate PDF
       const pdfBuffer = await generateBillPDF(bill, pharmacy);
@@ -736,9 +836,42 @@ router.post(
 
       // Generate PDF if not exists
       if (!pdfUrl) {
-        const pharmacy = await db
+        const pharmacyDoc = await db
           .collection("pharmacies")
           .findOne({ id: req.user.pharmacy_id }, { projection: { _id: 0 } });
+
+        const pharmacy = pharmacyDoc ? {
+          id: pharmacyDoc.id || null,
+          name: pharmacyDoc.name || "",
+          location: pharmacyDoc.location || "",
+          license_no: pharmacyDoc.license_no || "",
+          years_old: pharmacyDoc.years_old || null,
+          logo_url: pharmacyDoc.logo_url || null,
+          contact: pharmacyDoc.contact || "",
+          pan: pharmacyDoc.pan || "",
+          bank_name: pharmacyDoc.bank_name || "",
+          bank_ifsc: pharmacyDoc.bank_ifsc || "",
+          bank_acc_no: pharmacyDoc.bank_acc_no || "",
+          bank_holder: pharmacyDoc.bank_holder || "",
+          upi_id: pharmacyDoc.upi_id || "",
+          gst_no: pharmacyDoc.gst_no || "",
+          created_at: pharmacyDoc.created_at || null
+        } : {
+          id: null,
+          name: "",
+          location: "",
+          license_no: "",
+          years_old: null,
+          logo_url: null,
+          contact: "",
+          pan: "",
+          bank_name: "",
+          bank_ifsc: "",
+          bank_acc_no: "",
+          bank_holder: "",
+          upi_id: "",
+          gst_no: ""
+        };
 
         const pdfBuffer = await generateBillPDF(bill, pharmacy);
         const key = `bills/${req.user.pharmacy_id}/${bill.bill_no}.pdf`;

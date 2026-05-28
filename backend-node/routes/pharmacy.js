@@ -15,16 +15,45 @@ router.put(
   auth,
   requireSubscription(),
   adminOnly,
+  upload.none(),
   async (req, res, next) => {
     try {
-      const { name, location, license_no, years_old } = req.body;
+      const {
+        name,
+        location,
+        license_no,
+        years_old,
+        contact,
+        pan,
+        bank_name,
+        bank_ifsc,
+        bank_acc_no,
+        bank_holder,
+        upi_id,
+        gst_no,
+      } = req.body;
       const db = mongoose.connection.db;
+
+      const updateFields = {
+        name: name || null,
+        location: location || null,
+        license_no: license_no || null,
+        years_old: years_old ? parseInt(years_old) : null,
+        contact: contact || null,
+        pan: pan || null,
+        bank_name: bank_name || null,
+        bank_ifsc: bank_ifsc || null,
+        bank_acc_no: bank_acc_no || null,
+        bank_holder: bank_holder || null,
+        upi_id: upi_id || null,
+        gst_no: gst_no || null,
+      };
 
       await db
         .collection("pharmacies")
         .updateOne(
           { id: req.user.pharmacy_id },
-          { $set: { name, location, license_no, years_old } }
+          { $set: updateFields }
         );
 
       const pharmacy = await db

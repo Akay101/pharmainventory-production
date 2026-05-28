@@ -55,6 +55,7 @@ import {
   Bar,
 } from "recharts";
 import { toast } from "sonner";
+import PlanBadge from "../components/PlanBadge";
 
 axios.interceptors.request.use(
   (config) => {
@@ -96,15 +97,21 @@ const StatCard = ({
       <div className="absolute top-0 left-0 w-full h-[1.5px] bg-gradient-to-r from-transparent via-primary/30 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
       <CardContent className="p-5 flex items-start justify-between">
         <div className="space-y-1.5 min-w-0">
-          <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/80">{title}</p>
+          <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/80">
+            {title}
+          </p>
           <p className="text-2xl font-black font-mono tracking-tight text-foreground truncate">
             {value}
           </p>
           {trend !== undefined && (
             <div className="flex items-center gap-1.5 pt-1">
-              <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                trend >= 0 ? "bg-primary/10 text-primary" : "bg-destructive/10 text-destructive"
-              }`}>
+              <span
+                className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                  trend >= 0
+                    ? "bg-primary/10 text-primary"
+                    : "bg-destructive/10 text-destructive"
+                }`}
+              >
                 {trend >= 0 ? (
                   <ArrowUpRight className="w-3 h-3" />
                 ) : (
@@ -112,11 +119,15 @@ const StatCard = ({
                 )}
                 {Math.abs(trendValue || trend)}%
               </span>
-              <span className="text-[10px] font-bold text-muted-foreground/60">vs last month</span>
+              <span className="text-[10px] font-bold text-muted-foreground/60">
+                vs last month
+              </span>
             </div>
           )}
         </div>
-        <div className={`p-3 rounded-2xl border transition-all duration-300 shadow-sm group-hover:scale-105 shrink-0 ${bgClasses[color]}`}>
+        <div
+          className={`p-3 rounded-2xl border transition-all duration-300 shadow-sm group-hover:scale-105 shrink-0 ${bgClasses[color]}`}
+        >
           <Icon className={`w-5 h-5 ${colorClasses[color]}`} />
         </div>
       </CardContent>
@@ -145,13 +156,14 @@ export default function DashboardPage() {
     supplierId: null,
     supplierName: "",
   });
-  const [supplierPartialPaymentDialog, setSupplierPartialPaymentDialog] = useState({
-    open: false,
-    supplierId: null,
-    supplierName: "",
-    amount: "0",
-    notes: "",
-  });
+  const [supplierPartialPaymentDialog, setSupplierPartialPaymentDialog] =
+    useState({
+      open: false,
+      supplierId: null,
+      supplierName: "",
+      amount: "0",
+      notes: "",
+    });
   const [aiTips, setAiTips] = useState(null);
   const [loading, setLoading] = useState(true);
   const [tipsLoading, setTipsLoading] = useState(false);
@@ -213,7 +225,9 @@ export default function DashboardPage() {
 
     setClearingDebt(true);
     try {
-      const response = await axios.post(`${API}/customers/${customerId}/clear-debt`);
+      const response = await axios.post(
+        `${API}/customers/${customerId}/clear-debt`
+      );
       toast.success(response.data.message);
       fetchDashboardData();
       setClearDebtDialog({ open: false, customerId: null, customerName: "" });
@@ -251,10 +265,16 @@ export default function DashboardPage() {
 
     setClearingDebt(true);
     try {
-      await axios.post(`${API}/suppliers/${supplierId}/pay-part`, { amount: parseFloat(amount), notes });
+      await axios.post(`${API}/suppliers/${supplierId}/pay-part`, {
+        amount: parseFloat(amount),
+        notes,
+      });
       toast.success("Partial payment registered successfully");
       fetchDashboardData();
-      setSupplierPartialPaymentDialog({ ...supplierPartialPaymentDialog, open: false });
+      setSupplierPartialPaymentDialog({
+        ...supplierPartialPaymentDialog,
+        open: false,
+      });
     } catch (error) {
       toast.error(error.response?.data?.detail || "Failed to process payment");
     } finally {
@@ -287,7 +307,9 @@ export default function DashboardPage() {
             <div className="absolute inset-0 rounded-full border-4 border-primary/20"></div>
             <div className="absolute inset-0 rounded-full border-4 border-primary border-t-transparent animate-spin"></div>
           </div>
-          <p className="text-xs font-bold text-muted-foreground/80 uppercase tracking-widest animate-pulse">Loading Workspace Stats...</p>
+          <p className="text-xs font-bold text-muted-foreground/80 uppercase tracking-widest animate-pulse">
+            Loading Workspace Stats...
+          </p>
         </div>
       </div>
     );
@@ -298,9 +320,12 @@ export default function DashboardPage() {
       {/* Header Panel */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-border/40 pb-5">
         <div className="space-y-1">
-          <h1 className="text-2xl font-extrabold tracking-tight text-foreground">Dashboard</h1>
+          <h1 className="text-2xl font-extrabold tracking-tight text-foreground">
+            Dashboard
+          </h1>
           <p className="text-xs font-medium text-muted-foreground">
-            Welcome back! Here's what's happening at <span className="text-primary font-bold">{pharmacy?.name}</span>
+            Welcome back! Here's what's happening at{" "}
+            <span className="text-primary font-bold">{pharmacy?.name}</span>
           </p>
         </div>
         <Button
@@ -354,7 +379,9 @@ export default function DashboardPage() {
           title="Low Stock Items"
           value={alerts.low_stock_alerts?.length || 0}
           icon={AlertTriangle}
-          color={alerts.low_stock_alerts?.length > 0 ? "destructive" : "primary"}
+          color={
+            alerts.low_stock_alerts?.length > 0 ? "destructive" : "primary"
+          }
         />
         <StatCard
           title="Expiring Soon"
@@ -378,7 +405,11 @@ export default function DashboardPage() {
             <div className="h-64">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={salesTrend}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.03)" vertical={false} />
+                  <CartesianGrid
+                    strokeDasharray="3 3"
+                    stroke="rgba(255,255,255,0.03)"
+                    vertical={false}
+                  />
                   <XAxis
                     dataKey="date"
                     stroke="hsl(var(--muted-foreground))"
@@ -399,7 +430,9 @@ export default function DashboardPage() {
                       if (active && payload && payload.length) {
                         return (
                           <div className="bg-card/95 border border-border/50 rounded-xl p-3 shadow-xl backdrop-blur-md">
-                            <p className="text-[9px] font-bold text-muted-foreground/80 mb-1">{label}</p>
+                            <p className="text-[9px] font-bold text-muted-foreground/80 mb-1">
+                              {label}
+                            </p>
                             <p className="text-xs font-black font-mono text-primary">
                               ₹{payload[0].value.toLocaleString("en-IN")}
                             </p>
@@ -415,7 +448,11 @@ export default function DashboardPage() {
                     stroke="hsl(var(--primary))"
                     strokeWidth={3}
                     dot={false}
-                    activeDot={{ r: 5, strokeWidth: 0, fill: "hsl(var(--primary))" }}
+                    activeDot={{
+                      r: 5,
+                      strokeWidth: 0,
+                      fill: "hsl(var(--primary))",
+                    }}
                   />
                 </LineChart>
               </ResponsiveContainer>
@@ -432,17 +469,19 @@ export default function DashboardPage() {
                 Top Selling Products
               </CardTitle>
             </div>
-            {user?.subscription_plan && (
-              <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[9px] font-bold bg-accent/15 text-accent border border-accent/20">
-                Plan: {user.subscription_plan}
-              </span>
-            )}
+            {/* {user?.subscription_plan && (
+              <PlanBadge plan={user.subscription_plan} />
+            )} */}
           </CardHeader>
           <CardContent className="p-6">
             <div className="h-64">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={topProducts} layout="vertical" barSize={12}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.03)" horizontal={false} />
+                  <CartesianGrid
+                    strokeDasharray="3 3"
+                    stroke="rgba(255,255,255,0.03)"
+                    horizontal={false}
+                  />
                   <XAxis
                     type="number"
                     stroke="hsl(var(--muted-foreground))"
@@ -459,14 +498,20 @@ export default function DashboardPage() {
                     width={100}
                     tickLine={false}
                     axisLine={false}
-                    tickFormatter={(value) => (value && value.length > 15 ? `${value.slice(0, 13)}...` : (value || ""))}
+                    tickFormatter={(value) =>
+                      value && value.length > 15
+                        ? `${value.slice(0, 13)}...`
+                        : value || ""
+                    }
                   />
                   <Tooltip
                     content={({ active, payload }) => {
                       if (active && payload && payload.length) {
                         return (
                           <div className="bg-card/95 border border-border/50 rounded-xl p-3 shadow-xl backdrop-blur-md">
-                            <p className="text-[9px] font-bold text-muted-foreground/80 mb-0.5 truncate max-w-[150px]">{payload[0].payload.product_name}</p>
+                            <p className="text-[9px] font-bold text-muted-foreground/80 mb-0.5 truncate max-w-[150px]">
+                              {payload[0].payload.product_name}
+                            </p>
                             <p className="text-xs font-black font-mono text-accent">
                               ₹{payload[0].value.toLocaleString("en-IN")}
                             </p>
@@ -508,8 +553,13 @@ export default function DashboardPage() {
                 </h4>
                 <ul className="space-y-1.5 text-xs">
                   {alerts.low_stock_alerts.slice(0, 5).map((item, i) => (
-                    <li key={i} className="flex justify-between items-center py-0.5 border-b border-yellow-500/10 last:border-0">
-                      <span className="font-medium text-foreground">{item.product_name}</span>
+                    <li
+                      key={i}
+                      className="flex justify-between items-center py-0.5 border-b border-yellow-500/10 last:border-0"
+                    >
+                      <span className="font-medium text-foreground">
+                        {item.product_name}
+                      </span>
                       <span className="font-mono font-bold text-yellow-500 bg-yellow-500/10 px-1.5 py-0.5 rounded text-[10px]">
                         {item.quantity} units left
                       </span>
@@ -528,10 +578,17 @@ export default function DashboardPage() {
                 </h4>
                 <ul className="space-y-1.5 text-xs">
                   {alerts.expiry_alerts.slice(0, 5).map((item, i) => (
-                    <li key={i} className="flex justify-between items-center py-0.5 border-b border-destructive/10 last:border-0">
+                    <li
+                      key={i}
+                      className="flex justify-between items-center py-0.5 border-b border-destructive/10 last:border-0"
+                    >
                       <div className="flex items-center gap-1.5">
-                        <span className="font-medium text-foreground">{item.product_name}</span>
-                        <span className="font-mono text-[9px] text-muted-foreground/70 uppercase">({item.batch_no})</span>
+                        <span className="font-medium text-foreground">
+                          {item.product_name}
+                        </span>
+                        <span className="font-mono text-[9px] text-muted-foreground/70 uppercase">
+                          ({item.batch_no})
+                        </span>
                       </div>
                       <span className="font-mono font-bold text-destructive flex items-center gap-1">
                         <Calendar className="w-3 h-3" />
@@ -592,9 +649,12 @@ export default function DashboardPage() {
                 <div className="w-10 h-10 rounded-full bg-accent/10 flex items-center justify-center mx-auto mb-3 shadow shadow-accent/5">
                   <Sparkles className="w-5 h-5 text-accent animate-pulse" />
                 </div>
-                <p className="text-xs font-bold text-foreground">Awaiting Input Data</p>
+                <p className="text-xs font-bold text-foreground">
+                  Awaiting Input Data
+                </p>
                 <p className="text-[10px] text-muted-foreground/60 max-w-[240px] mx-auto mt-1 leading-relaxed">
-                  Trigger analysis to generate custom reports and stock optimizations.
+                  Trigger analysis to generate custom reports and stock
+                  optimizations.
                 </p>
               </div>
             )}
@@ -622,19 +682,25 @@ export default function DashboardPage() {
                 </p>
               </div>
               <div className="p-5 bg-destructive/[0.02]">
-                <p className="text-[10px] text-destructive font-bold uppercase tracking-wider mb-1">Overdue Amount</p>
+                <p className="text-[10px] text-destructive font-bold uppercase tracking-wider mb-1">
+                  Overdue Amount
+                </p>
                 <p className="text-xl font-bold font-mono text-destructive">
                   {formatCurrency(debtSummary.overdue_amount)}
                 </p>
               </div>
               <div className="p-5">
-                <p className="text-[10px] text-muted-foreground/80 font-bold uppercase tracking-wider mb-1">Unpaid Invoices</p>
+                <p className="text-[10px] text-muted-foreground/80 font-bold uppercase tracking-wider mb-1">
+                  Unpaid Invoices
+                </p>
                 <p className="text-xl font-bold font-mono text-foreground">
                   {debtSummary.total_unpaid_bills}
                 </p>
               </div>
               <div className="p-5">
-                <p className="text-[10px] text-muted-foreground/80 font-bold uppercase tracking-wider mb-1">Overdue Count</p>
+                <p className="text-[10px] text-muted-foreground/80 font-bold uppercase tracking-wider mb-1">
+                  Overdue Count
+                </p>
                 <p className="text-xl font-bold font-mono text-destructive/80">
                   {debtSummary.overdue_count}
                 </p>
@@ -657,26 +723,32 @@ export default function DashboardPage() {
                           {debtor.name.charAt(0).toUpperCase()}
                         </div>
                         <div className="min-w-0">
-                          <p className="font-bold text-xs text-foreground truncate">{debtor.name}</p>
+                          <p className="font-bold text-xs text-foreground truncate">
+                            {debtor.name}
+                          </p>
                           <p className="text-[10px] text-muted-foreground font-semibold">
                             {debtor.bills_count} unpaid bills
                           </p>
                         </div>
                       </div>
-                      
+
                       <div className="flex items-center gap-4 shrink-0">
                         <div className="text-right">
                           <p className="font-mono font-bold text-xs text-amber-500">
                             {formatCurrency(debtor.total_debt)}
                           </p>
-                          <p className="text-[8px] text-muted-foreground/60 uppercase font-bold tracking-wider">Balance</p>
+                          <p className="text-[8px] text-muted-foreground/60 uppercase font-bold tracking-wider">
+                            Balance
+                          </p>
                         </div>
-                        
+
                         <Button
                           size="sm"
                           variant="outline"
                           className="w-8 h-8 p-0 rounded-lg border-primary/20 text-primary hover:bg-primary hover:text-primary-foreground group-hover:border-primary transition-all duration-300"
-                          onClick={() => handleClearDebt(debtor.id, debtor.name)}
+                          onClick={() =>
+                            handleClearDebt(debtor.id, debtor.name)
+                          }
                           title="Mark Invoice as Settled"
                         >
                           <Check className="w-4 h-4 stroke-[3]" />
@@ -711,19 +783,25 @@ export default function DashboardPage() {
                 </p>
               </div>
               <div className="p-5 bg-destructive/[0.02]">
-                <p className="text-[10px] text-destructive font-bold uppercase tracking-wider mb-1">Overdue Dues</p>
+                <p className="text-[10px] text-destructive font-bold uppercase tracking-wider mb-1">
+                  Overdue Dues
+                </p>
                 <p className="text-xl font-bold font-mono text-destructive">
                   {formatCurrency(supplierDues.overdue_due)}
                 </p>
               </div>
               <div className="p-5">
-                <p className="text-[10px] text-muted-foreground/80 font-bold uppercase tracking-wider mb-1">Unpaid Invoices</p>
+                <p className="text-[10px] text-muted-foreground/80 font-bold uppercase tracking-wider mb-1">
+                  Unpaid Invoices
+                </p>
                 <p className="text-xl font-bold font-mono text-foreground">
                   {supplierDues.unpaid_purchases_count}
                 </p>
               </div>
               <div className="p-5">
-                <p className="text-[10px] text-muted-foreground/80 font-bold uppercase tracking-wider mb-1">Overdue Count</p>
+                <p className="text-[10px] text-muted-foreground/80 font-bold uppercase tracking-wider mb-1">
+                  Overdue Count
+                </p>
                 <p className="text-xl font-bold font-mono text-destructive/80">
                   {supplierDues.overdue_count}
                 </p>
@@ -746,35 +824,49 @@ export default function DashboardPage() {
                           <Truck className="w-4 h-4" />
                         </div>
                         <div className="min-w-0">
-                          <p className="font-bold text-xs text-foreground truncate">{supplier.name}</p>
+                          <p className="font-bold text-xs text-foreground truncate">
+                            {supplier.name}
+                          </p>
                           <p className="text-[10px] text-muted-foreground font-semibold">
                             {supplier.purchase_count} unpaid purchases
                           </p>
                         </div>
                       </div>
-                      
+
                       <div className="flex items-center gap-4 shrink-0">
                         <div className="text-right">
                           <p className="font-mono font-bold text-xs text-primary">
                             {formatCurrency(supplier.total_debt)}
                           </p>
-                          <p className="text-[8px] text-muted-foreground/60 uppercase font-bold tracking-wider">Outstanding</p>
+                          <p className="text-[8px] text-muted-foreground/60 uppercase font-bold tracking-wider">
+                            Outstanding
+                          </p>
                         </div>
-                        
+
                         <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-all duration-300">
-                          <Button 
-                            variant="outline" 
-                            size="sm" 
+                          <Button
+                            variant="outline"
+                            size="sm"
                             className="h-8 text-[10px] font-bold border-border/60 hover:bg-primary/20 hover:text-primary hover:border-primary px-3 rounded-lg"
-                            onClick={() => handleSupplierPartialPayment(supplier.id, supplier.name)}
+                            onClick={() =>
+                              handleSupplierPartialPayment(
+                                supplier.id,
+                                supplier.name
+                              )
+                            }
                           >
                             Pay Part
                           </Button>
-                          <Button 
-                            variant="outline" 
-                            size="sm" 
+                          <Button
+                            variant="outline"
+                            size="sm"
                             className="h-8 text-[10px] font-bold bg-primary/10 border-primary/20 text-primary hover:bg-primary hover:text-primary-foreground px-3 rounded-lg"
-                            onClick={() => handleSupplierClearDues(supplier.id, supplier.name)}
+                            onClick={() =>
+                              handleSupplierClearDues(
+                                supplier.id,
+                                supplier.name
+                              )
+                            }
                           >
                             Fully Settled
                           </Button>
@@ -806,12 +898,16 @@ export default function DashboardPage() {
               This action registers cash completion for all outstanding items on{" "}
               <span className="font-extrabold text-foreground bg-muted/60 px-1.5 py-0.5 rounded">
                 {clearDebtDialog.customerName}
-              </span>. 
-              The customer's active outstanding balance will reset to zero. This ledger write is permanent.
+              </span>
+              . The customer's active outstanding balance will reset to zero.
+              This ledger write is permanent.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter className="mt-4 gap-2">
-            <AlertDialogCancel className="h-10 text-xs font-bold border-border/80 hover:bg-muted rounded-xl" disabled={clearingDebt}>
+            <AlertDialogCancel
+              className="h-10 text-xs font-bold border-border/80 hover:bg-muted rounded-xl"
+              disabled={clearingDebt}
+            >
               Cancel
             </AlertDialogCancel>
             <AlertDialogAction
@@ -836,9 +932,15 @@ export default function DashboardPage() {
       </AlertDialog>
 
       {/* Supplier Partial Payment Dialog */}
-      <Dialog 
-        open={supplierPartialPaymentDialog.open} 
-        onOpenChange={(open) => !open && setSupplierPartialPaymentDialog({ ...supplierPartialPaymentDialog, open: false })}
+      <Dialog
+        open={supplierPartialPaymentDialog.open}
+        onOpenChange={(open) =>
+          !open &&
+          setSupplierPartialPaymentDialog({
+            ...supplierPartialPaymentDialog,
+            open: false,
+          })
+        }
       >
         <DialogContent className="rounded-2xl border border-border/40 shadow-2xl max-w-md p-6">
           <DialogHeader className="border-b border-border/40 pb-4">
@@ -849,34 +951,55 @@ export default function DashboardPage() {
           </DialogHeader>
           <div className="space-y-4 py-3">
             <div className="p-3 bg-muted/20 border border-border/40 rounded-xl">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/60">Supplier Name</span>
-              <p className="text-sm font-extrabold text-foreground mt-0.5">{supplierPartialPaymentDialog.supplierName}</p>
+              <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/60">
+                Supplier Name
+              </span>
+              <p className="text-sm font-extrabold text-foreground mt-0.5">
+                {supplierPartialPaymentDialog.supplierName}
+              </p>
             </div>
             <div className="space-y-2">
-              <Label className="text-xs font-bold text-muted-foreground/80">Amount Paid (₹)</Label>
-              <Input 
-                type="number" 
-                min="0" 
-                step="0.01" 
+              <Label className="text-xs font-bold text-muted-foreground/80">
+                Amount Paid (₹)
+              </Label>
+              <Input
+                type="number"
+                min="0"
+                step="0.01"
                 placeholder="0.00"
-                value={supplierPartialPaymentDialog.amount} 
-                onChange={(e) => setSupplierPartialPaymentDialog({ ...supplierPartialPaymentDialog, amount: e.target.value })} 
+                value={supplierPartialPaymentDialog.amount}
+                onChange={(e) =>
+                  setSupplierPartialPaymentDialog({
+                    ...supplierPartialPaymentDialog,
+                    amount: e.target.value,
+                  })
+                }
                 className="h-10 text-sm font-bold border-border/80 focus:border-primary bg-card/25"
               />
-              <p className="text-[9px] text-muted-foreground/60 font-semibold leading-relaxed">This amount will clear purchases in First-In First-Out (FIFO) chronological sequence.</p>
+              <p className="text-[9px] text-muted-foreground/60 font-semibold leading-relaxed">
+                This amount will clear purchases in First-In First-Out (FIFO)
+                chronological sequence.
+              </p>
             </div>
             <div className="space-y-2">
-              <Label className="text-xs font-bold text-muted-foreground/80">Reference Notes</Label>
-              <Input 
-                placeholder="Check #, UPI transaction ID, bank details..." 
-                value={supplierPartialPaymentDialog.notes} 
-                onChange={(e) => setSupplierPartialPaymentDialog({ ...supplierPartialPaymentDialog, notes: e.target.value })} 
+              <Label className="text-xs font-bold text-muted-foreground/80">
+                Reference Notes
+              </Label>
+              <Input
+                placeholder="Check #, UPI transaction ID, bank details..."
+                value={supplierPartialPaymentDialog.notes}
+                onChange={(e) =>
+                  setSupplierPartialPaymentDialog({
+                    ...supplierPartialPaymentDialog,
+                    notes: e.target.value,
+                  })
+                }
                 className="h-10 text-sm border-border/80 focus:border-primary bg-card/25"
               />
             </div>
-            <Button 
-              onClick={confirmSupplierPartialPayment} 
-              disabled={clearingDebt} 
+            <Button
+              onClick={confirmSupplierPartialPayment}
+              disabled={clearingDebt}
               className="w-full btn-primary h-10 text-xs font-bold bg-primary hover:bg-primary/95 text-primary-foreground shadow-md shadow-primary/10 rounded-xl mt-2"
             >
               {clearingDebt ? (
@@ -896,7 +1019,11 @@ export default function DashboardPage() {
       <AlertDialog
         open={supplierClearDuesDialog.open}
         onOpenChange={(open) =>
-          !open && setSupplierClearDuesDialog({ ...supplierClearDuesDialog, open: false })
+          !open &&
+          setSupplierClearDuesDialog({
+            ...supplierClearDuesDialog,
+            open: false,
+          })
         }
       >
         <AlertDialogContent className="rounded-2xl border border-border/40 shadow-2xl max-w-md">
@@ -906,15 +1033,22 @@ export default function DashboardPage() {
               Settle Supplier Dues
             </AlertDialogTitle>
             <AlertDialogDescription className="text-xs leading-relaxed text-muted-foreground font-medium">
-              This action confirms full payment reconciliation for outstanding balances on{" "}
+              This action confirms full payment reconciliation for outstanding
+              balances on{" "}
               <span className="font-extrabold text-foreground bg-muted/60 px-1.5 py-0.5 rounded">
                 {supplierClearDuesDialog.supplierName}
-              </span>.
-              All unpaid invoice items will flag as settled. This action is irreversible.
+              </span>
+              . All unpaid invoice items will flag as settled. This action is
+              irreversible.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter className="mt-4 gap-2">
-            <AlertDialogCancel className="h-10 text-xs font-bold border-border/80 hover:bg-muted rounded-xl" disabled={clearingDebt}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel
+              className="h-10 text-xs font-bold border-border/80 hover:bg-muted rounded-xl"
+              disabled={clearingDebt}
+            >
+              Cancel
+            </AlertDialogCancel>
             <AlertDialogAction
               className="bg-primary hover:bg-primary/95 text-primary-foreground h-10 text-xs font-bold shadow-md shadow-primary/10 rounded-xl"
               onClick={(e) => {

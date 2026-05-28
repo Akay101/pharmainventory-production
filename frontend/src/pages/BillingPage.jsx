@@ -101,6 +101,10 @@ export default function BillingPage() {
   });
   const [billDiscount, setBillDiscount] = useState(0);
   const [isPaid, setIsPaid] = useState(true);
+  const [doctorName, setDoctorName] = useState("");
+  const [doctorSearch, setDoctorSearch] = useState("");
+  const [doctorSuggestions, setDoctorSuggestions] = useState([]);
+  const [showDoctorSuggestions, setShowDoctorSuggestions] = useState(false);
 
   //billing date
   const [billingDate, setBillingDate] = useState(
@@ -226,11 +230,15 @@ export default function BillingPage() {
     expiry_date: "",
     quantity: 1,
     unit_price: 0,
+    exclusive_price: 0,
+    net_total: 0,
     purchase_price: 0,
     available: 0,
     discount_percent: 0,
     is_manual: false,
     salt_composition: "",
+    cgst: "",
+    sgst: "",
   };
 
   // ============ MULTI-TAB DRAFTS ============
@@ -254,6 +262,7 @@ export default function BillingPage() {
               customer_email: "",
             }
           );
+          setDoctorName(active.data.doctorName || "");
           setBillingDate(
             active.data.billingDate || new Date().toISOString().slice(0, 10)
           );
@@ -281,6 +290,7 @@ export default function BillingPage() {
                   billItems,
                   billDiscount,
                   isPaid,
+                  doctorName,
                 },
               }
             : t
@@ -299,6 +309,7 @@ export default function BillingPage() {
     billItems,
     billDiscount,
     isPaid,
+    doctorName,
     activeTabId,
     user?.id,
   ]);
@@ -328,6 +339,7 @@ export default function BillingPage() {
           customer_mobile: "",
           customer_email: "",
         },
+        doctorName: "",
         billingDate: new Date().toISOString().slice(0, 10),
         billItems: [defaultRow],
         billDiscount: 0,
@@ -342,6 +354,7 @@ export default function BillingPage() {
       customer_mobile: "",
       customer_email: "",
     });
+    setDoctorName("");
     setBillingDate(new Date().toISOString().slice(0, 10));
     setBillItems([defaultRow]);
     setBillDiscount(0);
@@ -364,6 +377,7 @@ export default function BillingPage() {
         customer_email: "",
       }
     );
+    setDoctorName(target.data.doctorName || "");
     setBillingDate(
       target.data.billingDate || new Date().toISOString().slice(0, 10)
     );
@@ -393,6 +407,7 @@ export default function BillingPage() {
         customer_mobile: "",
         customer_email: "",
       });
+      setDoctorName("");
       setBillingDate(new Date().toISOString().slice(0, 10));
       setBillItems([]);
       setBillDiscount(0);
@@ -654,6 +669,27 @@ export default function BillingPage() {
     return () => clearTimeout(debounce);
   }, [editingInventorySearch]);
 
+  // Server-side doctor search
+  useEffect(() => {
+    const searchDoctors = async () => {
+      if (doctorSearch.length >= 1) {
+        try {
+          const response = await axios.get(
+            `${API}/bills/doctors?search=${encodeURIComponent(doctorSearch)}`
+          );
+          setDoctorSuggestions(response.data.doctors || []);
+        } catch (error) {
+          console.error("Doctor search error:", error);
+        }
+      } else {
+        setDoctorSuggestions([]);
+      }
+    };
+
+    const debounce = setTimeout(searchDoctors, 200);
+    return () => clearTimeout(debounce);
+  }, [doctorSearch]);
+
   const fetchData = async () => {
     try {
       setLoading(true);
@@ -751,6 +787,11 @@ export default function BillingPage() {
         const unitPrice = inventoryItem.mrp_per_unit || inventoryItem.mrp || 0;
         const purchasePrice =
           inventoryItem.cost_per_unit || inventoryItem.purchase_price || 0;
+        const cgstVal = inventoryItem.cgst !== undefined ? Math.max(0, parseFloat(inventoryItem.cgst) || 0) : 0;
+        const sgstVal = inventoryItem.sgst !== undefined ? Math.max(0, parseFloat(inventoryItem.sgst) || 0) : 0;
+        const exclPrice = unitPrice / (1 + (cgstVal + sgstVal) / 100);
+        const itemDiscount = (qty * exclPrice) * ((parseFloat(item.discount_percent) || 0) / 100);
+        const netTotal = (qty * exclPrice - itemDiscount) * (1 + (cgstVal + sgstVal) / 100);
 
         return {
           ...item,
@@ -760,6 +801,8 @@ export default function BillingPage() {
           batch_no: inventoryItem.batch_no,
           expiry_date: inventoryItem.expiry_date || "",
           unit_price: unitPrice,
+          exclusive_price: exclPrice,
+          net_total: netTotal,
           purchase_price: purchasePrice,
           available:
             inventoryItem.available_quantity ||
@@ -767,6 +810,8 @@ export default function BillingPage() {
             0,
           units_per_pack: inventoryItem.units_per_pack || 1,
           is_manual: false,
+          cgst: inventoryItem.cgst !== undefined ? inventoryItem.cgst : "",
+          sgst: inventoryItem.sgst !== undefined ? inventoryItem.sgst : "",
         };
       })
     );
@@ -840,6 +885,11 @@ export default function BillingPage() {
   };
 
   const handleSelectInventoryItem = (item) => {
+    const cgstVal = item.cgst !== undefined ? Math.max(0, parseFloat(item.cgst) || 0) : 0;
+    const sgstVal = item.sgst !== undefined ? Math.max(0, parseFloat(item.sgst) || 0) : 0;
+    const unitPrice = item.mrp_per_unit || item.mrp || 0;
+    const exclPrice = unitPrice / (1 + (cgstVal + sgstVal) / 100);
+
     setNewItemRow({
       ...newItemRow,
       inventory_id: item.id,
@@ -847,10 +897,13 @@ export default function BillingPage() {
       salt_composition: item.salt_composition || "",
       batch_no: item.batch_no,
       expiry_date: item.expiry_date || "",
-      unit_price: item.mrp_per_unit || item.mrp || 0,
+      unit_price: unitPrice,
+      exclusive_price: exclPrice,
       purchase_price: item.cost_per_unit || item.purchase_price || 0,
       available: item.available_quantity || item.available_units || 0,
       units_per_pack: item.units_per_pack || 1,
+      cgst: item.cgst !== undefined ? item.cgst : "",
+      sgst: item.sgst !== undefined ? item.sgst : "",
     });
     setInventorySearch("");
     setInventorySuggestions([]);
@@ -886,22 +939,38 @@ export default function BillingPage() {
       prev.map((item) => {
         if (item.id !== itemId) return item;
 
-        const updated = { ...item, [field]: value };
+        // Clamp cgst/sgst values to a minimum of 0
+        let val = value;
+        if (field === "cgst" || field === "sgst") {
+          val = value === "" ? "" : Math.max(0, parseFloat(value) || 0).toString();
+        }
+
+        const updated = { ...item, [field]: val };
 
         if (
           field === "quantity" ||
           field === "unit_price" ||
-          field === "discount_percent"
+          field === "discount_percent" ||
+          field === "cgst" ||
+          field === "sgst"
         ) {
           const qty = parseInt(updated.quantity) || 1;
           const unitPrice = parseFloat(updated.unit_price) || 0;
           const discPercent = parseFloat(updated.discount_percent) || 0;
           const purchasePrice = parseFloat(updated.purchase_price) || 0;
+          const cgstVal = Math.max(0, parseFloat(updated.cgst) || 0);
+          const sgstVal = Math.max(0, parseFloat(updated.sgst) || 0);
 
-          const itemTotal = qty * unitPrice;
+          if (field === "unit_price" || updated.exclusive_price === undefined || updated.exclusive_price === null || isNaN(updated.exclusive_price) || updated.exclusive_price === 0) {
+            updated.exclusive_price = unitPrice / (1 + (cgstVal + sgstVal) / 100);
+          }
+
+          const exclPrice = parseFloat(updated.exclusive_price) || 0;
+          const itemTotal = qty * exclPrice;
           const itemDiscount = itemTotal * (discPercent / 100);
-          updated.net_total = itemTotal - itemDiscount;
-          updated.profit = (unitPrice - purchasePrice) * qty - itemDiscount;
+          const taxableValue = itemTotal - itemDiscount;
+          updated.net_total = taxableValue * (1 + (cgstVal + sgstVal) / 100);
+          updated.profit = (unitPrice - purchasePrice) * qty - (qty * unitPrice * (discPercent / 100));
         }
 
         return updated;
@@ -934,15 +1003,21 @@ export default function BillingPage() {
       return;
     }
 
-    const itemTotal = newItemRow.quantity * newItemRow.unit_price;
+    const cgstVal = Math.max(0, parseFloat(newItemRow.cgst) || 0);
+    const sgstVal = Math.max(0, parseFloat(newItemRow.sgst) || 0);
+    const unitPrice = parseFloat(newItemRow.unit_price) || 0;
+    const exclPrice = unitPrice / (1 + (cgstVal + sgstVal) / 100);
+    const itemTotal = newItemRow.quantity * exclPrice;
     const itemDiscount = itemTotal * (newItemRow.discount_percent / 100);
+    const taxableValue = itemTotal - itemDiscount;
 
     const item = {
       ...newItemRow,
-      net_total: itemTotal - itemDiscount,
+      exclusive_price: exclPrice,
+      net_total: taxableValue * (1 + (cgstVal + sgstVal) / 100),
       profit:
         (newItemRow.unit_price - newItemRow.purchase_price) *
-        newItemRow.quantity,
+        newItemRow.quantity - (newItemRow.quantity * newItemRow.unit_price * (newItemRow.discount_percent / 100)),
     };
 
     setBillItems((prev) => [...prev, item]);
@@ -1066,6 +1141,7 @@ export default function BillingPage() {
         customer_mobile: customerInfo.customer_mobile,
         customer_email: customerInfo.customer_email || null,
         billing_date: billingDate,
+        doctor: doctorName || null,
         items: validItems.map(
           ({
             id,
@@ -1074,6 +1150,7 @@ export default function BillingPage() {
             available,
             units_per_pack,
             salt_composition,
+            exclusive_price,
             ...item
           }) => ({
             inventory_id: item.inventory_id || null,
@@ -1085,6 +1162,9 @@ export default function BillingPage() {
             unit_price: parseFloat(item.unit_price) || 0,
             purchase_price: parseFloat(item.purchase_price) || 0,
             discount_percent: parseFloat(item.discount_percent) || 0,
+            cgst: parseFloat(item.cgst) || 0,
+            sgst: parseFloat(item.sgst) || 0,
+            item_total: parseFloat(net_total) || 0,
           })
         ),
         discount_percent: billDiscount,
@@ -1114,24 +1194,40 @@ export default function BillingPage() {
       notes: bill.notes || "",
       is_paid: bill.is_paid,
       billing_date: bill.billing_date || bill.created_at?.slice(0, 10),
+      doctor: bill.doctor || "",
     });
 
     // Map existing items to editable format
-    const mappedItems = bill.items.map((item, idx) => ({
-      id: item.id || `edit-${idx}-${Date.now()}`,
-      inventory_id: item.inventory_id || null,
-      product_name: item.product_name,
-      batch_no: item.batch_no || "",
-      expiry_date: item.expiry_date || "",
-      quantity: item.quantity || 1,
-      unit_price: item.unit_price || item.mrp_per_unit || 0,
-      purchase_price: item.purchase_price || 0,
-      discount_percent: item.discount_percent || 0,
-      available: item.available_quantity || 0,
-      is_manual: !item.inventory_id,
-      salt_composition: item.salt_composition || "",
-      original_quantity: item.quantity, // Track original for inventory adjustment
-    }));
+    const mappedItems = bill.items.map((item, idx) => {
+      const qty = item.quantity || 1;
+      const unitPrice = item.unit_price || item.mrp_per_unit || 0;
+      const discPercent = item.discount_percent || 0;
+      const cgstVal = item.cgst !== undefined ? Math.max(0, parseFloat(item.cgst) || 0) : 0;
+      const sgstVal = item.sgst !== undefined ? Math.max(0, parseFloat(item.sgst) || 0) : 0;
+      const exclPrice = unitPrice / (1 + (cgstVal + sgstVal) / 100);
+      const itemDiscount = (qty * exclPrice) * (discPercent / 100);
+      const netTotal = (qty * exclPrice - itemDiscount) * (1 + (cgstVal + sgstVal) / 100);
+
+      return {
+        id: item.id || `edit-${idx}-${Date.now()}`,
+        inventory_id: item.inventory_id || null,
+        product_name: item.product_name,
+        batch_no: item.batch_no || "",
+        expiry_date: item.expiry_date || "",
+        quantity: qty,
+        unit_price: unitPrice,
+        exclusive_price: exclPrice,
+        net_total: netTotal,
+        purchase_price: item.purchase_price || 0,
+        discount_percent: discPercent,
+        available: item.available_quantity || 0,
+        is_manual: !item.inventory_id,
+        salt_composition: item.salt_composition || "",
+        original_quantity: item.quantity, // Track original for inventory adjustment
+        cgst: item.cgst !== undefined ? item.cgst : "",
+        sgst: item.sgst !== undefined ? item.sgst : "",
+      };
+    });
 
     setEditingBillItems(mappedItems);
   };
@@ -1161,22 +1257,38 @@ export default function BillingPage() {
       prev.map((item) => {
         if (item.id !== itemId) return item;
 
-        const updated = { ...item, [field]: value };
+        // Clamp cgst/sgst values to a minimum of 0
+        let val = value;
+        if (field === "cgst" || field === "sgst") {
+          val = value === "" ? "" : Math.max(0, parseFloat(value) || 0).toString();
+        }
+
+        const updated = { ...item, [field]: val };
 
         if (
           field === "quantity" ||
           field === "unit_price" ||
-          field === "discount_percent"
+          field === "discount_percent" ||
+          field === "cgst" ||
+          field === "sgst"
         ) {
           const qty = parseInt(updated.quantity) || 1;
           const unitPrice = parseFloat(updated.unit_price) || 0;
           const discPercent = parseFloat(updated.discount_percent) || 0;
           const purchasePrice = parseFloat(updated.purchase_price) || 0;
+          const cgstVal = Math.max(0, parseFloat(updated.cgst) || 0);
+          const sgstVal = Math.max(0, parseFloat(updated.sgst) || 0);
 
-          const itemTotal = qty * unitPrice;
+          if (field === "unit_price" || updated.exclusive_price === undefined || updated.exclusive_price === null || isNaN(updated.exclusive_price) || updated.exclusive_price === 0) {
+            updated.exclusive_price = unitPrice / (1 + (cgstVal + sgstVal) / 100);
+          }
+
+          const exclPrice = parseFloat(updated.exclusive_price) || 0;
+          const itemTotal = qty * exclPrice;
           const itemDiscount = itemTotal * (discPercent / 100);
-          updated.net_total = itemTotal - itemDiscount;
-          updated.profit = (unitPrice - purchasePrice) * qty - itemDiscount;
+          const taxableValue = itemTotal - itemDiscount;
+          updated.net_total = taxableValue * (1 + (cgstVal + sgstVal) / 100);
+          updated.profit = (unitPrice - purchasePrice) * qty - (qty * unitPrice * (discPercent / 100));
         }
 
         return updated;
@@ -1198,6 +1310,11 @@ export default function BillingPage() {
         const unitPrice = inventoryItem.mrp_per_unit || inventoryItem.mrp || 0;
         const purchasePrice =
           inventoryItem.cost_per_unit || inventoryItem.purchase_price || 0;
+        const cgstVal = inventoryItem.cgst !== undefined ? Math.max(0, parseFloat(inventoryItem.cgst) || 0) : 0;
+        const sgstVal = inventoryItem.sgst !== undefined ? Math.max(0, parseFloat(inventoryItem.sgst) || 0) : 0;
+        const exclPrice = unitPrice / (1 + (cgstVal + sgstVal) / 100);
+        const itemDiscount = (qty * exclPrice) * ((parseFloat(item.discount_percent) || 0) / 100);
+        const netTotal = (qty * exclPrice - itemDiscount) * (1 + (cgstVal + sgstVal) / 100);
 
         return {
           ...item,
@@ -1207,6 +1324,8 @@ export default function BillingPage() {
           batch_no: inventoryItem.batch_no,
           expiry_date: inventoryItem.expiry_date || "",
           unit_price: unitPrice,
+          exclusive_price: exclPrice,
+          net_total: netTotal,
           purchase_price: purchasePrice,
           available:
             inventoryItem.available_quantity ||
@@ -1214,6 +1333,8 @@ export default function BillingPage() {
             0,
           units_per_pack: inventoryItem.units_per_pack || 1,
           is_manual: false,
+          cgst: inventoryItem.cgst !== undefined ? inventoryItem.cgst : "",
+          sgst: inventoryItem.sgst !== undefined ? inventoryItem.sgst : "",
         };
       })
     );
@@ -1312,6 +1433,7 @@ export default function BillingPage() {
         customer_mobile: editingBillData.customer_mobile,
         customer_email: editingBillData.customer_email || null,
         billing_date: editingBillData.billing_date,
+        doctor: editingBillData.doctor || null,
         items: validItems.map(
           ({
             id,
@@ -1321,6 +1443,7 @@ export default function BillingPage() {
             units_per_pack,
             salt_composition,
             original_quantity,
+            exclusive_price,
             ...item
           }) => ({
             inventory_id: item.inventory_id || null,
@@ -1331,6 +1454,9 @@ export default function BillingPage() {
             unit_price: parseFloat(item.unit_price) || 0,
             purchase_price: parseFloat(item.purchase_price) || 0,
             discount_percent: parseFloat(item.discount_percent) || 0,
+            cgst: parseFloat(item.cgst) || 0,
+            sgst: parseFloat(item.sgst) || 0,
+            item_total: parseFloat(net_total) || 0,
           })
         ),
         discount_percent: parseFloat(editingBillData.discount_percent) || 0,
@@ -1418,7 +1544,12 @@ export default function BillingPage() {
     const qty = parseInt(item.quantity) || 0;
     const unitPrice = parseFloat(item.unit_price) || 0;
     const discPercent = parseFloat(item.discount_percent) || 0;
-    const itemTotal = qty * unitPrice * (1 - discPercent / 100);
+    const cgstVal = parseFloat(item.cgst) || 0;
+    const sgstVal = parseFloat(item.sgst) || 0;
+    const exclPrice = item.exclusive_price !== undefined && item.exclusive_price !== null && !isNaN(item.exclusive_price)
+      ? parseFloat(item.exclusive_price)
+      : (unitPrice / (1 + (cgstVal + sgstVal) / 100));
+    const itemTotal = qty * exclPrice * (1 - discPercent / 100) * (1 + (cgstVal + sgstVal) / 100);
     return sum + itemTotal;
   }, 0);
   const discountAmount = subtotal * (billDiscount / 100);
@@ -1460,7 +1591,12 @@ export default function BillingPage() {
     const qty = parseInt(item.quantity) || 0;
     const unitPrice = parseFloat(item.unit_price) || 0;
     const discPercent = parseFloat(item.discount_percent) || 0;
-    const itemTotal = qty * unitPrice * (1 - discPercent / 100);
+    const cgstVal = parseFloat(item.cgst) || 0;
+    const sgstVal = parseFloat(item.sgst) || 0;
+    const exclPrice = item.exclusive_price !== undefined && item.exclusive_price !== null && !isNaN(item.exclusive_price)
+      ? parseFloat(item.exclusive_price)
+      : (unitPrice / (1 + (cgstVal + sgstVal) / 100));
+    const itemTotal = qty * exclPrice * (1 - discPercent / 100) * (1 + (cgstVal + sgstVal) / 100);
     return sum + itemTotal;
   }, 0);
   const editDiscountPercent = editingBillData?.discount_percent || 0;
@@ -1617,7 +1753,7 @@ export default function BillingPage() {
           </CardHeader>
           <CardContent className="space-y-6 px-0 pb-0">
             {/* Customer Info */}
-            <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
               <div className="space-y-2">
                 <Label className="text-xs font-bold text-muted-foreground/80 uppercase tracking-wider">Billing Date *</Label>
                 <Input
@@ -1712,6 +1848,42 @@ export default function BillingPage() {
                   className="h-10 border-border/80 rounded-xl focus-visible:ring-1 focus-visible:ring-primary focus-visible:border-primary transition-all duration-200"
                 />
               </div>
+              <div className="space-y-2 relative">
+                <Label className="text-xs font-bold text-muted-foreground/80 uppercase tracking-wider">Doctor</Label>
+                <Input
+                  placeholder="Doctor's name..."
+                  value={doctorName}
+                  onChange={(e) => {
+                    setDoctorName(e.target.value);
+                    setDoctorSearch(e.target.value);
+                    setShowDoctorSuggestions(true);
+                  }}
+                  onFocus={() => setShowDoctorSuggestions(true)}
+                  onBlur={() =>
+                    setTimeout(() => setShowDoctorSuggestions(false), 200)
+                  }
+                  className="h-10 border-border/80 rounded-xl focus-visible:ring-1 focus-visible:ring-primary focus-visible:border-primary transition-all duration-200"
+                  data-testid="doctor-search"
+                />
+                {showDoctorSuggestions &&
+                  doctorSuggestions.length > 0 && (
+                    <div className="absolute z-50 w-full mt-1 bg-card/95 backdrop-blur-md border border-border shadow-xl rounded-xl max-h-48 overflow-y-auto top-full overflow-x-hidden transition-all duration-150 animate-in fade-in slide-in-from-top-2">
+                      {doctorSuggestions.map((doc, idx) => (
+                        <div
+                          key={idx}
+                          className="p-2.5 hover:bg-primary/10 cursor-pointer border-b border-border/50 last:border-0 transition-colors duration-150"
+                          onMouseDown={() => {
+                            setDoctorName(doc.name);
+                            setDoctorSearch("");
+                            setShowDoctorSuggestions(false);
+                          }}
+                        >
+                          <p className="font-semibold text-sm">{doc.name}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+              </div>
             </div>
 
             {/* Items Table - Inline Editable */}
@@ -1743,6 +1915,12 @@ export default function BillingPage() {
                     <TableHead className="w-[60px] text-center font-bold text-foreground/80 text-xs uppercase tracking-wider">
                       Disc %
                     </TableHead>
+                    <TableHead className="w-[60px] text-center font-bold text-foreground/80 text-xs uppercase tracking-wider">
+                      CGST %
+                    </TableHead>
+                    <TableHead className="w-[60px] text-center font-bold text-foreground/80 text-xs uppercase tracking-wider">
+                      SGST %
+                    </TableHead>
                     <TableHead className="w-[80px] text-right font-bold text-foreground/80 text-xs uppercase tracking-wider">
                       Total
                     </TableHead>
@@ -1758,7 +1936,12 @@ export default function BillingPage() {
                     const unitPrice = parseFloat(item.unit_price) || 0;
                     const discPercent = parseFloat(item.discount_percent) || 0;
                     const purchasePrice = parseFloat(item.purchase_price) || 0;
-                    const itemTotal = qty * unitPrice * (1 - discPercent / 100);
+                    const cgstVal = parseFloat(item.cgst) || 0;
+                    const sgstVal = parseFloat(item.sgst) || 0;
+                    const exclPrice = item.exclusive_price !== undefined && item.exclusive_price !== null && !isNaN(item.exclusive_price)
+                      ? parseFloat(item.exclusive_price)
+                      : (unitPrice / (1 + (cgstVal + sgstVal) / 100));
+                    const itemTotal = qty * exclPrice * (1 - discPercent / 100) * (1 + (cgstVal + sgstVal) / 100);
                     const available = parseInt(item.available) || 0;
 
                     const fromInventory = item.is_manual
@@ -2127,6 +2310,60 @@ export default function BillingPage() {
                             onKeyDown={(e) => {
                               if (e.key === "Enter") {
                                 e.preventDefault();
+                                document
+                                  .getElementById(`cgst-${item.id}`)
+                                  ?.focus({ preventScroll: true });
+                              }
+                            }}
+                            min="0"
+                            max="100"
+                            placeholder="0"
+                            className="h-8 text-xs text-center border-border/80 focus-visible:ring-1 focus-visible:ring-primary focus-visible:border-primary rounded-lg transition-all duration-200 w-16"
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <Input
+                            id={`cgst-${item.id}`}
+                            type="number"
+                            step="0.01"
+                            value={item.cgst !== undefined ? item.cgst : ""}
+                            onChange={(e) =>
+                              handleItemFieldChange(
+                                item.id,
+                                "cgst",
+                                e.target.value
+                              )
+                            }
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                document
+                                  .getElementById(`sgst-${item.id}`)
+                                  ?.focus({ preventScroll: true });
+                              }
+                            }}
+                            min="0"
+                            max="100"
+                            placeholder="0"
+                            className="h-8 text-xs text-center border-border/80 focus-visible:ring-1 focus-visible:ring-primary focus-visible:border-primary rounded-lg transition-all duration-200 w-14"
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <Input
+                            id={`sgst-${item.id}`}
+                            type="number"
+                            step="0.01"
+                            value={item.sgst !== undefined ? item.sgst : ""}
+                            onChange={(e) =>
+                              handleItemFieldChange(
+                                item.id,
+                                "sgst",
+                                e.target.value
+                              )
+                            }
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
                                 if (index === billItems.length - 1) {
                                   handleAddNewRow();
                                 } else {
@@ -2141,7 +2378,7 @@ export default function BillingPage() {
                             min="0"
                             max="100"
                             placeholder="0"
-                            className="h-8 text-xs text-center border-border/80 focus-visible:ring-1 focus-visible:ring-primary focus-visible:border-primary rounded-lg transition-all duration-200 w-16"
+                            className="h-8 text-xs text-center border-border/80 focus-visible:ring-1 focus-visible:ring-primary focus-visible:border-primary rounded-lg transition-all duration-200 w-14"
                           />
                         </TableCell>
                         <TableCell className="text-right font-mono text-sm font-semibold text-foreground">
@@ -2164,7 +2401,7 @@ export default function BillingPage() {
                   {billItems.length === 0 && (
                     <TableRow>
                       <TableCell
-                        colSpan={9}
+                        colSpan={11}
                         className="text-center py-8 text-muted-foreground"
                       >
                         <Package className="w-8 h-8 mx-auto mb-2 opacity-50" />
@@ -2318,7 +2555,7 @@ export default function BillingPage() {
           </CardHeader>
           <CardContent className="space-y-6 px-0 pb-0">
             {/* Customer Info */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
               <div className="space-y-2 relative">
                 <Label className="flex items-center gap-1 text-xs font-bold text-muted-foreground/80 uppercase tracking-wider">
                   <User className="w-3.5 h-3.5 text-amber-500" /> Customer Name *
@@ -2405,6 +2642,47 @@ export default function BillingPage() {
                   className="h-10 border-border/80 rounded-xl focus-visible:ring-1 focus-visible:ring-amber-500 focus-visible:border-amber-500 transition-all duration-200"
                 />
               </div>
+              <div className="space-y-2 relative">
+                <Label className="text-xs font-bold text-muted-foreground/80 uppercase tracking-wider">Doctor</Label>
+                <Input
+                  placeholder="Doctor's name..."
+                  value={editingBillData.doctor || ""}
+                  onChange={(e) => {
+                    setEditingBillData({
+                      ...editingBillData,
+                      doctor: e.target.value,
+                    });
+                    setDoctorSearch(e.target.value);
+                    setShowDoctorSuggestions(true);
+                  }}
+                  onFocus={() => setShowDoctorSuggestions(true)}
+                  onBlur={() =>
+                    setTimeout(() => setShowDoctorSuggestions(false), 200)
+                  }
+                  className="h-10 border-border/80 rounded-xl focus-visible:ring-1 focus-visible:ring-amber-500 focus-visible:border-amber-500 transition-all duration-200"
+                />
+                {showDoctorSuggestions &&
+                  doctorSuggestions.length > 0 && (
+                    <div className="absolute z-50 w-full mt-1 bg-card/95 backdrop-blur-md border border-border shadow-xl rounded-xl max-h-48 overflow-y-auto top-full overflow-x-hidden transition-all duration-150 animate-in fade-in slide-in-from-top-2">
+                      {doctorSuggestions.map((doc, idx) => (
+                        <div
+                          key={idx}
+                          className="p-2.5 hover:bg-amber-500/10 cursor-pointer border-b border-border/50 last:border-0 transition-colors duration-150"
+                          onMouseDown={() => {
+                            setEditingBillData({
+                              ...editingBillData,
+                              doctor: doc.name,
+                            });
+                            setDoctorSearch("");
+                            setShowDoctorSuggestions(false);
+                          }}
+                        >
+                          <p className="font-semibold text-sm">{doc.name}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+              </div>
             </div>
 
             {/* Items Table - Inline Editable */}
@@ -2439,6 +2717,12 @@ export default function BillingPage() {
                     <TableHead className="w-[60px] text-center font-bold text-foreground/80 text-xs uppercase tracking-wider">
                       Disc %
                     </TableHead>
+                    <TableHead className="w-[60px] text-center font-bold text-foreground/80 text-xs uppercase tracking-wider">
+                      CGST %
+                    </TableHead>
+                    <TableHead className="w-[60px] text-center font-bold text-foreground/80 text-xs uppercase tracking-wider">
+                      SGST %
+                    </TableHead>
                     <TableHead className="w-[80px] text-right font-bold text-foreground/80 text-xs uppercase tracking-wider">
                       Total
                     </TableHead>
@@ -2453,7 +2737,12 @@ export default function BillingPage() {
                     const unitPrice = parseFloat(item.unit_price) || 0;
                     const discPercent = parseFloat(item.discount_percent) || 0;
                     const purchasePrice = parseFloat(item.purchase_price) || 0;
-                    const itemTotal = qty * unitPrice * (1 - discPercent / 100);
+                    const cgstVal = parseFloat(item.cgst) || 0;
+                    const sgstVal = parseFloat(item.sgst) || 0;
+                    const exclPrice = item.exclusive_price !== undefined && item.exclusive_price !== null && !isNaN(item.exclusive_price)
+                      ? parseFloat(item.exclusive_price)
+                      : (unitPrice / (1 + (cgstVal + sgstVal) / 100));
+                    const itemTotal = qty * exclPrice * (1 - discPercent / 100) * (1 + (cgstVal + sgstVal) / 100);
                     const available = parseInt(item.available) || 0;
 
                     const hasOverflow =
@@ -2765,6 +3054,44 @@ export default function BillingPage() {
                             className="h-8 text-xs text-center border-border/80 focus-visible:ring-1 focus-visible:ring-amber-500 focus-visible:border-amber-500 rounded-lg transition-all duration-200 w-16"
                           />
                         </TableCell>
+                        <TableCell>
+                          <Input
+                            type="number"
+                            step="0.01"
+                            value={item.cgst !== undefined ? item.cgst : ""}
+                            onFocus={(e) => e.target.select()}
+                            onChange={(e) =>
+                              handleEditItemFieldChange(
+                                item.id,
+                                "cgst",
+                                e.target.value
+                              )
+                            }
+                            min="0"
+                            max="100"
+                            placeholder="0"
+                            className="h-8 text-xs text-center border-border/80 focus-visible:ring-1 focus-visible:ring-amber-500 focus-visible:border-amber-500 rounded-lg transition-all duration-200 w-16"
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <Input
+                            type="number"
+                            step="0.01"
+                            value={item.sgst !== undefined ? item.sgst : ""}
+                            onFocus={(e) => e.target.select()}
+                            onChange={(e) =>
+                              handleEditItemFieldChange(
+                                item.id,
+                                "sgst",
+                                e.target.value
+                              )
+                            }
+                            min="0"
+                            max="100"
+                            placeholder="0"
+                            className="h-8 text-xs text-center border-border/80 focus-visible:ring-1 focus-visible:ring-amber-500 focus-visible:border-amber-500 rounded-lg transition-all duration-200 w-16"
+                          />
+                        </TableCell>
                         <TableCell className="text-right font-mono text-sm font-semibold text-foreground">
                           ₹{itemTotal.toFixed(2)}
                         </TableCell>
@@ -2785,7 +3112,7 @@ export default function BillingPage() {
                   {editingBillItems.length === 0 && (
                     <TableRow>
                       <TableCell
-                        colSpan={11}
+                        colSpan={13}
                         className="text-center py-8 text-muted-foreground"
                       >
                         <Package className="w-8 h-8 mx-auto mb-2 opacity-50" />
@@ -3303,6 +3630,11 @@ export default function BillingPage() {
                             <p className="text-xs text-muted-foreground font-mono">
                               {bill.customer_mobile}
                             </p>
+                            {bill.doctor && (
+                              <p className="text-xs text-primary/80 font-semibold mt-0.5">
+                                Dr: {bill.doctor}
+                              </p>
+                            )}
                           </TableCell>
                           <TableCell>
                             <Badge variant="outline" className="bg-primary/5 text-primary border-primary/20 rounded-md font-bold text-xs">
@@ -3407,6 +3739,12 @@ export default function BillingPage() {
                                         <TableHead className="text-xs font-bold text-center text-muted-foreground uppercase tracking-wider">
                                           Disc%
                                         </TableHead>
+                                        <TableHead className="text-xs font-bold text-center text-muted-foreground uppercase tracking-wider">
+                                          CGST %
+                                        </TableHead>
+                                        <TableHead className="text-xs font-bold text-center text-muted-foreground uppercase tracking-wider">
+                                          SGST %
+                                        </TableHead>
                                         <TableHead className="text-xs font-bold text-right text-muted-foreground uppercase tracking-wider">
                                           Total
                                         </TableHead>
@@ -3455,6 +3793,12 @@ export default function BillingPage() {
                                             <TableCell className="text-sm text-center font-bold text-muted-foreground">
                                               {discPercent}%
                                             </TableCell>
+                                            <TableCell className="text-sm text-center font-mono font-semibold text-muted-foreground">
+                                              {item.cgst !== undefined ? `${item.cgst}%` : "0%"}
+                                            </TableCell>
+                                            <TableCell className="text-sm text-center font-mono font-semibold text-muted-foreground">
+                                              {item.sgst !== undefined ? `${item.sgst}%` : "0%"}
+                                            </TableCell>
                                             <TableCell className="text-sm text-right font-mono font-bold text-foreground">
                                               ₹{itemTotal.toFixed(2)}
                                             </TableCell>
@@ -3473,10 +3817,15 @@ export default function BillingPage() {
                                     </TableBody>
                                   </Table>
                                 </div>
-                                <div className="mt-3 pt-3 border-t border-border/40 flex justify-between items-center text-sm">
-                                  <div>
-                                    {(bill.negative_billed_qty > 0 ||
-                                      bill.items?.some((i) => i.is_manual)) && (
+                                <div className="mt-3 pt-3 border-t border-border/40 flex flex-col md:flex-row justify-between items-start md:items-center gap-3 text-sm">
+                                   <div className="space-y-1">
+                                     {bill.doctor && (
+                                       <p className="text-xs font-bold text-foreground">
+                                         Prescribing Doctor: <span className="text-primary font-extrabold">{bill.doctor}</span>
+                                       </p>
+                                     )}
+                                     {(bill.negative_billed_qty > 0 ||
+                                       bill.items?.some((i) => i.is_manual)) && (
                                       <span className="text-amber-600 dark:text-amber-400 text-xs font-semibold flex items-center gap-1">
                                         ⚠️{" "}
                                         {bill.inventory_billed_qty ||

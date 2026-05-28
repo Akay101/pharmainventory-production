@@ -42,6 +42,14 @@ export default function SettingsPage() {
     location: pharmacy?.location || "",
     license_no: pharmacy?.license_no || "",
     years_old: pharmacy?.years_old || "",
+    contact: pharmacy?.contact || "",
+    pan: pharmacy?.pan || "",
+    bank_name: pharmacy?.bank_name || "",
+    bank_ifsc: pharmacy?.bank_ifsc || "",
+    bank_acc_no: pharmacy?.bank_acc_no || "",
+    bank_holder: pharmacy?.bank_holder || "",
+    upi_id: pharmacy?.upi_id || "",
+    gst_no: pharmacy?.gst_no || "",
   });
 
   const [migrationData, setMigrationData] = useState({
@@ -65,10 +73,18 @@ export default function SettingsPage() {
     setSaving(true);
     try {
       const formData = new FormData();
-      if (pharmacyData.name) formData.append("name", pharmacyData.name);
-      if (pharmacyData.location) formData.append("location", pharmacyData.location);
-      if (pharmacyData.license_no) formData.append("license_no", pharmacyData.license_no);
-      if (pharmacyData.years_old) formData.append("years_old", pharmacyData.years_old);
+      formData.append("name", pharmacyData.name || "");
+      formData.append("location", pharmacyData.location || "");
+      formData.append("license_no", pharmacyData.license_no || "");
+      formData.append("years_old", pharmacyData.years_old || "");
+      formData.append("contact", pharmacyData.contact || "");
+      formData.append("pan", pharmacyData.pan || "");
+      formData.append("bank_name", pharmacyData.bank_name || "");
+      formData.append("bank_ifsc", pharmacyData.bank_ifsc || "");
+      formData.append("bank_acc_no", pharmacyData.bank_acc_no || "");
+      formData.append("bank_holder", pharmacyData.bank_holder || "");
+      formData.append("upi_id", pharmacyData.upi_id || "");
+      formData.append("gst_no", pharmacyData.gst_no || "");
 
       const response = await axios.put(`${API}/pharmacy`, formData);
       setPharmacy(response.data.pharmacy);
@@ -402,6 +418,98 @@ export default function SettingsPage() {
                       onChange={(e) => setPharmacyData({ ...pharmacyData, years_old: e.target.value })}
                       disabled={!isAdmin}
                       data-testid="pharmacy-years-input"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Contact Details (Email/Phone)</Label>
+                    <Input
+                      value={pharmacyData.contact}
+                      onChange={(e) => setPharmacyData({ ...pharmacyData, contact: e.target.value })}
+                      disabled={!isAdmin}
+                      placeholder="e.g. 8535085807, jk05493@gmail.com"
+                      data-testid="pharmacy-contact-input"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>PAN Number</Label>
+                    <Input
+                      value={pharmacyData.pan}
+                      onChange={(e) => setPharmacyData({ ...pharmacyData, pan: e.target.value })}
+                      disabled={!isAdmin}
+                      placeholder="e.g. EAAPK8941N"
+                      data-testid="pharmacy-pan-input"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>GST Number (GSTIN)</Label>
+                  <Input
+                    value={pharmacyData.gst_no}
+                    onChange={(e) => setPharmacyData({ ...pharmacyData, gst_no: e.target.value })}
+                    disabled={!isAdmin}
+                    placeholder="e.g. 09AAACH1111H1Z1"
+                    data-testid="pharmacy-gst-input"
+                  />
+                </div>
+
+                <div className="space-y-4 pt-2">
+                  <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Bank Details</h3>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Bank Name & Branch</Label>
+                      <Input
+                        value={pharmacyData.bank_name}
+                        onChange={(e) => setPharmacyData({ ...pharmacyData, bank_name: e.target.value })}
+                        disabled={!isAdmin}
+                        placeholder="e.g. STATE BANK OF INDIA, FARIDPUR"
+                        data-testid="pharmacy-bank-name-input"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>IFSC Code</Label>
+                      <Input
+                        value={pharmacyData.bank_ifsc}
+                        onChange={(e) => setPharmacyData({ ...pharmacyData, bank_ifsc: e.target.value })}
+                        disabled={!isAdmin}
+                        placeholder="e.g. SBIN0000637"
+                        data-testid="pharmacy-ifsc-input"
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Account Number</Label>
+                      <Input
+                        value={pharmacyData.bank_acc_no}
+                        onChange={(e) => setPharmacyData({ ...pharmacyData, bank_acc_no: e.target.value })}
+                        disabled={!isAdmin}
+                        placeholder="e.g. 20300115911"
+                        data-testid="pharmacy-acc-no-input"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Account Holder Name</Label>
+                      <Input
+                        value={pharmacyData.bank_holder}
+                        onChange={(e) => setPharmacyData({ ...pharmacyData, bank_holder: e.target.value })}
+                        disabled={!isAdmin}
+                        placeholder="e.g. Jitendra Kumar"
+                        data-testid="pharmacy-holder-input"
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>UPI ID</Label>
+                    <Input
+                      value={pharmacyData.upi_id}
+                      onChange={(e) => setPharmacyData({ ...pharmacyData, upi_id: e.target.value })}
+                      disabled={!isAdmin}
+                      placeholder="e.g. q201486073@ybl"
+                      data-testid="pharmacy-upi-input"
                     />
                   </div>
                 </div>
