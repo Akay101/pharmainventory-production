@@ -14,6 +14,17 @@ const generateOTP = () => {
   return Math.floor(100000 + Math.random() * 900000).toString();
 };
 
+const getCookieOptions = (isRefresh = false) => {
+  const isProd = process.env.NODE_ENV === "production";
+  return {
+    httpOnly: false,
+    secure: isProd,
+    sameSite: isProd ? "none" : "lax",
+    path: "/",
+    maxAge: isRefresh ? 7 * 24 * 60 * 60 * 1000 : 15 * 60 * 1000,
+  };
+};
+
 // POST /api/auth/register
 router.post("/register", async (req, res, next) => {
   try {
@@ -121,20 +132,8 @@ router.post("/verify-otp", async (req, res, next) => {
     const { token, refreshToken } = generateToken(user.id, user.token_version || 0);
 
     // Set cookies
-    res.cookie("pharmalogy_token", token, {
-      httpOnly: false,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      path: "/",
-      maxAge: 15 * 60 * 1000 // 15 mins
-    });
-    res.cookie("pharmalogy_refresh_token", refreshToken, {
-      httpOnly: false,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      path: "/",
-      maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
-    });
+    res.cookie("pharmalogy_token", token, getCookieOptions(false));
+    res.cookie("pharmalogy_refresh_token", refreshToken, getCookieOptions(true));
 
     // Get pharmacy
     const pharmacy = await db
@@ -222,20 +221,8 @@ router.post("/login", async (req, res, next) => {
     const { token, refreshToken } = generateToken(user.id, user.token_version || 0);
 
     // Set cookies
-    res.cookie("pharmalogy_token", token, {
-      httpOnly: false,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      path: "/",
-      maxAge: 15 * 60 * 1000 // 15 mins
-    });
-    res.cookie("pharmalogy_refresh_token", refreshToken, {
-      httpOnly: false,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      path: "/",
-      maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
-    });
+    res.cookie("pharmalogy_token", token, getCookieOptions(false));
+    res.cookie("pharmalogy_refresh_token", refreshToken, getCookieOptions(true));
 
     const pharmacy = await db
       .collection("pharmacies")
@@ -348,20 +335,8 @@ router.post("/refresh", async (req, res, next) => {
       const tokens = generateToken(user.id, user.token_version || 0);
 
       // Set cookies
-      res.cookie("pharmalogy_token", tokens.token, {
-        httpOnly: false,
-        secure: process.env.NODE_ENV === "production",
-        sameSite: "lax",
-        path: "/",
-        maxAge: 15 * 60 * 1000 // 15 mins
-      });
-      res.cookie("pharmalogy_refresh_token", tokens.refreshToken, {
-        httpOnly: false,
-        secure: process.env.NODE_ENV === "production",
-        sameSite: "lax",
-        path: "/",
-        maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
-      });
+      res.cookie("pharmalogy_token", tokens.token, getCookieOptions(false));
+      res.cookie("pharmalogy_refresh_token", tokens.refreshToken, getCookieOptions(true));
 
       res.json({ message: "Token refreshed successfully" });
     } catch (err) {
@@ -384,16 +359,13 @@ router.post("/logout", auth, async (req, res, next) => {
     );
 
     // Clear cookies
-    res.clearCookie("pharmalogy_token", {
+    const clearOpts = {
       path: "/",
       secure: process.env.NODE_ENV === "production",
-      sameSite: "lax"
-    });
-    res.clearCookie("pharmalogy_refresh_token", {
-      path: "/",
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax"
-    });
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+    };
+    res.clearCookie("pharmalogy_token", clearOpts);
+    res.clearCookie("pharmalogy_refresh_token", clearOpts);
 
     res.json({ message: "Logged out successfully" });
   } catch (error) {

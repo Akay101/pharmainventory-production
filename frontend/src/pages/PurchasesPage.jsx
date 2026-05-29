@@ -1436,10 +1436,8 @@ export default function PurchasesPage() {
     if (!productName || !currentPrice || currentPrice <= 0) return;
 
     try {
-      const token = getCookie("pharmalogy_token");
       const response = await axios.get(`${API}/purchases/price-history`, {
         params: { product_name: productName, current_price: currentPrice },
-        headers: { Authorization: `Bearer ${token}` },
       });
 
       const data = response.data;
@@ -1469,11 +1467,8 @@ export default function PurchasesPage() {
     }
 
     try {
-      const token = getCookie("pharmalogy_token");
-
       const response = await axios.get(`${API}/purchases/price-history`, {
         params: { product_name: productName, current_price: currentPrice },
-        headers: { Authorization: `Bearer ${token}` },
       });
 
       const data = response.data;

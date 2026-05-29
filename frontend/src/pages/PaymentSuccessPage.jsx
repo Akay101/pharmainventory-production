@@ -24,8 +24,7 @@ export default function PaymentSuccessPage() {
       try {
         const res = await axios.post(
           `${API}/payments/verify`,
-          { order_id },
-          { headers: { Authorization: `Bearer ${getCookie("pharmalogy_token")}` } }
+          { order_id }
         );
         if (res.data.status === "already_processed" || res.data.status === "success") {
           setStatus("success");

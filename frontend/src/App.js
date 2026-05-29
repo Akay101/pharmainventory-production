@@ -98,9 +98,7 @@ const AuthProvider = ({ children }) => {
 
   const fetchSettings = async () => {
     try {
-      const response = await axios.get(`${API}/settings`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const response = await axios.get(`${API}/settings`);
       setSettings(response.data.preferences);
       setSettingsDefinitions(response.data.settings);
     } catch (error) {
@@ -115,16 +113,11 @@ const AuthProvider = ({ children }) => {
 
       await axios.post(
         `${API}/settings/update`,
-        { key, value },
-        {
-          headers: { Authorization: `Bearer ${token}` },
-        }
+        { key, value }
       );
 
       // Refresh definitions as well
-      const response = await axios.get(`${API}/settings`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const response = await axios.get(`${API}/settings`);
       setSettingsDefinitions(response.data.settings);
     } catch (error) {
       console.error("Failed to update setting:", error);
@@ -134,9 +127,7 @@ const AuthProvider = ({ children }) => {
 
   const fetchUser = async () => {
     try {
-      const response = await axios.get(`${API}/auth/me`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const response = await axios.get(`${API}/auth/me`);
       setUser(response.data.user);
       setPharmacy(response.data.pharmacy);
       // Fetch settings after user is confirmed

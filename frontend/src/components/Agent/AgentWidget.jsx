@@ -130,9 +130,7 @@ export default function AgentWidget({ user }) {
 
   const fetchConversations = async () => {
     try {
-      const res = await axios.get(`${API}/chat/conversations`, {
-        headers: { Authorization: `Bearer ${getCookie("pharmalogy_token")}` }
-      });
+      const res = await axios.get(`${API}/chat/conversations`);
       setConversations(res.data);
     } catch (err) {
       console.error("Failed to fetch conversations", err);
@@ -143,9 +141,7 @@ export default function AgentWidget({ user }) {
     setFetchingHistory(true);
     setShowHistory(false);
     try {
-      const res = await axios.get(`${API}/chat/conversations/${convId}`, {
-        headers: { Authorization: `Bearer ${getCookie("pharmalogy_token")}` }
-      });
+      const res = await axios.get(`${API}/chat/conversations/${convId}`);
       setMessages(res.data.messages);
       setActiveConvId(convId);
       localStorage.setItem(`agent_last_conv_${user?.id}`, convId);
@@ -177,9 +173,7 @@ export default function AgentWidget({ user }) {
     if (!convId) return;
     
     try {
-      await axios.delete(`${API}/chat/conversations/${convId}`, {
-        headers: { Authorization: `Bearer ${getCookie("pharmalogy_token")}` }
-      });
+      await axios.delete(`${API}/chat/conversations/${convId}`);
       setConversations(prev => prev.filter(c => c.id !== convId));
       if (activeConvId === convId) handleNewChat();
       toast.success("Chat deleted");
@@ -211,7 +205,6 @@ export default function AgentWidget({ user }) {
           conversationHistory: messages
         },
         {
-          headers: { Authorization: `Bearer ${getCookie("pharmalogy_token")}` },
           timeout: AXIOS_TIMEOUT
         }
       );
@@ -282,7 +275,6 @@ export default function AgentWidget({ user }) {
       }
 
       const config = {
-        headers: { Authorization: `Bearer ${getCookie("pharmalogy_token")}` },
         timeout: AXIOS_TIMEOUT
       };
 

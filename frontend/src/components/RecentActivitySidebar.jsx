@@ -97,9 +97,7 @@ export default function RecentActivitySidebar({ open, onClose }) {
             ? `${API}/activities?limit=30&page=${pageNum}`
             : `${API}/activities?limit=30&page=${pageNum}&module=${filterModule}`;
 
-        const res = await axios.get(url, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
+        const res = await axios.get(url);
 
         if (pageNum === 1) {
           setActivities(res.data.activities);
@@ -126,7 +124,7 @@ export default function RecentActivitySidebar({ open, onClose }) {
           filterModule === "ALL"
             ? `${API}/activities?limit=30&page=1`
             : `${API}/activities?limit=30&page=1&module=${filterModule}`;
-        const res = await axios.get(url, { headers: { Authorization: `Bearer ${token}` } });
+        const res = await axios.get(url);
         setActivities(res.data.activities);
         setPage(1);
         setHasMore(res.data.has_more);
