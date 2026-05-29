@@ -244,7 +244,7 @@ axios.interceptors.response.use(
 function App() {
   return (
     <AuthProvider>
-      <div
+      {/* <div
         id="under-development-banner"
         style={{ height: "28px" }}
         className="fixed top-0 left-0 right-0 bg-amber-600 text-white text-center text-[10px] sm:text-xs font-semibold select-none flex items-center justify-center gap-1.5 z-[999999] border-b border-amber-500/20 shadow-sm px-4"
@@ -255,7 +255,7 @@ function App() {
           application which may have bugs and performance issues so please
           contact support team in case of errors
         </span>
-      </div>
+      </div> */}
       <BrowserRouter>
         <NavigationHandler />
         <Routes>

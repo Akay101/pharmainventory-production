@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Manrope:wght@300;400;500;600;700;800&display=swap');
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Manrope:wght@300;400;500;600;700;800&display=swap");
 
 @tailwind base;
 @tailwind components;
@@ -78,18 +78,25 @@ div[style*="Made with Emergent"] {
   * {
     @apply border-border;
   }
-  
+
   body {
     @apply bg-background text-foreground antialiased;
-    font-family: 'Inter', sans-serif;
+    font-family: "Inter", sans-serif;
   }
-  
-  h1, h2, h3, h4, h5, h6 {
-    font-family: 'Manrope', sans-serif;
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-family: "Manrope", sans-serif;
   }
-  
-  .font-mono, code, .mono-text {
-    font-family: 'JetBrains Mono', monospace;
+
+  .font-mono,
+  code,
+  .mono-text {
+    font-family: "JetBrains Mono", monospace;
   }
 }
 
@@ -129,13 +136,18 @@ div[style*="Made with Emergent"] {
 }
 
 .stat-card::before {
-  content: '';
+  content: "";
   position: absolute;
   top: 0;
   left: 0;
   right: 0;
   height: 1px;
-  background: linear-gradient(90deg, transparent, hsl(var(--primary) / 0.5), transparent);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    hsl(var(--primary) / 0.5),
+    transparent
+  );
 }
 
 /* Table styles */
@@ -211,7 +223,7 @@ select {
   @apply bg-primary text-primary-foreground shadow-lg shadow-primary/20 font-bold opacity-100 !important;
 }
 
-.nav-item-active svg, 
+.nav-item-active svg,
 .nav-item-active span {
   @apply text-primary-foreground opacity-100 !important;
 }
@@ -250,15 +262,10 @@ select {
   border-color: hsl(var(--border) / 0.7) !important;
 }
 
-
-
-
 /* Sidebar transition */
 .sidebar-transition {
   @apply transition-all duration-300 ease-in-out;
 }
-
-
 
 /* Dashboard grid */
 .dashboard-grid {
@@ -267,14 +274,20 @@ select {
 
 /* Currency styling */
 .currency {
-  font-family: 'JetBrains Mono', monospace;
+  font-family: "JetBrains Mono", monospace;
   @apply tabular-nums;
 }
 
 /* Animations */
 @keyframes fadeIn {
-  from { opacity: 0; transform: translateY(10px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .animate-fade-in {
@@ -282,8 +295,13 @@ select {
 }
 
 @keyframes pulse-glow {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4); }
-  50% { box-shadow: 0 0 20px 5px rgba(16, 185, 129, 0.2); }
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 20px 5px rgba(16, 185, 129, 0.2);
+  }
 }
 
 .pulse-glow {
@@ -292,17 +310,20 @@ select {
 
 /* Price Alert Animations */
 @keyframes row-warning-blink {
-  0%, 40%, 80% { 
-    background-color: rgba(234, 179, 8, 0.25); 
-    box-shadow: inset 4px 0 0 rgb(234, 179, 8); 
+  0%,
+  40%,
+  80% {
+    background-color: rgba(234, 179, 8, 0.25);
+    box-shadow: inset 4px 0 0 rgb(234, 179, 8);
   }
-  20%, 60% { 
-    background-color: transparent; 
-    box-shadow: none; 
+  20%,
+  60% {
+    background-color: transparent;
+    box-shadow: none;
   }
-  100% { 
-    background-color: transparent; 
-    box-shadow: none; 
+  100% {
+    background-color: transparent;
+    box-shadow: none;
   }
 }
 
@@ -311,8 +332,15 @@ select {
 }
 
 @keyframes icon-pulse-warning {
-  0%, 100% { color: inherit; transform: scale(1); }
-  50% { color: rgb(234, 179, 8); transform: scale(1.4); }
+  0%,
+  100% {
+    color: inherit;
+    transform: scale(1);
+  }
+  50% {
+    color: rgb(234, 179, 8);
+    transform: scale(1.4);
+  }
 }
 
 .animate-icon-alert {
@@ -325,23 +353,23 @@ select {
 }
 
 /* Under Development Banner Layout Offsets */
-body {
+/* body {
   padding-top: 28px !important;
-}
+} */
 /* Desktop sidebar container */
-aside.fixed {
+/* aside.fixed {
   top: 28px !important;
   height: calc(100vh - 28px) !important;
-}
+} */
 /* Main layout top header navigation bar */
-header.sticky.top-0 {
+/* header.sticky.top-0 {
   top: 28px !important;
-}
+} */
 /* Recent activity drawer sidebar */
-div.activity-sidebar.fixed {
+/* div.activity-sidebar.fixed {
   top: 28px !important;
   height: calc(100vh - 28px) !important;
-}
+} */
 
 /* ----------------------------------------------------
    UI Performance Optimizations for Chrome & Safari
@@ -372,7 +400,8 @@ aside.fixed,
 [role="dialog"] .backdrop-blur-sm,
 .fixed.z-\[9999\] [class*="backdrop-blur"], /* Target elements inside AgentWidget */
 .fixed.z-\[9999\], 
-.absolute.z-50.backdrop-blur-md { /* Dropdowns & Auto-completes */
+.absolute.z-50.backdrop-blur-md {
+  /* Dropdowns & Auto-completes */
   backdrop-filter: blur(12px) !important;
   -webkit-backdrop-filter: blur(12px) !important;
 }
@@ -389,7 +418,8 @@ aside.fixed,
 
 /* 3. Accelerated native animation for the Agent widget typing indicator */
 @keyframes bounce-custom {
-  0%, 100% {
+  0%,
+  100% {
     transform: translateY(0);
   }
   50% {
