@@ -17,6 +17,7 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
       limit = 50,
       sort_by = "created_at",
       sort_order = "desc",
+      highlight_id,
     } = req.query;
 
     const query = {
@@ -73,13 +74,21 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
     }
 
     const total = allInventory.length;
-    const skip = (parseInt(page) - 1) * parseInt(limit);
+    let pageNum = parseInt(page);
+    if (highlight_id) {
+      const targetIndex = allInventory.findIndex((i) => i.id === highlight_id);
+      if (targetIndex !== -1) {
+        pageNum = Math.floor(targetIndex / parseInt(limit)) + 1;
+      }
+    }
+
+    const skip = (parseInt(pageNum) - 1) * parseInt(limit);
     const inventory = allInventory.slice(skip, skip + parseInt(limit));
 
     res.json({
       inventory,
       pagination: {
-        page: parseInt(page),
+        page: pageNum,
         limit: parseInt(limit),
         total,
         total_pages: Math.ceil(total / parseInt(limit)) || 1,

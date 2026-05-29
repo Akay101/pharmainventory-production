@@ -173,6 +173,7 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
       limit = 20,
       sort_by = "purchase_date",
       sort_order = "desc",
+      highlight_id,
     } = req.query;
 
     const query = { pharmacy_id: req.user.pharmacy_id };
@@ -191,13 +192,28 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
       if (end_date) query.purchase_date.$lte = end_date;
     }
 
-    const skip = (parseInt(page) - 1) * parseInt(limit);
     const sortDir = sort_order === "asc" ? 1 : -1;
 
     const sortOptions =
       sort_by === "purchase_date"
         ? { purchase_date: sortDir, created_at: sortDir }
         : { [sort_by]: sortDir };
+
+    let pageNum = parseInt(page);
+    if (highlight_id) {
+      const allPurchasesIds = await db
+        .collection("purchases")
+        .find(query)
+        .sort(sortOptions)
+        .project({ id: 1 })
+        .toArray();
+      const targetIndex = allPurchasesIds.findIndex((p) => p.id === highlight_id);
+      if (targetIndex !== -1) {
+        pageNum = Math.floor(targetIndex / parseInt(limit)) + 1;
+      }
+    }
+
+    const skip = (parseInt(pageNum) - 1) * parseInt(limit);
 
     const purchases = await db
       .collection("purchases")
@@ -212,7 +228,7 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
     res.json({
       purchases,
       pagination: {
-        page: parseInt(page),
+        page: pageNum,
         limit: parseInt(limit),
         total,
         total_pages: Math.ceil(total / parseInt(limit)) || 1,

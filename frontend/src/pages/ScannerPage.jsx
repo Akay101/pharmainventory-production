@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
-import { API } from "../App";
+import { API, getCookie } from "../App";
 import {
   Card,
   CardContent,
@@ -71,7 +71,7 @@ export default function ScannerPage() {
   }, [previewUrls]);
 
   useEffect(() => {
-    const token = localStorage.getItem("pharmalogy_token");
+    const token = getCookie("pharmalogy_token");
     if (token) {
       setIsAuthenticated(true);
       fetchSuppliers();

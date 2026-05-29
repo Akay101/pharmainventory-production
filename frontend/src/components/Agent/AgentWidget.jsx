@@ -8,7 +8,7 @@ import {
   History, Plus, Trash2, MessageSquarePlus, Clock, Search
 } from "lucide-react";
 import axios from "axios";
-import { API } from "../../App";
+import { API, getCookie } from "../../App";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Avatar, AvatarFallback } from "../ui/avatar";
@@ -131,7 +131,7 @@ export default function AgentWidget({ user }) {
   const fetchConversations = async () => {
     try {
       const res = await axios.get(`${API}/chat/conversations`, {
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` }
+        headers: { Authorization: `Bearer ${getCookie("pharmalogy_token")}` }
       });
       setConversations(res.data);
     } catch (err) {
@@ -144,7 +144,7 @@ export default function AgentWidget({ user }) {
     setShowHistory(false);
     try {
       const res = await axios.get(`${API}/chat/conversations/${convId}`, {
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` }
+        headers: { Authorization: `Bearer ${getCookie("pharmalogy_token")}` }
       });
       setMessages(res.data.messages);
       setActiveConvId(convId);
@@ -178,7 +178,7 @@ export default function AgentWidget({ user }) {
     
     try {
       await axios.delete(`${API}/chat/conversations/${convId}`, {
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` }
+        headers: { Authorization: `Bearer ${getCookie("pharmalogy_token")}` }
       });
       setConversations(prev => prev.filter(c => c.id !== convId));
       if (activeConvId === convId) handleNewChat();
@@ -211,7 +211,7 @@ export default function AgentWidget({ user }) {
           conversationHistory: messages
         },
         {
-          headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+          headers: { Authorization: `Bearer ${getCookie("pharmalogy_token")}` },
           timeout: AXIOS_TIMEOUT
         }
       );
@@ -282,7 +282,7 @@ export default function AgentWidget({ user }) {
       }
 
       const config = {
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+        headers: { Authorization: `Bearer ${getCookie("pharmalogy_token")}` },
         timeout: AXIOS_TIMEOUT
       };
 

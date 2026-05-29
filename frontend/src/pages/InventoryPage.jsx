@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { useNavigate, useLocation } from "react-router-dom";
 import axios from "axios";
 import { API } from "../App";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
@@ -42,6 +43,9 @@ import { Search, Plus, Package, AlertTriangle, ChevronLeft, ChevronRight, ArrowU
 import { toast } from "sonner";
 
 export default function InventoryPage() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const isInitialMount = useRef(true);
   const [inventory, setInventory] = useState([]);
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -64,20 +68,37 @@ export default function InventoryPage() {
   const [sortBy, setSortBy] = useState("created_at");
   const [sortOrder, setSortOrder] = useState("desc");
 
-  const fetchInventory = useCallback(async (page = 1) => {
+  const fetchInventory = useCallback(async (page = 1, highlightId = undefined) => {
     try {
       const params = new URLSearchParams();
-      params.append("page", page);
+      if (!highlightId) {
+        params.append("page", page);
+      }
       params.append("limit", pagination.limit);
       params.append("sort_by", sortBy);
       params.append("sort_order", sortOrder);
       if (search) params.append("search", search);
       if (showLowStock) params.append("low_stock", "true");
       if (showExpiringSoon) params.append("expiring_soon", "true");
+      if (highlightId) params.append("highlight_id", highlightId);
 
       const response = await axios.get(`${API}/inventory?${params.toString()}`);
       setInventory(response.data.inventory);
       setPagination(response.data.pagination);
+
+      if (highlightId) {
+        setTimeout(() => {
+          const el = document.getElementById(`record-${highlightId}`);
+          if (el) {
+            el.scrollIntoView({ behavior: "smooth", block: "center" });
+            el.classList.add("bg-primary/20", "transition-all", "duration-1000");
+            setTimeout(() => {
+              el.classList.remove("bg-primary/20");
+            }, 3000);
+          }
+          window.history.replaceState({}, document.title);
+        }, 300);
+      }
     } catch (error) {
       toast.error("Failed to load inventory");
     }
@@ -88,6 +109,12 @@ export default function InventoryPage() {
   }, []);
 
   useEffect(() => {
+    if (isInitialMount.current) {
+      isInitialMount.current = false;
+      if (location.state?.highlightId) {
+        return;
+      }
+    }
     const debounce = setTimeout(() => {
       fetchInventory(1);
     }, 300);
@@ -98,7 +125,13 @@ export default function InventoryPage() {
     try {
       const prodRes = await axios.get(`${API}/products`);
       setProducts(prodRes.data.products);
-      await fetchInventory(1);
+      
+      const hlId = location.state?.highlightId;
+      if (hlId) {
+        await fetchInventory(1, hlId);
+      } else {
+        await fetchInventory(1);
+      }
     } catch (error) {
       toast.error("Failed to load data");
     } finally {

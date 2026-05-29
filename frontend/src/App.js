@@ -32,6 +32,19 @@ import PaymentSuccessPage from "./pages/PaymentSuccessPage";
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 export const API = `${BACKEND_URL}/api`;
 
+axios.defaults.withCredentials = true;
+
+export const getCookie = (name) => {
+  const value = `; ${document.cookie}`;
+  const parts = value.split(`; ${name}=`);
+  if (parts.length === 2) return parts.pop().split(';').shift();
+  return null;
+};
+
+export const deleteCookie = (name) => {
+  document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;`;
+};
+
 let navigateGlobal = null;
 
 const NavigationHandler = () => {
@@ -53,9 +66,27 @@ const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [pharmacy, setPharmacy] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [token, setToken] = useState(localStorage.getItem("pharmalogy_token"));
+  const [token, setToken] = useState(getCookie("pharmalogy_token"));
   const [settings, setSettings] = useState({});
   const [settingsDefinitions, setSettingsDefinitions] = useState([]);
+
+  useEffect(() => {
+    const handleTokenRefreshed = (e) => {
+      setToken(e.detail.token);
+    };
+
+    const handleLogoutEvent = () => {
+      logout();
+    };
+
+    window.addEventListener("auth-token-refreshed", handleTokenRefreshed);
+    window.addEventListener("auth-logout", handleLogoutEvent);
+
+    return () => {
+      window.removeEventListener("auth-token-refreshed", handleTokenRefreshed);
+      window.removeEventListener("auth-logout", handleLogoutEvent);
+    };
+  }, []);
 
   useEffect(() => {
     if (token) {
@@ -125,18 +156,25 @@ const AuthProvider = ({ children }) => {
 
   const login = async (email, password) => {
     const response = await axios.post(`${API}/auth/login`, { email, password });
-    const { token: newToken, user: userData } = response.data;
-    localStorage.setItem("pharmalogy_token", newToken);
+    const newToken = getCookie("pharmalogy_token");
+    const userData = response.data.user;
     setToken(newToken);
     setUser(userData);
     return userData;
   };
 
-  const logout = () => {
-    localStorage.removeItem("pharmalogy_token");
-    setToken(null);
-    setUser(null);
-    setPharmacy(null);
+  const logout = async () => {
+    try {
+      await axios.post(`${API}/auth/logout`);
+    } catch (error) {
+      console.error("Failed to logout on backend:", error);
+    } finally {
+      deleteCookie("pharmalogy_token");
+      deleteCookie("pharmalogy_refresh_token");
+      setToken(null);
+      setUser(null);
+      setPharmacy(null);
+    }
   };
 
   const value = {
@@ -173,9 +211,9 @@ const ProtectedRoute = ({ children, adminOnly = false }) => {
     );
   }
 
-  // if (!user) {
-  //   return <Navigate to="/login" state={{ from: location }} replace />;
-  // }
+  if (!user) {
+    return <Navigate to="/login" state={{ from: location }} replace />;
+  }
 
   if (adminOnly && !isAdmin) {
     return <Navigate to="/dashboard" replace />;
@@ -186,6 +224,31 @@ const ProtectedRoute = ({ children, adminOnly = false }) => {
 
 let isRedirecting = false;
 
+axios.interceptors.request.use(
+  (config) => {
+    const token = getCookie("pharmalogy_token");
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+    return config;
+  },
+  (error) => Promise.reject(error)
+);
+
+let isRefreshing = false;
+let failedQueue = [];
+
+const processQueue = (error, token = null) => {
+  failedQueue.forEach((prom) => {
+    if (error) {
+      prom.reject(error);
+    } else {
+      prom.resolve(token);
+    }
+  });
+  failedQueue = [];
+};
+
 axios.interceptors.response.use(
   (response) => {
     const method = response.config?.method?.toLowerCase();
@@ -194,15 +257,68 @@ axios.interceptors.response.use(
     }
     return response;
   },
-  (error) => {
+  async (error) => {
+    const originalRequest = error.config;
     const status = error.response?.status;
     const code = error.response?.data?.code;
 
+    // 🔐 Avoid infinite loop if refresh/logout request fails with 401
+    if (originalRequest.url?.includes("/auth/logout")) {
+      return Promise.reject(error);
+    }
+
+    if (originalRequest.url?.includes("/auth/refresh")) {
+      deleteCookie("pharmalogy_token");
+      deleteCookie("pharmalogy_refresh_token");
+      window.dispatchEvent(new Event("auth-logout"));
+      return Promise.reject(error);
+    }
+
     // 🔐 Auth error
-    if (status === 401) {
-      localStorage.removeItem("pharmalogy_token");
-      // window.location.href = "/login";
-      return;
+    if (status === 401 && !originalRequest._retry) {
+      const refreshToken = getCookie("pharmalogy_refresh_token");
+      if (!refreshToken) {
+        deleteCookie("pharmalogy_token");
+        window.dispatchEvent(new Event("auth-logout"));
+        return Promise.reject(error);
+      }
+
+      if (isRefreshing) {
+        return new Promise((resolve, reject) => {
+          failedQueue.push({ resolve, reject });
+        })
+          .then((token) => {
+            originalRequest.headers.Authorization = `Bearer ${token}`;
+            return axios(originalRequest);
+          })
+          .catch((err) => Promise.reject(err));
+      }
+
+      originalRequest._retry = true;
+      isRefreshing = true;
+
+      try {
+        await axios.post(`${API}/auth/refresh`);
+        const newToken = getCookie("pharmalogy_token");
+
+        window.dispatchEvent(
+          new CustomEvent("auth-token-refreshed", {
+            detail: { token: newToken },
+          })
+        );
+
+        originalRequest.headers.Authorization = `Bearer ${newToken}`;
+        processQueue(null, newToken);
+        return axios(originalRequest);
+      } catch (refreshErr) {
+        processQueue(refreshErr, null);
+        deleteCookie("pharmalogy_token");
+        deleteCookie("pharmalogy_refresh_token");
+        window.dispatchEvent(new Event("auth-logout"));
+        return Promise.reject(refreshErr);
+      } finally {
+        isRefreshing = false;
+      }
     }
 
     // 💳 Subscription error
@@ -266,7 +382,14 @@ function App() {
           <Route path="/payment-success" element={<PaymentSuccessPage />} />
 
           {/* Scanner Route - Standalone for mobile */}
-          <Route path="/scan" element={<ScannerPage />} />
+          <Route
+            path="/scan"
+            element={
+              <ProtectedRoute>
+                <ScannerPage />
+              </ProtectedRoute>
+            }
+          />
 
           {/* Protected Routes */}
           <Route

@@ -11,7 +11,7 @@ const { requireSubscription } = require("../middleware/subscription");
 router.get("/", auth, requireSubscription(), async (req, res, next) => {
   try {
     const db = mongoose.connection.db;
-    const { search, has_debt, page = 1, limit = 50 } = req.query;
+    const { search, has_debt, page = 1, limit = 50, highlight_id } = req.query;
 
     const query = { pharmacy_id: req.user.pharmacy_id };
     if (search) {
@@ -21,7 +21,23 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
       ];
     }
 
-    const skip = (parseInt(page) - 1) * parseInt(limit);
+    let pageNum = parseInt(page);
+    if (highlight_id) {
+      let allCusts = await db
+        .collection("customers")
+        .find(query)
+        .project({ id: 1, total_debt: 1 })
+        .toArray();
+      if (has_debt === "true") {
+        allCusts = allCusts.filter((c) => (c.total_debt || 0) > 0);
+      }
+      const targetIndex = allCusts.findIndex((c) => c.id === highlight_id);
+      if (targetIndex !== -1) {
+        pageNum = Math.floor(targetIndex / parseInt(limit)) + 1;
+      }
+    }
+
+    const skip = (parseInt(pageNum) - 1) * parseInt(limit);
     let customers = await db
       .collection("customers")
       .find(query, { projection: { _id: 0 } })
@@ -38,7 +54,7 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
     res.json({
       customers,
       pagination: {
-        page: parseInt(page),
+        page: pageNum,
         limit: parseInt(limit),
         total,
         total_pages: Math.ceil(total / parseInt(limit)) || 1,

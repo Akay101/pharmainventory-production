@@ -125,7 +125,6 @@ export default function RegisterPage() {
         email: formData.email,
         otp: otp,
       });
-      localStorage.setItem("pharmalogy_token", response.data.token);
       toast.success("Registration successful!");
       window.location.href = "/dashboard";
     } catch (error) {

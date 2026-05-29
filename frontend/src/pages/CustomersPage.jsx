@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { useNavigate, useLocation } from "react-router-dom";
 import axios from "axios";
 import { API } from "../App";
 import { Card, CardContent } from "../components/ui/card";
@@ -49,6 +49,8 @@ import { toast } from "sonner";
 
 export default function CustomersPage() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const isInitialMount = useRef(true);
   const [customers, setCustomers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -81,41 +83,6 @@ export default function CustomersPage() {
   const [sortBy, setSortBy] = useState("created_at");
   const [sortOrder, setSortOrder] = useState("desc");
 
-  const fetchCustomers = useCallback(
-    async (page = 1) => {
-      try {
-        const params = new URLSearchParams();
-        params.append("page", page);
-        params.append("limit", pagination.limit);
-        params.append("sort_by", sortBy);
-        params.append("sort_order", sortOrder);
-        if (search) params.append("search", search);
-
-        const response = await axios.get(
-          `${API}/customers?${params.toString()}`
-        );
-        setCustomers(response.data.customers);
-        setPagination(response.data.pagination);
-      } catch (error) {
-        toast.error("Failed to load customers");
-      } finally {
-        setLoading(false);
-      }
-    },
-    [search, sortBy, sortOrder, pagination.limit]
-  );
-
-  useEffect(() => {
-    fetchCustomers(1);
-  }, []);
-
-  useEffect(() => {
-    const debounce = setTimeout(() => {
-      fetchCustomers(1);
-    }, 300);
-    return () => clearTimeout(debounce);
-  }, [search, sortBy, sortOrder]);
-
   const handleViewCustomer = async (customer) => {
     setSelectedCustomer(customer);
     setDetailsOpen(true);
@@ -133,6 +100,73 @@ export default function CustomersPage() {
       toast.error("Failed to load customer details");
     }
   };
+
+  const fetchCustomers = useCallback(
+    async (page = 1, highlightId = undefined) => {
+      try {
+        const params = new URLSearchParams();
+        if (!highlightId) {
+          params.append("page", page);
+        }
+        params.append("limit", pagination.limit);
+        params.append("sort_by", sortBy);
+        params.append("sort_order", sortOrder);
+        if (search) params.append("search", search);
+        if (highlightId) params.append("highlight_id", highlightId);
+
+        const response = await axios.get(
+          `${API}/customers?${params.toString()}`
+        );
+        setCustomers(response.data.customers);
+        setPagination(response.data.pagination);
+
+        if (highlightId) {
+          setTimeout(() => {
+            const target = response.data.customers.find((c) => c.id === highlightId);
+            if (target) {
+              handleViewCustomer(target);
+            }
+            const el = document.getElementById(`record-${highlightId}`);
+            if (el) {
+              el.scrollIntoView({ behavior: "smooth", block: "center" });
+              el.classList.add("bg-primary/20", "transition-all", "duration-1000");
+              setTimeout(() => {
+                el.classList.remove("bg-primary/20");
+              }, 3000);
+            }
+            window.history.replaceState({}, document.title);
+          }, 300);
+        }
+      } catch (error) {
+        toast.error("Failed to load customers");
+      } finally {
+        setLoading(false);
+      }
+    },
+    [search, sortBy, sortOrder, pagination.limit]
+  );
+
+  useEffect(() => {
+    const hlId = location.state?.highlightId;
+    if (hlId) {
+      fetchCustomers(1, hlId);
+    } else {
+      fetchCustomers(1);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (isInitialMount.current) {
+      isInitialMount.current = false;
+      if (location.state?.highlightId) {
+        return;
+      }
+    }
+    const debounce = setTimeout(() => {
+      fetchCustomers(1);
+    }, 300);
+    return () => clearTimeout(debounce);
+  }, [search, sortBy, sortOrder]);
 
   const handlePayBill = (bill) => {
     setPayBillDialog({

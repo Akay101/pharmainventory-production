@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams, useLocation } from "react-router-dom";
 import { v4 as uuidv4 } from "uuid";
 import { createPortal } from "react-dom";
 import axios from "axios";
@@ -106,6 +106,12 @@ export default function BillingPage() {
   const [doctorSuggestions, setDoctorSuggestions] = useState([]);
   const [showDoctorSuggestions, setShowDoctorSuggestions] = useState(false);
 
+  // Customer suggestions pagination state
+  const [customerSuggestions, setCustomerSuggestions] = useState([]);
+  const [customerSuggestionPage, setCustomerSuggestionPage] = useState(1);
+  const [hasMoreCustomerSuggestions, setHasMoreCustomerSuggestions] = useState(false);
+  const [loadingCustomerSuggestions, setLoadingCustomerSuggestions] = useState(false);
+
   //billing date
   const [billingDate, setBillingDate] = useState(
     new Date().toISOString().slice(0, 10)
@@ -170,44 +176,96 @@ export default function BillingPage() {
   const [activeDropdownIndex, setActiveDropdownIndex] = useState(-1);
   const [highlightedSuggestion, setHighlightedSuggestion] = useState(-1);
 
+  const [activeBillItemId, setActiveBillItemId] = useState(null);
+  const [isMouseOverSuggestions, setIsMouseOverSuggestions] = useState(false);
+  const [isMouseOverEditingSuggestions, setIsMouseOverEditingSuggestions] = useState(false);
+  const inputRefs = useRef({});
+  const editingInputRefs = useRef({});
+
+  const setInputRef = (el, itemId) => {
+    if (el) {
+      inputRefs.current[itemId] = el;
+    }
+  };
+  const setEditingInputRef = (el, itemId) => {
+    if (el) {
+      editingInputRefs.current[itemId] = el;
+    }
+  };
+
   const [dropdownPosition, setDropdownPosition] = useState({
     top: 0,
     left: 0,
     width: 400,
+    transform: "none",
   });
+
+  const updatePos = () => {
+    const el = showInventorySuggestions
+      ? inputRefs.current[activeBillItemId]
+      : editingInputRefs.current[activeEditingItemId];
+    if (el) {
+      const rect = el.getBoundingClientRect();
+      const dropdownWidth = Math.max(rect.width, 400);
+
+      const spaceBelow = window.innerHeight - rect.bottom;
+      const spaceAbove = rect.top;
+      const dropdownMaxHeight = 260; // Max height in styling is 260px
+      const positionAbove = spaceBelow < dropdownMaxHeight && spaceAbove > spaceBelow;
+
+      setDropdownPosition({
+        top: positionAbove ? rect.top - 4 : rect.bottom + 4,
+        left: rect.left,
+        width: dropdownWidth,
+        transform: positionAbove ? "translateY(-100%)" : "none",
+      });
+    }
+  };
 
   useEffect(() => {
     if (!showInventorySuggestions && !showEditingInventorySuggestions) return;
 
     let rafId;
-    const updatePos = () => {
-      const el = showInventorySuggestions
-        ? productInputRef.current
-        : editingProductInputRef.current;
-      if (el) {
-        const rect = el.getBoundingClientRect();
-        setDropdownPosition({
-          top: rect.bottom + 4,
-          left: rect.left,
-          width: Math.max(rect.width, 400),
-        });
-      }
-      rafId = requestAnimationFrame(updatePos);
+    const runUpdate = () => {
+      updatePos();
+      rafId = requestAnimationFrame(runUpdate);
     };
 
-    rafId = requestAnimationFrame(updatePos);
+    rafId = requestAnimationFrame(runUpdate);
     return () => cancelAnimationFrame(rafId);
-  }, [showInventorySuggestions, showEditingInventorySuggestions]);
+  }, [showInventorySuggestions, showEditingInventorySuggestions, activeBillItemId, activeEditingItemId]);
+
+  // Keyboard navigation scroll-into-view
+  useEffect(() => {
+    if (showInventorySuggestions && highlightedSuggestion >= 0) {
+      const el = document.getElementById(`suggestion-new-${highlightedSuggestion}`);
+      el?.scrollIntoView({ block: "nearest" });
+    }
+  }, [highlightedSuggestion, showInventorySuggestions]);
+
+  useEffect(() => {
+    if (showEditingInventorySuggestions && highlightedEditingSuggestion >= 0) {
+      const el = document.getElementById(`suggestion-edit-${highlightedEditingSuggestion}`);
+      el?.scrollIntoView({ block: "nearest" });
+    }
+  }, [highlightedEditingSuggestion, showEditingInventorySuggestions]);
 
   // Pagination
   const [page, setPage] = useState(1);
   const [limit] = useState(10);
   const [totalPages, setTotalPages] = useState(1);
 
+  // Search
+  const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
+  const [tableLoading, setTableLoading] = useState(false);
+
   // Filters and Insights
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [searchParams, setSearchParams] = useSearchParams();
+  const location = useLocation();
+  const isInitialMount = useRef(true);
   const [filterCustomer, setFilterCustomer] = useState(
     searchParams.get("customer_id") || "all"
   );
@@ -448,7 +506,7 @@ export default function BillingPage() {
   });
 
   useEffect(() => {
-    fetchData();
+    fetchData(true);
 
     // Global keyboard shortcuts
     const handleKeyDown = (e) => {
@@ -538,9 +596,25 @@ export default function BillingPage() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
+  // Debounce search query changes
   useEffect(() => {
+    const handler = setTimeout(() => {
+      setPage(1);
+      setDebouncedSearchQuery(searchQuery);
+    }, 300);
+    return () => clearTimeout(handler);
+  }, [searchQuery]);
+
+  useEffect(() => {
+    if (isInitialMount.current) {
+      isInitialMount.current = false;
+      if (location.state?.highlightId) {
+        return;
+      }
+    }
     fetchData();
-  }, [page, startDate, endDate, filterCustomer]);
+  }, [page, startDate, endDate, filterCustomer, debouncedSearchQuery]);
+
 
   // Fetch Insights when dates change
   useEffect(() => {
@@ -690,17 +764,86 @@ export default function BillingPage() {
     return () => clearTimeout(debounce);
   }, [doctorSearch]);
 
-  const fetchData = async () => {
+  // Server-side customer search with infinite scroll
+  useEffect(() => {
+    const searchCustomers = async () => {
+      if (customerSearch.trim().length >= 1) {
+        setLoadingCustomerSuggestions(true);
+        try {
+          const response = await axios.get(
+            `${API}/customers?search=${encodeURIComponent(customerSearch)}&page=1&limit=15`
+          );
+          setCustomerSuggestions(response.data.customers || []);
+          setHasMoreCustomerSuggestions(
+            response.data.pagination?.page < response.data.pagination?.total_pages
+          );
+          setCustomerSuggestionPage(1);
+        } catch (error) {
+          console.error("Customer search error:", error);
+        } finally {
+          setLoadingCustomerSuggestions(false);
+        }
+      } else {
+        setCustomerSuggestions([]);
+        setHasMoreCustomerSuggestions(false);
+        setCustomerSuggestionPage(1);
+      }
+    };
+
+    const debounce = setTimeout(searchCustomers, 300);
+    return () => clearTimeout(debounce);
+  }, [customerSearch]);
+
+  const loadMoreCustomerSuggestions = async () => {
+    if (loadingCustomerSuggestions || !hasMoreCustomerSuggestions) return;
+
+    setLoadingCustomerSuggestions(true);
     try {
-      setLoading(true);
+      const nextPage = customerSuggestionPage + 1;
+      const response = await axios.get(
+        `${API}/customers?search=${encodeURIComponent(customerSearch)}&page=${nextPage}&limit=15`
+      );
+      setCustomerSuggestions((prev) => [
+        ...prev,
+        ...(response.data.customers || []),
+      ]);
+      setHasMoreCustomerSuggestions(
+        response.data.pagination?.page < response.data.pagination?.total_pages
+      );
+      setCustomerSuggestionPage(nextPage);
+    } catch (error) {
+      console.error("Failed to load more customers:", error);
+    } finally {
+      setLoadingCustomerSuggestions(false);
+    }
+  };
+
+  const handleScrollCustomerSuggestions = (e) => {
+    const { scrollTop, scrollHeight, clientHeight } = e.target;
+    if (scrollHeight - scrollTop - clientHeight < 30) {
+      loadMoreCustomerSuggestions();
+    }
+  };
+
+  const fetchData = async (isInitial = false) => {
+    try {
+      if (isInitial) {
+        setLoading(true);
+      } else {
+        setTableLoading(true);
+      }
+
+      const hlId = isInitial ? location.state?.highlightId : undefined;
 
       const billsRes = await axios.get(`${API}/bills`, {
         params: {
-          page,
+          page: hlId ? undefined : page,
           limit,
           start_date: startDate || undefined,
           end_date: endDate || undefined,
           customer_id: filterCustomer !== "all" ? filterCustomer : undefined,
+          search: debouncedSearchQuery || undefined,
+          highlight_id: hlId || undefined,
         },
       });
 
@@ -714,14 +857,34 @@ export default function BillingPage() {
       setBills(finalBills);
       setTotalBills(billsRes?.data?.pagination?.total);
 
-      setTotalPages(billsRes.data.pagination.total_pages);
+      if (hlId && billsRes.data.pagination?.page) {
+        setPage(billsRes.data.pagination.page);
+      } else {
+        setTotalPages(billsRes.data.pagination.total_pages);
+      }
 
       const custRes = await axios.get(`${API}/customers`);
       setCustomers(custRes.data.customers);
+
+      if (hlId) {
+        setTimeout(() => {
+          setExpandedBills((prev) => ({ ...prev, [hlId]: true }));
+          const el = document.getElementById(`record-${hlId}`);
+          if (el) {
+            el.scrollIntoView({ behavior: "smooth", block: "center" });
+            el.classList.add("bg-primary/20", "transition-all", "duration-1000");
+            setTimeout(() => {
+              el.classList.remove("bg-primary/20");
+            }, 3000);
+          }
+          window.history.replaceState({}, document.title);
+        }, 300);
+      }
     } catch (error) {
       toast.error("Failed to load data");
     } finally {
       setLoading(false);
+      setTableLoading(false);
     }
   };
 
@@ -818,6 +981,8 @@ export default function BillingPage() {
     setInventorySearch("");
     setInventorySuggestions([]);
     setShowInventorySuggestions(false);
+    setIsMouseOverSuggestions(false);
+    setActiveBillItemId(null);
   };
 
   // Handle manual entry for items not in inventory
@@ -843,6 +1008,8 @@ export default function BillingPage() {
     setInventorySuggestions([]);
     setShowInventorySuggestions(false);
     setHighlightedSuggestion(-1);
+    setIsMouseOverSuggestions(false);
+    setActiveBillItemId(null);
     setTimeout(() => quantityInputRef.current?.focus(), 100);
   };
 
@@ -1342,6 +1509,8 @@ export default function BillingPage() {
     setEditingInventorySuggestions([]);
     setShowEditingInventorySuggestions(false);
     setHighlightedEditingSuggestion(-1);
+    setIsMouseOverEditingSuggestions(false);
+    setActiveEditingItemId(null);
   };
 
   const handleManualEntryForEdit = (itemId, productName) => {
@@ -1364,6 +1533,8 @@ export default function BillingPage() {
     setEditingInventorySuggestions([]);
     setShowEditingInventorySuggestions(false);
     setHighlightedEditingSuggestion(-1);
+    setIsMouseOverEditingSuggestions(false);
+    setActiveEditingItemId(null);
   };
 
   const handleEditDropdownKeyDown = (e, itemId) => {
@@ -1784,9 +1955,12 @@ export default function BillingPage() {
                 />
                 {showCustomerSuggestions &&
                   customerSearch &&
-                  filteredCustomers.length > 0 && (
-                    <div className="absolute z-50 w-full mt-1 bg-card/95 backdrop-blur-md border border-border shadow-xl rounded-xl max-h-48 overflow-y-auto top-full overflow-x-hidden transition-all duration-150 animate-in fade-in slide-in-from-top-2">
-                      {filteredCustomers.slice(0, 5).map((customer) => (
+                  (customerSuggestions.length > 0 || loadingCustomerSuggestions) && (
+                    <div
+                      onScroll={handleScrollCustomerSuggestions}
+                      className="absolute z-[100] w-full mt-1 bg-card/95 backdrop-blur-md border border-border shadow-xl rounded-xl max-h-48 overflow-y-auto top-full overflow-x-hidden transition-all duration-150 animate-in fade-in slide-in-from-top-2"
+                    >
+                      {customerSuggestions.map((customer) => (
                         <div
                           key={customer.id}
                           className="p-2.5 hover:bg-primary/10 cursor-pointer border-b border-border/50 last:border-0 transition-colors duration-150"
@@ -1798,6 +1972,11 @@ export default function BillingPage() {
                           </p>
                         </div>
                       ))}
+                      {loadingCustomerSuggestions && (
+                        <div className="p-3 text-center text-xs text-muted-foreground">
+                          Loading...
+                        </div>
+                      )}
                     </div>
                   )}
               </div>
@@ -1867,7 +2046,7 @@ export default function BillingPage() {
                 />
                 {showDoctorSuggestions &&
                   doctorSuggestions.length > 0 && (
-                    <div className="absolute z-50 w-full mt-1 bg-card/95 backdrop-blur-md border border-border shadow-xl rounded-xl max-h-48 overflow-y-auto top-full overflow-x-hidden transition-all duration-150 animate-in fade-in slide-in-from-top-2">
+                    <div className="absolute z-[100] w-full mt-1 bg-card/95 backdrop-blur-md border border-border shadow-xl rounded-xl max-h-48 overflow-y-auto top-full overflow-x-hidden transition-all duration-150 animate-in fade-in slide-in-from-top-2">
                       {doctorSuggestions.map((doc, idx) => (
                         <div
                           key={idx}
@@ -1965,11 +2144,12 @@ export default function BillingPage() {
                           style={{ overflow: "visible" }}
                         >
                           <Input
-                            ref={
-                              index === billItems.length - 1
-                                ? productInputRef
-                                : null
-                            }
+                            ref={(el) => {
+                              setInputRef(el, item.id);
+                              if (index === billItems.length - 1) {
+                                productInputRef.current = el;
+                              }
+                            }}
                             value={item.product_name || ""}
                             onChange={(e) =>
                               handleItemFieldChange(
@@ -1982,13 +2162,25 @@ export default function BillingPage() {
                               setInventorySearch(item.product_name || "");
                               setShowInventorySuggestions(true);
                               setActiveDropdownIndex(index);
+                              setActiveBillItemId(item.id);
                             }}
-                            onBlur={() =>
+                            onBlur={() => {
+                              const currentId = item.id;
                               setTimeout(
-                                () => setShowInventorySuggestions(false),
+                                () => {
+                                  if (!isMouseOverSuggestions) {
+                                    setActiveBillItemId((prev) => {
+                                      if (prev === currentId) {
+                                        setShowInventorySuggestions(false);
+                                        return null;
+                                      }
+                                      return prev;
+                                    });
+                                  }
+                                },
                                 200
-                              )
-                            }
+                              );
+                            }}
                             onKeyDown={(e) => handleDropdownKeyDown(e, item.id)}
                             placeholder="Search product or salt..."
                             className="h-8 text-xs border-border/80 focus-visible:ring-1 focus-visible:ring-primary focus-visible:border-primary rounded-lg transition-all duration-200"
@@ -1997,17 +2189,27 @@ export default function BillingPage() {
                           />
                           {/* Search Suggestions Dropdown */}
                           {showInventorySuggestions &&
-                            index === billItems.length - 1 &&
+                            activeBillItemId === item.id &&
                             createPortal(
                               <div
                                 data-suggestions-dropdown="true"
                                 className="bg-card/95 backdrop-blur-xl border border-border/80 rounded-xl shadow-2xl overflow-y-auto z-[99999] animate-in fade-in slide-in-from-top-2 duration-150"
+                                onMouseEnter={() => setIsMouseOverSuggestions(true)}
+                                onMouseLeave={() => {
+                                  setIsMouseOverSuggestions(false);
+                                  const activeInput = inputRefs.current[activeBillItemId];
+                                  if (activeInput && document.activeElement !== activeInput) {
+                                    setShowInventorySuggestions(false);
+                                    setActiveBillItemId(null);
+                                  }
+                                }}
                                 style={{
                                   position: "fixed",
                                   top: dropdownPosition.top,
                                   left: dropdownPosition.left,
                                   width: dropdownPosition.width || 400,
                                   maxHeight: "260px",
+                                  transform: dropdownPosition.transform || "none",
                                 }}
                               >
                                 {/* Manual Entry Option */}
@@ -2579,9 +2781,12 @@ export default function BillingPage() {
                 />
                 {showCustomerSuggestions &&
                   customerSearch &&
-                  filteredCustomers.length > 0 && (
-                    <div className="absolute z-50 w-full mt-1 bg-card/95 backdrop-blur-md border border-border shadow-xl rounded-xl max-h-48 overflow-y-auto top-full overflow-x-hidden transition-all duration-150 animate-in fade-in slide-in-from-top-2">
-                      {filteredCustomers.slice(0, 5).map((customer) => (
+                  (customerSuggestions.length > 0 || loadingCustomerSuggestions) && (
+                    <div
+                      onScroll={handleScrollCustomerSuggestions}
+                      className="absolute z-[100] w-full mt-1 bg-card/95 backdrop-blur-md border border-border shadow-xl rounded-xl max-h-48 overflow-y-auto top-full overflow-x-hidden transition-all duration-150 animate-in fade-in slide-in-from-top-2"
+                    >
+                      {customerSuggestions.map((customer) => (
                         <div
                           key={customer.id}
                           className="p-2.5 hover:bg-amber-500/10 cursor-pointer border-b border-border/50 last:border-0 transition-colors duration-150"
@@ -2593,6 +2798,11 @@ export default function BillingPage() {
                           </p>
                         </div>
                       ))}
+                      {loadingCustomerSuggestions && (
+                        <div className="p-3 text-center text-xs text-muted-foreground">
+                          Loading...
+                        </div>
+                      )}
                     </div>
                   )}
               </div>
@@ -2663,7 +2873,7 @@ export default function BillingPage() {
                 />
                 {showDoctorSuggestions &&
                   doctorSuggestions.length > 0 && (
-                    <div className="absolute z-50 w-full mt-1 bg-card/95 backdrop-blur-md border border-border shadow-xl rounded-xl max-h-48 overflow-y-auto top-full overflow-x-hidden transition-all duration-150 animate-in fade-in slide-in-from-top-2">
+                    <div className="absolute z-[100] w-full mt-1 bg-card/95 backdrop-blur-md border border-border shadow-xl rounded-xl max-h-48 overflow-y-auto top-full overflow-x-hidden transition-all duration-150 animate-in fade-in slide-in-from-top-2">
                       {doctorSuggestions.map((doc, idx) => (
                         <div
                           key={idx}
@@ -2760,11 +2970,12 @@ export default function BillingPage() {
                           style={{ overflow: "visible" }}
                         >
                           <Input
-                            ref={
-                              index === editingBillItems.length - 1
-                                ? editingProductInputRef
-                                : null
-                            }
+                            ref={(el) => {
+                              setEditingInputRef(el, item.id);
+                              if (index === editingBillItems.length - 1) {
+                                editingProductInputRef.current = el;
+                              }
+                            }}
                             value={item.product_name || ""}
                             onChange={(e) =>
                               handleEditItemFieldChange(
@@ -2781,12 +2992,23 @@ export default function BillingPage() {
                               setActiveEditingItemId(item.id);
                               setHighlightedEditingSuggestion(-1);
                             }}
-                            onBlur={() =>
+                            onBlur={() => {
+                              const currentId = item.id;
                               setTimeout(
-                                () => setShowEditingInventorySuggestions(false),
+                                () => {
+                                  if (!isMouseOverEditingSuggestions) {
+                                    setActiveEditingItemId((prev) => {
+                                      if (prev === currentId) {
+                                        setShowEditingInventorySuggestions(false);
+                                        return null;
+                                      }
+                                      return prev;
+                                    });
+                                  }
+                                },
                                 200
-                              )
-                            }
+                              );
+                            }}
                             onKeyDown={(e) =>
                               handleEditDropdownKeyDown(e, item.id)
                             }
@@ -2800,12 +3022,22 @@ export default function BillingPage() {
                             createPortal(
                               <div
                                 className="bg-card/95 backdrop-blur-xl border border-border/80 rounded-xl shadow-2xl overflow-y-auto z-[99999] animate-in fade-in slide-in-from-top-2 duration-150"
+                                onMouseEnter={() => setIsMouseOverEditingSuggestions(true)}
+                                onMouseLeave={() => {
+                                  setIsMouseOverEditingSuggestions(false);
+                                  const activeInput = editingInputRefs.current[activeEditingItemId];
+                                  if (activeInput && document.activeElement !== activeInput) {
+                                    setShowEditingInventorySuggestions(false);
+                                    setActiveEditingItemId(null);
+                                  }
+                                }}
                                 style={{
                                   position: "fixed",
                                   top: dropdownPosition.top,
                                   left: dropdownPosition.left,
                                   width: dropdownPosition.width || 400,
                                   maxHeight: "260px",
+                                  transform: dropdownPosition.transform || "none",
                                 }}
                               >
                                 {/* Manual Entry Option */}
@@ -3283,6 +3515,19 @@ export default function BillingPage() {
       {!showNewBill && !editingBillId && (
         <Card className="glass bg-card/45 backdrop-blur-xl border border-border/70 shadow-lg rounded-2xl p-6 mb-6">
           <div className="flex flex-col gap-5">
+            <div className="flex flex-col md:flex-row gap-4">
+              <div className="flex-1">
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                  <Input
+                    placeholder="Search bills by bill number, customer, doctor, batch, product, notes..."
+                    className="pl-10 h-10 border-border/80 rounded-xl focus-visible:ring-1 focus-visible:ring-primary focus-visible:border-primary transition-all duration-200 bg-background/50"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                  />
+                </div>
+              </div>
+            </div>
             <div className="flex flex-wrap items-end gap-5">
               <div className="space-y-2">
                 <Label className="text-xs font-bold text-muted-foreground/80 uppercase tracking-wider">Filter Customer</Label>
@@ -3365,8 +3610,10 @@ export default function BillingPage() {
                   variant="ghost"
                   size="sm"
                   onClick={() => {
+                    setSearchQuery("");
                     setStartDate("");
                     setEndDate("");
+                    handleCustomerFilterChange("all");
                     setPage(1);
                   }}
                   className="h-10 text-xs font-bold text-muted-foreground hover:text-foreground hover:bg-muted/50 rounded-xl transition-all"
@@ -3581,7 +3828,7 @@ export default function BillingPage() {
                   <TableHead className="text-center text-xs font-bold text-muted-foreground uppercase tracking-wider">Actions</TableHead>
                 </TableRow>
               </TableHeader>
-              <TableBody>
+              <TableBody className={tableLoading ? "opacity-50 pointer-events-none transition-opacity duration-200" : "transition-opacity duration-200"}>
                 {bills.length === 0 ? (
                   <TableRow>
                     <TableCell

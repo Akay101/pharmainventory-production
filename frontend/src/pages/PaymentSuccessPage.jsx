@@ -4,7 +4,7 @@ import { CheckCircle2, ArrowRight, XCircle, Loader2 } from "lucide-react";
 import { Card, CardContent } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import axios from "axios";
-import { API } from "../App";
+import { API, getCookie } from "../App";
 
 export default function PaymentSuccessPage() {
   const location = useLocation();
@@ -25,7 +25,7 @@ export default function PaymentSuccessPage() {
         const res = await axios.post(
           `${API}/payments/verify`,
           { order_id },
-          { headers: { Authorization: `Bearer ${localStorage.getItem("pharmalogy_token")}` } }
+          { headers: { Authorization: `Bearer ${getCookie("pharmalogy_token")}` } }
         );
         if (res.data.status === "already_processed" || res.data.status === "success") {
           setStatus("success");

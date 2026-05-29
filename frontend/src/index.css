@@ -400,7 +400,7 @@ aside.fixed,
 [role="dialog"] .backdrop-blur-sm,
 .fixed.z-\[9999\] [class*="backdrop-blur"], /* Target elements inside AgentWidget */
 .fixed.z-\[9999\], 
-.absolute.z-50.backdrop-blur-md {
+.absolute.backdrop-blur-md {
   /* Dropdowns & Auto-completes */
   backdrop-filter: blur(12px) !important;
   -webkit-backdrop-filter: blur(12px) !important;

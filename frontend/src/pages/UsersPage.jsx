@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useLocation } from "react-router-dom";
 import axios from "axios";
 import { API, useAuth } from "../App";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
@@ -60,8 +61,15 @@ export default function UsersPage() {
     role: "PHARMACIST",
   });
 
+  const location = useLocation();
+
   useEffect(() => {
     fetchUsers();
+    if (location.state?.highlightId) {
+      setTimeout(() => {
+        window.history.replaceState({}, document.title);
+      }, 1000);
+    }
   }, []);
 
   const fetchUsers = async () => {
@@ -361,7 +369,7 @@ export default function UsersPage() {
               </TableRow>
             ) : (
               users.map((user) => (
-                <TableRow key={user.id} data-testid={`user-row-${user.id}`}>
+                <TableRow key={user.id} id={`record-${user.id}`} data-testid={`user-row-${user.id}`}>
                   <TableCell>
                     <div className="flex items-center gap-3">
                       <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center">

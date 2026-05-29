@@ -3,8 +3,9 @@ const router = express.Router();
 const bcrypt = require("bcryptjs");
 const mongoose = require("mongoose");
 const { v4: uuidv4 } = require("uuid");
-const { auth, generateToken } = require("../middleware/auth");
+const { auth, generateToken, parseCookies } = require("../middleware/auth");
 const { sendOTPEmail } = require("../services/email");
+const jwt = require("jsonwebtoken");
 
 const { requireSubscription } = require("../middleware/subscription");
 
@@ -117,7 +118,23 @@ router.post("/verify-otp", async (req, res, next) => {
       );
 
     // Generate token
-    const token = generateToken(user.id);
+    const { token, refreshToken } = generateToken(user.id, user.token_version || 0);
+
+    // Set cookies
+    res.cookie("pharmalogy_token", token, {
+      httpOnly: false,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      path: "/",
+      maxAge: 15 * 60 * 1000 // 15 mins
+    });
+    res.cookie("pharmalogy_refresh_token", refreshToken, {
+      httpOnly: false,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      path: "/",
+      maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+    });
 
     // Get pharmacy
     const pharmacy = await db
@@ -126,7 +143,6 @@ router.post("/verify-otp", async (req, res, next) => {
 
     res.json({
       message: "Email verified successfully",
-      token,
       user: {
         id: user.id,
         name: user.name,
@@ -203,14 +219,29 @@ router.post("/login", async (req, res, next) => {
         .json({ detail: "Email not verified", email: user.email });
     }
 
-    const token = generateToken(user.id);
+    const { token, refreshToken } = generateToken(user.id, user.token_version || 0);
+
+    // Set cookies
+    res.cookie("pharmalogy_token", token, {
+      httpOnly: false,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      path: "/",
+      maxAge: 15 * 60 * 1000 // 15 mins
+    });
+    res.cookie("pharmalogy_refresh_token", refreshToken, {
+      httpOnly: false,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      path: "/",
+      maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+    });
 
     const pharmacy = await db
       .collection("pharmacies")
       .findOne({ id: user.pharmacy_id }, { projection: { _id: 0 } });
 
     res.json({
-      token,
       user: {
         id: user.id,
         name: user.name,
@@ -274,6 +305,97 @@ router.get("/me", auth, async (req, res, next) => {
       user: req.user,
       pharmacy: normalizedPharmacy,
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// POST /api/auth/refresh
+router.post("/refresh", async (req, res, next) => {
+  try {
+    let refreshToken = req.body.refreshToken;
+    if (!refreshToken && req.headers.cookie) {
+      const cookies = parseCookies(req.headers.cookie);
+      refreshToken = cookies['pharmalogy_refresh_token'];
+    }
+
+    if (!refreshToken) {
+      return res.status(401).json({ detail: "Refresh token is required" });
+    }
+
+    const JWT_SECRET = process.env.JWT_SECRET;
+    try {
+      const decoded = jwt.verify(refreshToken, JWT_SECRET);
+      if (decoded.token_type !== "refresh") {
+        return res.status(401).json({ detail: "Invalid token type" });
+      }
+
+      const db = mongoose.connection.db;
+      const user = await db.collection("users").findOne(
+        { id: decoded.user_id },
+        { projection: { _id: 0, password_hash: 0, password: 0 } }
+      );
+
+      if (!user) {
+        return res.status(401).json({ detail: "User not found" });
+      }
+
+      // Verify token version matches user token version
+      if ((decoded.token_version || 0) !== (user.token_version || 0)) {
+        return res.status(401).json({ detail: "Session expired or invalidated" });
+      }
+
+      const tokens = generateToken(user.id, user.token_version || 0);
+
+      // Set cookies
+      res.cookie("pharmalogy_token", tokens.token, {
+        httpOnly: false,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "lax",
+        path: "/",
+        maxAge: 15 * 60 * 1000 // 15 mins
+      });
+      res.cookie("pharmalogy_refresh_token", tokens.refreshToken, {
+        httpOnly: false,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "lax",
+        path: "/",
+        maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+      });
+
+      res.json({ message: "Token refreshed successfully" });
+    } catch (err) {
+      return res.status(401).json({ detail: "Invalid or expired refresh token" });
+    }
+  } catch (error) {
+    next(error);
+  }
+});
+
+// POST /api/auth/logout
+router.post("/logout", auth, async (req, res, next) => {
+  try {
+    const db = mongoose.connection.db;
+    
+    // Invalidate session by incrementing token_version
+    await db.collection("users").updateOne(
+      { id: req.user.id },
+      { $inc: { token_version: 1 } }
+    );
+
+    // Clear cookies
+    res.clearCookie("pharmalogy_token", {
+      path: "/",
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax"
+    });
+    res.clearCookie("pharmalogy_refresh_token", {
+      path: "/",
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax"
+    });
+
+    res.json({ message: "Logged out successfully" });
   } catch (error) {
     next(error);
   }

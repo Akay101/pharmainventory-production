@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams, useLocation } from "react-router-dom";
 import { v4 as uuidv4 } from "uuid";
 import { createPortal } from "react-dom";
 import axios from "axios";
-import { API, useAuth } from "../App";
+import { API, useAuth, getCookie } from "../App";
 import {
   Card,
   CardContent,
@@ -349,6 +349,7 @@ export default function PurchasesPage() {
   const [newItemRow, setNewItemRow] = useState(null);
   const [searchMedicine, setSearchMedicine] = useState("");
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [isMouseOverSuggestions, setIsMouseOverSuggestions] = useState(false);
   const [aiAutofillEnabled, setAiAutofillEnabled] = useState(false);
   const [isAiLoading, setIsAiLoading] = useState(false);
 
@@ -360,6 +361,68 @@ export default function PurchasesPage() {
   const [suggestionPage, setSuggestionPage] = useState(1);
   const [hasMoreSuggestions, setHasMoreSuggestions] = useState(false);
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
+
+  const [applyCgstToAll, setApplyCgstToAll] = useState(false);
+  const [applySgstToAll, setApplySgstToAll] = useState(false);
+
+  const applyCgstToAllRef = useRef(applyCgstToAll);
+  const applySgstToAllRef = useRef(applySgstToAll);
+
+  useEffect(() => {
+    applyCgstToAllRef.current = applyCgstToAll;
+  }, [applyCgstToAll]);
+
+  useEffect(() => {
+    applySgstToAllRef.current = applySgstToAll;
+  }, [applySgstToAll]);
+
+  const handleApplyCgstToAllChange = (checked) => {
+    setApplyCgstToAll(checked);
+    if (checked) {
+      setPurchaseItems((prevItems) => {
+        if (prevItems.length === 0) return prevItems;
+        const firstRowCgst = prevItems[0].cgst;
+        const cgstVal = parseFloat(firstRowCgst) || 0;
+        return prevItems.map((item) => {
+          const updated = { ...item, cgst: firstRowCgst };
+          const qty = parseInt(updated.quantity || updated.pack_quantity) || 1;
+          const ratePack =
+            parseFloat(updated.rate_pack || updated.pack_price) || 0;
+          const sgstVal = parseFloat(updated.sgst) || 0;
+          const base = qty * ratePack;
+          updated.total_amount = (
+            base *
+            (1 + (cgstVal + sgstVal) / 100)
+          ).toFixed(2);
+          return updated;
+        });
+      });
+    }
+  };
+
+  const handleApplySgstToAllChange = (checked) => {
+    setApplySgstToAll(checked);
+    if (checked) {
+      setPurchaseItems((prevItems) => {
+        if (prevItems.length === 0) return prevItems;
+        const firstRowSgst = prevItems[0].sgst;
+        const sgstVal = parseFloat(firstRowSgst) || 0;
+        return prevItems.map((item) => {
+          const updated = { ...item, sgst: firstRowSgst };
+          const qty = parseInt(updated.quantity || updated.pack_quantity) || 1;
+          const ratePack =
+            parseFloat(updated.rate_pack || updated.pack_price) || 0;
+          const cgstVal = parseFloat(updated.cgst) || 0;
+          const base = qty * ratePack;
+          updated.total_amount = (
+            base *
+            (1 + (cgstVal + sgstVal) / 100)
+          ).toFixed(2);
+          return updated;
+        });
+      });
+    }
+  };
 
   // Edit existing purchase
   const [editingPurchase, setEditingPurchase] = useState(null);
@@ -391,6 +454,7 @@ export default function PurchasesPage() {
     top: 0,
     left: 0,
     width: 0,
+    transform: "none",
   });
 
   const setInputRef = (el, itemId) => {
@@ -408,10 +472,17 @@ export default function PurchasesPage() {
     const rect = inputElement.getBoundingClientRect();
     const dropdownWidth = Math.max(rect.width, 480);
 
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const spaceAbove = rect.top;
+    const dropdownMaxHeight = 300; // Purchases Page max height is 300px
+    const positionAbove =
+      spaceBelow < dropdownMaxHeight && spaceAbove > spaceBelow;
+
     setDropdownPosition({
-      top: rect.bottom + 4,
+      top: positionAbove ? rect.top - 4 : rect.bottom + 4,
       left: rect.left,
       width: dropdownWidth,
+      transform: positionAbove ? "translateY(-100%)" : "none",
     });
   };
 
@@ -484,6 +555,8 @@ export default function PurchasesPage() {
   });
   const [searchQuery, setSearchQuery] = useState("");
   const [searchParams, setSearchParams] = useSearchParams();
+  const location = useLocation();
+  const isInitialMount = useRef(true);
   const [filterSupplier, setFilterSupplier] = useState(
     searchParams.get("supplier_id") || "all"
   );
@@ -773,10 +846,12 @@ export default function PurchasesPage() {
   }, []);
 
   const fetchPurchases = useCallback(
-    async (page = 1) => {
+    async (page = 1, highlightId = undefined) => {
       try {
         const params = new URLSearchParams();
-        params.append("page", page);
+        if (!highlightId) {
+          params.append("page", page);
+        }
         params.append("limit", pagination.limit);
         params.append("sort_by", sortBy);
         params.append("sort_order", sortOrder);
@@ -785,12 +860,28 @@ export default function PurchasesPage() {
           params.append("supplier_id", filterSupplier);
         if (startDate) params.append("start_date", startDate);
         if (endDate) params.append("end_date", endDate);
+        if (highlightId) params.append("highlight_id", highlightId);
 
         const response = await axios.get(
           `${API}/purchases?${params.toString()}`
         );
         setPurchases(response.data.purchases);
         setPagination(response.data.pagination);
+
+        if (highlightId) {
+          setTimeout(() => {
+            setExpandedPurchase(highlightId);
+            const el = document.getElementById(`record-${highlightId}`);
+            if (el) {
+              el.scrollIntoView({ behavior: "smooth", block: "center" });
+              el.classList.add("bg-primary/20", "transition-all", "duration-1000");
+              setTimeout(() => {
+                el.classList.remove("bg-primary/20");
+              }, 3000);
+            }
+            window.history.replaceState({}, document.title);
+          }, 300);
+        }
       } catch (error) {
         toast.error("Failed to load purchases");
       }
@@ -811,6 +902,12 @@ export default function PurchasesPage() {
   }, []);
 
   useEffect(() => {
+    if (isInitialMount.current) {
+      isInitialMount.current = false;
+      if (location.state?.highlightId) {
+        return;
+      }
+    }
     const debounce = setTimeout(() => {
       fetchPurchases(1);
     }, 300);
@@ -904,7 +1001,12 @@ export default function PurchasesPage() {
       });
 
       setSuppliers(combined);
-      await fetchPurchases(1);
+      const hlId = location.state?.highlightId;
+      if (hlId) {
+        await fetchPurchases(1, hlId);
+      } else {
+        await fetchPurchases(1);
+      }
     } catch (error) {
       toast.error("Failed to load data");
     } finally {
@@ -954,6 +1056,8 @@ export default function PurchasesPage() {
     setPurchaseDate(new Date().toISOString().slice(0, 10));
     setNewItemRow(null);
     setShowSuggestions(false);
+    setApplyCgstToAll(false);
+    setApplySgstToAll(false);
     clearDraft();
   };
 
@@ -974,8 +1078,20 @@ export default function PurchasesPage() {
 
   // Add new empty row to items
   const handleAddNewRow = () => {
-    const newRow = { ...emptyItem, id: `temp-${Date.now()}` };
-    setPurchaseItems((prev) => [...prev, newRow]);
+    setPurchaseItems((prev) => {
+      let cgst = "";
+      let sgst = "";
+      if (prev.length > 0) {
+        if (applyCgstToAllRef.current) {
+          cgst = prev[0].cgst;
+        }
+        if (applySgstToAllRef.current) {
+          sgst = prev[0].sgst;
+        }
+      }
+      const newRow = { ...emptyItem, id: `temp-${Date.now()}`, cgst, sgst };
+      return [...prev, newRow];
+    });
     // Focus the last row's product input after render
     setTimeout(() => productInputRef.current?.focus(), 100);
   };
@@ -1208,40 +1324,87 @@ export default function PurchasesPage() {
 
   // Handle field change with bidirectional calculation for Rate/Total
   const handleItemFieldChangeWithCalc = (itemId, field, value) => {
-    setPurchaseItems((prev) =>
-      prev.map((item) => {
-        if (item.id !== itemId) return item;
+    setPurchaseItems((prev) => {
+      const isFirstRow = prev.length > 0 && prev[0].id === itemId;
+      if (!isFirstRow) {
+        if (field === "cgst" && applyCgstToAllRef.current) {
+          setTimeout(() => setApplyCgstToAll(false), 0);
+        }
+        if (field === "sgst" && applySgstToAllRef.current) {
+          setTimeout(() => setApplySgstToAll(false), 0);
+        }
+      }
 
-        const updated = { ...item, [field]: value };
+      const shouldPropagateCgst =
+        isFirstRow && field === "cgst" && applyCgstToAllRef.current;
+      const shouldPropagateSgst =
+        isFirstRow && field === "sgst" && applySgstToAllRef.current;
 
-        if (field === "rate_pack" || field === "total_amount") {
+      return prev.map((item) => {
+        const isTarget = item.id === itemId;
+        if (!isTarget && !shouldPropagateCgst && !shouldPropagateSgst)
+          return item;
+
+        let updatedValue = isTarget ? value : item[field];
+        if (field === "cgst" && shouldPropagateCgst) {
+          updatedValue = value;
+        }
+        if (field === "sgst" && shouldPropagateSgst) {
+          updatedValue = value;
+        }
+
+        const updated = { ...item, [field]: updatedValue };
+
+        if (isTarget && (field === "rate_pack" || field === "total_amount")) {
           updated._is_auto_filled_rate = false;
         }
 
         const qty =
-          parseInt(field === "quantity" ? value : (updated.quantity || updated.pack_quantity)) || 1;
+          parseInt(
+            field === "quantity" && isTarget
+              ? value
+              : updated.quantity || updated.pack_quantity
+          ) || 1;
         const ratePack =
-          parseFloat(field === "rate_pack" ? value : (updated.rate_pack || updated.pack_price)) || 0;
+          parseFloat(
+            field === "rate_pack" && isTarget
+              ? value
+              : updated.rate_pack || updated.pack_price
+          ) || 0;
         const cgstVal =
-          parseFloat(field === "cgst" ? value : updated.cgst) || 0;
+          parseFloat(
+            field === "cgst" && (isTarget || shouldPropagateCgst)
+              ? value
+              : updated.cgst
+          ) || 0;
         const sgstVal =
-          parseFloat(field === "sgst" ? value : updated.sgst) || 0;
+          parseFloat(
+            field === "sgst" && (isTarget || shouldPropagateSgst)
+              ? value
+              : updated.sgst
+          ) || 0;
 
         const base = qty * ratePack;
 
         if (
-          field === "cgst" ||
-          field === "sgst" ||
-          field === "quantity" ||
-          field === "rate_pack"
+          (field === "cgst" && (isTarget || shouldPropagateCgst)) ||
+          (field === "sgst" && (isTarget || shouldPropagateSgst)) ||
+          (field === "quantity" && isTarget) ||
+          (field === "rate_pack" && isTarget)
         ) {
           // Recalculate total_amount to include GST
-          updated.total_amount = (base * (1 + (cgstVal + sgstVal) / 100)).toFixed(2);
-        } else if (field === "total_amount") {
+          updated.total_amount = (
+            base *
+            (1 + (cgstVal + sgstVal) / 100)
+          ).toFixed(2);
+        } else if (field === "total_amount" && isTarget) {
           const newTotal = parseFloat(value) || 0;
           if (base > 0) {
             const totalTaxRate = ((newTotal - base) / base) * 100;
-            const halfTax = Math.max(0, parseFloat((totalTaxRate / 2).toFixed(2)));
+            const halfTax = Math.max(
+              0,
+              parseFloat((totalTaxRate / 2).toFixed(2))
+            );
             updated.cgst = String(halfTax);
             updated.sgst = String(halfTax);
           } else {
@@ -1252,8 +1415,8 @@ export default function PurchasesPage() {
         }
 
         return updated;
-      })
-    );
+      });
+    });
 
     // // Check price history when rate_pack is entered
     // if (field === "rate_pack" && value !== "") {
@@ -1273,7 +1436,7 @@ export default function PurchasesPage() {
     if (!productName || !currentPrice || currentPrice <= 0) return;
 
     try {
-      const token = localStorage.getItem("token");
+      const token = getCookie("pharmalogy_token");
       const response = await axios.get(`${API}/purchases/price-history`, {
         params: { product_name: productName, current_price: currentPrice },
         headers: { Authorization: `Bearer ${token}` },
@@ -1306,7 +1469,7 @@ export default function PurchasesPage() {
     }
 
     try {
-      const token = localStorage.getItem("token");
+      const token = getCookie("pharmalogy_token");
 
       const response = await axios.get(`${API}/purchases/price-history`, {
         params: { product_name: productName, current_price: currentPrice },
@@ -1409,43 +1572,95 @@ export default function PurchasesPage() {
       "";
 
     const ratePackFixed = ratePack.toFixed(2);
-    const cgstVal = isInventory && medicine.cgst !== undefined ? parseFloat(medicine.cgst) || 0 : 0;
-    const sgstVal = isInventory && medicine.sgst !== undefined ? parseFloat(medicine.sgst) || 0 : 0;
 
-    setPurchaseItems((prev) =>
-      prev.map((item) => {
-        if (item.id !== itemId) return item;
+    setPurchaseItems((prev) => {
+      const isFirstRow = prev.length > 0 && prev[0].id === itemId;
+      const finalCgst =
+        isInventory && medicine.cgst !== undefined ? String(medicine.cgst) : "";
+      const finalSgst =
+        isInventory && medicine.sgst !== undefined ? String(medicine.sgst) : "";
 
-        const qty = parseInt(item.quantity) || 1;
+      const shouldPropagateCgst = isFirstRow && applyCgstToAllRef.current;
+      const shouldPropagateSgst = isFirstRow && applySgstToAllRef.current;
+      return prev.map((item) => {
+        if (item.id !== itemId && !shouldPropagateCgst && !shouldPropagateSgst)
+          return item;
 
-        return {
-          ...item,
-          product_id: medicine.id || `med-${Date.now()}`,
-          product_name: medicine.product_name || medicine.name,
-          manufacturer,
-          salt_composition,
-          units: String(unitsPerPack),
-          rate_pack: ratePackFixed,
-          mrp_pack: mrpPack.toFixed(2),
-          total_amount: (qty * ratePack * (1 + (cgstVal + sgstVal) / 100)).toFixed(2),
-          cgst: isInventory && medicine.cgst !== undefined ? String(medicine.cgst) : "",
-          sgst: isInventory && medicine.sgst !== undefined ? String(medicine.sgst) : "",
-          _is_auto_filled_rate: true,
+        const qty =
+          parseInt(
+            item.id === itemId
+              ? item.quantity
+              : item.quantity || item.pack_quantity
+          ) || 1;
+        const currentRatePack =
+          item.id === itemId
+            ? ratePack
+            : parseFloat(item.rate_pack || item.pack_price) || 0;
 
-          // Store inventory metadata for visual indicators
-          _inventoryMeta: isInventory
-            ? {
-                batch_no: medicine.batch_no,
-                expiry_date: medicine.expiry_date,
-                available_quantity: medicine.available_quantity,
-                stock_status: medicine.stock_status,
-                last_supplier: medicine.supplier_name,
-                match_quality: medicine.matchQuality, // 'exact', 'good', or 'fuzzy'
-              }
-            : null,
-        };
-      })
-    );
+        let cgstStr = item.cgst;
+        if (item.id === itemId) {
+          cgstStr = finalCgst;
+        } else if (shouldPropagateCgst) {
+          cgstStr = finalCgst;
+        }
+
+        let sgstStr = item.sgst;
+        if (item.id === itemId) {
+          sgstStr = finalSgst;
+        } else if (shouldPropagateSgst) {
+          sgstStr = finalSgst;
+        }
+
+        const currentCgstVal = parseFloat(cgstStr) || 0;
+        const currentSgstVal = parseFloat(sgstStr) || 0;
+
+        const base = qty * currentRatePack;
+        const total = (
+          base *
+          (1 + (currentCgstVal + currentSgstVal) / 100)
+        ).toFixed(2);
+
+        if (item.id === itemId) {
+          return {
+            ...item,
+            product_id: medicine.id || `med-${Date.now()}`,
+            product_name: medicine.product_name || medicine.name,
+            manufacturer,
+            salt_composition,
+            units: String(unitsPerPack),
+            rate_pack: ratePackFixed,
+            mrp_pack: mrpPack.toFixed(2),
+            total_amount: total,
+            cgst: cgstStr,
+            sgst: sgstStr,
+            _is_auto_filled_rate: true,
+
+            // Store inventory metadata for visual indicators
+            _inventoryMeta: isInventory
+              ? {
+                  batch_no: medicine.batch_no,
+                  expiry_date: medicine.expiry_date,
+                  available_quantity: medicine.available_quantity,
+                  stock_status: medicine.stock_status,
+                  last_supplier: medicine.supplier_name,
+                  match_quality: medicine.matchQuality, // 'exact', 'good', or 'fuzzy'
+                }
+              : null,
+          };
+        } else {
+          // Propagated row updates
+          const updated = { ...item };
+          if (shouldPropagateCgst) {
+            updated.cgst = cgstStr;
+          }
+          if (shouldPropagateSgst) {
+            updated.sgst = sgstStr;
+          }
+          updated.total_amount = total;
+          return updated;
+        }
+      });
+    });
 
     // Call silent ping immediately so if the loaded price is high, it highlights!
     checkPriceHistorySilent(
@@ -1457,6 +1672,8 @@ export default function PurchasesPage() {
     setSearchMedicine("");
     setMedicineSuggestions([]);
     setShowSuggestions(false);
+    setIsMouseOverSuggestions(false);
+    setActiveItemId(null);
 
     // Optional: Show toast for fuzzy matches
     if (isInventory && medicine.matchQuality === "fuzzy") {
@@ -1678,9 +1895,16 @@ export default function PurchasesPage() {
       rate_pack: item.pack_price || 0,
       mrp_pack:
         item.mrp_pack || (item.mrp_per_unit || 0) * (item.units_per_pack || 1),
-      total_amount: item.item_total !== undefined && item.item_total !== null
-        ? String(item.item_total)
-        : ((item.pack_quantity || item.quantity || 1) * (item.pack_price || 0) * (1 + ((parseFloat(item.cgst) || 0) + (parseFloat(item.sgst) || 0)) / 100)).toFixed(2),
+      total_amount:
+        item.item_total !== undefined && item.item_total !== null
+          ? String(item.item_total)
+          : (
+              (item.pack_quantity || item.quantity || 1) *
+              (item.pack_price || 0) *
+              (1 +
+                ((parseFloat(item.cgst) || 0) + (parseFloat(item.sgst) || 0)) /
+                  100)
+            ).toFixed(2),
       cgst: item.cgst !== undefined ? item.cgst : "",
       sgst: item.sgst !== undefined ? item.sgst : "",
     }));
@@ -2399,11 +2623,37 @@ export default function PurchasesPage() {
                     <TableHead className="w-[100px] font-bold text-foreground">
                       Expiry
                     </TableHead>
-                    <TableHead className="w-[70px] text-center font-bold text-foreground">
-                      CGST (%)
+                    <TableHead className="w-[95px] text-center font-bold text-foreground">
+                      <div className="flex flex-col items-center gap-1 py-1">
+                        <span>CGST (%)</span>
+                        <label className="flex items-center gap-1 cursor-pointer select-none text-[10px] font-medium text-muted-foreground/80 hover:text-foreground">
+                          <input
+                            type="checkbox"
+                            checked={applyCgstToAll}
+                            onChange={(e) =>
+                              handleApplyCgstToAllChange(e.target.checked)
+                            }
+                            className="h-3.5 w-3.5 rounded border border-border/80 text-primary focus:ring-1 focus:ring-primary cursor-pointer transition-colors"
+                          />
+                          Apply All
+                        </label>
+                      </div>
                     </TableHead>
-                    <TableHead className="w-[70px] text-center font-bold text-foreground">
-                      SGST (%)
+                    <TableHead className="w-[95px] text-center font-bold text-foreground">
+                      <div className="flex flex-col items-center gap-1 py-1">
+                        <span>SGST (%)</span>
+                        <label className="flex items-center gap-1 cursor-pointer select-none text-[10px] font-medium text-muted-foreground/80 hover:text-foreground">
+                          <input
+                            type="checkbox"
+                            checked={applySgstToAll}
+                            onChange={(e) =>
+                              handleApplySgstToAllChange(e.target.checked)
+                            }
+                            className="h-3.5 w-3.5 rounded border border-border/80 text-primary focus:ring-1 focus:ring-primary cursor-pointer transition-colors"
+                          />
+                          Apply All
+                        </label>
+                      </div>
                     </TableHead>
                     <TableHead className="w-[60px] text-center font-bold text-foreground">
                       Qty *
@@ -2491,33 +2741,32 @@ export default function PurchasesPage() {
                                 setHighlightedSuggestionIndex(-1);
                               }}
                               onBlur={(e) => {
-                                // Check if focus is moving to the suggestions dropdown
-                                const relatedTarget = e.relatedTarget;
-                                const isMovingToSuggestions =
-                                  relatedTarget?.closest?.(
-                                    "[data-suggestions-dropdown]"
-                                  );
-
-                                if (!isMovingToSuggestions) {
-                                  setTimeout(() => {
-                                    if (
-                                      aiAutofillEnabled &&
-                                      item.product_name &&
-                                      item.product_name.length > 2 &&
-                                      !item._inventoryMeta &&
-                                      !item.salt_composition &&
-                                      !item.manufacturer
-                                    ) {
-                                      handleSelectAiMedicineForItem(
-                                        item.id,
-                                        item.product_name
-                                      );
-                                    }
-                                    setShowSuggestions(false);
-                                    setActiveItemId(null);
-                                    setHighlightedSuggestionIndex(-1);
-                                  }, 200);
-                                }
+                                const currentId = item.id;
+                                setTimeout(() => {
+                                  if (!isMouseOverSuggestions) {
+                                    setActiveItemId((prev) => {
+                                      if (prev === currentId) {
+                                        if (
+                                          aiAutofillEnabled &&
+                                          item.product_name &&
+                                          item.product_name.length > 2 &&
+                                          !item._inventoryMeta &&
+                                          !item.salt_composition &&
+                                          !item.manufacturer
+                                        ) {
+                                          handleSelectAiMedicineForItem(
+                                            item.id,
+                                            item.product_name
+                                          );
+                                        }
+                                        setShowSuggestions(false);
+                                        setHighlightedSuggestionIndex(-1);
+                                        return null;
+                                      }
+                                      return prev;
+                                    });
+                                  }
+                                }, 200);
                               }}
                               onKeyDown={(e) => {
                                 const hasAiOption = searchMedicine.length > 1;
@@ -2630,12 +2879,29 @@ export default function PurchasesPage() {
                               <div
                                 data-suggestions-dropdown="true"
                                 className="bg-card/95 backdrop-blur-xl border border-border/80 rounded-xl shadow-2xl overflow-y-auto z-[99999]"
+                                onMouseEnter={() =>
+                                  setIsMouseOverSuggestions(true)
+                                }
+                                onMouseLeave={() => {
+                                  setIsMouseOverSuggestions(false);
+                                  const activeInput =
+                                    inputRefs.current[activeItemId];
+                                  if (
+                                    activeInput &&
+                                    document.activeElement !== activeInput
+                                  ) {
+                                    setShowSuggestions(false);
+                                    setActiveItemId(null);
+                                  }
+                                }}
                                 style={{
                                   position: "fixed",
                                   top: dropdownPosition.top,
                                   left: dropdownPosition.left,
                                   width: dropdownPosition.width || 480,
                                   maxHeight: "300px",
+                                  transform:
+                                    dropdownPosition.transform || "none",
                                   overscrollBehavior: "contain",
                                   WebkitOverflowScrolling: "touch",
                                 }}
@@ -2643,7 +2909,7 @@ export default function PurchasesPage() {
                               >
                                 {/* Match Quality Summary */}
                                 {medicineSuggestions[0]?.matchQuality && (
-                                  <div className="px-3 py-2 bg-muted/50 border-b border-border text-xs text-muted-foreground flex gap-3 sticky top-0">
+                                  <div className="px-3 py-2 bg-muted border-b border-border text-xs text-muted-foreground flex gap-3 sticky top-0 z-10">
                                     {/* <span>
                                         Exact:{" "}
                                         {
@@ -2839,6 +3105,7 @@ export default function PurchasesPage() {
                                 {!loadingSuggestions &&
                                   searchMedicine.length > 1 && (
                                     <div
+                                      id={`purchases-suggestion-${medicineSuggestions.length}`}
                                       className={`p-3 cursor-pointer border-t border-indigo-100 dark:border-indigo-500/20 bg-indigo-50/50 dark:bg-indigo-500/10 hover:bg-indigo-100/50 dark:hover:bg-indigo-500/20 transition-colors ${
                                         highlightedSuggestionIndex ===
                                         medicineSuggestions.length
@@ -3855,10 +4122,14 @@ export default function PurchasesPage() {
                                         ₹{mrpPerUnit.toFixed(2)}
                                       </TableCell>
                                       <TableCell className="text-center font-mono">
-                                        {item.cgst !== undefined ? `${item.cgst}%` : "0%"}
+                                        {item.cgst !== undefined
+                                          ? `${item.cgst}%`
+                                          : "0%"}
                                       </TableCell>
                                       <TableCell className="text-center font-mono">
-                                        {item.sgst !== undefined ? `${item.sgst}%` : "0%"}
+                                        {item.sgst !== undefined
+                                          ? `${item.sgst}%`
+                                          : "0%"}
                                       </TableCell>
                                       <TableCell className="text-right font-mono">
                                         ₹{total.toFixed(2)}

@@ -31,6 +31,7 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
       limit = 20,
       sort_by = "billing_date", // ✅ default changed
       sort_order = "desc",
+      highlight_id,
     } = req.query;
 
     const query = { pharmacy_id: req.user.pharmacy_id };
@@ -39,7 +40,13 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
       query.$or = [
         { bill_no: { $regex: search, $options: "i" } },
         { customer_name: { $regex: search, $options: "i" } },
+        { customer_mobile: { $regex: search, $options: "i" } },
+        { customer_email: { $regex: search, $options: "i" } },
+        { doctor: { $regex: search, $options: "i" } },
+        { notes: { $regex: search, $options: "i" } },
+        { billing_date: { $regex: search, $options: "i" } },
         { "items.product_name": { $regex: search, $options: "i" } },
+        { "items.batch_no": { $regex: search, $options: "i" } },
       ];
     }
 
@@ -59,7 +66,6 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
       if (end_date) query.billing_date.$lte = end_date;
     }
 
-    const skip = (parseInt(page) - 1) * parseInt(limit);
     const sortDir = sort_order === "asc" ? 1 : -1;
 
     // 🧠 Smart sorting logic
@@ -67,6 +73,22 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
       sort_by === "billing_date"
         ? { billing_date: sortDir, created_at: sortDir }
         : { [sort_by]: sortDir };
+
+    let pageNum = parseInt(page);
+    if (highlight_id) {
+      const allBillsIds = await db
+        .collection("bills")
+        .find(query)
+        .sort(sortOptions)
+        .project({ id: 1 })
+        .toArray();
+      const targetIndex = allBillsIds.findIndex((b) => b.id === highlight_id);
+      if (targetIndex !== -1) {
+        pageNum = Math.floor(targetIndex / parseInt(limit)) + 1;
+      }
+    }
+
+    const skip = (parseInt(pageNum) - 1) * parseInt(limit);
 
     const bills = await db
       .collection("bills")
@@ -88,7 +110,7 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
     res.json({
       bills: processedBills,
       pagination: {
-        page: parseInt(page),
+        page: pageNum,
         limit: parseInt(limit),
         total,
         total_pages: Math.ceil(total / parseInt(limit)) || 1,

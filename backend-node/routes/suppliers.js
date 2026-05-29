@@ -11,7 +11,7 @@ const { requireSubscription } = require("../middleware/subscription");
 router.get("/", auth, requireSubscription(), async (req, res, next) => {
   try {
     const db = mongoose.connection.db;
-    const { search, page = 1, limit = 50 } = req.query;
+    const { search, page = 1, limit = 50, highlight_id } = req.query;
 
     const query = { pharmacy_id: req.user.pharmacy_id };
     if (search) {
@@ -21,7 +21,20 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
       ];
     }
 
-    const skip = (parseInt(page) - 1) * parseInt(limit);
+    let pageNum = parseInt(page);
+    if (highlight_id) {
+      const allSups = await db
+        .collection("suppliers")
+        .find(query)
+        .project({ id: 1 })
+        .toArray();
+      const targetIndex = allSups.findIndex((s) => s.id === highlight_id);
+      if (targetIndex !== -1) {
+        pageNum = Math.floor(targetIndex / parseInt(limit)) + 1;
+      }
+    }
+
+    const skip = (parseInt(pageNum) - 1) * parseInt(limit);
     const suppliers = await db
       .collection("suppliers")
       .find(query, { projection: { _id: 0 } })
@@ -55,7 +68,7 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
     res.json({
       suppliers: augmentedSuppliers,
       pagination: {
-        page: parseInt(page),
+        page: pageNum,
         limit: parseInt(limit),
         total,
         total_pages: Math.ceil(total / parseInt(limit)) || 1,
