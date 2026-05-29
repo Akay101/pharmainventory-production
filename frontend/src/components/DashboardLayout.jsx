@@ -375,7 +375,7 @@ export default function DashboardLayout() {
     >
       {/* Desktop Sidebar (Collapsible) */}
       <aside
-        className={`border-r border-border/40 bg-card/25 backdrop-blur-xl hidden md:flex flex-col fixed h-full z-50 transition-all duration-300 ease-in-out ${
+        className={`border-r border-border/40 bg-card/25 backdrop-blur-xl hidden md:flex flex-col fixed h-full z-50 transition-[width] duration-300 ease-in-out ${
           sidebarCollapsed ? "w-16" : "w-64"
         }`}
       >
@@ -384,12 +384,12 @@ export default function DashboardLayout() {
 
       {/* Main Content Layout Wrapper */}
       <div
-        className={`flex-1 flex flex-col min-h-screen transition-all duration-300 ease-in-out ${
+        className={`flex-1 flex flex-col min-h-screen transition-[margin-left] duration-300 ease-in-out ${
           sidebarCollapsed ? "md:ml-16" : "md:ml-64"
         }`}
       >
         {/* Floating Glassy Header */}
-        <header className="h-16 border-b border-border/40 bg-card/25 backdrop-blur-xl sticky top-0 z-40 w-full transition-all">
+        <header className="h-16 border-b border-border/40 bg-card/25 backdrop-blur-xl sticky top-0 z-40 w-full">
           <div className="h-full px-4 md:px-6 flex items-center justify-between">
             {/* Mobile Menu Trigger */}
             <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>

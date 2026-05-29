@@ -355,7 +355,6 @@ export default function AgentWidget({ user }) {
         <AnimatePresence mode="wait">
           {isOpen && (
             <motion.div
-              layout
               initial={{ opacity: 0, y: 20, scale: 0.95, width: 420 }}
               animate={{ 
                 opacity: 1, 
@@ -367,7 +366,6 @@ export default function AgentWidget({ user }) {
               }}
               exit={{ opacity: 0, y: 20, scale: 0.95 }}
               transition={{ 
-                layout: { type: "spring", stiffness: 200, damping: 25 },
                 width: { duration: 0.4, ease: "easeInOut" },
                 height: { duration: 0.4, ease: "easeInOut" }
               }}
@@ -581,7 +579,11 @@ export default function AgentWidget({ user }) {
                   {isLoading && (
                     <div className="flex justify-start items-center ml-9 gap-1 h-6">
                       {[0, 1, 2].map(i => (
-                        <motion.div key={i} className="w-1.5 h-1.5 bg-indigo-400 rounded-full" animate={{ y: [0, -5, 0] }} transition={{ repeat: Infinity, duration: 0.6, delay: i * 0.15 }} />
+                        <div
+                          key={i}
+                          className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce-custom"
+                          style={{ animationDelay: `${i * 0.15}s` }}
+                        />
                       ))}
                     </div>
                   )}

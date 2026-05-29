@@ -93,7 +93,7 @@ const StatCard = ({
   };
 
   return (
-    <Card className="group hover:border-primary/30 dark:hover:border-primary/20 transition-all duration-300 relative overflow-hidden bg-card/45 backdrop-blur-sm border-border/40 shadow-sm hover:shadow-md rounded-xl">
+    <Card className="group hover:border-primary/30 dark:hover:border-primary/20 transition-colors duration-300 relative overflow-hidden bg-card/90 border-border/40 shadow-sm hover:shadow-md rounded-xl">
       <div className="absolute top-0 left-0 w-full h-[1.5px] bg-gradient-to-r from-transparent via-primary/30 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
       <CardContent className="p-5 flex items-start justify-between">
         <div className="space-y-1.5 min-w-0">
@@ -394,7 +394,7 @@ export default function DashboardPage() {
       {/* Charts Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Sales Trend Chart */}
-        <Card className="bg-card/45 border-border/40 backdrop-blur-sm shadow-sm rounded-xl overflow-hidden">
+        <Card className="bg-card/90 border-border/40 shadow-sm rounded-xl overflow-hidden">
           <CardHeader className="border-b border-border/40 py-4">
             <CardTitle className="text-sm font-bold tracking-tight text-foreground flex items-center gap-2">
               <TrendingUp className="w-4 h-4 text-primary" />
@@ -429,7 +429,7 @@ export default function DashboardPage() {
                     content={({ active, payload, label }) => {
                       if (active && payload && payload.length) {
                         return (
-                          <div className="bg-card/95 border border-border/50 rounded-xl p-3 shadow-xl backdrop-blur-md">
+                          <div className="bg-card/95 border border-border/50 rounded-xl p-3 shadow-xl">
                             <p className="text-[9px] font-bold text-muted-foreground/80 mb-1">
                               {label}
                             </p>
@@ -448,6 +448,7 @@ export default function DashboardPage() {
                     stroke="hsl(var(--primary))"
                     strokeWidth={3}
                     dot={false}
+                    isAnimationActive={false}
                     activeDot={{
                       r: 5,
                       strokeWidth: 0,
@@ -461,7 +462,7 @@ export default function DashboardPage() {
         </Card>
 
         {/* Top Selling Products Chart */}
-        <Card className="bg-card/45 border-border/40 backdrop-blur-sm shadow-sm rounded-xl overflow-hidden">
+        <Card className="bg-card/90 border-border/40 shadow-sm rounded-xl overflow-hidden">
           <CardHeader className="border-b border-border/40 py-4 flex flex-row items-center justify-between flex-wrap gap-2">
             <div>
               <CardTitle className="text-sm font-bold tracking-tight text-foreground flex items-center gap-2">
@@ -508,7 +509,7 @@ export default function DashboardPage() {
                     content={({ active, payload }) => {
                       if (active && payload && payload.length) {
                         return (
-                          <div className="bg-card/95 border border-border/50 rounded-xl p-3 shadow-xl backdrop-blur-md">
+                          <div className="bg-card/95 border border-border/50 rounded-xl p-3 shadow-xl">
                             <p className="text-[9px] font-bold text-muted-foreground/80 mb-0.5 truncate max-w-[150px]">
                               {payload[0].payload.product_name}
                             </p>
@@ -525,6 +526,7 @@ export default function DashboardPage() {
                     dataKey="revenue"
                     fill="hsl(var(--accent))"
                     radius={[0, 4, 4, 0]}
+                    isAnimationActive={false}
                   />
                 </BarChart>
               </ResponsiveContainer>
@@ -536,7 +538,7 @@ export default function DashboardPage() {
       {/* Alerts and AI Insights Panel Row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Inventory Alerts Card */}
-        <Card className="bg-card/45 border-border/40 backdrop-blur-sm shadow-sm rounded-xl overflow-hidden">
+        <Card className="bg-card/90 border-border/40 shadow-sm rounded-xl overflow-hidden">
           <CardHeader className="border-b border-border/40 py-4">
             <CardTitle className="text-sm font-bold tracking-tight text-foreground flex items-center gap-2">
               <AlertTriangle className="w-4 h-4 text-primary" />
@@ -613,7 +615,7 @@ export default function DashboardPage() {
         </Card>
 
         {/* AI Business Insights Card */}
-        <Card className="bg-card/45 border-border/40 backdrop-blur-sm shadow-sm rounded-xl overflow-hidden">
+        <Card className="bg-card/90 border-border/40 shadow-sm rounded-xl overflow-hidden">
           <CardHeader className="border-b border-border/40 py-4 flex flex-row items-center justify-between">
             <CardTitle className="text-sm font-bold tracking-tight text-foreground flex items-center gap-2">
               <Sparkles className="w-4 h-4 text-accent" />
@@ -664,7 +666,7 @@ export default function DashboardPage() {
 
       {/* Debt summary Ledger Card */}
       {debtSummary && debtSummary.total_debt > 0 && (
-        <Card className="bg-card/45 border-border/40 backdrop-blur-sm shadow-sm rounded-xl overflow-hidden">
+        <Card className="bg-card/90 border-border/40 shadow-sm rounded-xl overflow-hidden">
           <CardHeader className="border-b border-border/40 py-4 bg-muted/20">
             <CardTitle className="text-sm font-bold tracking-tight text-foreground flex items-center gap-2">
               <Receipt className="w-4 h-4 text-amber-500" />
@@ -765,7 +767,7 @@ export default function DashboardPage() {
 
       {/* Supplier payables ledger card */}
       {supplierDues && supplierDues.total_due > 0 && (
-        <Card className="bg-card/45 border-border/40 backdrop-blur-sm shadow-sm rounded-xl overflow-hidden">
+        <Card className="bg-card/90 border-border/40 shadow-sm rounded-xl overflow-hidden">
           <CardHeader className="border-b border-border/40 py-4 bg-muted/20">
             <CardTitle className="text-sm font-bold tracking-tight text-foreground flex items-center gap-2">
               <Truck className="w-4 h-4 text-primary" />

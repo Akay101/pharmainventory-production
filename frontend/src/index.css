@@ -114,11 +114,13 @@ div[style*="Made with Emergent"] {
 
 /* Glass morphism */
 .glass {
-  @apply backdrop-blur-xl bg-card/60 border border-border;
+  background-color: hsl(var(--card) / 0.85);
+  border: 1px solid hsl(var(--border) / 0.55);
 }
 
 .glass-heavy {
-  @apply backdrop-blur-2xl bg-background/80 border-b border-border;
+  background-color: hsl(var(--background) / 0.95);
+  border-bottom: 1px solid hsl(var(--border) / 0.7);
 }
 
 /* Stat card glow effect */
@@ -138,7 +140,7 @@ div[style*="Made with Emergent"] {
 
 /* Table styles */
 .data-table {
-  @apply rounded-xl border border-border overflow-hidden bg-card/30 backdrop-blur-sm;
+  @apply rounded-xl border border-border overflow-hidden bg-card/30;
 }
 
 .data-table th {
@@ -201,7 +203,7 @@ select {
 
 /* Sidebar styles */
 .sidebar-link {
-  @apply flex items-center gap-3 px-4 py-3 rounded-lg text-muted-foreground hover:text-foreground hover:bg-white/5 transition-all duration-200 cursor-pointer select-none;
+  @apply flex items-center gap-3 px-4 py-3 rounded-lg text-muted-foreground hover:text-foreground hover:bg-white/5 transition-colors duration-200 cursor-pointer select-none;
 }
 
 /* 🎯 Unified Active State - Bold Solid Background Box */
@@ -339,4 +341,62 @@ header.sticky.top-0 {
 div.activity-sidebar.fixed {
   top: 28px !important;
   height: calc(100vh - 28px) !important;
+}
+
+/* ----------------------------------------------------
+   UI Performance Optimizations for Chrome & Safari
+   ---------------------------------------------------- */
+
+/* 1. Global backdrop-blur override for static elements */
+.backdrop-blur-sm,
+.backdrop-blur-md,
+.backdrop-blur,
+.backdrop-blur-lg,
+.backdrop-blur-xl,
+.backdrop-blur-2xl,
+.backdrop-blur-3xl {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* 2. Selective high-performance blur only on true floating/modal/layout layers */
+header.sticky,
+aside.fixed,
+.activity-sidebar [class*="backdrop-blur"], /* Target child elements with backdrop-blur inside sidebar */
+.dialog-overlay,
+.DialogContent,
+.AlertDialogContent,
+[role="dialog"],
+[role="dialog"] .backdrop-blur-xl,
+[role="dialog"] .backdrop-blur-md,
+[role="dialog"] .backdrop-blur-sm,
+.fixed.z-\[9999\] [class*="backdrop-blur"], /* Target elements inside AgentWidget */
+.fixed.z-\[9999\], 
+.absolute.z-50.backdrop-blur-md { /* Dropdowns & Auto-completes */
+  backdrop-filter: blur(12px) !important;
+  -webkit-backdrop-filter: blur(12px) !important;
+}
+
+/* 2b. GPU compositor layer promotion for non-animating layout layers (excludes animating sidebar container transform overrides) */
+header.sticky,
+aside.fixed,
+.DialogContent,
+.AlertDialogContent,
+.fixed.z-\[9999\] {
+  transform: translateZ(0);
+  will-change: transform;
+}
+
+/* 3. Accelerated native animation for the Agent widget typing indicator */
+@keyframes bounce-custom {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-5px);
+  }
+}
+
+.animate-bounce-custom {
+  animation: bounce-custom 0.6s ease-in-out infinite;
 }
