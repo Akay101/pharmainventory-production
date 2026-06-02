@@ -27,7 +27,7 @@ const auth = async (req, res, next) => {
       token = cookies['pharmalogy_token'];
     }
 
-    if (!token) {
+    if (!token || token === 'undefined' || token === 'null') {
       return res.status(401).json({ detail: 'Not authenticated' });
     }
 
