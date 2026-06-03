@@ -89,12 +89,8 @@ const AuthProvider = ({ children }) => {
   }, []);
 
   useEffect(() => {
-    if (token) {
-      fetchUser();
-    } else {
-      setLoading(false);
-    }
-  }, [token]);
+    fetchUser();
+  }, []);
 
   const fetchSettings = async () => {
     try {
@@ -130,13 +126,18 @@ const AuthProvider = ({ children }) => {
       const response = await axios.get(`${API}/auth/me`);
       setUser(response.data.user);
       setPharmacy(response.data.pharmacy);
+      setToken("present");
       // Fetch settings after user is confirmed
       fetchSettings();
     } catch (error) {
       const status = error.response?.status;
 
       if (status === 401) {
-        logout(); // only logout if token invalid
+        deleteCookie("pharmalogy_token");
+        deleteCookie("pharmalogy_refresh_token");
+        setToken(null);
+        setUser(null);
+        setPharmacy(null);
       } else {
         console.error("Auth error:", error);
       }
@@ -147,7 +148,7 @@ const AuthProvider = ({ children }) => {
 
   const login = async (email, password) => {
     const response = await axios.post(`${API}/auth/login`, { email, password });
-    const newToken = getCookie("pharmalogy_token");
+    const newToken = getCookie("pharmalogy_token") || "present";
     const userData = response.data.user;
     setToken(newToken);
     setUser(userData);
@@ -218,7 +219,7 @@ let isRedirecting = false;
 axios.interceptors.request.use(
   (config) => {
     const token = getCookie("pharmalogy_token");
-    if (token) {
+    if (token && token !== "null" && token !== "undefined") {
       config.headers.Authorization = `Bearer ${token}`;
     }
     return config;
@@ -267,19 +268,14 @@ axios.interceptors.response.use(
 
     // 🔐 Auth error
     if (status === 401 && !originalRequest._retry) {
-      const refreshToken = getCookie("pharmalogy_refresh_token");
-      if (!refreshToken) {
-        deleteCookie("pharmalogy_token");
-        window.dispatchEvent(new Event("auth-logout"));
-        return Promise.reject(error);
-      }
-
       if (isRefreshing) {
         return new Promise((resolve, reject) => {
           failedQueue.push({ resolve, reject });
         })
           .then((token) => {
-            originalRequest.headers.Authorization = `Bearer ${token}`;
+            if (token && token !== "null" && token !== "undefined") {
+              originalRequest.headers.Authorization = `Bearer ${token}`;
+            }
             return axios(originalRequest);
           })
           .catch((err) => Promise.reject(err));
@@ -298,7 +294,9 @@ axios.interceptors.response.use(
           })
         );
 
-        originalRequest.headers.Authorization = `Bearer ${newToken}`;
+        if (newToken && newToken !== "null" && newToken !== "undefined") {
+          originalRequest.headers.Authorization = `Bearer ${newToken}`;
+        }
         processQueue(null, newToken);
         return axios(originalRequest);
       } catch (refreshErr) {

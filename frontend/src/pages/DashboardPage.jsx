@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import axios from "axios";
-import { API, useAuth, getCookie } from "../App";
+import { API, useAuth } from "../App";
 import {
   Card,
   CardContent,
@@ -57,18 +57,6 @@ import {
 import { toast } from "sonner";
 import PlanBadge from "../components/PlanBadge";
 
-axios.interceptors.request.use(
-  (config) => {
-    const token = getCookie("pharmalogy_token");
-
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
-    }
-
-    return config;
-  },
-  (error) => Promise.reject(error)
-);
 
 const StatCard = ({
   title,

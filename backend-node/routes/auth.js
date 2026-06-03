@@ -14,12 +14,12 @@ const generateOTP = () => {
   return Math.floor(100000 + Math.random() * 900000).toString();
 };
 
-const getCookieOptions = (isRefresh = false) => {
-  const isProd = process.env.NODE_ENV === "production";
+const getCookieOptions = (req, isRefresh = false) => {
+  const isSecure = req.secure || req.headers['x-forwarded-proto'] === 'https';
   return {
     httpOnly: false,
-    secure: isProd,
-    sameSite: isProd ? "none" : "lax",
+    secure: isSecure,
+    sameSite: isSecure ? "none" : "lax",
     path: "/",
     maxAge: isRefresh ? 7 * 24 * 60 * 60 * 1000 : 15 * 60 * 1000,
   };
@@ -132,8 +132,8 @@ router.post("/verify-otp", async (req, res, next) => {
     const { token, refreshToken } = generateToken(user.id, user.token_version || 0);
 
     // Set cookies
-    res.cookie("pharmalogy_token", token, getCookieOptions(false));
-    res.cookie("pharmalogy_refresh_token", refreshToken, getCookieOptions(true));
+    res.cookie("pharmalogy_token", token, getCookieOptions(req, false));
+    res.cookie("pharmalogy_refresh_token", refreshToken, getCookieOptions(req, true));
 
     // Get pharmacy
     const pharmacy = await db
@@ -221,8 +221,8 @@ router.post("/login", async (req, res, next) => {
     const { token, refreshToken } = generateToken(user.id, user.token_version || 0);
 
     // Set cookies
-    res.cookie("pharmalogy_token", token, getCookieOptions(false));
-    res.cookie("pharmalogy_refresh_token", refreshToken, getCookieOptions(true));
+    res.cookie("pharmalogy_token", token, getCookieOptions(req, false));
+    res.cookie("pharmalogy_refresh_token", refreshToken, getCookieOptions(req, true));
 
     const pharmacy = await db
       .collection("pharmacies")
@@ -306,7 +306,7 @@ router.post("/refresh", async (req, res, next) => {
       refreshToken = cookies['pharmalogy_refresh_token'];
     }
 
-    if (!refreshToken) {
+    if (!refreshToken || refreshToken === "undefined" || refreshToken === "null") {
       return res.status(401).json({ detail: "Refresh token is required" });
     }
 
@@ -335,8 +335,8 @@ router.post("/refresh", async (req, res, next) => {
       const tokens = generateToken(user.id, user.token_version || 0);
 
       // Set cookies
-      res.cookie("pharmalogy_token", tokens.token, getCookieOptions(false));
-      res.cookie("pharmalogy_refresh_token", tokens.refreshToken, getCookieOptions(true));
+      res.cookie("pharmalogy_token", tokens.token, getCookieOptions(req, false));
+      res.cookie("pharmalogy_refresh_token", tokens.refreshToken, getCookieOptions(req, true));
 
       res.json({ message: "Token refreshed successfully" });
     } catch (err) {
@@ -359,10 +359,11 @@ router.post("/logout", auth, async (req, res, next) => {
     );
 
     // Clear cookies
+    const isSecure = req.secure || req.headers['x-forwarded-proto'] === 'https';
     const clearOpts = {
       path: "/",
-      secure: process.env.NODE_ENV === "production",
-      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+      secure: isSecure,
+      sameSite: isSecure ? "none" : "lax",
     };
     res.clearCookie("pharmalogy_token", clearOpts);
     res.clearCookie("pharmalogy_refresh_token", clearOpts);

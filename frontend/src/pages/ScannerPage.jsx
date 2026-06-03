@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
-import { API, getCookie } from "../App";
+import { API, useAuth } from "../App";
 import {
   Card,
   CardContent,
@@ -37,9 +37,9 @@ import { toast } from "sonner";
 
 export default function ScannerPage() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const fileInputRef = useRef(null);
   const billInputRef = useRef(null);
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [scanProgress, setScanProgress] = useState(0); // [Issue #14] Progress UI
   const [scannedItems, setScannedItems] = useState([]);
@@ -71,12 +71,10 @@ export default function ScannerPage() {
   }, [previewUrls]);
 
   useEffect(() => {
-    const token = getCookie("pharmalogy_token");
-    if (token) {
-      setIsAuthenticated(true);
+    if (user) {
       fetchSuppliers();
     }
-  }, []);
+  }, [user]);
 
   const fetchSuppliers = async (page = 1, search = "", append = false) => {
     if (loadingSuppliers) return;
@@ -477,29 +475,8 @@ export default function ScannerPage() {
     }
   };
 
-  if (!isAuthenticated) {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center p-4">
-        <Card className="w-full max-w-md glass bg-card/45 backdrop-blur-xl border border-border/70 shadow-2xl rounded-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-300">
-          <CardHeader className="text-center pb-2">
-            <CardTitle className="text-3xl font-extrabold bg-gradient-to-r from-primary to-primary/80 bg-clip-text text-transparent">
-              Smart Scanner
-            </CardTitle>
-            <p className="text-sm text-muted-foreground mt-2">
-              Please login to use the scanner
-            </p>
-          </CardHeader>
-          <CardContent className="pt-4">
-            <Button
-              className="w-full btn-primary h-11 rounded-xl shadow-lg shadow-primary/20 hover:shadow-primary/30 transition-all font-bold text-sm"
-              onClick={() => navigate("/login")}
-            >
-              Go to Login
-            </Button>
-          </CardContent>
-        </Card>
-      </div>
-    );
+  if (!user) {
+    return null;
   }
 
   return (
