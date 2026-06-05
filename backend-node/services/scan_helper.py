@@ -34,26 +34,31 @@ Important: Only return valid JSON, no other text.
 """
 
     contents = [prompt]
-    for url in image_urls:
+    for path_or_url in image_urls:
         try:
-            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-            with urllib.request.urlopen(req) as response:
-                image_data = response.read()
-                mime_type = "image/webp"
-                url_lower = url.lower()
-                if url_lower.endswith(".jpg") or url_lower.endswith(".jpeg"):
-                    mime_type = "image/jpeg"
-                elif url_lower.endswith(".png"):
-                    mime_type = "image/png"
-                
-                contents.append(
-                    types.Part.from_bytes(
-                        data=image_data,
-                        mime_type=mime_type
-                    )
+            if path_or_url.startswith('http://') or path_or_url.startswith('https://'):
+                req = urllib.request.Request(path_or_url, headers={'User-Agent': 'Mozilla/5.0'})
+                with urllib.request.urlopen(req) as response:
+                    image_data = response.read()
+            else:
+                with open(path_or_url, 'rb') as f:
+                    image_data = f.read()
+
+            mime_type = "image/webp"
+            url_lower = path_or_url.lower()
+            if url_lower.endswith(".jpg") or url_lower.endswith(".jpeg"):
+                mime_type = "image/jpeg"
+            elif url_lower.endswith(".png"):
+                mime_type = "image/png"
+            
+            contents.append(
+                types.Part.from_bytes(
+                    data=image_data,
+                    mime_type=mime_type
                 )
+            )
         except Exception as e:
-            print(f"Failed to download image from {url}. Error: {str(e)}", file=sys.stderr)
+            print(f"Failed to retrieve image from {path_or_url}. Error: {str(e)}", file=sys.stderr)
 
     if len(contents) <= 1:
          return {
@@ -83,7 +88,7 @@ Important: Only return valid JSON, no other text.
             }
 
             response = client.models.generate_content(
-                model="gemini-2.0-flash",
+                model="gemini-2.5-flash",
                 contents=contents,
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json",

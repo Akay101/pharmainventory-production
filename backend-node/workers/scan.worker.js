@@ -11,7 +11,7 @@ dotenv.config({ path: path.join(__dirname, "../.env") });
 const { connection } = require("../services/ai/queue");
 const ScanJob = require("../models/scanJob");
 const { cleanupTmpFolder } = require("../services/ai/cleanup_service");
-const { deleteFromR2, R2_PUBLIC_URL } = require("../services/r2");
+const { deleteFromR2, downloadFromR2, R2_PUBLIC_URL } = require("../services/r2");
 
 // Connect to MongoDB
 const MONGO_URL =
@@ -31,9 +31,28 @@ const worker = new Worker(
 
     console.log(`[Worker] Processing job ${jobId} (type: ${type}) from R2`);
 
-    // Resolve R2 URLs
-    const imageUrls = r2Keys.map((key) => `${R2_PUBLIC_URL}/${key}`);
-    console.log(`[Worker] Image URLs for job ${jobId}:`, imageUrls);
+    // Create a local temp folder for this job
+    const tempDir = path.join(__dirname, "../tmp/scans", jobId);
+    fs.mkdirSync(tempDir, { recursive: true });
+
+    // Download files from R2
+    const localPaths = [];
+    for (const key of r2Keys) {
+      try {
+        const buffer = await downloadFromR2(key);
+        const localPath = path.join(tempDir, path.basename(key));
+        fs.writeFileSync(localPath, buffer);
+        localPaths.push(localPath);
+      } catch (err) {
+        console.error(`[Worker] Failed to download key ${key} from R2:`, err);
+      }
+    }
+
+    if (localPaths.length === 0) {
+      // Clean up tempDir
+      try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch (e) {}
+      throw new Error(`No images could be retrieved for processing. Tried to download: ${r2Keys.join(", ")}`);
+    }
 
     // [Issue #7] Granular progress steps
     await job.updateProgress(10);
@@ -67,7 +86,7 @@ const worker = new Worker(
     return new Promise((resolve, reject) => {
       const pythonProcess = spawn(
         pythonPath,
-        [helperPath, apiKey, ...imageUrls],
+        [helperPath, apiKey, ...localPaths],
         {
           shell: false,
         }
@@ -81,6 +100,19 @@ const worker = new Worker(
 
         if (pythonProcess.exitCode === null) {
           pythonProcess.kill();
+
+          // Cleanup local temp files
+          try {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+          } catch (e) {}
+
+          // Cleanup R2 files if max attempts reached
+          const maxAttempts = job.opts.attempts || 3;
+          if (job.attemptsMade >= maxAttempts) {
+            for (const key of r2Keys) {
+              try { await deleteFromR2(key); } catch (e) {}
+            }
+          }
 
           await ScanJob.findOneAndUpdate(
             { jobId },
@@ -107,17 +139,23 @@ const worker = new Worker(
         clearTimeout(timeout);
         clearInterval(progressTicker);
 
-        // Cleanup R2 files
-        for (const key of r2Keys) {
-          try {
-            await deleteFromR2(key);
-          } catch (e) {}
-        }
+        // Cleanup local temp files
+        try {
+          fs.rmSync(tempDir, { recursive: true, force: true });
+        } catch (e) {}
 
         try {
           if (code !== 0) {
             const errorMsg =
               stderrData || `Python process exited with code ${code}`;
+
+            // Cleanup R2 files if max attempts reached
+            const maxAttempts = job.opts.attempts || 3;
+            if (job.attemptsMade >= maxAttempts) {
+              for (const key of r2Keys) {
+                try { await deleteFromR2(key); } catch (e) {}
+              }
+            }
 
             return reject(new Error(errorMsg));
           }
@@ -127,7 +165,21 @@ const worker = new Worker(
           const result = JSON.parse(stdoutData.trim());
 
           if (!result.success) {
+            // Cleanup R2 files if max attempts reached
+            const maxAttempts = job.opts.attempts || 3;
+            if (job.attemptsMade >= maxAttempts) {
+              for (const key of r2Keys) {
+                try { await deleteFromR2(key); } catch (e) {}
+              }
+            }
             return reject(new Error(result.error || "AI extraction failed"));
+          }
+
+          // If successful, clean up R2 files immediately
+          for (const key of r2Keys) {
+            try {
+              await deleteFromR2(key);
+            } catch (e) {}
           }
 
           await ScanJob.findOneAndUpdate(
@@ -162,6 +214,14 @@ worker.on("failed", async (job, err) => {
     console.log(
       `[Worker] Max retries reached for job ${job.data.jobId}. Marking as failed in DB.`
     );
+
+    // Safety cleanup fallback
+    for (const key of job.data.r2Keys) {
+      try {
+        await deleteFromR2(key);
+      } catch (e) {}
+    }
+
     await ScanJob.findOneAndUpdate(
       { jobId: job.data.jobId },
       {

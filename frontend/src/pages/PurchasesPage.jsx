@@ -70,6 +70,7 @@ import {
   AlertCircle,
   CreditCard,
   CheckCircle2,
+  Sparkles,
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatDate } from "./utils";
@@ -350,8 +351,9 @@ export default function PurchasesPage() {
   const [searchMedicine, setSearchMedicine] = useState("");
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [isMouseOverSuggestions, setIsMouseOverSuggestions] = useState(false);
-  const [aiAutofillEnabled, setAiAutofillEnabled] = useState(false);
   const [isAiLoading, setIsAiLoading] = useState(false);
+  const [processingRowId, setProcessingRowId] = useState(null);
+  const [sparkleRowId, setSparkleRowId] = useState(null);
 
   // Payment Tracking State
   const [paymentStatus, setPaymentStatus] = useState("Unpaid");
@@ -763,6 +765,7 @@ export default function PurchasesPage() {
       handleCancelAddItem,
       handleCancelNewPurchase,
       handleAddNewRow,
+      handleAutofillWithAI,
       setShowShortcuts,
       showNewPurchase,
       newItemRow,
@@ -793,6 +796,7 @@ export default function PurchasesPage() {
         handleCancelAddItem,
         handleCancelNewPurchase,
         handleAddNewRow,
+        handleAutofillWithAI,
         setShowShortcuts,
         showNewPurchase,
         newItemRow,
@@ -832,6 +836,16 @@ export default function PurchasesPage() {
         if (showNewPurchase) {
           e.preventDefault();
           handleAddNewRow();
+        }
+      }
+      // Alt+I - Autofill with AI
+      if (
+        e.altKey &&
+        (e.key === "i" || e.key === "I" || e.code === "KeyI" || e.key === "ˆ")
+      ) {
+        if (showNewPurchase) {
+          e.preventDefault();
+          handleAutofillWithAI();
         }
       }
       // Alt+? - Show shortcuts
@@ -874,7 +888,11 @@ export default function PurchasesPage() {
             const el = document.getElementById(`record-${highlightId}`);
             if (el) {
               el.scrollIntoView({ behavior: "smooth", block: "center" });
-              el.classList.add("bg-primary/20", "transition-all", "duration-1000");
+              el.classList.add(
+                "bg-primary/20",
+                "transition-all",
+                "duration-1000"
+              );
               setTimeout(() => {
                 el.classList.remove("bg-primary/20");
               }, 3000);
@@ -1674,35 +1692,6 @@ export default function PurchasesPage() {
     if (isInventory && medicine.matchQuality === "fuzzy") {
       toast.info(`Fuzzy match: "${medicine.name}" - verify before saving`);
     }
-
-    // AI Enrichment Trigger
-    if (aiAutofillEnabled && (!manufacturer || !salt_composition)) {
-      try {
-        setIsAiLoading(true);
-        const res = await axios.post(`${API}/medicines/enrich`, {
-          product_name: medicine.product_name || medicine.name,
-        });
-
-        if (res.data.manufacturer || res.data.salt_composition) {
-          setPurchaseItems((prev) =>
-            prev.map((item) => {
-              if (item.id !== itemId) return item;
-              return {
-                ...item,
-                manufacturer: item.manufacturer || res.data.manufacturer,
-                salt_composition:
-                  item.salt_composition || res.data.salt_composition,
-              };
-            })
-          );
-          toast.success("AI Autofilled missing metadata ✨");
-        }
-      } catch (err) {
-        console.warn("AI enrichment request failed or timed out.");
-      } finally {
-        setIsAiLoading(false);
-      }
-    }
   };
 
   // Direct AI resolution when no suggestions are found or user overrides
@@ -1758,6 +1747,83 @@ export default function PurchasesPage() {
       console.warn("AI direct lookup failed", err);
       toast.error("AI lookup failed to connect.");
     } finally {
+      setIsAiLoading(false);
+    }
+  };
+
+  const handleAutofillWithAI = async () => {
+    const candidates = purchaseItems.filter(
+      (item) =>
+        item.product_name &&
+        item.product_name.trim().length > 0 &&
+        (!item.salt_composition ||
+          !item.salt_composition.trim() ||
+          !item.manufacturer ||
+          !item.manufacturer.trim())
+    );
+
+    if (candidates.length === 0) return;
+
+    try {
+      setIsAiLoading(true);
+      let filledCount = 0;
+
+      for (const item of candidates) {
+        setProcessingRowId(item.id);
+
+        try {
+          const res = await axios.post(`${API}/medicines/enrich`, {
+            product_name: item.product_name,
+          });
+
+          let itemFilled = false;
+          const manufacturerVal = res.data.manufacturer || "";
+          const saltVal = res.data.salt_composition || "";
+
+          if (manufacturerVal || saltVal) {
+            setPurchaseItems((prev) =>
+              prev.map((pItem) => {
+                if (pItem.id !== item.id) return pItem;
+                const updated = { ...pItem };
+                if (!updated.manufacturer && manufacturerVal) {
+                  updated.manufacturer = manufacturerVal;
+                  itemFilled = true;
+                }
+                if (!updated.salt_composition && saltVal) {
+                  updated.salt_composition = saltVal;
+                  itemFilled = true;
+                }
+                return updated;
+              })
+            );
+          }
+
+          if (itemFilled) {
+            filledCount++;
+          }
+        } catch (err) {
+          console.warn(`AI enrichment failed for ${item.product_name}:`, err);
+        } finally {
+          setProcessingRowId(null);
+          // Sparkle pop animation delay (800ms) before moving to next row
+          setSparkleRowId(item.id);
+          await new Promise((resolve) => setTimeout(resolve, 800));
+          setSparkleRowId(null);
+        }
+      }
+
+      if (filledCount > 0) {
+        toast.success(
+          `AI Autofilled missing metadata for ${filledCount} item(s) ✨`
+        );
+      } else {
+        toast.info("AI couldn't extract properties for the missing items.");
+      }
+    } catch (error) {
+      console.error("Autofill with AI failed:", error);
+      toast.error("AI Autofill encountered an error.");
+    } finally {
+      setProcessingRowId(null);
       setIsAiLoading(false);
     }
   };
@@ -2149,6 +2215,27 @@ export default function PurchasesPage() {
       className="space-y-6 animate-fade-in pb-24"
       data-testid="purchases-page"
     >
+      <style>{`
+        .ai-loading-row {
+          background: linear-gradient(270deg, rgba(99, 102, 241, 0.08), rgba(168, 85, 247, 0.08), rgba(236, 72, 153, 0.08)) !important;
+          background-size: 600% 600% !important;
+          animation: gradientScroll 3s ease infinite !important;
+          border-left: 3px solid #6366f1 !important;
+        }
+        @keyframes gradientScroll {
+          0% { background-position: 0% 50% }
+          50% { background-position: 100% 50% }
+          100% { background-position: 0% 50% }
+        }
+        .ai-sparkle-row {
+          animation: sparkleFlash 0.8s ease-out !important;
+          border-left: 3px solid #10b981 !important;
+        }
+        @keyframes sparkleFlash {
+          0% { background-color: rgba(99, 102, 241, 0.25); filter: brightness(1.1); }
+          100% { background-color: transparent; }
+        }
+      `}</style>
       {/* Restore Draft Dialog */}
       <Dialog
         open={paymentDialog.open}
@@ -2220,6 +2307,12 @@ export default function PurchasesPage() {
               <span>Add Item</span>
               <kbd className="px-2 py-1 bg-muted rounded text-xs font-mono">
                 {getOS() === "mac" ? "⌥ + A" : "Alt + A"}
+              </kbd>
+            </div>
+            <div className="flex justify-between items-center p-2 bg-muted/30 rounded">
+              <span>Autofill with AI</span>
+              <kbd className="px-2 py-1 bg-muted rounded text-xs font-mono">
+                {getOS() === "mac" ? "⌥ + I" : "Alt + I"}
               </kbd>
             </div>
             <div className="flex justify-between items-center p-2 bg-muted/30 rounded">
@@ -2413,7 +2506,7 @@ export default function PurchasesPage() {
           className="glass bg-card/45 backdrop-blur-xl border border-primary/30 relative overflow-hidden shadow-2xl rounded-2xl"
           data-testid="new-purchase-form"
         >
-          {isAiLoading && (
+          {isAiLoading && !processingRowId && (
             <div className="absolute inset-0 z-[100] flex flex-col items-center justify-center bg-background/60 backdrop-blur-md transition-all duration-300">
               <div className="relative">
                 <div className="absolute inset-0 bg-primary/20 blur-xl rounded-full"></div>
@@ -2442,21 +2535,28 @@ export default function PurchasesPage() {
                   </span>
                 </CardTitle>
                 <div className="flex items-center gap-3">
-                  <Button
-                    variant={aiAutofillEnabled ? "default" : "outline"}
-                    onClick={() => setAiAutofillEnabled(!aiAutofillEnabled)}
-                    className={`relative overflow-hidden group ${
-                      aiAutofillEnabled
-                        ? "bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white shadow-lg shadow-indigo-500/30 border-none transition-all duration-300 font-bold"
-                        : "text-indigo-600 border-indigo-200 hover:bg-indigo-50 transition-all font-medium"
-                    }`}
-                    size="sm"
-                  >
-                    {aiAutofillEnabled && (
+                  {purchaseItems.some(
+                    (item) =>
+                      item.product_name &&
+                      item.product_name.trim().length > 0 &&
+                      (!item.salt_composition ||
+                        !item.salt_composition.trim() ||
+                        !item.manufacturer ||
+                        !item.manufacturer.trim())
+                  ) && (
+                    <Button
+                      variant="default"
+                      onClick={handleAutofillWithAI}
+                      className="relative overflow-hidden group bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white shadow-lg shadow-indigo-500/30 border-none transition-all duration-300 font-bold"
+                      size="sm"
+                    >
                       <div className="absolute inset-0 bg-white/20 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-700 ease-in-out skew-x-12"></div>
-                    )}
-                    ✨ AI Autofill {aiAutofillEnabled ? "ON" : "OFF"}
-                  </Button>
+                      ✨ Autofill with AI
+                      <span className="text-[10px] opacity-80 font-normal ml-1">
+                        ({getOS() === "mac" ? "⌥I" : "Alt+I"})
+                      </span>
+                    </Button>
+                  )}
                   <Button
                     variant="ghost"
                     size="icon"
@@ -2468,15 +2568,23 @@ export default function PurchasesPage() {
               </div>
 
               {/* Warning Text Dropdown */}
-              <div
-                className={`flex justify-end pr-10 transition-all duration-300 overflow-hidden ${aiAutofillEnabled ? "max-h-12 opacity-100" : "max-h-0 opacity-0"}`}
-              >
-                <div className="text-[11px] font-medium text-amber-600 dark:text-amber-400 bg-amber-500/10 px-3 py-1.5 rounded-md border border-amber-500/20 flex items-center gap-1.5 shadow-sm backdrop-blur-sm">
-                  <AlertCircle className="w-3.5 h-3.5" />
-                  Generative AI may be inaccurate. Please review the autofilled
-                  details below before saving.
+              {purchaseItems.some(
+                (item) =>
+                  item.product_name &&
+                  item.product_name.trim().length > 0 &&
+                  (!item.salt_composition ||
+                    !item.salt_composition.trim() ||
+                    !item.manufacturer ||
+                    !item.manufacturer.trim())
+              ) && (
+                <div className="flex justify-end pr-10 transition-all duration-300">
+                  <div className="text-[11px] font-medium text-amber-600 dark:text-amber-400 bg-amber-500/10 px-3 py-1.5 rounded-md border border-amber-500/20 flex items-center gap-1.5 shadow-sm backdrop-blur-sm">
+                    <AlertCircle className="w-3.5 h-3.5" />
+                    Generative AI may be inaccurate. Please review the
+                    autofilled details below before saving.
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -2487,6 +2595,7 @@ export default function PurchasesPage() {
                 <SupplierSelector
                   selectedId={selectedSupplier}
                   knownSuppliers={suppliers}
+                  disabled={processingRowId !== null}
                   onSelect={(s) => {
                     setSelectedSupplier(s.id);
                     if (!suppliers.find((x) => x.id === s.id)) {
@@ -2500,6 +2609,7 @@ export default function PurchasesPage() {
                 <Input
                   placeholder="INV-001"
                   value={invoiceNo}
+                  disabled={processingRowId !== null}
                   onChange={(e) => setInvoiceNo(e.target.value)}
                   data-testid="invoice-no-input"
                 />
@@ -2509,6 +2619,7 @@ export default function PurchasesPage() {
                 <Input
                   type="date"
                   value={purchaseDate}
+                  disabled={processingRowId !== null}
                   onChange={(e) => setPurchaseDate(e.target.value)}
                 />
               </div>
@@ -2539,6 +2650,7 @@ export default function PurchasesPage() {
                     <button
                       key={status}
                       type="button"
+                      disabled={processingRowId !== null}
                       onClick={() => setPaymentStatus(status)}
                       className={`flex-1 text-xs font-semibold py-1.5 px-3 rounded-md transition-all ${
                         paymentStatus === status
@@ -2563,6 +2675,7 @@ export default function PurchasesPage() {
                     type="number"
                     min="0"
                     step="0.01"
+                    disabled={processingRowId !== null}
                     value={amountPaid}
                     onChange={(e) => {
                       const val = e.target.value;
@@ -2677,7 +2790,13 @@ export default function PurchasesPage() {
                     </TableHead>
                   </TableRow>
                 </TableHeader>
-                <TableBody>
+                <TableBody
+                  className={
+                    processingRowId !== null
+                      ? "pointer-events-none opacity-80"
+                      : ""
+                  }
+                >
                   {/* Editable Item Rows */}
                   {purchaseItems.map((item, index) => {
                     const qty =
@@ -2704,7 +2823,9 @@ export default function PurchasesPage() {
                     return (
                       <TableRow
                         key={item.id || index}
-                        className={`bg-primary/5 ${
+                        className={`bg-primary/5 relative transition-all duration-500 ${
+                          processingRowId === item.id ? "ai-loading-row" : ""
+                        } ${sparkleRowId === item.id ? "ai-sparkle-row" : ""} ${
                           priceAlerts[item.id] ? "animate-row-alert" : ""
                         }`}
                       >
@@ -2712,6 +2833,14 @@ export default function PurchasesPage() {
                           className="relative"
                           style={{ overflow: "visible" }}
                         >
+                          {sparkleRowId === item.id && (
+                            <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1 bg-emerald-500 text-white dark:bg-emerald-600 shadow-lg px-2 py-1 rounded-md z-[99] border border-emerald-400 animate-bounce">
+                              <Sparkles className="w-3.5 h-3.5 text-yellow-300 fill-yellow-200 animate-pulse" />
+                              <span className="text-[10px] font-extrabold uppercase tracking-wider">
+                                AI Done!
+                              </span>
+                            </div>
+                          )}
                           <div className="flex items-center gap-2">
                             <Input
                               ref={(el) => {
@@ -2721,6 +2850,7 @@ export default function PurchasesPage() {
                                 }
                               }}
                               value={item.product_name || ""}
+                              disabled={processingRowId !== null}
                               onChange={(e) => {
                                 handleItemFieldChange(
                                   item.id,
@@ -2741,19 +2871,6 @@ export default function PurchasesPage() {
                                   if (!isMouseOverSuggestions) {
                                     setActiveItemId((prev) => {
                                       if (prev === currentId) {
-                                        if (
-                                          aiAutofillEnabled &&
-                                          item.product_name &&
-                                          item.product_name.length > 2 &&
-                                          !item._inventoryMeta &&
-                                          !item.salt_composition &&
-                                          !item.manufacturer
-                                        ) {
-                                          handleSelectAiMedicineForItem(
-                                            item.id,
-                                            item.product_name
-                                          );
-                                        }
                                         setShowSuggestions(false);
                                         setHighlightedSuggestionIndex(-1);
                                         return null;
@@ -3548,6 +3665,7 @@ export default function PurchasesPage() {
                 variant="outline"
                 size="sm"
                 onClick={handleAddNewRow}
+                disabled={processingRowId !== null}
                 data-testid="add-item-btn"
               >
                 <Plus className="h-4 w-4 mr-1" /> Add Item
@@ -4787,6 +4905,7 @@ export default function PurchasesPage() {
               <Button
                 variant="ghost"
                 onClick={handleCancelNewPurchase}
+                disabled={processingRowId !== null}
                 className="text-muted-foreground hover:text-foreground"
               >
                 Cancel (Esc)
@@ -4796,6 +4915,7 @@ export default function PurchasesPage() {
                 onClick={handleSubmitPurchase}
                 disabled={
                   submitting ||
+                  processingRowId !== null ||
                   purchaseItems.filter((i) => i.product_name).length === 0
                 }
                 className="btn-primary shadow-lg shadow-primary/20 min-w-[160px]"

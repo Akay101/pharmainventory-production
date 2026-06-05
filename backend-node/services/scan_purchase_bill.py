@@ -69,21 +69,26 @@ Your goal is to extract EVERY item line-by-line from the table.
 
     confidences = []
 
-    for index, url in enumerate(image_urls):
+    for index, path_or_url in enumerate(image_urls):
         image_data = None
         mime_type = "image/webp"
         
         try:
-            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-            with urllib.request.urlopen(req) as response:
-                image_data = response.read()
-                url_lower = url.lower()
-                if url_lower.endswith(".jpg") or url_lower.endswith(".jpeg"):
-                    mime_type = "image/jpeg"
-                elif url_lower.endswith(".png"):
-                    mime_type = "image/png"
+            if path_or_url.startswith('http://') or path_or_url.startswith('https://'):
+                req = urllib.request.Request(path_or_url, headers={'User-Agent': 'Mozilla/5.0'})
+                with urllib.request.urlopen(req) as response:
+                    image_data = response.read()
+            else:
+                with open(path_or_url, 'rb') as f:
+                    image_data = f.read()
+
+            url_lower = path_or_url.lower()
+            if url_lower.endswith(".jpg") or url_lower.endswith(".jpeg"):
+                mime_type = "image/jpeg"
+            elif url_lower.endswith(".png"):
+                mime_type = "image/png"
         except Exception as e:
-            print(f"Failed to download image {index+1}: {str(e)}", file=sys.stderr)
+            print(f"Failed to retrieve image {index+1}: {str(e)}", file=sys.stderr)
             continue
 
         if not image_data:
@@ -94,7 +99,7 @@ Your goal is to extract EVERY item line-by-line from the table.
         for attempt in range(max_retries + 1):
             try:
                 response = client.models.generate_content(
-                    model="gemini-2.0-flash",
+                    model="gemini-2.5-flash",
                     contents=[
                         prompt,
                         types.Part.from_bytes(data=image_data, mime_type=mime_type)
