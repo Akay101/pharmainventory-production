@@ -93,6 +93,7 @@ export default function BillingPage() {
   // New bill state - inline table approach
   const [showNewBill, setShowNewBill] = useState(false);
   const [billItems, setBillItems] = useState([]);
+  const [visibleBatchesLimit, setVisibleBatchesLimit] = useState({});
   const [customerInfo, setCustomerInfo] = useState({
     customer_id: "",
     customer_name: "",
@@ -297,6 +298,7 @@ export default function BillingPage() {
     salt_composition: "",
     cgst: "",
     sgst: "",
+    available_batches: [],
   };
 
   // ============ MULTI-TAB DRAFTS ============
@@ -942,39 +944,53 @@ export default function BillingPage() {
 
   // Handle selecting inventory item for a specific row
   const handleSelectInventoryForRow = (itemId, inventoryItem) => {
+    let availableBatches = (inventoryItem.batches || []).filter(b => (b.available_quantity || 0) > 0);
+    if (availableBatches.length === 0) {
+      availableBatches = inventoryItem.batches || [];
+    }
+
+    availableBatches.sort((a, b) => {
+      if (!a.expiry_date) return 1;
+      if (!b.expiry_date) return -1;
+      return a.expiry_date.localeCompare(b.expiry_date);
+    });
+
+    const defaultBatch = availableBatches[0] || inventoryItem;
+
     setBillItems((prev) =>
       prev.map((item) => {
         if (item.id !== itemId) return item;
 
         const qty = parseInt(item.quantity) || 1;
-        const unitPrice = inventoryItem.mrp_per_unit || inventoryItem.mrp || 0;
+        const unitPrice = defaultBatch.mrp_per_unit || defaultBatch.mrp || 0;
         const purchasePrice =
-          inventoryItem.cost_per_unit || inventoryItem.purchase_price || 0;
-        const cgstVal = inventoryItem.cgst !== undefined ? Math.max(0, parseFloat(inventoryItem.cgst) || 0) : 0;
-        const sgstVal = inventoryItem.sgst !== undefined ? Math.max(0, parseFloat(inventoryItem.sgst) || 0) : 0;
+          defaultBatch.cost_per_unit || defaultBatch.purchase_price || 0;
+        const cgstVal = defaultBatch.cgst !== undefined ? Math.max(0, parseFloat(defaultBatch.cgst) || 0) : 0;
+        const sgstVal = defaultBatch.sgst !== undefined ? Math.max(0, parseFloat(defaultBatch.sgst) || 0) : 0;
         const exclPrice = unitPrice / (1 + (cgstVal + sgstVal) / 100);
         const itemDiscount = (qty * exclPrice) * ((parseFloat(item.discount_percent) || 0) / 100);
         const netTotal = (qty * exclPrice - itemDiscount) * (1 + (cgstVal + sgstVal) / 100);
 
         return {
           ...item,
-          inventory_id: inventoryItem.id,
+          inventory_id: defaultBatch.id,
           product_name: inventoryItem.product_name,
           salt_composition: inventoryItem.salt_composition || "",
-          batch_no: inventoryItem.batch_no,
-          expiry_date: inventoryItem.expiry_date || "",
+          batch_no: defaultBatch.batch_no,
+          expiry_date: defaultBatch.expiry_date || "",
           unit_price: unitPrice,
           exclusive_price: exclPrice,
           net_total: netTotal,
           purchase_price: purchasePrice,
           available:
-            inventoryItem.available_quantity ||
-            inventoryItem.available_units ||
+            defaultBatch.available_quantity ||
+            defaultBatch.available_units ||
             0,
           units_per_pack: inventoryItem.units_per_pack || 1,
           is_manual: false,
-          cgst: inventoryItem.cgst !== undefined ? inventoryItem.cgst : "",
-          sgst: inventoryItem.sgst !== undefined ? inventoryItem.sgst : "",
+          cgst: defaultBatch.cgst !== undefined ? defaultBatch.cgst : "",
+          sgst: defaultBatch.sgst !== undefined ? defaultBatch.sgst : "",
+          available_batches: availableBatches,
         };
       })
     );
@@ -1350,7 +1366,7 @@ export default function BillingPage() {
 
   // ============ EDIT BILL - FULL INLINE TABLE EDITING ============
 
-  const handleStartEditBill = (bill) => {
+  const handleStartEditBill = async (bill) => {
     setEditingBillId(bill.id);
     setEditingBillData({
       ...bill,
@@ -1365,36 +1381,56 @@ export default function BillingPage() {
     });
 
     // Map existing items to editable format
-    const mappedItems = bill.items.map((item, idx) => {
-      const qty = item.quantity || 1;
-      const unitPrice = item.unit_price || item.mrp_per_unit || 0;
-      const discPercent = item.discount_percent || 0;
-      const cgstVal = item.cgst !== undefined ? Math.max(0, parseFloat(item.cgst) || 0) : 0;
-      const sgstVal = item.sgst !== undefined ? Math.max(0, parseFloat(item.sgst) || 0) : 0;
-      const exclPrice = unitPrice / (1 + (cgstVal + sgstVal) / 100);
-      const itemDiscount = (qty * exclPrice) * (discPercent / 100);
-      const netTotal = (qty * exclPrice - itemDiscount) * (1 + (cgstVal + sgstVal) / 100);
+    const mappedItems = await Promise.all(
+      bill.items.map(async (item, idx) => {
+        const qty = item.quantity || 1;
+        const unitPrice = item.unit_price || item.mrp_per_unit || 0;
+        const discPercent = item.discount_percent || 0;
+        const cgstVal = item.cgst !== undefined ? Math.max(0, parseFloat(item.cgst) || 0) : 0;
+        const sgstVal = item.sgst !== undefined ? Math.max(0, parseFloat(item.sgst) || 0) : 0;
+        const exclPrice = unitPrice / (1 + (cgstVal + sgstVal) / 100);
+        const itemDiscount = (qty * exclPrice) * (discPercent / 100);
+        const netTotal = (qty * exclPrice - itemDiscount) * (1 + (cgstVal + sgstVal) / 100);
 
-      return {
-        id: item.id || `edit-${idx}-${Date.now()}`,
-        inventory_id: item.inventory_id || null,
-        product_name: item.product_name,
-        batch_no: item.batch_no || "",
-        expiry_date: item.expiry_date || "",
-        quantity: qty,
-        unit_price: unitPrice,
-        exclusive_price: exclPrice,
-        net_total: netTotal,
-        purchase_price: item.purchase_price || 0,
-        discount_percent: discPercent,
-        available: item.available_quantity || 0,
-        is_manual: !item.inventory_id,
-        salt_composition: item.salt_composition || "",
-        original_quantity: item.quantity, // Track original for inventory adjustment
-        cgst: item.cgst !== undefined ? item.cgst : "",
-        sgst: item.sgst !== undefined ? item.sgst : "",
-      };
-    });
+        let availableBatches = [];
+        if (item.inventory_id && !item.is_manual) {
+          try {
+            const res = await axios.get(
+              `${API}/inventory/search?q=${encodeURIComponent(item.product_name)}&limit=30`
+            );
+            const matchedProduct = res.data.inventory.find(
+              (inv) => inv.product_name.toLowerCase() === item.product_name.toLowerCase()
+            );
+            if (matchedProduct) {
+              availableBatches = matchedProduct.batches || [];
+            }
+          } catch (e) {
+            console.error("Failed to load batches for existing item", e);
+          }
+        }
+
+        return {
+          id: item.id || `edit-${idx}-${Date.now()}`,
+          inventory_id: item.inventory_id || null,
+          product_name: item.product_name,
+          batch_no: item.batch_no || "",
+          expiry_date: item.expiry_date || "",
+          quantity: qty,
+          unit_price: unitPrice,
+          exclusive_price: exclPrice,
+          net_total: netTotal,
+          purchase_price: item.purchase_price || 0,
+          discount_percent: discPercent,
+          available: item.available_quantity || 0,
+          is_manual: !item.inventory_id,
+          salt_composition: item.salt_composition || "",
+          original_quantity: item.quantity, // Track original for inventory adjustment
+          cgst: item.cgst !== undefined ? item.cgst : "",
+          sgst: item.sgst !== undefined ? item.sgst : "",
+          available_batches: availableBatches,
+        };
+      })
+    );
 
     setEditingBillItems(mappedItems);
   };
@@ -1469,39 +1505,53 @@ export default function BillingPage() {
 
   // Handle selecting inventory for editing items
   const handleSelectInventoryForEditRow = (itemId, inventoryItem) => {
+    let availableBatches = (inventoryItem.batches || []).filter(b => (b.available_quantity || 0) > 0);
+    if (availableBatches.length === 0) {
+      availableBatches = inventoryItem.batches || [];
+    }
+
+    availableBatches.sort((a, b) => {
+      if (!a.expiry_date) return 1;
+      if (!b.expiry_date) return -1;
+      return a.expiry_date.localeCompare(b.expiry_date);
+    });
+
+    const defaultBatch = availableBatches[0] || inventoryItem;
+
     setEditingBillItems((prev) =>
       prev.map((item) => {
         if (item.id !== itemId) return item;
 
         const qty = parseInt(item.quantity) || 1;
-        const unitPrice = inventoryItem.mrp_per_unit || inventoryItem.mrp || 0;
+        const unitPrice = defaultBatch.mrp_per_unit || defaultBatch.mrp || 0;
         const purchasePrice =
-          inventoryItem.cost_per_unit || inventoryItem.purchase_price || 0;
-        const cgstVal = inventoryItem.cgst !== undefined ? Math.max(0, parseFloat(inventoryItem.cgst) || 0) : 0;
-        const sgstVal = inventoryItem.sgst !== undefined ? Math.max(0, parseFloat(inventoryItem.sgst) || 0) : 0;
+          defaultBatch.cost_per_unit || defaultBatch.purchase_price || 0;
+        const cgstVal = defaultBatch.cgst !== undefined ? Math.max(0, parseFloat(defaultBatch.cgst) || 0) : 0;
+        const sgstVal = defaultBatch.sgst !== undefined ? Math.max(0, parseFloat(defaultBatch.sgst) || 0) : 0;
         const exclPrice = unitPrice / (1 + (cgstVal + sgstVal) / 100);
         const itemDiscount = (qty * exclPrice) * ((parseFloat(item.discount_percent) || 0) / 100);
         const netTotal = (qty * exclPrice - itemDiscount) * (1 + (cgstVal + sgstVal) / 100);
 
         return {
           ...item,
-          inventory_id: inventoryItem.id,
+          inventory_id: defaultBatch.id,
           product_name: inventoryItem.product_name,
           salt_composition: inventoryItem.salt_composition || "",
-          batch_no: inventoryItem.batch_no,
-          expiry_date: inventoryItem.expiry_date || "",
+          batch_no: defaultBatch.batch_no,
+          expiry_date: defaultBatch.expiry_date || "",
           unit_price: unitPrice,
           exclusive_price: exclPrice,
           net_total: netTotal,
           purchase_price: purchasePrice,
           available:
-            inventoryItem.available_quantity ||
-            inventoryItem.available_units ||
+            defaultBatch.available_quantity ||
+            defaultBatch.available_units ||
             0,
           units_per_pack: inventoryItem.units_per_pack || 1,
           is_manual: false,
-          cgst: inventoryItem.cgst !== undefined ? inventoryItem.cgst : "",
-          sgst: inventoryItem.sgst !== undefined ? inventoryItem.sgst : "",
+          cgst: defaultBatch.cgst !== undefined ? defaultBatch.cgst : "",
+          sgst: defaultBatch.sgst !== undefined ? defaultBatch.sgst : "",
+          available_batches: availableBatches,
         };
       })
     );
@@ -2366,6 +2416,76 @@ export default function BillingPage() {
                               placeholder="Batch"
                               className="h-8 text-xs border-border/80 focus-visible:ring-1 focus-visible:ring-primary focus-visible:border-primary rounded-lg transition-all duration-200 w-16"
                             />
+                          ) : (item.available_batches && item.available_batches.length > 0) ? (
+                            <Select
+                              value={item.inventory_id}
+                              onValueChange={(selectedInvId) => {
+                                const selectedBatch = item.available_batches.find(b => b.id === selectedInvId);
+                                if (selectedBatch) {
+                                  const qty = parseInt(item.quantity) || 1;
+                                  const unitPrice = selectedBatch.mrp_per_unit || selectedBatch.mrp || 0;
+                                  const purchasePrice = selectedBatch.cost_per_unit || selectedBatch.purchase_price || 0;
+                                  const cgstVal = selectedBatch.cgst !== undefined ? Math.max(0, parseFloat(selectedBatch.cgst) || 0) : 0;
+                                  const sgstVal = selectedBatch.sgst !== undefined ? Math.max(0, parseFloat(selectedBatch.sgst) || 0) : 0;
+                                  
+                                  const exclPrice = unitPrice / (1 + (cgstVal + sgstVal) / 100);
+                                  const itemDiscount = (qty * exclPrice) * ((parseFloat(item.discount_percent) || 0) / 100);
+                                  const netTotal = (qty * exclPrice - itemDiscount) * (1 + (cgstVal + sgstVal) / 100);
+                                  const profit = (unitPrice - purchasePrice) * qty - (qty * unitPrice * ((parseFloat(item.discount_percent) || 0) / 100));
+
+                                  setBillItems((prev) =>
+                                    prev.map((bi) =>
+                                      bi.id === item.id
+                                        ? {
+                                            ...bi,
+                                            inventory_id: selectedInvId,
+                                            batch_no: selectedBatch.batch_no,
+                                            expiry_date: selectedBatch.expiry_date || "",
+                                            unit_price: unitPrice,
+                                            exclusive_price: exclPrice,
+                                            net_total: netTotal,
+                                            purchase_price: purchasePrice,
+                                            available: selectedBatch.available_quantity || 0,
+                                            cgst: selectedBatch.cgst !== undefined ? selectedBatch.cgst : "",
+                                            sgst: selectedBatch.sgst !== undefined ? selectedBatch.sgst : "",
+                                            profit: profit
+                                          }
+                                        : bi
+                                    )
+                                  );
+                                }
+                              }}
+                            >
+                              <SelectTrigger className="h-8 text-xs font-mono border-border/80 rounded-lg w-28">
+                                <SelectValue placeholder="Select Batch" />
+                              </SelectTrigger>
+                              <SelectContent className="border border-border/40 shadow-xl rounded-xl z-[99999]">
+                                {item.available_batches.slice(0, visibleBatchesLimit[item.id] || 10).map((b) => (
+                                  <SelectItem key={b.id} value={b.id} className="text-xs font-mono">
+                                    {b.batch_no} ({b.available_quantity || 0} units, exp: {b.expiry_date || "N/A"}{b.supplier_name ? `, Supp: ${b.supplier_name}` : ""})
+                                  </SelectItem>
+                                ))}
+                                {item.available_batches.length > (visibleBatchesLimit[item.id] || 10) && (
+                                  <div className="p-1 border-t border-border/20">
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      className="w-full h-7 text-[10px] font-bold text-amber-500 hover:text-amber-600 hover:bg-amber-500/5 transition-all"
+                                      onMouseDown={(e) => {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        setVisibleBatchesLimit(prev => ({
+                                          ...prev,
+                                          [item.id]: (visibleBatchesLimit[item.id] || 10) + 10
+                                        }));
+                                      }}
+                                    >
+                                      Show More Batches...
+                                    </Button>
+                                  </div>
+                                )}
+                              </SelectContent>
+                            </Select>
                           ) : (
                             <span className="text-xs text-muted-foreground font-mono">
                               {item.batch_no || "-"}
@@ -3177,18 +3297,90 @@ export default function BillingPage() {
                           />
                         </TableCell>
                         <TableCell>
-                          <Input
-                            value={item.batch_no || ""}
-                            onChange={(e) =>
-                              handleEditItemFieldChange(
-                                item.id,
-                                "batch_no",
-                                e.target.value
-                              )
-                            }
-                            placeholder="Batch"
-                            className="h-8 text-xs text-center border-border/80 focus-visible:ring-1 focus-visible:ring-amber-500 focus-visible:border-amber-500 rounded-lg transition-all duration-200 w-20"
-                          />
+                          {(!item.is_manual && item.available_batches && item.available_batches.length > 0) ? (
+                            <Select
+                              value={item.inventory_id}
+                              onValueChange={(selectedInvId) => {
+                                const selectedBatch = item.available_batches.find(b => b.id === selectedInvId);
+                                if (selectedBatch) {
+                                  const qty = parseInt(item.quantity) || 1;
+                                  const unitPrice = selectedBatch.mrp_per_unit || selectedBatch.mrp || 0;
+                                  const purchasePrice = selectedBatch.cost_per_unit || selectedBatch.purchase_price || 0;
+                                  const cgstVal = selectedBatch.cgst !== undefined ? Math.max(0, parseFloat(selectedBatch.cgst) || 0) : 0;
+                                  const sgstVal = selectedBatch.sgst !== undefined ? Math.max(0, parseFloat(selectedBatch.sgst) || 0) : 0;
+                                  
+                                  const exclPrice = unitPrice / (1 + (cgstVal + sgstVal) / 100);
+                                  const itemDiscount = (qty * exclPrice) * ((parseFloat(item.discount_percent) || 0) / 100);
+                                  const netTotal = (qty * exclPrice - itemDiscount) * (1 + (cgstVal + sgstVal) / 100);
+                                  const profit = (unitPrice - purchasePrice) * qty - (qty * unitPrice * ((parseFloat(item.discount_percent) || 0) / 100));
+
+                                  setEditingBillItems((prev) =>
+                                    prev.map((bi) =>
+                                      bi.id === item.id
+                                        ? {
+                                            ...bi,
+                                            inventory_id: selectedInvId,
+                                            batch_no: selectedBatch.batch_no,
+                                            expiry_date: selectedBatch.expiry_date || "",
+                                            unit_price: unitPrice,
+                                            exclusive_price: exclPrice,
+                                            net_total: netTotal,
+                                            purchase_price: purchasePrice,
+                                            available: selectedBatch.available_quantity || 0,
+                                            cgst: selectedBatch.cgst !== undefined ? selectedBatch.cgst : "",
+                                            sgst: selectedBatch.sgst !== undefined ? selectedBatch.sgst : "",
+                                            profit: profit
+                                          }
+                                        : bi
+                                    )
+                                  );
+                                }
+                              }}
+                            >
+                              <SelectTrigger className="h-8 text-xs font-mono border-border/80 rounded-lg w-28">
+                                <SelectValue placeholder="Select Batch" />
+                              </SelectTrigger>
+                              <SelectContent className="border border-border/40 shadow-xl rounded-xl z-[99999]">
+                                {item.available_batches.slice(0, visibleBatchesLimit[item.id] || 10).map((b) => (
+                                  <SelectItem key={b.id} value={b.id} className="text-xs font-mono">
+                                    {b.batch_no} ({b.available_quantity || 0} units, exp: {b.expiry_date || "N/A"}{b.supplier_name ? `, Supp: ${b.supplier_name}` : ""})
+                                  </SelectItem>
+                                ))}
+                                {item.available_batches.length > (visibleBatchesLimit[item.id] || 10) && (
+                                  <div className="p-1 border-t border-border/20">
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      className="w-full h-7 text-[10px] font-bold text-amber-500 hover:text-amber-600 hover:bg-amber-500/5 transition-all"
+                                      onMouseDown={(e) => {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        setVisibleBatchesLimit(prev => ({
+                                          ...prev,
+                                          [item.id]: (visibleBatchesLimit[item.id] || 10) + 10
+                                        }));
+                                      }}
+                                    >
+                                      Show More Batches...
+                                    </Button>
+                                  </div>
+                                )}
+                              </SelectContent>
+                            </Select>
+                          ) : (
+                            <Input
+                              value={item.batch_no || ""}
+                              onChange={(e) =>
+                                handleEditItemFieldChange(
+                                  item.id,
+                                  "batch_no",
+                                  e.target.value
+                                )
+                              }
+                              placeholder="Batch"
+                              className="h-8 text-xs text-center border-border/80 focus-visible:ring-1 focus-visible:ring-amber-500 focus-visible:border-amber-500 rounded-lg transition-all duration-200 w-20"
+                            />
+                          )}
                         </TableCell>
                         <TableCell className="text-center font-medium">
                           {item.is_manual ? (

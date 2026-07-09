@@ -39,7 +39,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "../components/ui/alert-dialog";
-import { Search, Plus, Package, AlertTriangle, ChevronLeft, ChevronRight, ArrowUpDown, Trash2 } from "lucide-react";
+import { Search, Plus, Package, AlertTriangle, ChevronLeft, ChevronRight, ArrowUpDown, Trash2, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
 export default function InventoryPage() {
@@ -63,10 +63,149 @@ export default function InventoryPage() {
     low_stock_threshold: 10,
   });
 
+  // Merge States
+  const [selectedItemIds, setSelectedItemIds] = useState([]);
+  const [mergeDialogOpen, setMergeDialogOpen] = useState(false);
+  const [mergeFormData, setMergeFormData] = useState({
+    merged_name: "",
+    merged_manufacturer: "",
+    merged_salt: "",
+    merged_hsn: "",
+  });
+  const [merging, setMerging] = useState(false);
+
+  // Product Catalog Details State
+  const [detailProduct, setDetailProduct] = useState(null);
+  const [detailBatches, setDetailBatches] = useState([]);
+  const [loadingDetails, setLoadingDetails] = useState(false);
+
+  // Merge Other Catalog Product States
+  const [showAddMergeForm, setShowAddMergeForm] = useState(false);
+  const [productsToMerge, setProductsToMerge] = useState([]);
+  const [mergingOther, setMergingOther] = useState(false);
+
   // Pagination State
   const [pagination, setPagination] = useState({ page: 1, limit: 30, total: 0, total_pages: 1 });
   const [sortBy, setSortBy] = useState("created_at");
   const [sortOrder, setSortOrder] = useState("desc");
+
+  const handleOpenMergeDialog = () => {
+    const selectedItems = inventory.filter((item) => selectedItemIds.includes(item.id));
+    if (selectedItems.length < 2) return;
+
+    // Prefill form using the first selected item
+    const firstItem = selectedItems[0];
+    setMergeFormData({
+      merged_name: firstItem.product_name || "",
+      merged_manufacturer: firstItem.manufacturer || "",
+      merged_salt: firstItem.salt_composition || "",
+      merged_hsn: firstItem.hsn_no || "",
+    });
+    setMergeDialogOpen(true);
+  };
+
+  const handleMergeSubmit = async () => {
+    if (!mergeFormData.merged_name.trim()) {
+      toast.error("Please enter a merged product name");
+      return;
+    }
+
+    setMerging(true);
+    try {
+      await axios.post(`${API}/inventory/merge`, {
+        inventory_ids: selectedItemIds,
+        ...mergeFormData,
+      });
+
+      toast.success("Inventory items merged successfully");
+      setMergeDialogOpen(false);
+      setSelectedItemIds([]);
+      await fetchData();
+    } catch (error) {
+      toast.error(error.response?.data?.detail || "Failed to merge inventory items");
+    } finally {
+      setMerging(false);
+    }
+  };
+
+  const handleOpenProductDetails = async (product, autoOpenMerge = false) => {
+    setDetailProduct(product);
+    setLoadingDetails(true);
+    setDetailBatches([]);
+    if (autoOpenMerge) {
+      setShowAddMergeForm(true);
+    }
+    try {
+      const res = await axios.get(`${API}/inventory?product_id=${product.id}&limit=100`);
+      setDetailBatches(res.data.inventory || []);
+    } catch (err) {
+      toast.error("Failed to load product details");
+    } finally {
+      setLoadingDetails(false);
+    }
+  };
+
+  const handleSelectProductToMerge = (productId) => {
+    const matched = products.find(p => p.id === productId);
+    if (!matched) return;
+    if (productsToMerge.some(p => p.id === productId)) {
+      toast.error("Product already selected");
+      return;
+    }
+    setProductsToMerge(prev => [...prev, matched]);
+  };
+
+  const handleRemoveProductFromMerge = (productId) => {
+    setProductsToMerge(prev => prev.filter(p => p.id !== productId));
+  };
+
+  const handleExecuteOtherMerge = async () => {
+    if (productsToMerge.length === 0) {
+      toast.error("Please select at least one product to merge");
+      return;
+    }
+    setMergingOther(true);
+    try {
+      const targetInvIds = detailBatches.map(b => b.id);
+      const batchResponses = await Promise.all(
+        productsToMerge.map(p => axios.get(`${API}/inventory?product_id=${p.id}&limit=100`))
+      );
+
+      const otherInvIds = [];
+      batchResponses.forEach(res => {
+        const items = res.data.inventory || [];
+        items.forEach(item => otherInvIds.push(item.id));
+      });
+
+      const allInvIds = [...targetInvIds, ...otherInvIds];
+
+      if (allInvIds.length === 0) {
+        toast.error("No inventory items found to perform merge");
+        return;
+      }
+
+      const firstBatch = detailBatches[0] || {};
+      await axios.post(`${API}/inventory/merge`, {
+        inventory_ids: allInvIds,
+        merged_name: detailProduct.name,
+        merged_manufacturer: firstBatch.manufacturer || "",
+        merged_salt: firstBatch.salt_composition || "",
+        merged_hsn: firstBatch.hsn_no || ""
+      });
+
+      toast.success("Products merged successfully into " + detailProduct.name);
+      setProductsToMerge([]);
+      setShowAddMergeForm(false);
+      await fetchData();
+
+      const updatedBatchesRes = await axios.get(`${API}/inventory?product_id=${detailProduct.id}&limit=100`);
+      setDetailBatches(updatedBatchesRes.data.inventory || []);
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Failed to merge products");
+    } finally {
+      setMergingOther(false);
+    }
+  };
 
   const fetchInventory = useCallback(async (page = 1, highlightId = undefined) => {
     try {
@@ -245,13 +384,24 @@ export default function InventoryPage() {
           </p>
         </div>
 
-        <Dialog open={productDialog} onOpenChange={setProductDialog}>
-          <DialogTrigger asChild>
-            <Button className="bg-primary hover:bg-primary/95 text-primary-foreground h-10 text-xs font-bold shadow-md shadow-primary/10 rounded-xl px-4 flex items-center gap-2" data-testid="add-product-btn">
-              <Plus className="w-4 h-4" />
-              Add Product
+        <div className="flex items-center gap-3">
+          {selectedItemIds.length >= 2 && (
+            <Button
+              onClick={handleOpenMergeDialog}
+              className="bg-amber-500 hover:bg-amber-600 text-white h-10 text-xs font-bold shadow-md rounded-xl px-4 flex items-center gap-2"
+              data-testid="merge-products-btn"
+            >
+              Merge Selected ({selectedItemIds.length})
             </Button>
-          </DialogTrigger>
+          )}
+
+          <Dialog open={productDialog} onOpenChange={setProductDialog}>
+            <DialogTrigger asChild>
+              <Button className="bg-primary hover:bg-primary/95 text-primary-foreground h-10 text-xs font-bold shadow-md shadow-primary/10 rounded-xl px-4 flex items-center gap-2" data-testid="add-product-btn">
+                <Plus className="w-4 h-4" />
+                Add Product
+              </Button>
+            </DialogTrigger>
           <DialogContent className="rounded-2xl border border-border/40 shadow-2xl max-w-md p-6">
             <DialogHeader className="border-b border-border/40 pb-4">
               <DialogTitle className="font-extrabold text-base tracking-tight text-foreground flex items-center gap-2">
@@ -321,6 +471,7 @@ export default function InventoryPage() {
             </div>
           </DialogContent>
         </Dialog>
+        </div>
       </div>
 
       {/* Filters */}
@@ -391,6 +542,20 @@ export default function InventoryPage() {
           <Table>
             <TableHeader className="border-b border-border/40 bg-muted/20">
               <TableRow className="hover:bg-transparent">
+                <TableHead className="w-12 h-11 text-center">
+                  <input
+                    type="checkbox"
+                    className="rounded border-border/80 focus:ring-primary w-4 h-4 cursor-pointer accent-primary"
+                    checked={inventory.length > 0 && selectedItemIds.length === inventory.length}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        setSelectedItemIds(inventory.map((item) => item.id));
+                      } else {
+                        setSelectedItemIds([]);
+                      }
+                    }}
+                  />
+                </TableHead>
                 <TableHead className="font-bold text-xs text-muted-foreground uppercase tracking-wider h-11">
                   <Button
                     variant="ghost"
@@ -443,7 +608,7 @@ export default function InventoryPage() {
             <TableBody>
               {inventory.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={11} className="text-center py-10 text-muted-foreground">
+                  <TableCell colSpan={12} className="text-center py-10 text-muted-foreground">
                     <Package className="w-10 h-10 mx-auto mb-2 opacity-55 text-muted-foreground/60" />
                     <p className="text-xs font-bold uppercase tracking-widest text-muted-foreground/60">No inventory items found</p>
                   </TableCell>
@@ -477,6 +642,20 @@ export default function InventoryPage() {
                   
                   return (
                     <TableRow key={item.id} id={`record-${item.id}`} data-testid={`inventory-row-${item.id}`} className="hover:bg-muted/15 border-b border-border/40 transition-colors">
+                      <TableCell className="text-center">
+                        <input
+                          type="checkbox"
+                          className="rounded border-border/80 focus:ring-primary w-4 h-4 cursor-pointer accent-primary"
+                          checked={selectedItemIds.includes(item.id)}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setSelectedItemIds((prev) => [...prev, item.id]);
+                            } else {
+                              setSelectedItemIds((prev) => prev.filter((id) => id !== item.id));
+                            }
+                          }}
+                        />
+                      </TableCell>
                       <TableCell className="font-bold text-sm text-foreground">{item.product_name}</TableCell>
                       <TableCell className="text-xs font-semibold text-muted-foreground">{item.manufacturer || "-"}</TableCell>
                       <TableCell className="font-mono text-xs font-semibold text-muted-foreground">{item.batch_no}</TableCell>
@@ -604,10 +783,11 @@ export default function InventoryPage() {
         </CardHeader>
         <CardContent className="p-6">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {products.slice(0, 12).map((product) => (
+             {products.slice(0, 12).map((product) => (
               <div
                 key={product.id}
-                className="p-4 rounded-xl bg-card/20 border border-border/40 hover:border-primary/30 dark:hover:border-primary/20 transition-all duration-300 group relative overflow-hidden"
+                onClick={() => handleOpenProductDetails(product)}
+                className="p-4 rounded-xl bg-card/20 border border-border/40 hover:border-primary/30 dark:hover:border-primary/20 transition-all duration-300 group relative overflow-hidden cursor-pointer"
               >
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform duration-300">
@@ -619,15 +799,33 @@ export default function InventoryPage() {
                       {product.category} • THRESHOLD: {product.low_stock_threshold}
                     </p>
                   </div>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="text-destructive hover:text-destructive hover:bg-destructive/10 rounded-lg shrink-0"
-                    onClick={() => setDeleteDialog({ open: true, item: product, type: "product" })}
-                    data-testid={`delete-product-${product.id}`}
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </Button>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="text-primary hover:text-primary hover:bg-primary/10 rounded-lg"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleOpenProductDetails(product, true);
+                      }}
+                      title="Merge Products"
+                      data-testid={`merge-product-${product.id}`}
+                    >
+                      <Plus className="w-4 h-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="text-destructive hover:text-destructive hover:bg-destructive/10 rounded-lg"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setDeleteDialog({ open: true, item: product, type: "product" });
+                      }}
+                      data-testid={`delete-product-${product.id}`}
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
+                  </div>
                 </div>
               </div>
             ))}
@@ -723,6 +921,323 @@ export default function InventoryPage() {
               Update Stock
             </Button>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Merge Dialog */}
+      <Dialog open={mergeDialogOpen} onOpenChange={setMergeDialogOpen}>
+        <DialogContent className="rounded-2xl border border-border/40 shadow-2xl max-w-lg p-6">
+          <DialogHeader className="border-b border-border/40 pb-4">
+            <DialogTitle className="font-extrabold text-base tracking-tight text-foreground flex items-center gap-2">
+              <Package className="w-5 h-5 text-amber-500" />
+              Merge Selected Products
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 pt-4">
+            <div className="text-xs text-muted-foreground/80 leading-relaxed bg-amber-500/5 border border-amber-500/10 p-3 rounded-xl">
+              <strong className="text-amber-600 font-semibold block mb-0.5">⚠️ Important Warning</strong>
+              This will merge all selected batches under a single unified product name. Historical billing and purchase records will be updated to point to the unified name.
+            </div>
+
+            <div className="max-h-32 overflow-y-auto p-2 border border-border/40 rounded-xl bg-muted/10 space-y-1">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/80 mb-1">Items being merged:</p>
+              {inventory
+                .filter(item => selectedItemIds.includes(item.id))
+                .map(item => (
+                  <div key={item.id} className="text-xs flex justify-between py-1 border-b border-border/20 last:border-0">
+                    <span className="font-semibold">{item.product_name} <span className="text-muted-foreground font-mono">({item.batch_no})</span></span>
+                    <span className="text-muted-foreground font-semibold">{item.available_quantity || 0} units</span>
+                  </div>
+                ))}
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label className="text-xs font-bold text-muted-foreground/80">Unified Product Name *</Label>
+                <Input
+                  value={mergeFormData.merged_name}
+                  onChange={(e) => setMergeFormData({ ...mergeFormData, merged_name: e.target.value })}
+                  placeholder="e.g. Dolo 650mg Tablet"
+                  className="h-10 text-sm font-bold border-border/80 focus:border-primary bg-card/25"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-xs font-bold text-muted-foreground/80">Manufacturer</Label>
+                <Input
+                  value={mergeFormData.merged_manufacturer}
+                  onChange={(e) => setMergeFormData({ ...mergeFormData, merged_manufacturer: e.target.value })}
+                  placeholder="e.g. Micro Labs Ltd"
+                  className="h-10 text-sm font-bold border-border/80 focus:border-primary bg-card/25"
+                />
+              </div>
+
+              <div className="space-y-2 md:col-span-2">
+                <Label className="text-xs font-bold text-muted-foreground/80">Salt Composition</Label>
+                <Input
+                  value={mergeFormData.merged_salt}
+                  onChange={(e) => setMergeFormData({ ...mergeFormData, merged_salt: e.target.value })}
+                  placeholder="e.g. Paracetamol 650mg"
+                  className="h-10 text-sm font-bold border-border/80 focus:border-primary bg-card/25"
+                />
+              </div>
+
+              <div className="space-y-2 md:col-span-2">
+                <Label className="text-xs font-bold text-muted-foreground/80">HSN Number</Label>
+                <Input
+                  value={mergeFormData.merged_hsn}
+                  onChange={(e) => setMergeFormData({ ...mergeFormData, merged_hsn: e.target.value })}
+                  placeholder="e.g. 30049099"
+                  className="h-10 text-sm font-bold border-border/80 focus:border-primary bg-card/25"
+                />
+              </div>
+            </div>
+
+            <Button
+              onClick={handleMergeSubmit}
+              disabled={merging}
+              className="w-full bg-amber-500 hover:bg-amber-600 text-white h-10 text-xs font-bold shadow-md rounded-xl mt-2 flex items-center justify-center gap-2"
+            >
+              {merging ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Merging Products...
+                </>
+              ) : (
+                "Confirm and Merge Products"
+              )}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Product Details Dialog */}
+      <Dialog 
+        open={!!detailProduct} 
+        onOpenChange={(open) => {
+          if (!open) {
+            setDetailProduct(null);
+            setShowAddMergeForm(false);
+            setProductsToMerge([]);
+          }
+        }}
+      >
+        <DialogContent className="rounded-2xl border border-border/40 shadow-2xl max-w-2xl p-6 overflow-hidden bg-background">
+          <DialogHeader className="border-b border-border/40 pb-4">
+            <DialogTitle className="font-extrabold text-base tracking-tight text-foreground flex items-center justify-between w-full">
+              <span className="flex items-center gap-2">
+                <Package className="w-5 h-5 text-primary" />
+                Product Catalog Details
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 text-xs font-bold border-amber-500/30 text-amber-500 hover:text-amber-600 hover:bg-amber-500/5 rounded-lg flex items-center gap-1.5"
+                onClick={() => {
+                  setShowAddMergeForm(!showAddMergeForm);
+                  setProductsToMerge([]);
+                }}
+              >
+                <Plus className="w-3.5 h-3.5" />
+                {showAddMergeForm ? "Cancel Merge" : "Merge Another Product"}
+              </Button>
+            </DialogTitle>
+          </DialogHeader>
+
+          {loadingDetails ? (
+            <div className="flex flex-col items-center justify-center py-10 gap-3">
+              <Loader2 className="w-8 h-8 animate-spin text-primary" />
+              <p className="text-xs font-semibold text-muted-foreground">Loading associated inventory details...</p>
+            </div>
+          ) : (
+            <div className="space-y-6 pt-4 overflow-y-auto max-h-[70vh] pr-1">
+              
+              {/* Merge Other Catalog Product Form */}
+              {showAddMergeForm && (
+                <div className="border border-amber-500/20 bg-amber-500/5 rounded-xl p-4 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs font-extrabold text-amber-600 flex items-center gap-1.5">
+                      <Package className="w-4 h-4" />
+                      Merge Another Catalog Product
+                    </p>
+                    <span className="text-[10px] text-muted-foreground font-semibold">
+                      This will move all stock and history of selected products into <strong>{detailProduct?.name}</strong>
+                    </span>
+                  </div>
+
+                  <div className="flex gap-3 items-end">
+                    <div className="flex-1 space-y-1.5">
+                      <Label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Select Product to Merge</Label>
+                      <Select 
+                        onValueChange={(val) => {
+                          handleSelectProductToMerge(val);
+                        }}
+                      >
+                        <SelectTrigger className="h-9 text-xs border-border/80 focus:border-amber-500 bg-background rounded-lg">
+                          <SelectValue placeholder="Choose product..." />
+                        </SelectTrigger>
+                        <SelectContent className="border border-border/40 shadow-xl rounded-xl z-[99999]">
+                          {products
+                            .filter(p => p.id !== detailProduct?.id)
+                            .map(p => (
+                              <SelectItem key={p.id} value={p.id} className="text-xs">
+                                {p.name}
+                              </SelectItem>
+                            ))
+                          }
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <Button
+                      onClick={handleExecuteOtherMerge}
+                      disabled={mergingOther || productsToMerge.length === 0}
+                      className="bg-amber-500 hover:bg-amber-600 text-white h-9 text-xs font-bold px-4 rounded-lg shadow-sm flex items-center gap-2"
+                    >
+                      {mergingOther ? (
+                        <>
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          Merging...
+                        </>
+                      ) : (
+                        "Merge Group"
+                      )}
+                    </Button>
+                  </div>
+
+                  {productsToMerge.length > 0 && (
+                    <div className="space-y-1.5 pt-2">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Selected products to merge:</p>
+                      <div className="flex flex-wrap gap-2">
+                        {productsToMerge.map(p => (
+                          <Badge 
+                            key={p.id} 
+                            variant="secondary"
+                            className="bg-amber-500/10 text-amber-600 hover:bg-amber-500/20 text-xs font-semibold px-2 py-0.5 rounded-lg flex items-center gap-1 border border-amber-500/20"
+                          >
+                            {p.name}
+                            <button
+                              onClick={() => handleRemoveProductFromMerge(p.id)}
+                              className="text-amber-500 hover:text-amber-700 font-bold ml-1 text-sm leading-none focus:outline-none"
+                            >
+                              ×
+                            </button>
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Product Info Fields */}
+              <div className="bg-muted/10 border border-border/30 rounded-xl p-4 grid grid-cols-2 md:grid-cols-3 gap-4">
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Product Name</p>
+                  <p className="text-sm font-extrabold text-foreground mt-0.5">{detailProduct?.name}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Category</p>
+                  <p className="text-sm font-semibold text-foreground mt-0.5 capitalize">{detailProduct?.category || "Medicine"}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Low Stock Threshold</p>
+                  <p className="text-sm font-semibold text-foreground mt-0.5">{detailProduct?.low_stock_threshold || 10} units</p>
+                </div>
+                {detailBatches.length > 0 && (
+                  <>
+                    <div className="md:col-span-2">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Salt Composition</p>
+                      <p className="text-xs font-semibold text-foreground mt-0.5">{detailBatches[0]?.salt_composition || "-"}</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Manufacturer</p>
+                      <p className="text-xs font-semibold text-foreground mt-0.5">{detailBatches[0]?.manufacturer || "-"}</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">HSN Number</p>
+                      <p className="text-xs font-mono font-semibold text-foreground mt-0.5">{detailBatches[0]?.hsn_no || "-"}</p>
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {/* Batches Table */}
+              <div className="space-y-3">
+                <p className="text-xs font-extrabold text-foreground flex items-center gap-1.5">
+                  <Package className="w-4 h-4 text-muted-foreground" />
+                  Associated Inventory Batches ({detailBatches.length})
+                </p>
+                
+                <div className="border border-border/40 rounded-xl overflow-hidden bg-card/25">
+                  <Table>
+                    <TableHeader className="bg-muted/10 border-b border-border/40">
+                      <TableRow className="hover:bg-transparent">
+                        <TableHead className="font-bold text-xs text-muted-foreground h-10">Batch No</TableHead>
+                        <TableHead className="font-bold text-xs text-muted-foreground h-10">Expiry</TableHead>
+                        <TableHead className="font-bold text-xs text-muted-foreground h-10">Available Stock</TableHead>
+                        <TableHead className="font-bold text-xs text-muted-foreground h-10">Cost / MRP</TableHead>
+                        <TableHead className="font-bold text-xs text-muted-foreground h-10">Supplier</TableHead>
+                        <TableHead className="font-bold text-xs text-muted-foreground h-10 text-center">Status</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {detailBatches.length === 0 ? (
+                        <TableRow>
+                          <TableCell colSpan={6} className="text-center py-6 text-xs text-muted-foreground font-semibold">
+                            No active batches found in inventory for this product.
+                          </TableCell>
+                        </TableRow>
+                      ) : (
+                        detailBatches.map((batch) => {
+                          const isExpired = batch.expiry_date && new Date(batch.expiry_date) < new Date();
+                          const isLowStock = batch.available_quantity <= (detailProduct?.low_stock_threshold || 10);
+                          let statusLabel = "In Stock";
+                          
+                          if (isExpired) {
+                            statusLabel = "Expired";
+                          } else if (batch.available_quantity <= 0) {
+                            statusLabel = "Out of Stock";
+                          } else if (isLowStock) {
+                            statusLabel = "Low Stock";
+                          }
+
+                          return (
+                            <TableRow key={batch.id} className="hover:bg-muted/10 border-b border-border/30 last:border-0">
+                              <TableCell className="font-mono text-xs font-bold text-foreground">{batch.batch_no}</TableCell>
+                              <TableCell className="text-xs font-semibold text-muted-foreground">{batch.expiry_date || "N/A"}</TableCell>
+                              <TableCell className="text-xs font-semibold text-foreground">
+                                {batch.available_quantity || 0} units <span className="text-[10px] text-muted-foreground font-normal">(of {batch.quantity || 0})</span>
+                              </TableCell>
+                              <TableCell className="text-xs font-semibold text-foreground">
+                                ₹{batch.purchase_price} / ₹{batch.mrp}
+                              </TableCell>
+                              <TableCell className="text-xs font-semibold text-muted-foreground truncate max-w-[120px]">
+                                {batch.supplier_name || "-"}
+                              </TableCell>
+                              <TableCell className="text-center">
+                                <Badge 
+                                  className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${
+                                    statusLabel === "Expired" || statusLabel === "Out of Stock"
+                                      ? "bg-red-500/10 text-red-500 hover:bg-red-500/15"
+                                      : statusLabel === "Low Stock"
+                                      ? "bg-amber-500/10 text-amber-500 hover:bg-amber-500/15"
+                                      : "bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/15"
+                                  }`}
+                                >
+                                  {statusLabel}
+                                </Badge>
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })
+                      )}
+                    </TableBody>
+                  </Table>
+                </div>
+              </div>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </div>

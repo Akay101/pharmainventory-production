@@ -276,10 +276,33 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
     const processedItems = [];
 
     for (const item of items) {
+      // Find or create product in products collection (unique product directory)
+      const normalizedName = item.product_name.trim();
+      let matchedProduct = await db.collection("products").findOne({
+        pharmacy_id: req.user.pharmacy_id,
+        name: { $regex: new RegExp("^" + normalizedName.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&') + "$", "i") }
+      }, { session });
+
+      let resolvedProductId;
+      if (matchedProduct) {
+        resolvedProductId = matchedProduct.id;
+      } else {
+        resolvedProductId = uuidv4();
+        await db.collection("products").insertOne({
+          id: resolvedProductId,
+          pharmacy_id: req.user.pharmacy_id,
+          name: normalizedName,
+          low_stock_threshold: 10,
+          created_at: new Date().toISOString(),
+        }, { session });
+      }
+
       let packQty = item.pack_quantity || item.quantity || 1;
-      let unitsPerPack = item.units_per_pack || 1;
-      let packPrice = item.pack_price || item.purchase_price || 0;
-      let mrpPerUnit = item.mrp_per_unit || item.mrp || 0;
+      let unitsPerPack = item.units_per_pack || item.units || 1;
+      let packPrice = item.pack_price || item.rate_pack || 0;
+      let mrpPerUnit = item.mrp_per_unit || item.mrp_unit || 0;
+      const discount = parseFloat(item.discount) || 0;
+      const scheme = parseFloat(item.scheme) || 0;
 
       if (item.quantity && !item.pack_quantity && item.purchase_price) {
         packQty = item.quantity;
@@ -287,16 +310,19 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
         packPrice = item.purchase_price;
       }
 
-      const totalUnits = packQty * unitsPerPack;
-      const pricePerUnit =
-        unitsPerPack > 0 ? packPrice / unitsPerPack : packPrice;
+      const totalPacks = packQty + scheme;
+      const totalUnits = totalPacks * unitsPerPack;
+      
+      const netBasePrice = packQty * packPrice * (1 - discount / 100);
+      const pricePerUnit = totalUnits > 0 ? netBasePrice / totalUnits : 0;
+
       const cgst = parseFloat(item.cgst) || 0;
       const sgst = parseFloat(item.sgst) || 0;
-      const itemTotal = packQty * packPrice * (1 + (cgst + sgst) / 100);
+      const itemTotal = netBasePrice * (1 + (cgst + sgst) / 100);
       totalAmount += itemTotal;
 
       const processedItem = {
-        product_id: item.product_id,
+        product_id: resolvedProductId,
         product_name: item.product_name,
         batch_no: item.batch_no,
         expiry_date: item.expiry_date,
@@ -305,6 +331,7 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
         pack_type: item.pack_type || "Strip",
         quantity: totalUnits,
         pack_quantity: packQty,
+        scheme: scheme,
         units_per_pack: unitsPerPack,
         total_units: totalUnits,
         purchase_price: Math.round(pricePerUnit * 100) / 100,
@@ -317,15 +344,16 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
           : null,
         hsn_no: item.hsn_no || null,
         item_total: itemTotal,
-        cgst: parseFloat(item.cgst) || 0,
-        sgst: parseFloat(item.sgst) || 0,
+        cgst: cgst,
+        sgst: sgst,
+        discount: discount,
       };
       processedItems.push(processedItem);
 
       // Update inventory (with session)
       const existingInventory = await db.collection("inventory").findOne({
         pharmacy_id: req.user.pharmacy_id,
-        product_name: item.product_name,
+        product_id: resolvedProductId,
         batch_no: item.batch_no,
       }, { session });
 
@@ -344,8 +372,10 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
               pack_price: packPrice,
               mrp_pack: mrpPerUnit ? mrpPerUnit * unitsPerPack : null,
               expiry_date: item.expiry_date,
-              cgst: parseFloat(item.cgst) || 0,
-              sgst: parseFloat(item.sgst) || 0,
+              cgst: cgst,
+              sgst: sgst,
+              discount: discount,
+              scheme: scheme,
             },
           },
           { session }
@@ -355,7 +385,7 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
         await db.collection("inventory").insertOne({
           id: inventoryId,
           pharmacy_id: req.user.pharmacy_id,
-          product_id: item.product_id,
+          product_id: resolvedProductId,
           product_name: item.product_name,
           batch_no: item.batch_no,
           hsn_no: item.hsn_no || null,
@@ -366,13 +396,15 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
           quantity: totalUnits,
           available_quantity: totalUnits,
           pack_quantity: packQty,
+          scheme: scheme,
           units_per_pack: unitsPerPack,
           purchase_price: pricePerUnit,
           mrp: mrpPerUnit,
           pack_price: packPrice,
           mrp_pack: mrpPerUnit ? mrpPerUnit * unitsPerPack : null,
-          cgst: parseFloat(item.cgst) || 0,
-          sgst: parseFloat(item.sgst) || 0,
+          cgst: cgst,
+          sgst: sgst,
+          discount: discount,
           purchase_id: purchaseId,
           supplier_id: supplier_id,
           created_at: new Date().toISOString(),
@@ -559,6 +591,27 @@ router.put(
       const processedItems = [];
 
       for (const item of items) {
+        // Find or create product in products collection (unique product directory)
+        const normalizedName = item.product_name.trim();
+        let matchedProduct = await db.collection("products").findOne({
+          pharmacy_id: req.user.pharmacy_id,
+          name: { $regex: new RegExp("^" + normalizedName.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&') + "$", "i") }
+        }, { session });
+
+        let resolvedProductId;
+        if (matchedProduct) {
+          resolvedProductId = matchedProduct.id;
+        } else {
+          resolvedProductId = uuidv4();
+          await db.collection("products").insertOne({
+            id: resolvedProductId,
+            pharmacy_id: req.user.pharmacy_id,
+            name: normalizedName,
+            low_stock_threshold: 10,
+            created_at: new Date().toISOString(),
+          }, { session });
+        }
+
         const packQty =
           parseInt(item.pack_quantity) || parseInt(item.quantity) || 1;
         const unitsPerPack =
@@ -567,33 +620,41 @@ router.put(
           parseFloat(item.pack_price) || parseFloat(item.rate_pack) || 0;
         const mrpPerUnit =
           parseFloat(item.mrp_per_unit) || parseFloat(item.mrp_unit) || 0;
+        const discount = parseFloat(item.discount) || 0;
+        const scheme = parseFloat(item.scheme) || 0;
 
-        const totalUnits = packQty * unitsPerPack;
-        const pricePerUnit =
-          unitsPerPack > 0 ? packPrice / unitsPerPack : packPrice;
+        const totalPacks = packQty + scheme;
+        const totalUnits = totalPacks * unitsPerPack;
+        
+        const netBasePrice = packQty * packPrice * (1 - discount / 100);
+        const pricePerUnit = totalUnits > 0 ? netBasePrice / totalUnits : 0;
+
         const cgst = parseFloat(item.cgst) || 0;
         const sgst = parseFloat(item.sgst) || 0;
-        const itemTotal = packQty * packPrice * (1 + (cgst + sgst) / 100);
+        const itemTotal = netBasePrice * (1 + (cgst + sgst) / 100);
         totalAmount += itemTotal;
 
         processedItems.push({
           ...item,
+          product_id: resolvedProductId,
           pack_quantity: packQty,
+          scheme: scheme,
           units_per_pack: unitsPerPack,
           pack_price: packPrice,
           mrp_per_unit: mrpPerUnit,
           total_units: totalUnits,
           price_per_unit: pricePerUnit,
           item_total: itemTotal,
-          cgst: parseFloat(item.cgst) || 0,
-          sgst: parseFloat(item.sgst) || 0,
+          cgst: cgst,
+          sgst: sgst,
+          discount: discount,
         });
 
         if (updateInventory) {
           // Add to inventory
           const existingInventory = await db.collection("inventory").findOne({
             pharmacy_id: req.user.pharmacy_id,
-            product_name: item.product_name,
+            product_id: resolvedProductId,
             batch_no: item.batch_no,
           }, { session });
 
@@ -605,8 +666,10 @@ router.put(
                 $set: {
                   purchase_price: pricePerUnit,
                   mrp: mrpPerUnit,
-                  cgst: parseFloat(item.cgst) || 0,
-                  sgst: parseFloat(item.sgst) || 0,
+                  cgst: cgst,
+                  sgst: sgst,
+                  discount: discount,
+                  scheme: scheme,
                 },
               },
               { session }
@@ -615,17 +678,20 @@ router.put(
             await db.collection("inventory").insertOne({
               id: uuidv4(),
               pharmacy_id: req.user.pharmacy_id,
-              product_id: item.product_id,
+              product_id: resolvedProductId,
               product_name: item.product_name,
               batch_no: item.batch_no,
               expiry_date: item.expiry_date,
               quantity: totalUnits,
               available_quantity: totalUnits,
+              pack_quantity: packQty,
+              scheme: scheme,
               units_per_pack: unitsPerPack,
               purchase_price: pricePerUnit,
               mrp: mrpPerUnit,
-              cgst: parseFloat(item.cgst) || 0,
-              sgst: parseFloat(item.sgst) || 0,
+              cgst: cgst,
+              sgst: sgst,
+              discount: discount,
               purchase_id: req.params.purchase_id,
               created_at: new Date().toISOString(),
             }, { session });

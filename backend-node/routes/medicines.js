@@ -201,6 +201,52 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
 
     const inventoryPipeline = [
       { $match: inventoryMatchStage },
+      // Lookup supplier for EACH inventory batch BEFORE grouping
+      {
+        $lookup: {
+          from: "suppliers",
+          localField: "supplier_id",
+          foreignField: "id",
+          as: "batch_supplier"
+        }
+      },
+      {
+        $unwind: {
+          path: "$batch_supplier",
+          preserveNullAndEmptyArrays: true
+        }
+      },
+      {
+        $group: {
+          _id: "$product_name",
+          product_id: { $first: "$product_id" },
+          product_name: { $first: "$product_name" },
+          manufacturer: { $first: "$manufacturer" },
+          salt_composition: { $first: "$salt_composition" },
+          hsn_no: { $first: "$hsn_no" },
+          available_quantity: { $sum: "$available_quantity" },
+          quantity: { $sum: "$quantity" },
+          units_per_pack: { $first: "$units_per_pack" },
+          purchase_price: { $first: "$purchase_price" },
+          mrp: { $first: "$mrp" },
+          created_at: { $max: "$created_at" },
+          supplier_id: { $first: "$supplier_id" },
+          batches: {
+            $push: {
+              id: "$id",
+              batch_no: "$batch_no",
+              expiry_date: "$expiry_date",
+              available_quantity: "$available_quantity",
+              quantity: "$quantity",
+              purchase_price: "$purchase_price",
+              mrp: "$mrp",
+              cgst: "$cgst",
+              sgst: "$sgst",
+              supplier_name: "$batch_supplier.name"
+            }
+          }
+        }
+      },
       {
         $lookup: {
           from: "suppliers",
@@ -279,13 +325,14 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
           manufacturer_name: "$manufacturer",
           salt_composition: "$salt_composition",
           short_composition1: "$salt_composition",
-          pack_size: { $concat: [{ $toString: "$units_per_pack" }, " units"] },
+          pack_size: { $concat: [{ $toString: { $ifNull: ["$units_per_pack", 1] } }, " units"] },
           pack_size_label: {
-            $concat: [{ $toString: "$units_per_pack" }, " units"],
+            $concat: [{ $toString: { $ifNull: ["$units_per_pack", 1] } }, " units"],
           },
           source: "inventory",
-          batch_no: "$batch_no",
-          expiry_date: "$expiry_date",
+          batches: "$batches",
+          batch_no: { $let: { vars: { firstBatch: { $first: "$batches" } }, in: "$$firstBatch.batch_no" } },
+          expiry_date: { $let: { vars: { firstBatch: { $first: "$batches" } }, in: "$$firstBatch.expiry_date" } },
           available_quantity: "$available_quantity",
           quantity: "$quantity",
           stock_status: {
@@ -296,7 +343,6 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
             },
           },
           purchase_price: "$purchase_price",
-          pack_price: "$pack_price",
           mrp_per_unit: "$mrp",
           mrp: "$mrp",
           "price(₹)": "$mrp",
@@ -517,25 +563,26 @@ router.get(
       // Quick prefix search with fallback to fuzzy
       let inventoryResults = await db
         .collection("inventory")
-        .find(
+        .aggregate([
           {
-            pharmacy_id: pharmacyId,
-            $or: [
-              { product_name: { $regex: `^${q}`, $options: "i" } },
-              { product_name: { $regex: q, $options: "i" } },
-            ],
+            $match: {
+              pharmacy_id: pharmacyId,
+              $or: [
+                { product_name: { $regex: `^${q}`, $options: "i" } },
+                { product_name: { $regex: q, $options: "i" } },
+              ],
+            }
           },
           {
-            projection: {
-              _id: 0,
-              product_name: 1,
-              product_id: 1,
-              available_quantity: 1,
-              source: { $literal: "inventory" },
-            },
-          }
-        )
-        .limit(parsedLimit)
+            $group: {
+              _id: "$product_name",
+              product_name: { $first: "$product_name" },
+              product_id: { $first: "$product_id" },
+              available_quantity: { $sum: "$available_quantity" }
+            }
+          },
+          { $limit: parsedLimit }
+        ])
         .toArray();
 
       // If few results, try fuzzy
@@ -543,23 +590,24 @@ router.get(
         const fuzzyPattern = q.split("").join(".*?");
         const fuzzyResults = await db
           .collection("inventory")
-          .find(
+          .aggregate([
             {
-              pharmacy_id: pharmacyId,
-              product_name: { $regex: fuzzyPattern, $options: "i" },
-              product_name: { $not: { $regex: `^${q}`, $options: "i" } }, // Exclude already found
+              $match: {
+                pharmacy_id: pharmacyId,
+                product_name: { $regex: fuzzyPattern, $options: "i" },
+                product_name: { $not: { $regex: `^${q}`, $options: "i" } }, // Exclude already found
+              }
             },
             {
-              projection: {
-                _id: 0,
-                product_name: 1,
-                product_id: 1,
-                available_quantity: 1,
-                source: { $literal: "inventory" },
-              },
-            }
-          )
-          .limit(parsedLimit - inventoryResults.length)
+              $group: {
+                _id: "$product_name",
+                product_name: { $first: "$product_name" },
+                product_id: { $first: "$product_id" },
+                available_quantity: { $sum: "$available_quantity" }
+              }
+            },
+            { $limit: parsedLimit - inventoryResults.length }
+          ])
           .toArray();
 
         inventoryResults = [...inventoryResults, ...fuzzyResults];
