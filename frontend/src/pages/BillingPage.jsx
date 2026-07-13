@@ -49,6 +49,7 @@ import {
 import {
   Search,
   Plus,
+  Eye,
   Trash2,
   Loader2,
   FileText,
@@ -85,7 +86,7 @@ export default function BillingPage() {
   const [totalBills, setTotalBills] = useState(0);
   const [customers, setCustomers] = useState([]);
   const [loading, setLoading] = useState(true);
-  const { user } = useAuth();
+  const { user, settings } = useAuth();
   const [tabs, setTabs] = useState([]);
   const [activeTabId, setActiveTabId] = useState(null);
   const [submitting, setSubmitting] = useState(false);
@@ -102,6 +103,18 @@ export default function BillingPage() {
   });
   const [billDiscount, setBillDiscount] = useState(0);
   const [isPaid, setIsPaid] = useState(true);
+  const [paymentMode, setPaymentMode] = useState("");
+  
+  // Customer Profile Modal state
+  const [showCustomerProfileModal, setShowCustomerProfileModal] = useState(false);
+  const [customerProfileData, setCustomerProfileData] = useState(null);
+  const [customerBills, setCustomerBills] = useState([]);
+  const [customerBillsPage, setCustomerBillsPage] = useState(1);
+  const [hasMoreCustomerBills, setHasMoreCustomerBills] = useState(false);
+  const [loadingCustomerBills, setLoadingCustomerBills] = useState(false);
+  const [customerBillsSearch, setCustomerBillsSearch] = useState("");
+  const [expandedCustomerBills, setExpandedCustomerBills] = useState({});
+
   const [doctorName, setDoctorName] = useState("");
   const [doctorSearch, setDoctorSearch] = useState("");
   const [doctorSuggestions, setDoctorSuggestions] = useState([]);
@@ -251,6 +264,20 @@ export default function BillingPage() {
     }
   }, [highlightedEditingSuggestion, showEditingInventorySuggestions]);
 
+  // Default payment mode settings synchronization
+  useEffect(() => {
+    if (!isPaid) {
+      if (paymentMode !== "") {
+        setPaymentMode("");
+      }
+      return;
+    }
+    const defaultMode = settings?.billing_payment_mode_default;
+    if (defaultMode && defaultMode !== "none" && paymentMode === "") {
+      setPaymentMode(defaultMode);
+    }
+  }, [settings, paymentMode, isPaid]);
+
   // Pagination
   const [page, setPage] = useState(1);
   const [limit] = useState(10);
@@ -329,6 +356,7 @@ export default function BillingPage() {
           setBillItems(active.data.billItems || []);
           setBillDiscount(active.data.billDiscount || 0);
           setIsPaid(active.data.isPaid !== false);
+          setPaymentMode(active.data.paymentMode || "");
         }
       } catch (e) {
         console.error("Failed to parse billing drafts", e);
@@ -350,6 +378,7 @@ export default function BillingPage() {
                   billItems,
                   billDiscount,
                   isPaid,
+                  paymentMode,
                   doctorName,
                 },
               }
@@ -369,6 +398,7 @@ export default function BillingPage() {
     billItems,
     billDiscount,
     isPaid,
+    paymentMode,
     doctorName,
     activeTabId,
     user?.id,
@@ -390,6 +420,8 @@ export default function BillingPage() {
     }
     const newId = uuidv4();
     const defaultRow = { ...emptyItem, id: `temp-${Date.now()}` };
+    const defaultMode = settings?.billing_payment_mode_default;
+    const initialMode = defaultMode && defaultMode !== "none" ? defaultMode : "";
     const newTab = {
       id: newId,
       data: {
@@ -404,6 +436,7 @@ export default function BillingPage() {
         billItems: [defaultRow],
         billDiscount: 0,
         isPaid: true,
+        paymentMode: initialMode,
       },
     };
     setTabs((prev) => [...prev, newTab]);
@@ -419,6 +452,7 @@ export default function BillingPage() {
     setBillItems([defaultRow]);
     setBillDiscount(0);
     setIsPaid(true);
+    setPaymentMode(initialMode);
     setShowNewBill(true);
     setTimeout(() => productInputRef.current?.focus(), 150);
   };
@@ -444,6 +478,7 @@ export default function BillingPage() {
     setBillItems(target.data.billItems || []);
     setBillDiscount(target.data.billDiscount || 0);
     setIsPaid(target.data.isPaid !== false);
+    setPaymentMode(target.data.paymentMode || "");
     setShowNewBill(true);
     setTimeout(() => productInputRef.current?.focus(), 150);
   };
@@ -472,6 +507,7 @@ export default function BillingPage() {
       setBillItems([]);
       setBillDiscount(0);
       setIsPaid(true);
+      setPaymentMode("");
       setShowNewBill(false);
     }
 
@@ -825,6 +861,61 @@ export default function BillingPage() {
     if (scrollHeight - scrollTop - clientHeight < 30) {
       loadMoreCustomerSuggestions();
     }
+  };
+
+  const fetchCustomerProfileData = async (customerId) => {
+    if (!customerId) return;
+    try {
+      const res = await axios.get(`${API}/customers/${customerId}`);
+      setCustomerProfileData(res.data);
+      setExpandedCustomerBills({});
+      // Fetch initial bills page
+      setCustomerBillsPage(1);
+      setCustomerBillsSearch("");
+      fetchCustomerBills(customerId, 1, "", false);
+      setShowCustomerProfileModal(true);
+    } catch (err) {
+      console.error("Failed to fetch customer profile data", err);
+      toast.error("Failed to load customer profile details");
+    }
+  };
+
+  const fetchCustomerBills = async (customerId, pageNum, searchTerm, isLoadMore = false) => {
+    if (!customerId) return;
+    setLoadingCustomerBills(true);
+    try {
+      const res = await axios.get(`${API}/bills`, {
+        params: {
+          customer_id: customerId,
+          search: searchTerm || undefined,
+          page: pageNum,
+          limit: 10,
+        },
+      });
+
+      if (isLoadMore) {
+        setCustomerBills((prev) => [...prev, ...res.data.bills]);
+      } else {
+        setCustomerBills(res.data.bills);
+      }
+
+      const total = res.data.pagination?.total || 0;
+      const loaded = isLoadMore ? (customerBills.length + res.data.bills.length) : res.data.bills.length;
+      setHasMoreCustomerBills(loaded < total);
+      setCustomerBillsPage(pageNum);
+    } catch (err) {
+      console.error("Failed to fetch customer bills", err);
+      toast.error("Failed to load customer bills");
+    } finally {
+      setLoadingCustomerBills(false);
+    }
+  };
+
+  const toggleCustomerBillExpand = (billId) => {
+    setExpandedCustomerBills((prev) => ({
+      ...prev,
+      [billId]: !prev[billId],
+    }));
   };
 
   const fetchData = async (isInitial = false) => {
@@ -1297,6 +1388,11 @@ export default function BillingPage() {
       return;
     }
 
+    if (settings?.billing_payment_mode_mandatory && (!paymentMode || paymentMode === "none")) {
+      toast.error("Payment mode is mandatory. Please select Cash, UPI, or Card.");
+      return;
+    }
+
     const validItems = billItems.filter(
       (item) => item.product_name && item.product_name.trim() !== ""
     );
@@ -1352,6 +1448,7 @@ export default function BillingPage() {
         ),
         discount_percent: billDiscount,
         is_paid: isPaid,
+        payment_mode: (paymentMode && paymentMode !== "none") ? paymentMode : null,
       });
 
       toast.success(`Bill ${response.data.bill.bill_no} created successfully`);
@@ -1376,6 +1473,7 @@ export default function BillingPage() {
       discount_percent: bill.discount_percent || 0,
       notes: bill.notes || "",
       is_paid: bill.is_paid,
+      payment_mode: bill.payment_mode || "",
       billing_date: bill.billing_date || bill.created_at?.slice(0, 10),
       doctor: bill.doctor || "",
     });
@@ -1646,6 +1744,11 @@ export default function BillingPage() {
       return;
     }
 
+    if (settings?.billing_payment_mode_mandatory && (!editingBillData.payment_mode || editingBillData.payment_mode === "none")) {
+      toast.error("Payment mode is mandatory. Please select Cash, UPI, or Card.");
+      return;
+    }
+
     setSubmitting(true);
     try {
       const response = await axios.put(`${API}/bills/${editingBillId}`, {
@@ -1682,6 +1785,7 @@ export default function BillingPage() {
         ),
         discount_percent: parseFloat(editingBillData.discount_percent) || 0,
         is_paid: editingBillData.is_paid,
+        payment_mode: (editingBillData.payment_mode && editingBillData.payment_mode !== "none") ? editingBillData.payment_mode : null,
         notes: editingBillData.notes || null,
       });
 
@@ -1955,6 +2059,290 @@ export default function BillingPage() {
         </DialogContent>
       </Dialog>
 
+      {/* Customer Profile Modal */}
+      <Dialog
+        open={showCustomerProfileModal}
+        onOpenChange={setShowCustomerProfileModal}
+      >
+        <DialogContent className="glass bg-card/95 backdrop-blur-xl border border-border/80 shadow-2xl rounded-2xl p-6 max-w-5xl w-[90vw]">
+          <DialogHeader className="pb-3 border-b border-border/50">
+            <DialogTitle className="text-xl font-bold flex items-center gap-2 text-foreground">
+              <User className="w-5 h-5 text-primary" />
+              Customer Profile Details
+            </DialogTitle>
+          </DialogHeader>
+
+          {customerProfileData && (
+            <div className="space-y-6 py-4">
+              {/* Contact Information */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="p-3.5 bg-muted/40 border border-border/40 rounded-xl">
+                  <p className="text-[10px] uppercase font-bold text-muted-foreground/80 tracking-wider">Customer Name</p>
+                  <p className="text-sm font-semibold text-foreground mt-1">{customerProfileData.customer?.name}</p>
+                </div>
+                <div className="p-3.5 bg-muted/40 border border-border/40 rounded-xl">
+                  <p className="text-[10px] uppercase font-bold text-muted-foreground/80 tracking-wider">Mobile Number</p>
+                  <p className="text-sm font-semibold text-foreground mt-1">{customerProfileData.customer?.mobile || "N/A"}</p>
+                </div>
+                <div className="p-3.5 bg-muted/40 border border-border/40 rounded-xl">
+                  <p className="text-[10px] uppercase font-bold text-muted-foreground/80 tracking-wider">Email Address</p>
+                  <p className="text-sm font-semibold text-foreground mt-1 truncate">{customerProfileData.customer?.email || "N/A"}</p>
+                </div>
+              </div>
+
+              {/* Statistics & Debt Cards */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="p-4 bg-emerald-500/10 border border-emerald-500/25 rounded-xl shadow-sm">
+                  <span className="text-[10px] uppercase font-bold text-emerald-600 dark:text-emerald-400 tracking-wider">Total Purchases</span>
+                  <div className="text-xl font-extrabold font-mono text-emerald-600 dark:text-emerald-500 mt-1">
+                    ₹{(customerProfileData.stats?.total_purchases || 0).toFixed(2)}
+                  </div>
+                </div>
+
+                <div className="p-4 bg-indigo-500/10 border border-indigo-500/25 rounded-xl shadow-sm">
+                  <span className="text-[10px] uppercase font-bold text-indigo-600 dark:text-indigo-400 tracking-wider">Total Profit Given</span>
+                  <div className="text-xl font-extrabold font-mono text-indigo-600 dark:text-indigo-500 mt-1">
+                    ₹{(customerProfileData.stats?.total_profit || 0).toFixed(2)}
+                  </div>
+                </div>
+
+                <div className={`p-4 rounded-xl shadow-sm border ${
+                  (customerProfileData.customer?.total_debt || 0) > 0
+                    ? "bg-red-500/10 border-red-500/25 text-red-500"
+                    : "bg-muted/40 border-border/40 text-muted-foreground"
+                }`}>
+                  <span className="text-[10px] uppercase font-bold tracking-wider">Active Debts</span>
+                  <div className="text-xl font-extrabold font-mono mt-1">
+                    ₹{(customerProfileData.customer?.total_debt || 0).toFixed(2)}
+                  </div>
+                </div>
+              </div>
+
+              {/* Past Bills Section */}
+              <div className="space-y-3 pt-2">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <h3 className="text-sm font-bold text-foreground/90 uppercase tracking-wide">Past Bills History</h3>
+                  
+                  {/* Bill Search Bar */}
+                  <div className="relative w-full sm:w-64">
+                    <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      placeholder="Search bills..."
+                      value={customerBillsSearch}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setCustomerBillsSearch(val);
+                        setCustomerBillsPage(1);
+                        fetchCustomerBills(customerProfileData.customer?.id, 1, val, false);
+                      }}
+                      className="pl-9 h-9 text-xs border-border/80 rounded-xl focus-visible:ring-1 focus-visible:ring-primary focus-visible:border-primary"
+                    />
+                  </div>
+                </div>
+
+                {/* Infinite Scrollable / Paginated bills viewport */}
+                <div className="border border-border/50 rounded-xl overflow-hidden bg-background/30 backdrop-blur-sm max-h-[420px] overflow-y-auto">
+                  <Table>
+                    <TableHeader className="sticky top-0 bg-muted/90 backdrop-blur-md z-[20]">
+                      <TableRow>
+                        <TableHead className="h-8 w-12"></TableHead>
+                        <TableHead className="h-8 text-[11px] font-bold">Bill No</TableHead>
+                        <TableHead className="h-8 text-[11px] font-bold">Date</TableHead>
+                        <TableHead className="h-8 text-[11px] font-bold text-center">Items</TableHead>
+                        <TableHead className="h-8 text-[11px] font-bold text-right">Amount</TableHead>
+                        <TableHead className="h-8 text-[11px] font-bold text-right">Profit</TableHead>
+                        <TableHead className="h-8 text-[11px] font-bold text-center">Status</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody className="text-xs">
+                      {customerBills.length > 0 ? (
+                        customerBills.map((bill) => {
+                          const billTotal = bill.items?.reduce((sum, item) => sum + (item.item_total || 0), 0) || 0;
+                          const isExpanded = expandedCustomerBills[bill.id];
+                          return (
+                            <React.Fragment key={bill.id}>
+                              <TableRow
+                                className={`cursor-pointer hover:bg-muted/30 transition-all border-b border-border/40 ${isExpanded ? "bg-muted/10" : ""}`}
+                                onClick={() => toggleCustomerBillExpand(bill.id)}
+                              >
+                                <TableCell className="w-12 text-center py-2.5" onClick={(e) => e.stopPropagation()}>
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={() => toggleCustomerBillExpand(bill.id)}
+                                    className="h-7 w-7 rounded-lg hover:bg-muted/80 text-muted-foreground hover:text-foreground transition-all duration-200"
+                                  >
+                                    {isExpanded ? (
+                                      <ChevronUp className="h-3.5 w-3.5" />
+                                    ) : (
+                                      <ChevronDown className="h-3.5 w-3.5" />
+                                    )}
+                                  </Button>
+                                </TableCell>
+                                <TableCell className="font-semibold text-foreground/80 py-2.5">
+                                  {bill.bill_no}
+                                </TableCell>
+                                <TableCell className="text-muted-foreground py-2.5">
+                                  {new Date(bill.created_at || bill.billing_date).toLocaleDateString()}
+                                </TableCell>
+                                <TableCell className="text-center py-2.5">
+                                  {bill.items?.length || 0}
+                                </TableCell>
+                                <TableCell className="text-right font-semibold py-2.5 font-mono">
+                                  ₹{billTotal.toFixed(2)}
+                                </TableCell>
+                                <TableCell className={`text-right font-semibold py-2.5 font-mono ${bill.profit >= 0 ? "text-emerald-500" : "text-red-500"}`}>
+                                  ₹{(bill.profit || 0).toFixed(2)}
+                                </TableCell>
+                                <TableCell className="text-center py-2.5">
+                                  <Badge className={`text-[9px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider ${
+                                    bill.is_paid
+                                      ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
+                                      : "bg-amber-500/10 text-amber-500 border border-amber-500/20"
+                                  }`}>
+                                    {bill.is_paid ? "Paid" : "Unpaid"}
+                                  </Badge>
+                                </TableCell>
+                              </TableRow>
+                              {/* Expanded items section */}
+                              {isExpanded && bill.items && bill.items.length > 0 && (
+                                <TableRow className="bg-muted/15 border-b border-border/40" onClick={(e) => e.stopPropagation()}>
+                                  <TableCell colSpan={7} className="p-0">
+                                    <div className="p-4 pl-12 bg-muted/5">
+                                      <p className="text-[10px] font-bold text-muted-foreground/80 uppercase tracking-wider mb-2">
+                                        Items Sold
+                                      </p>
+                                      <div className="border border-border/50 rounded-xl overflow-hidden bg-background/30 max-h-48 overflow-y-auto">
+                                        <Table>
+                                          <TableHeader className="bg-muted/40">
+                                            <TableRow className="border-b border-border/40">
+                                              <TableHead className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider py-1.5">
+                                                Product
+                                              </TableHead>
+                                              <TableHead className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider py-1.5">
+                                                Batch
+                                              </TableHead>
+                                              <TableHead className="text-[10px] font-bold text-center text-muted-foreground uppercase tracking-wider py-1.5">
+                                                Qty (Units)
+                                              </TableHead>
+                                              <TableHead className="text-[10px] font-bold text-right text-amber-600 dark:text-amber-400 bg-amber-500/5 dark:bg-amber-500/10 uppercase tracking-wider py-1.5">
+                                                Rate/Unit (MRP)
+                                              </TableHead>
+                                              <TableHead className="text-[10px] font-bold text-center text-muted-foreground uppercase tracking-wider py-1.5">
+                                                Disc%
+                                              </TableHead>
+                                              <TableHead className="text-[10px] font-bold text-center text-muted-foreground uppercase tracking-wider py-1.5">
+                                                CGST %
+                                              </TableHead>
+                                              <TableHead className="text-[10px] font-bold text-center text-muted-foreground uppercase tracking-wider py-1.5">
+                                                SGST %
+                                              </TableHead>
+                                              <TableHead className="text-[10px] font-bold text-right text-muted-foreground uppercase tracking-wider py-1.5">
+                                                Total
+                                              </TableHead>
+                                              <TableHead className="text-[10px] font-bold text-right text-muted-foreground uppercase tracking-wider py-1.5">
+                                                Profit
+                                              </TableHead>
+                                            </TableRow>
+                                          </TableHeader>
+                                          <TableBody>
+                                            {bill.items.map((item, idx) => {
+                                              const unitPrice = item.unit_price || item.mrp_per_unit || 0;
+                                              const qty = item.quantity || item.sold_units || 1;
+                                              const discPercent = item.discount_percent || 0;
+                                              const itemTotal = item.total || item.item_total || (qty * unitPrice * (1 - discPercent / 100));
+                                              return (
+                                                <TableRow
+                                                  key={`${bill.id}-item-${idx}`}
+                                                  className={`border-b border-border/40 hover:bg-muted/20 transition-colors ${item.is_manual ? "bg-amber-500/5 text-amber-900/80 dark:text-amber-200/80" : ""}`}
+                                                >
+                                                  <TableCell className="text-xs font-semibold py-1.5">
+                                                    {item.product_name}
+                                                    {item.is_manual && (
+                                                      <Badge
+                                                        variant="outline"
+                                                        className="ml-2 bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20 text-[9px] font-extrabold rounded px-1 py-0"
+                                                      >
+                                                        Manual
+                                                      </Badge>
+                                                    )}
+                                                  </TableCell>
+                                                  <TableCell className="text-xs py-1.5 font-mono">
+                                                    {item.batch_no || "-"}
+                                                  </TableCell>
+                                                  <TableCell className="text-center text-xs py-1.5 font-semibold font-mono">
+                                                    {qty}
+                                                  </TableCell>
+                                                  <TableCell className="text-right text-xs py-1.5 font-mono text-amber-600 dark:text-amber-400 bg-amber-500/5 dark:bg-amber-500/10 font-bold">
+                                                    ₹{unitPrice.toFixed(2)}
+                                                  </TableCell>
+                                                  <TableCell className="text-center text-xs py-1.5 font-mono">
+                                                    {discPercent}%
+                                                  </TableCell>
+                                                  <TableCell className="text-center text-xs py-1.5 font-mono">
+                                                    {item.cgst}%
+                                                  </TableCell>
+                                                  <TableCell className="text-center text-xs py-1.5 font-mono">
+                                                    {item.sgst}%
+                                                  </TableCell>
+                                                  <TableCell className="text-right text-xs py-1.5 font-bold font-mono">
+                                                    ₹{itemTotal.toFixed(2)}
+                                                  </TableCell>
+                                                  <TableCell className={`text-right text-xs py-1.5 font-bold font-mono ${(item.profit || 0) >= 0 ? "text-emerald-500" : "text-destructive"}`}>
+                                                    ₹{(item.profit || 0).toFixed(2)}
+                                                  </TableCell>
+                                                </TableRow>
+                                              );
+                                            })}
+                                          </TableBody>
+                                        </Table>
+                                      </div>
+                                    </div>
+                                  </TableCell>
+                                </TableRow>
+                              )}
+                            </React.Fragment>
+                          );
+                        })
+                      ) : (
+                        <TableRow>
+                          <TableCell colSpan={7} className="text-center py-8 text-muted-foreground/60">
+                            No bills found
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </TableBody>
+                  </Table>
+                </div>
+
+                {/* Paginated Loading triggers */}
+                {hasMoreCustomerBills && (
+                  <div className="flex justify-center pt-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => fetchCustomerBills(customerProfileData.customer?.id, customerBillsPage + 1, customerBillsSearch, true)}
+                      disabled={loadingCustomerBills}
+                      className="text-xs h-8 px-4 border-border/80 rounded-xl hover:bg-muted/50"
+                    >
+                      {loadingCustomerBills ? (
+                        <>
+                          <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Loading...
+                        </>
+                      ) : (
+                        "Load More Bills"
+                      )}
+                    </Button>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
       {/* New Bill - Inline Table Entry */}
       {showNewBill && (
         <Card
@@ -1986,8 +2374,21 @@ export default function BillingPage() {
               </div>
 
               <div className="space-y-2 relative">
-                <Label className="flex items-center gap-1 text-xs font-bold text-muted-foreground/80 uppercase tracking-wider">
-                  <User className="w-3.5 h-3.5 text-primary" /> Customer
+                <Label className="flex items-center justify-between text-xs font-bold text-muted-foreground/80 uppercase tracking-wider">
+                  <span className="flex items-center gap-1">
+                    <User className="w-3.5 h-3.5 text-primary" /> Customer
+                  </span>
+                  {customerInfo.customer_id && (
+                    <Button
+                      type="button"
+                      variant="link"
+                      size="sm"
+                      onClick={() => fetchCustomerProfileData(customerInfo.customer_id)}
+                      className="h-auto p-0 text-primary font-bold text-xs flex items-center gap-1 animate-in fade-in"
+                    >
+                      <Eye className="w-3.5 h-3.5" /> See Profile
+                    </Button>
+                  )}
                 </Label>
                 <Input
                   placeholder="Search existing customer..."
@@ -2584,10 +2985,10 @@ export default function BillingPage() {
                                 )
                               }
                               placeholder="Cost"
-                              className="h-8 text-xs text-center border-border/80 focus-visible:ring-1 focus-visible:ring-primary focus-visible:border-primary rounded-lg transition-all duration-200 w-16"
+                              className="h-8 text-xs text-center border-primary/30 bg-primary/5 text-primary font-bold focus-visible:ring-1 focus-visible:ring-primary focus-visible:border-primary rounded-lg transition-all duration-200 w-16"
                             />
                           ) : (
-                            <span className="text-xs text-muted-foreground font-mono font-medium">
+                            <span className="text-xs text-primary font-mono font-bold">
                               ₹{purchasePrice.toFixed(2)}
                             </span>
                           )}
@@ -2614,7 +3015,7 @@ export default function BillingPage() {
                               }
                             }}
                             placeholder="MRP"
-                            className="h-8 text-xs text-center border-border/80 focus-visible:ring-1 focus-visible:ring-primary focus-visible:border-primary rounded-lg transition-all duration-200 w-20"
+                            className="h-8 text-xs text-center border-amber-500/30 bg-amber-500/5 dark:bg-amber-500/10 text-amber-600 dark:text-amber-400 font-bold focus-visible:ring-1 focus-visible:ring-amber-500 focus-visible:border-amber-500 rounded-lg transition-all duration-200 w-20"
                           />
                         </TableCell>
                         <TableCell>
@@ -2757,11 +3158,36 @@ export default function BillingPage() {
                     <Checkbox
                       id="isPaid"
                       checked={isPaid}
-                      onCheckedChange={setIsPaid}
+                      disabled={settings?.billing_payment_mode_mandatory}
+                      onCheckedChange={(val) => {
+                        setIsPaid(val);
+                        if (!val) {
+                          setPaymentMode("");
+                        }
+                      }}
                     />
                     <Label htmlFor="isPaid" className="text-sm font-semibold text-foreground/80 cursor-pointer select-none">
                       Paid
                     </Label>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Select
+                      value={paymentMode}
+                      onValueChange={setPaymentMode}
+                      disabled={!isPaid}
+                    >
+                      <SelectTrigger className="h-9 w-36 bg-muted/20 border border-border/50 rounded-xl text-xs font-semibold" disabled={!isPaid}>
+                        <SelectValue placeholder="Payment Mode" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {!settings?.billing_payment_mode_mandatory && (
+                          <SelectItem value="none">None</SelectItem>
+                        )}
+                        <SelectItem value="Cash">Cash</SelectItem>
+                        <SelectItem value="UPI">UPI</SelectItem>
+                        <SelectItem value="Card">Card</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
                 </div>
                 {negativeBilledQty > 0 && (
@@ -3440,7 +3866,7 @@ export default function BillingPage() {
                               )
                             }
                             placeholder="Cost"
-                            className="h-8 text-xs text-center border-border/80 focus-visible:ring-1 focus-visible:ring-amber-500 focus-visible:border-amber-500 rounded-lg transition-all duration-200 w-20"
+                            className="h-8 text-xs text-center border-primary/30 bg-primary/5 text-primary font-bold focus-visible:ring-1 focus-visible:ring-primary focus-visible:border-primary rounded-lg transition-all duration-200 w-20"
                           />
                         </TableCell>
                         <TableCell>
@@ -3457,7 +3883,7 @@ export default function BillingPage() {
                               )
                             }
                             placeholder="MRP"
-                            className="h-8 text-xs text-center border-border/80 focus-visible:ring-1 focus-visible:ring-amber-500 focus-visible:border-amber-500 rounded-lg transition-all duration-200 w-24"
+                            className="h-8 text-xs text-center border-amber-500/30 bg-amber-500/5 dark:bg-amber-500/10 text-amber-600 dark:text-amber-400 font-bold focus-visible:ring-1 focus-visible:ring-amber-500 focus-visible:border-amber-500 rounded-lg transition-all duration-200 w-24"
                           />
                         </TableCell>
                         <TableCell>
@@ -3580,17 +4006,43 @@ export default function BillingPage() {
                     <Checkbox
                       id="editIsPaid"
                       checked={editingBillData.is_paid}
+                      disabled={settings?.billing_payment_mode_mandatory}
                       onCheckedChange={(v) =>
                         setEditingBillData({
                           ...editingBillData,
                           is_paid: v,
                           due_date: v ? null : editingBillData.due_date,
+                          payment_mode: v ? editingBillData.payment_mode : "",
                         })
                       }
                     />
                     <Label htmlFor="editIsPaid" className="text-sm font-semibold text-foreground/80 cursor-pointer select-none">
                       Paid
                     </Label>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Select
+                      value={editingBillData.payment_mode || "none"}
+                      onValueChange={(val) =>
+                        setEditingBillData({
+                          ...editingBillData,
+                          payment_mode: val,
+                        })
+                      }
+                      disabled={!editingBillData.is_paid}
+                    >
+                      <SelectTrigger className="h-9 w-36 bg-muted/20 border border-border/50 rounded-xl text-xs font-semibold" disabled={!editingBillData.is_paid}>
+                        <SelectValue placeholder="Payment Mode" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {!settings?.billing_payment_mode_mandatory && (
+                          <SelectItem value="none">None</SelectItem>
+                        )}
+                        <SelectItem value="Cash">Cash</SelectItem>
+                        <SelectItem value="UPI">UPI</SelectItem>
+                        <SelectItem value="Card">Card</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
                 </div>
 
@@ -4010,8 +4462,7 @@ export default function BillingPage() {
               <TableHeader className="bg-muted/40">
                 <TableRow className="border-b border-border/60">
                   <TableHead className="w-12"></TableHead>
-                  <TableHead className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Bill No</TableHead>
-                  <TableHead className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Date</TableHead>
+                  <TableHead className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Bill No / Timestamp</TableHead>
                   <TableHead className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Customer</TableHead>
                   <TableHead className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Items</TableHead>
                   <TableHead className="text-right text-xs font-bold text-muted-foreground uppercase tracking-wider">Amount</TableHead>
@@ -4024,7 +4475,7 @@ export default function BillingPage() {
                 {bills.length === 0 ? (
                   <TableRow>
                     <TableCell
-                      colSpan={9}
+                      colSpan={8}
                       className="text-center py-12 text-muted-foreground"
                     >
                       <Receipt className="w-12 h-12 mx-auto mb-3 opacity-30 animate-pulse text-primary" />
@@ -4033,9 +4484,10 @@ export default function BillingPage() {
                     </TableCell>
                   </TableRow>
                 ) : (
-                  bills.map((bill) => {
+                  bills.map((bill, index) => {
                     const isExpanded = expandedBills[bill.id];
                     const billTotal = bill.grand_total || bill.total_amount || 0;
+                    const serialNum = totalBills - ((page - 1) * limit + index);
                     return (
                       <React.Fragment key={bill.id}>
                         <TableRow
@@ -4057,11 +4509,18 @@ export default function BillingPage() {
                               )}
                             </Button>
                           </TableCell>
-                          <TableCell className="font-mono font-bold text-sm text-foreground">
-                            {bill.bill_no}
-                          </TableCell>
-                          <TableCell className="text-sm font-medium text-muted-foreground">
-                            {formatDate(bill.billing_date || bill.created_at)}
+                          <TableCell className="font-mono text-sm text-foreground py-2.5">
+                            <div className="font-bold">#{serialNum} - {bill.bill_no}</div>
+                            <div className="text-[11px] text-muted-foreground font-medium mt-0.5">
+                              {new Date(bill.created_at || bill.billing_date || new Date()).toLocaleString("en-IN", {
+                                day: "2-digit",
+                                month: "short",
+                                year: "numeric",
+                                hour: "2-digit",
+                                minute: "2-digit",
+                                hour12: true
+                              })}
+                            </div>
                           </TableCell>
 
                           <TableCell className="py-3">
@@ -4091,15 +4550,22 @@ export default function BillingPage() {
                             ₹{bill.profit.toFixed(2)}
                           </TableCell>
 
-                          <TableCell>
-                            {bill.is_paid ? (
-                              <Badge className="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20 rounded-full font-bold px-2.5 py-0.5 text-xs transition-colors">
-                                Paid
-                              </Badge>
-                            ) : (
-                              <Badge className="bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20 hover:bg-amber-500/20 rounded-full font-bold px-2.5 py-0.5 text-xs transition-colors">
-                                Unpaid
-                              </Badge>
+                          <TableCell className="text-center">
+                            <div>
+                              {bill.is_paid ? (
+                                <Badge className="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20 rounded-full font-bold px-2.5 py-0.5 text-xs transition-colors">
+                                  Paid
+                                </Badge>
+                              ) : (
+                                <Badge className="bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20 hover:bg-amber-500/20 rounded-full font-bold px-2.5 py-0.5 text-xs transition-colors">
+                                  Unpaid
+                                </Badge>
+                              )}
+                            </div>
+                            {bill.payment_mode && bill.payment_mode !== "none" && (
+                              <div className="text-[10px] text-muted-foreground/80 mt-1 font-bold uppercase tracking-wider">
+                                {bill.payment_mode}
+                              </div>
                             )}
                           </TableCell>
                           <TableCell onClick={(e) => e.stopPropagation()}>
@@ -4154,7 +4620,7 @@ export default function BillingPage() {
                         {/* Expanded Items Row */}
                         {isExpanded && bill.items && bill.items.length > 0 && (
                           <TableRow className="bg-muted/15 border-b border-border/40">
-                            <TableCell colSpan={9} className="p-0">
+                            <TableCell colSpan={8} className="p-0">
                               <div className="p-6 pl-12">
                                 <p className="text-xs font-bold text-muted-foreground/80 uppercase tracking-wider mb-3">
                                   Items Sold
@@ -4172,8 +4638,8 @@ export default function BillingPage() {
                                         <TableHead className="text-xs font-bold text-center text-muted-foreground uppercase tracking-wider">
                                           Qty (Units)
                                         </TableHead>
-                                        <TableHead className="text-xs font-bold text-right text-muted-foreground uppercase tracking-wider">
-                                          Rate/Unit
+                                        <TableHead className="text-xs font-bold text-right text-amber-600 dark:text-amber-400 bg-amber-500/5 dark:bg-amber-500/10 uppercase tracking-wider">
+                                          Rate/Unit (MRP)
                                         </TableHead>
                                         <TableHead className="text-xs font-bold text-center text-muted-foreground uppercase tracking-wider">
                                           Disc%
@@ -4226,7 +4692,7 @@ export default function BillingPage() {
                                             <TableCell className="text-sm font-bold text-center text-foreground">
                                               {qty}
                                             </TableCell>
-                                            <TableCell className="text-sm font-mono text-right font-medium">
+                                            <TableCell className="text-sm font-mono text-right font-bold text-amber-600 dark:text-amber-400 bg-amber-500/5 dark:bg-amber-500/10">
                                               ₹{unitPrice.toFixed(2)}
                                             </TableCell>
                                             <TableCell className="text-sm text-center font-bold text-muted-foreground">

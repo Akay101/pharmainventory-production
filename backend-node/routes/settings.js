@@ -14,7 +14,7 @@ const DEFAULT_REGISTRY = [
     type: "boolean",
     default: false,
     category: "Appearance",
-    description: "Whether the sidebar should be collapsed when you log in."
+    description: "Whether the sidebar should be collapsed when you log in.",
   },
   {
     key: "theme",
@@ -23,7 +23,7 @@ const DEFAULT_REGISTRY = [
     options: ["dark", "light"],
     default: "dark",
     category: "Appearance",
-    description: "Choose your preferred application theme."
+    description: "Choose your preferred application theme.",
   },
   {
     key: "activity_sidebar_open",
@@ -31,8 +31,61 @@ const DEFAULT_REGISTRY = [
     type: "boolean",
     default: true,
     category: "Appearance",
-    description: "Keep the recent activity sidebar visible by default."
-  }
+    description: "Keep the recent activity sidebar visible by default.",
+  },
+  {
+    key: "purchase_payment_status",
+    label: "Purchase Payment Status Unpaid/Partial/Paid",
+    type: "select",
+    options: ["Unpaid", "Partial", "Paid"],
+    default: "Unpaid",
+    category: "Preferences",
+    description:
+      "What should be the payment mode by default Unpaid/Partial/Paid",
+  },
+  {
+    key: "purchase_payment_mode_mandatory",
+    label: "Purchase Payment Mode Mandatory",
+    type: "boolean",
+    default: false,
+    category: "Preferences",
+    description:
+      "Require payment mode to be selected when creating a purchase.",
+  },
+  {
+    key: "purchase_payment_mode_default",
+    label: "Purchase Default Payment Mode",
+    type: "select",
+    options: ["none", "Cash", "UPI", "Card"],
+    default: "none",
+    category: "Preferences",
+    description: "Default payment mode selected for new purchases.",
+  },
+  {
+    key: "billing_payment_mode_mandatory",
+    label: "Billing Payment Mode Mandatory",
+    type: "boolean",
+    default: false,
+    category: "Preferences",
+    description: "Require payment mode to be selected when creating a bill.",
+  },
+  {
+    key: "billing_payment_mode_default",
+    label: "Billing Default Payment Mode",
+    type: "select",
+    options: ["none", "Cash", "UPI", "Card"],
+    default: "none",
+    category: "Preferences",
+    description: "Default payment mode selected for new bills.",
+  },
+  {
+    key: "shortage_threshold",
+    label: "Shortage List Threshold",
+    type: "number",
+    default: 10,
+    category: "Preferences",
+    description: "Default minimum stock quantity threshold for Shortage List alert.",
+  },
 ];
 
 // Helper to ensure registry exists in DB
@@ -72,20 +125,23 @@ router.get("/", auth, async (req, res, next) => {
     // 2. Fetch registry and user settings
     const [registry, userPrefs] = await Promise.all([
       db.collection("settings_registry").find().toArray(),
-      db.collection("user_settings").findOne({ user_id: userId })
+      db.collection("user_settings").findOne({ user_id: userId }),
     ]);
 
     const preferences = userPrefs?.preferences || {};
 
     // 3. Merge registry with user preferences
-    const merged = registry.map(setting => ({
+    const merged = registry.map((setting) => ({
       ...setting,
-      value: preferences[setting.key] !== undefined ? preferences[setting.key] : setting.default
+      value:
+        preferences[setting.key] !== undefined
+          ? preferences[setting.key]
+          : setting.default,
     }));
 
     res.json({
       settings: merged,
-      preferences // raw map
+      preferences, // raw map
     });
   } catch (error) {
     next(error);
@@ -104,12 +160,35 @@ router.post("/update", auth, async (req, res, next) => {
       return res.status(400).json({ detail: "Setting key is required" });
     }
 
+    // If setting purchase_payment_mode_mandatory to true, ensure purchase_payment_status is not Unpaid
+    let extraUpdates = {};
+    if (key === "purchase_payment_mode_mandatory" && value === true) {
+      const userSettings = await db.collection("user_settings").findOne({ user_id: userId });
+      if (userSettings?.preferences?.purchase_payment_status === "Unpaid" || !userSettings?.preferences?.purchase_payment_status) {
+        extraUpdates["preferences.purchase_payment_status"] = "Paid";
+      }
+    }
+    // If setting purchase_payment_status to Unpaid, ensure purchase_payment_mode_mandatory is false
+    if (key === "purchase_payment_status" && value === "Unpaid") {
+      const userSettings = await db.collection("user_settings").findOne({ user_id: userId });
+      if (userSettings?.preferences?.purchase_payment_mode_mandatory === true) {
+        return res.status(400).json({ detail: "Cannot set default status to Unpaid when payment mode is mandatory" });
+      }
+    }
+
     // Update user preferences
-    await db.collection("user_settings").updateOne(
-      { user_id: userId },
-      { $set: { [`preferences.${key}`]: value } },
-      { upsert: true }
-    );
+    await db
+      .collection("user_settings")
+      .updateOne(
+        { user_id: userId },
+        { 
+          $set: { 
+            [`preferences.${key}`]: value,
+            ...extraUpdates
+          } 
+        },
+        { upsert: true }
+      );
 
     res.json({ message: "Setting updated successfully", key, value });
   } catch (error) {

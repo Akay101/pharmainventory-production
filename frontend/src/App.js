@@ -152,6 +152,7 @@ const AuthProvider = ({ children }) => {
     const userData = response.data.user;
     setToken(newToken);
     setUser(userData);
+    await fetchUser();
     return userData;
   };
 
@@ -166,6 +167,8 @@ const AuthProvider = ({ children }) => {
       setToken(null);
       setUser(null);
       setPharmacy(null);
+      setSettings({});
+      setSettingsDefinitions([]);
     }
   };
 

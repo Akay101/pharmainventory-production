@@ -231,8 +231,18 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
       is_paid = true,
       due_date,
       billing_date,
+      payment_mode,
     } = req.body;
     const db = mongoose.connection.db;
+
+    // Validate payment mode against mandatory settings preference
+    const userPrefs = await db.collection("user_settings").findOne({ user_id: req.user.id });
+    const preferences = userPrefs?.preferences || {};
+    const isModeMandatory = preferences.billing_payment_mode_mandatory === true;
+
+    if (isModeMandatory && (!payment_mode || !["Cash", "UPI", "Card"].includes(payment_mode))) {
+      return res.status(400).json({ detail: "Payment mode is mandatory" });
+    }
 
     if (!items || items.length === 0) {
       return res.status(400).json({ detail: "At least one item is required" });
@@ -371,6 +381,7 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
       is_paid,
       due_date: due_date || null,
       payment_date: is_paid ? new Date().toISOString() : null,
+      payment_mode: payment_mode || null,
       notes: notes || null,
       doctor: doctor || null,
       pdf_url: null,
@@ -442,9 +453,19 @@ router.put("/:bill_id", auth, requireSubscription(), async (req, res, next) => {
       is_paid,
       due_date,
       billing_date,
+      payment_mode,
     } = req.body;
 
     const db = mongoose.connection.db;
+
+    // Validate payment mode against mandatory settings preference
+    const userPrefs = await db.collection("user_settings").findOne({ user_id: req.user.id });
+    const preferences = userPrefs?.preferences || {};
+    const isModeMandatory = preferences.billing_payment_mode_mandatory === true;
+
+    if (isModeMandatory && (!payment_mode || !["Cash", "UPI", "Card"].includes(payment_mode))) {
+      return res.status(400).json({ detail: "Payment mode is mandatory" });
+    }
 
     const bill = await db.collection("bills").findOne({
       id: req.params.bill_id,
@@ -617,6 +638,7 @@ router.put("/:bill_id", auth, requireSubscription(), async (req, res, next) => {
       is_paid,
       due_date: due_date || null,
       payment_date: is_paid ? new Date().toISOString() : null,
+      payment_mode: payment_mode || null,
       notes: notes || null,
       doctor: doctor || null,
       updated_at: new Date().toISOString(),

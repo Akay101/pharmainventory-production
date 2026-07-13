@@ -196,23 +196,35 @@ const generateBillPDF = async (bill, pharmacy) => {
           .text(pharmacy?.gst_no || "");
 
         // Right Header Panel: Customer and Billing details
-        const billDateFormatted = new Date(bill.created_at || bill.billing_date)
-          .toLocaleDateString("en-GB", {
-            day: "2-digit",
-            month: "short",
-            year: "numeric",
-          })
-          .replace(/ /g, "-");
+        const billDate = new Date(bill.created_at || bill.billing_date || new Date());
+        const billDateFormatted = isNaN(billDate.getTime())
+          ? "-"
+          : billDate.toLocaleDateString("en-GB", {
+              day: "2-digit",
+              month: "short",
+              year: "numeric",
+            }).replace(/ /g, "-");
+        const billTimeFormatted = isNaN(billDate.getTime())
+          ? ""
+          : billDate.toLocaleTimeString("en-IN", {
+              hour: "2-digit",
+              minute: "2-digit",
+              hour12: true,
+            });
+        const billTimestamp = billTimeFormatted
+          ? `${billDateFormatted} ${billTimeFormatted}`
+          : billDateFormatted;
 
         doc.fillColor("#000000");
+        doc.font("Helvetica-Bold").fontSize(6.5).text("Serial No.", 349, 14);
         doc
           .font("Helvetica-Bold")
-          .fontSize(9)
-          .text(bill.bill_no || "-", 349, 14);
+          .fontSize(7.5)
+          .text(bill.bill_no || "-", 395, 14, { width: 85 });
         doc
           .font("Helvetica-Bold")
-          .fontSize(9)
-          .text(billDateFormatted, 485, 14, { width: 95, align: "right" });
+          .fontSize(7)
+          .text(billTimestamp, 480, 14, { width: 100, align: "right" });
 
         doc.font("Helvetica-Bold").fontSize(6.5).text("PATIENT", 349, 29);
         doc
@@ -555,8 +567,9 @@ const generateBillPDF = async (bill, pharmacy) => {
           let currentX = 10;
           vals.forEach((val, idx) => {
             const isRightAlign = idx >= 6;
+            const isHighlighted = idx === 7;
             doc
-              .font("Helvetica")
+              .font(isHighlighted ? "Helvetica-Bold" : "Helvetica")
               .fontSize(6)
               .text(String(val), currentX + 3, rowY, {
                 width: columnWidths[idx] - (idx === 10 ? 10 : 6),
@@ -651,7 +664,7 @@ const generatePurchasePDF = async (purchase, pharmacy) => {
       });
 
       const columnWidths = [
-        12, 140, 40, 30, 28, 36, 35, 35, 28, 33, 33, 30, 30, 65,
+        12, 132, 40, 30, 28, 36, 35, 35, 28, 33, 33, 32, 36, 65,
       ];
       const tableHeaders = [
         "#",
@@ -748,29 +761,42 @@ const generatePurchasePDF = async (purchase, pharmacy) => {
           .text(pharmacy?.gst_no || "");
 
         // Right Header Panel: Supplier and Purchase details
-        const purchaseDateFormatted = new Date(
-          purchase.purchase_date || purchase.created_at
-        )
-          .toLocaleDateString("en-GB", {
-            day: "2-digit",
-            month: "short",
-            year: "numeric",
-          })
-          .replace(/ /g, "-");
+        const purchaseDate = new Date(
+          purchase.purchase_date || purchase.created_at || new Date()
+        );
+        const purchaseDateFormatted = isNaN(purchaseDate.getTime())
+          ? "-"
+          : purchaseDate.toLocaleDateString("en-GB", {
+              day: "2-digit",
+              month: "short",
+              year: "numeric",
+            }).replace(/ /g, "-");
+        const purchaseTimeFormatted = isNaN(purchaseDate.getTime())
+          ? ""
+          : purchaseDate.toLocaleTimeString("en-IN", {
+              hour: "2-digit",
+              minute: "2-digit",
+              hour12: true,
+            });
+        const purchaseTimestamp = purchaseTimeFormatted
+          ? `${purchaseDateFormatted} ${purchaseTimeFormatted}`
+          : purchaseDateFormatted;
 
         doc.fillColor("#000000");
+        doc.font("Helvetica-Bold").fontSize(6.5).text("Serial No.", 349, 14);
         doc
           .font("Helvetica-Bold")
-          .fontSize(9)
+          .fontSize(7.5)
           .text(
             purchase.invoice_no ? `INV-${purchase.invoice_no}` : "-",
-            349,
-            14
+            395,
+            14,
+            { width: 85 }
           );
         doc
           .font("Helvetica-Bold")
-          .fontSize(9)
-          .text(purchaseDateFormatted, 485, 14, { width: 95, align: "right" });
+          .fontSize(7)
+          .text(purchaseTimestamp, 480, 14, { width: 100, align: "right" });
 
         doc.font("Helvetica-Bold").fontSize(6.5).text("SUPPLIER", 349, 29);
         doc
@@ -1058,8 +1084,9 @@ const generatePurchasePDF = async (purchase, pharmacy) => {
           let currentX = 10;
           vals.forEach((val, idx) => {
             const isRightAlign = idx >= 4;
+            const isHighlighted = idx === 7 || idx === 11 || idx === 12;
             doc
-              .font("Helvetica")
+              .font(isHighlighted ? "Helvetica-Bold" : "Helvetica")
               .fontSize(6)
               .text(String(val), currentX + 3, rowY, {
                 width: columnWidths[idx] - (idx === 13 ? 10 : 6),

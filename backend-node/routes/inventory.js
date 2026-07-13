@@ -13,6 +13,7 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
     const {
       search,
       low_stock,
+      shortage,
       expiring_soon,
       page = 1,
       limit = 50,
@@ -36,18 +37,40 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
       ];
     }
 
+    // Fetch user settings for global shortage threshold
+    const userSettings = await db.collection("user_settings").findOne({ user_id: req.user.id });
+    const globalThreshold = userSettings?.preferences?.shortage_threshold !== undefined ? Number(userSettings.preferences.shortage_threshold) : 10;
+
+    // Fetch inventory stock grouped by product
+    const stockSummary = await db.collection("inventory").aggregate([
+      { $match: { pharmacy_id: req.user.pharmacy_id } },
+      {
+        $group: {
+          _id: "$product_id",
+          total_stock: { $sum: "$available_quantity" }
+        }
+      }
+    ]).toArray();
+
+    // Fetch products thresholds
+    const productsListForThresholds = await db.collection("products").find({ pharmacy_id: req.user.pharmacy_id }).toArray();
+    const shortageProductIds = [];
+
+    productsListForThresholds.forEach((p) => {
+      const thresh = p.shortage_threshold !== undefined && p.shortage_threshold !== null ? Number(p.shortage_threshold) : globalThreshold;
+      
+      const stock = stockSummary.find((s) => s._id === p.id);
+      const totalStock = stock ? stock.total_stock : 0;
+
+      if (totalStock <= thresh) {
+        shortageProductIds.push(p.id);
+      }
+    });
+
+    const shortageCount = shortageProductIds.length;
+
     // Filter low stock (database query filter based on threshold comparison)
     if (low_stock === "true") {
-      const stockSummary = await db.collection("inventory").aggregate([
-        { $match: { pharmacy_id: req.user.pharmacy_id } },
-        {
-          $group: {
-            _id: "$product_id",
-            total_stock: { $sum: "$available_quantity" }
-          }
-        }
-      ]).toArray();
-
       const products = await db
         .collection("products")
         .find({ pharmacy_id: req.user.pharmacy_id })
@@ -61,6 +84,11 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
         .map((s) => s._id);
 
       query.product_id = { $in: lowStockProductIds };
+    }
+
+    // Filter shortage
+    if (shortage === "true") {
+      query.product_id = { $in: shortageProductIds };
     }
 
     // Filter expiring soon
@@ -129,6 +157,7 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
 
     res.json({
       inventory,
+      shortage_count: shortageCount,
       pagination: {
         page: pageNum,
         limit: parsedLimit,
@@ -293,6 +322,57 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
         total: total,
         total_pages: Math.ceil(total / parsedLimit) || 1
       }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// GET /api/inventory/shortage
+router.get("/shortage", auth, requireSubscription(), async (req, res, next) => {
+  try {
+    const db = mongoose.connection.db;
+
+    // Fetch user settings for global shortage threshold
+    const userSettings = await db.collection("user_settings").findOne({ user_id: req.user.id });
+    const globalThreshold = userSettings?.preferences?.shortage_threshold !== undefined ? Number(userSettings.preferences.shortage_threshold) : 10;
+
+    // Group available inventory quantities by product_id
+    const stockSummary = await db.collection("inventory").aggregate([
+      { $match: { pharmacy_id: req.user.pharmacy_id } },
+      {
+        $group: {
+          _id: "$product_id",
+          total_stock: { $sum: "$available_quantity" }
+        }
+      }
+    ]).toArray();
+
+    // Fetch products thresholds
+    const products = await db.collection("products").find({ pharmacy_id: req.user.pharmacy_id }).toArray();
+    const shortageProductIds = [];
+
+    products.forEach((p) => {
+      const thresh = p.shortage_threshold !== undefined && p.shortage_threshold !== null ? Number(p.shortage_threshold) : globalThreshold;
+      
+      const stock = stockSummary.find((s) => s._id === p.id);
+      const totalStock = stock ? stock.total_stock : 0;
+
+      if (totalStock <= thresh) {
+        shortageProductIds.push(p.id);
+      }
+    });
+
+    const inventory = await db.collection("inventory")
+      .find({
+        pharmacy_id: req.user.pharmacy_id,
+        product_id: { $in: shortageProductIds }
+      }, { projection: { _id: 0 } })
+      .toArray();
+
+    res.json({
+      inventory,
+      count: shortageProductIds.length
     });
   } catch (error) {
     next(error);

@@ -45,7 +45,7 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
 // POST /api/products
 router.post("/", auth, requireSubscription(), async (req, res, next) => {
   try {
-    const { name, description, low_stock_threshold, image_url } = req.body;
+    const { name, description, low_stock_threshold, shortage_threshold, image_url } = req.body;
     const db = mongoose.connection.db;
 
     const productId = uuidv4();
@@ -54,7 +54,8 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
       pharmacy_id: req.user.pharmacy_id,
       name,
       description: description || null,
-      low_stock_threshold: low_stock_threshold || 10,
+      low_stock_threshold: low_stock_threshold !== undefined ? Number(low_stock_threshold) : 10,
+      shortage_threshold: shortage_threshold !== undefined && shortage_threshold !== "" && shortage_threshold !== null ? Number(shortage_threshold) : null,
       image_url: image_url || null,
       created_at: new Date().toISOString(),
     };
@@ -76,14 +77,22 @@ router.put(
   requireSubscription(),
   async (req, res, next) => {
     try {
-      const { name, description, low_stock_threshold, image_url } = req.body;
+      const { name, description, low_stock_threshold, shortage_threshold, image_url } = req.body;
       const db = mongoose.connection.db;
 
       const result = await db
         .collection("products")
         .updateOne(
           { id: req.params.product_id, pharmacy_id: req.user.pharmacy_id },
-          { $set: { name, description, low_stock_threshold, image_url } }
+          { 
+            $set: { 
+              name, 
+              description, 
+              low_stock_threshold: low_stock_threshold !== undefined ? Number(low_stock_threshold) : 10, 
+              shortage_threshold: shortage_threshold !== undefined && shortage_threshold !== "" && shortage_threshold !== null ? Number(shortage_threshold) : null,
+              image_url 
+            } 
+          }
         );
 
       if (result.matchedCount === 0) {

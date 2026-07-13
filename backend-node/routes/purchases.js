@@ -245,9 +245,20 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
   session.startTransaction();
 
   try {
-    const { supplier_id, supplier_name, invoice_no, purchase_date, items, payment_status, amount_paid } =
+    const { supplier_id, supplier_name, invoice_no, purchase_date, items, payment_status, amount_paid, payment_mode } =
       req.body;
     const db = mongoose.connection.db;
+
+    // Validate payment mode against mandatory settings preference
+    const userPrefs = await db.collection("user_settings").findOne({ user_id: req.user.id });
+    const preferences = userPrefs?.preferences || {};
+    const isModeMandatory = preferences.purchase_payment_mode_mandatory === true;
+
+    if (isModeMandatory && (!payment_mode || !["Cash", "UPI", "Card"].includes(payment_mode))) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(400).json({ detail: "Payment mode is mandatory" });
+    }
 
     if (!items || items.length === 0) {
       await session.abortTransaction();
@@ -440,6 +451,7 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
       payment_status: pStatus,
       amount_paid: pAmount,
       payments: payments,
+      payment_mode: payment_mode || null,
       created_by: req.user.id,
       created_at: new Date().toISOString(),
     };
@@ -505,8 +517,19 @@ router.put(
     session.startTransaction();
 
     try {
-      const { items, purchase_date, invoice_no, supplier_id, supplier_name, payment_status, amount_paid } = req.body;
+      const { items, purchase_date, invoice_no, supplier_id, supplier_name, payment_status, amount_paid, payment_mode } = req.body;
       const db = mongoose.connection.db;
+
+      // Validate payment mode against mandatory settings preference
+      const userPrefs = await db.collection("user_settings").findOne({ user_id: req.user.id });
+      const preferences = userPrefs?.preferences || {};
+      const isModeMandatory = preferences.purchase_payment_mode_mandatory === true;
+
+      if (isModeMandatory && (!payment_mode || !["Cash", "UPI", "Card"].includes(payment_mode))) {
+        await session.abortTransaction();
+        session.endSession();
+        return res.status(400).json({ detail: "Payment mode is mandatory" });
+      }
 
       const purchase = await db.collection("purchases").findOne({
         id: req.params.purchase_id,
@@ -717,6 +740,7 @@ router.put(
         invoice_no: invoice_no || purchase.invoice_no,
         payment_status: finalStatus,
         amount_paid: finalAmountPaid,
+        payment_mode: payment_mode || null,
         updated_at: new Date().toISOString(),
       };
 

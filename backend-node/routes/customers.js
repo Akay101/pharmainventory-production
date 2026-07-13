@@ -147,7 +147,32 @@ router.get(
         .project({ _id: 0 })
         .toArray();
 
-      res.json({ customer, bills });
+      // Aggregate stats
+      const stats = await db
+        .collection("bills")
+        .aggregate([
+          { $match: { customer_id: req.params.customer_id } },
+          {
+            $group: {
+              _id: null,
+              total_purchases: { $sum: "$total_amount" },
+              total_profit: { $sum: "$profit" },
+            },
+          },
+        ])
+        .toArray();
+
+      const totalPurchases = stats[0]?.total_purchases || 0;
+      const totalProfit = stats[0]?.total_profit || 0;
+
+      res.json({ 
+        customer, 
+        bills,
+        stats: {
+          total_purchases: totalPurchases,
+          total_profit: totalProfit
+        }
+      });
     } catch (error) {
       next(error);
     }

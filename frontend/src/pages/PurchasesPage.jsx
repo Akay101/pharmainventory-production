@@ -335,7 +335,7 @@ export default function PurchasesPage() {
   const [medicineSuggestions, setMedicineSuggestions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
-  const { user } = useAuth();
+  const { user, settings } = useAuth();
   const [tabs, setTabs] = useState([]);
   const [activeTabId, setActiveTabId] = useState(null);
 
@@ -358,6 +358,7 @@ export default function PurchasesPage() {
   // Payment Tracking State
   const [paymentStatus, setPaymentStatus] = useState("Unpaid");
   const [amountPaid, setAmountPaid] = useState("");
+  const [paymentMode, setPaymentMode] = useState("");
 
   // Infinite scroll suggestion state
   const [suggestionPage, setSuggestionPage] = useState(1);
@@ -618,6 +619,7 @@ export default function PurchasesPage() {
           setPurchaseItems(active.data.purchaseItems || []);
           setPaymentStatus(active.data.paymentStatus || "Unpaid");
           setAmountPaid(active.data.amountPaid || "");
+          setPaymentMode(active.data.paymentMode || "");
         }
       } catch (e) {
         console.error("Failed to parse purchase drafts", e);
@@ -640,6 +642,7 @@ export default function PurchasesPage() {
                   purchaseItems,
                   paymentStatus,
                   amountPaid,
+                  paymentMode,
                 },
               }
             : t
@@ -659,9 +662,36 @@ export default function PurchasesPage() {
     purchaseItems,
     paymentStatus,
     amountPaid,
+    paymentMode,
     activeTabId,
     user?.id,
   ]);
+
+  // Default payment mode settings synchronization
+  useEffect(() => {
+    if (paymentStatus === "Unpaid") {
+      if (paymentMode !== "") {
+        setPaymentMode("");
+      }
+      return;
+    }
+    const defaultMode = settings?.purchase_payment_mode_default;
+    if (
+      defaultMode &&
+      defaultMode !== "none" &&
+      paymentMode === ""
+    ) {
+      setPaymentMode(defaultMode);
+    }
+  }, [settings, paymentMode, paymentStatus]);
+
+  useEffect(() => {
+    const defaultPaymentStatus = settings?.purchase_payment_status;
+    if (defaultPaymentStatus) {
+      const initialStatus = settings?.purchase_payment_mode_mandatory && defaultPaymentStatus === "Unpaid" ? "Paid" : defaultPaymentStatus;
+      setPaymentStatus(initialStatus);
+    }
+  }, [settings]);
 
   // Ensure at least one item row is present when creating/viewing a new purchase
   useEffect(() => {
@@ -679,6 +709,11 @@ export default function PurchasesPage() {
     }
     const newId = uuidv4();
     const defaultRow = { ...emptyItem, id: `temp-${Date.now()}` };
+    const defaultMode = settings?.purchase_payment_mode_default;
+    const initialMode =
+      defaultMode && defaultMode !== "none" ? defaultMode : "";
+    const defaultStatus = settings?.purchase_payment_status || "Unpaid";
+    const initialStatus = settings?.purchase_payment_mode_mandatory && defaultStatus === "Unpaid" ? "Paid" : defaultStatus;
     const newTab = {
       id: newId,
       data: {
@@ -686,8 +721,9 @@ export default function PurchasesPage() {
         invoiceNo: "",
         purchaseDate: new Date().toISOString().slice(0, 10),
         purchaseItems: [defaultRow],
-        paymentStatus: "Unpaid",
+        paymentStatus: initialStatus,
         amountPaid: "",
+        paymentMode: initialMode,
       },
     };
     setTabs((prev) => [...prev, newTab]);
@@ -696,8 +732,9 @@ export default function PurchasesPage() {
     setInvoiceNo("");
     setPurchaseDate(new Date().toISOString().slice(0, 10));
     setPurchaseItems([defaultRow]);
-    setPaymentStatus("Unpaid");
+    setPaymentStatus(initialStatus);
     setAmountPaid("");
+    setPaymentMode(initialMode);
     setShowNewPurchase(true);
     setTimeout(() => productInputRef.current?.focus(), 150);
   };
@@ -716,6 +753,7 @@ export default function PurchasesPage() {
     setPurchaseItems(target.data.purchaseItems || []);
     setPaymentStatus(target.data.paymentStatus || "Unpaid");
     setAmountPaid(target.data.amountPaid || "");
+    setPaymentMode(target.data.paymentMode || "");
     setShowNewPurchase(true);
   };
 
@@ -738,6 +776,7 @@ export default function PurchasesPage() {
       setPurchaseItems([]);
       setPaymentStatus("Unpaid");
       setAmountPaid("");
+      setPaymentMode("");
       setShowNewPurchase(false);
     }
 
@@ -1072,6 +1111,7 @@ export default function PurchasesPage() {
     setSelectedSupplier("");
     setInvoiceNo("");
     setPurchaseDate(new Date().toISOString().slice(0, 10));
+    setPaymentMode("");
     setNewItemRow(null);
     setShowSuggestions(false);
     setApplyCgstToAll(false);
@@ -1819,6 +1859,16 @@ export default function PurchasesPage() {
       return;
     }
 
+    if (
+      settings?.purchase_payment_mode_mandatory &&
+      (!paymentMode || paymentMode === "none")
+    ) {
+      toast.error(
+        "Payment mode is mandatory. Please select Cash, UPI, or Card."
+      );
+      return;
+    }
+
     const validItems = purchaseItems.filter(
       (item) => item.product_name && item.product_name.trim() !== ""
     );
@@ -1854,6 +1904,8 @@ export default function PurchasesPage() {
           hsn_no: item.hsn_no || null,
           cgst: parseFloat(item.cgst) || 0,
           sgst: parseFloat(item.sgst) || 0,
+          discount: parseFloat(item.discount) || 0,
+          scheme: parseInt(item.scheme) || 0,
         })),
         payment_status: paymentStatus,
         amount_paid:
@@ -1862,6 +1914,8 @@ export default function PurchasesPage() {
             : paymentStatus === "Paid"
               ? undefined /* backend handles total */
               : 0,
+        payment_mode:
+          paymentMode && paymentMode !== "none" ? paymentMode : null,
       };
 
       if (editingPurchaseId) {
@@ -1925,6 +1979,7 @@ export default function PurchasesPage() {
     );
     setPaymentStatus(purchase.payment_status || "Unpaid");
     setAmountPaid(purchase.amount_paid || "");
+    setPaymentMode(purchase.payment_mode || "");
 
     const mappedItems = purchase.items.map((item, idx) => ({
       id: item.id || `edit-${idx}`,
@@ -1953,6 +2008,8 @@ export default function PurchasesPage() {
             ).toFixed(2),
       cgst: item.cgst !== undefined ? item.cgst : "",
       sgst: item.sgst !== undefined ? item.sgst : "",
+      discount: item.discount !== undefined ? item.discount : "",
+      scheme: item.scheme !== undefined ? item.scheme : "",
     }));
 
     setPurchaseItems(mappedItems);
@@ -2635,8 +2692,16 @@ export default function PurchasesPage() {
                     <button
                       key={status}
                       type="button"
-                      disabled={processingRowId !== null}
-                      onClick={() => setPaymentStatus(status)}
+                      disabled={
+                        processingRowId !== null ||
+                        (settings?.purchase_payment_mode_mandatory && status === "Unpaid")
+                      }
+                      onClick={() => {
+                        setPaymentStatus(status);
+                        if (status === "Unpaid") {
+                          setPaymentMode("");
+                        }
+                      }}
                       className={`flex-1 text-xs font-semibold py-1.5 px-3 rounded-md transition-all ${
                         paymentStatus === status
                           ? status === "Paid"
@@ -2651,6 +2716,29 @@ export default function PurchasesPage() {
                     </button>
                   ))}
                 </div>
+              </div>
+
+              <div className="space-y-2 lg:col-span-1">
+                <Label>Payment Mode</Label>
+                <Select
+                  value={paymentMode}
+                  onValueChange={setPaymentMode}
+                  disabled={
+                    processingRowId !== null || paymentStatus === "Unpaid"
+                  }
+                >
+                  <SelectTrigger className="h-9 w-full bg-background border border-border/80 rounded-lg text-xs font-semibold">
+                    <SelectValue placeholder="Select Mode" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {!settings?.purchase_payment_mode_mandatory && (
+                      <SelectItem value="none">None</SelectItem>
+                    )}
+                    <SelectItem value="Cash">Cash</SelectItem>
+                    <SelectItem value="UPI">UPI</SelectItem>
+                    <SelectItem value="Card">Card</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
 
               {paymentStatus === "Partial" && (
@@ -2682,7 +2770,7 @@ export default function PurchasesPage() {
                     <p className="text-[11px] text-muted-foreground">
                       Remaining:{" "}
                       <span className="font-bold text-red-400">
-        ₹{(totalAmount - parseFloat(amountPaid)).toFixed(2)}
+                        ₹{(totalAmount - parseFloat(amountPaid)).toFixed(2)}
                       </span>
                     </p>
                   )}
@@ -2966,7 +3054,7 @@ export default function PurchasesPage() {
                                     : item.salt_composition
                                   : "Add Salt"}
                               </Button>
-                              
+
                               {hasScheme && (
                                 <span className="shrink-0 inline-flex items-center px-1.5 py-0.5 rounded text-[8px] font-bold bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 uppercase tracking-wider animate-pulse">
                                   +{scheme} free
@@ -3288,7 +3376,11 @@ export default function PurchasesPage() {
                               </SelectTrigger>
                               <SelectContent>
                                 {PACK_TYPES.map((type) => (
-                                  <SelectItem key={type} value={type} className="text-xs">
+                                  <SelectItem
+                                    key={type}
+                                    value={type}
+                                    className="text-xs"
+                                  >
                                     {type}
                                   </SelectItem>
                                 ))}
@@ -3300,7 +3392,9 @@ export default function PurchasesPage() {
                         <TableCell className="w-[150px]">
                           <div className="flex gap-1.5 justify-center items-center">
                             <div className="flex flex-col items-center gap-0.5 w-1/2">
-                              <span className="text-[9px] text-muted-foreground font-semibold uppercase">CGST</span>
+                              <span className="text-[9px] text-muted-foreground font-semibold uppercase">
+                                CGST
+                              </span>
                               <Input
                                 id={`cgst-${item.id}`}
                                 type="number"
@@ -3327,7 +3421,9 @@ export default function PurchasesPage() {
                               />
                             </div>
                             <div className="flex flex-col items-center gap-0.5 w-1/2">
-                              <span className="text-[9px] text-muted-foreground font-semibold uppercase">SGST</span>
+                              <span className="text-[9px] text-muted-foreground font-semibold uppercase">
+                                SGST
+                              </span>
                               <Input
                                 id={`sgst-${item.id}`}
                                 type="number"
@@ -3359,12 +3455,18 @@ export default function PurchasesPage() {
                         <TableCell className="w-[130px]">
                           <div className="flex gap-1.5 justify-center items-center">
                             <div className="flex flex-col items-center gap-0.5 w-1/2">
-                              <span className="text-[9px] text-muted-foreground font-semibold uppercase">Disc %</span>
+                              <span className="text-[9px] text-muted-foreground font-semibold uppercase">
+                                Disc %
+                              </span>
                               <Input
                                 id={`discount-${item.id}`}
                                 type="number"
                                 step="0.01"
-                                value={item.discount !== undefined ? item.discount : ""}
+                                value={
+                                  item.discount !== undefined
+                                    ? item.discount
+                                    : ""
+                                }
                                 onChange={(e) =>
                                   handleItemFieldChangeWithCalc(
                                     item.id,
@@ -3386,11 +3488,15 @@ export default function PurchasesPage() {
                               />
                             </div>
                             <div className="flex flex-col items-center gap-0.5 w-1/2">
-                              <span className="text-[9px] text-muted-foreground font-semibold uppercase">Scheme</span>
+                              <span className="text-[9px] text-muted-foreground font-semibold uppercase">
+                                Scheme
+                              </span>
                               <Input
                                 id={`scheme-${item.id}`}
                                 type="number"
-                                value={item.scheme !== undefined ? item.scheme : ""}
+                                value={
+                                  item.scheme !== undefined ? item.scheme : ""
+                                }
                                 onChange={(e) =>
                                   handleItemFieldChangeWithCalc(
                                     item.id,
@@ -3422,7 +3528,9 @@ export default function PurchasesPage() {
                           <div className="flex flex-col gap-1 items-center">
                             <div className="flex gap-1 w-full">
                               <div className="flex flex-col items-center gap-0.5 w-1/2">
-                                <span className="text-[9px] text-muted-foreground font-semibold uppercase">Qty</span>
+                                <span className="text-[9px] text-muted-foreground font-semibold uppercase">
+                                  Qty
+                                </span>
                                 <Input
                                   id={`qty-${item.id}`}
                                   type="number"
@@ -3450,7 +3558,9 @@ export default function PurchasesPage() {
                                 />
                               </div>
                               <div className="flex flex-col items-center gap-0.5 w-1/2">
-                                <span className="text-[9px] text-muted-foreground font-semibold uppercase">Units</span>
+                                <span className="text-[9px] text-muted-foreground font-semibold uppercase">
+                                  Units
+                                </span>
                                 <Input
                                   id={`units-${item.id}`}
                                   type="number"
@@ -3491,7 +3601,9 @@ export default function PurchasesPage() {
                           <div className="flex flex-col gap-1 items-center">
                             <div className="flex gap-1 w-full">
                               <div className="flex flex-col items-center gap-0.5 w-1/2 relative">
-                                <span className="text-[9px] text-muted-foreground font-semibold uppercase">Rate/P</span>
+                                <span className="text-[9px] text-muted-foreground font-semibold uppercase">
+                                  Rate/P
+                                </span>
                                 <div className="relative w-full">
                                   <Input
                                     id={`rate-${item.id}`}
@@ -3523,7 +3635,7 @@ export default function PurchasesPage() {
                                       }
                                     }}
                                     placeholder="₹"
-                                    className={`h-8 text-xs text-center w-full font-bold text-primary pr-6 ${
+                                    className={`h-8 text-xs text-center w-full font-bold text-primary pr-6 bg-primary/5 border-primary/30 ${
                                       priceAlerts[item.id]
                                         ? "border-yellow-500 bg-yellow-500/10"
                                         : ""
@@ -3574,7 +3686,9 @@ export default function PurchasesPage() {
                               </div>
 
                               <div className="flex flex-col items-center gap-0.5 w-1/2">
-                                <span className="text-[9px] text-muted-foreground font-semibold uppercase">MRP/P</span>
+                                <span className="text-[9px] text-muted-foreground font-semibold uppercase">
+                                  MRP/P
+                                </span>
                                 <Input
                                   id={`mrp-${item.id}`}
                                   type="number"
@@ -3596,7 +3710,7 @@ export default function PurchasesPage() {
                                     }
                                   }}
                                   placeholder="₹"
-                                  className="h-8 text-xs text-center w-full font-bold"
+                                  className="h-8 text-xs text-center w-full font-bold border-amber-500/30 bg-amber-500/5 dark:bg-amber-500/10 text-amber-600 dark:text-amber-400"
                                 />
                               </div>
                             </div>
@@ -3916,7 +4030,7 @@ export default function PurchasesPage() {
                                     items,
                                   }));
                                 }}
-                                className="h-8 text-xs w-20 text-center"
+                                className="h-8 text-xs w-20 text-center font-bold border-amber-500/30 bg-amber-500/5 dark:bg-amber-500/10 text-amber-600 dark:text-amber-400"
                               />
                             </TableCell>
                             <TableCell className="text-center font-mono font-medium text-primary">
@@ -4031,21 +4145,7 @@ export default function PurchasesPage() {
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-[40px]"></TableHead>
-                  <TableHead>
-                    <Button
-                      variant="ghost"
-                      onClick={() => {
-                        setSortBy("purchase_date");
-                        setSortOrder(
-                          sortBy === "purchase_date" && sortOrder === "desc"
-                            ? "asc"
-                            : "desc"
-                        );
-                      }}
-                    >
-                      Date <ArrowUpDown className="ml-2 h-4 w-4" />
-                    </Button>
-                  </TableHead>
+                  <TableHead>Invoice / Timestamp</TableHead>
                   <TableHead>
                     <Button
                       variant="ghost"
@@ -4062,7 +4162,6 @@ export default function PurchasesPage() {
                       Supplier <ArrowUpDown className="ml-2 h-4 w-4" />
                     </Button>
                   </TableHead>
-                  <TableHead>Invoice</TableHead>
                   <TableHead>Items</TableHead>
                   <TableHead className="text-center">Status</TableHead>
                   <TableHead className="text-right">
@@ -4085,7 +4184,7 @@ export default function PurchasesPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {purchases.map((purchase) => (
+                {purchases.map((purchase, index) => (
                   <>
                     <TableRow
                       key={purchase.id}
@@ -4104,33 +4203,55 @@ export default function PurchasesPage() {
                           <ChevronDown className="w-4 h-4" />
                         )}
                       </TableCell>
-                      <TableCell className="text-sm">
-                        {formatDate(
-                          purchase.purchase_date ||
-                            purchase.created_at?.slice(0, 10)
-                        )}
+                      <TableCell className="text-sm text-foreground py-2.5">
+                        <div className="font-bold">
+                          #
+                          {pagination.total -
+                            ((pagination.page - 1) * pagination.limit +
+                              index)}{" "}
+                          - {purchase.invoice_no || "-"}
+                        </div>
+                        <div className="text-[11px] text-muted-foreground font-medium mt-0.5">
+                          {new Date(
+                            purchase.purchase_date ||
+                              purchase.created_at ||
+                              new Date()
+                          ).toLocaleString("en-IN", {
+                            day: "2-digit",
+                            month: "short",
+                            year: "numeric",
+                            hour: "2-digit",
+                            minute: "2-digit",
+                            hour12: true,
+                          })}
+                        </div>
                       </TableCell>
                       <TableCell className="font-medium">
                         {purchase.supplier_name}
-                      </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
-                        {purchase.invoice_no || "-"}
                       </TableCell>
                       <TableCell className="text-sm">
                         {purchase.items?.length || 0} items
                       </TableCell>
                       <TableCell className="text-center">
-                        <span
-                          className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
-                            purchase.payment_status === "Paid"
-                              ? "bg-green-500/10 text-green-500 border border-green-500/20"
-                              : purchase.payment_status === "Partial"
-                                ? "bg-yellow-500/10 text-yellow-500 border border-yellow-500/20"
-                                : "bg-red-500/10 text-red-400 border border-red-500/20"
-                          }`}
-                        >
-                          {purchase.payment_status || "Unpaid"}
-                        </span>
+                        <div>
+                          <span
+                            className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                              purchase.payment_status === "Paid"
+                                ? "bg-green-500/10 text-green-500 border border-green-500/20"
+                                : purchase.payment_status === "Partial"
+                                  ? "bg-yellow-500/10 text-yellow-500 border border-yellow-500/20"
+                                  : "bg-red-500/10 text-red-400 border border-red-500/20"
+                            }`}
+                          >
+                            {purchase.payment_status || "Unpaid"}
+                          </span>
+                        </div>
+                        {purchase.payment_mode &&
+                          purchase.payment_mode !== "none" && (
+                            <div className="text-[10px] text-muted-foreground/80 mt-1 font-bold uppercase tracking-wider">
+                              {purchase.payment_mode}
+                            </div>
+                          )}
                       </TableCell>
                       <TableCell className="text-right font-mono text-primary">
                         ₹{purchase.total_amount?.toFixed(2)}
@@ -4176,7 +4297,7 @@ export default function PurchasesPage() {
                     </TableRow>
                     {expandedPurchase === purchase.id && (
                       <TableRow className="bg-muted/30">
-                        <TableCell colSpan={8} className="p-4">
+                        <TableCell colSpan={7} className="p-4">
                           <div className="rounded-lg border border-border overflow-hidden">
                             <Table>
                               <TableHeader>
@@ -4193,10 +4314,10 @@ export default function PurchasesPage() {
                                   <TableHead className="text-center">
                                     Total Units
                                   </TableHead>
-                                  <TableHead className="text-center">
+                                  <TableHead className="text-center font-bold text-primary bg-primary/5 dark:bg-primary/10">
                                     Cost/Unit
                                   </TableHead>
-                                  <TableHead className="text-center">
+                                  <TableHead className="text-center font-bold text-amber-600 dark:text-amber-400 bg-amber-500/5 dark:bg-amber-500/10">
                                     MRP/Unit
                                   </TableHead>
                                   <TableHead className="text-center">
@@ -4245,10 +4366,10 @@ export default function PurchasesPage() {
                                       <TableCell className="text-center font-medium text-primary">
                                         {totalUnits}
                                       </TableCell>
-                                      <TableCell className="text-center">
+                                      <TableCell className="text-center font-bold text-primary bg-primary/5 dark:bg-primary/10">
                                         ₹{costPerUnit.toFixed(2)}
                                       </TableCell>
-                                      <TableCell className="text-center">
+                                      <TableCell className="text-center font-bold text-amber-600 dark:text-amber-400 bg-amber-500/5 dark:bg-amber-500/10">
                                         ₹{mrpPerUnit.toFixed(2)}
                                       </TableCell>
                                       <TableCell className="text-center font-mono">
@@ -4393,7 +4514,7 @@ export default function PurchasesPage() {
                 {purchases.length === 0 && (
                   <TableRow>
                     <TableCell
-                      colSpan={8}
+                      colSpan={7}
                       className="text-center py-8 text-muted-foreground"
                     >
                       No purchases found

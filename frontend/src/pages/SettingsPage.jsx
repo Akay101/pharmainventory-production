@@ -782,7 +782,12 @@ export default function SettingsPage() {
                           <Switch
                             id={setting.key}
                             checked={settings[setting.key] !== undefined ? settings[setting.key] : setting.default}
-                            onCheckedChange={(val) => updateSetting(setting.key, val)}
+                            onCheckedChange={async (val) => {
+                              await updateSetting(setting.key, val);
+                              if (setting.key === "purchase_payment_mode_mandatory" && val && settings.purchase_payment_status === "Unpaid") {
+                                await updateSetting("purchase_payment_status", "Paid");
+                              }
+                            }}
                           />
                         )}
                         
@@ -795,11 +800,27 @@ export default function SettingsPage() {
                               <SelectValue placeholder="Select" />
                             </SelectTrigger>
                             <SelectContent>
-                              {setting.options.map(opt => (
-                                <SelectItem key={opt} value={opt} className="capitalize">{opt}</SelectItem>
-                              ))}
+                              {setting.options
+                                .filter(opt => {
+                                  if (setting.key === "purchase_payment_status" && settings.purchase_payment_mode_mandatory && opt === "Unpaid") {
+                                    return false;
+                                  }
+                                  return true;
+                                })
+                                .map(opt => (
+                                  <SelectItem key={opt} value={opt} className="capitalize">{opt}</SelectItem>
+                                ))}
                             </SelectContent>
                           </Select>
+                        )}
+                        
+                        {setting.type === 'number' && (
+                          <Input
+                            type="number"
+                            value={settings[setting.key] !== undefined ? settings[setting.key] : setting.default}
+                            onChange={(e) => updateSetting(setting.key, Number(e.target.value))}
+                            className="w-[120px] bg-background/50 h-9 rounded-xl border border-border/50 text-xs font-semibold"
+                          />
                         )}
                       </div>
                     ))}

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import axios from "axios";
-import { API } from "../App";
+import { API, useAuth } from "../App";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -45,13 +45,16 @@ import { toast } from "sonner";
 export default function InventoryPage() {
   const navigate = useNavigate();
   const location = useLocation();
+  const { settings } = useAuth();
   const isInitialMount = useRef(true);
   const [inventory, setInventory] = useState([]);
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [showLowStock, setShowLowStock] = useState(false);
+  const [showShortage, setShowShortage] = useState(false);
   const [showExpiringSoon, setShowExpiringSoon] = useState(false);
+  const [shortageCount, setShortageCount] = useState(0);
   const [deleteDialog, setDeleteDialog] = useState({ open: false, item: null, type: null });
   const [addStockDialog, setAddStockDialog] = useState({ open: false, item: null, quantityToAdd: "" });
   const [productDialog, setProductDialog] = useState(false);
@@ -61,6 +64,7 @@ export default function InventoryPage() {
     hsn_no: "",
     description: "",
     low_stock_threshold: 10,
+    shortage_threshold: 10,
   });
 
   // Merge States
@@ -218,12 +222,16 @@ export default function InventoryPage() {
       params.append("sort_order", sortOrder);
       if (search) params.append("search", search);
       if (showLowStock) params.append("low_stock", "true");
+      if (showShortage) params.append("shortage", "true");
       if (showExpiringSoon) params.append("expiring_soon", "true");
       if (highlightId) params.append("highlight_id", highlightId);
 
       const response = await axios.get(`${API}/inventory?${params.toString()}`);
       setInventory(response.data.inventory);
       setPagination(response.data.pagination);
+      if (response.data.shortage_count !== undefined) {
+        setShortageCount(response.data.shortage_count);
+      }
 
       if (highlightId) {
         setTimeout(() => {
@@ -241,7 +249,7 @@ export default function InventoryPage() {
     } catch (error) {
       toast.error("Failed to load inventory");
     }
-  }, [search, showLowStock, showExpiringSoon, sortBy, sortOrder, pagination.limit]);
+  }, [search, showLowStock, showShortage, showExpiringSoon, sortBy, sortOrder, pagination.limit]);
 
   useEffect(() => {
     fetchData();
@@ -258,7 +266,7 @@ export default function InventoryPage() {
       fetchInventory(1);
     }, 300);
     return () => clearTimeout(debounce);
-  }, [search, showLowStock, showExpiringSoon, sortBy, sortOrder]);
+  }, [search, showLowStock, showShortage, showExpiringSoon, sortBy, sortOrder]);
 
   const fetchData = async () => {
     try {
@@ -289,6 +297,7 @@ export default function InventoryPage() {
         hsn_no: "",
         description: "",
         low_stock_threshold: 10,
+        shortage_threshold: 10,
       });
       fetchData();
     } catch (error) {
@@ -465,6 +474,20 @@ export default function InventoryPage() {
                 />
               </div>
 
+              <div className="space-y-2">
+                <Label className="text-xs font-bold text-muted-foreground/80">Shortage List Threshold</Label>
+                <Input
+                  type="number"
+                  placeholder="10"
+                  value={newProduct.shortage_threshold}
+                  onChange={(e) =>
+                    setNewProduct({ ...newProduct, shortage_threshold: parseInt(e.target.value) || 10 })
+                  }
+                  data-testid="product-shortage-threshold-input"
+                  className="h-10 text-sm font-bold border-border/80 focus:border-primary bg-card/25"
+                />
+              </div>
+
               <Button onClick={handleCreateProduct} className="w-full bg-primary hover:bg-primary/95 text-primary-foreground h-10 text-xs font-bold shadow-md shadow-primary/10 rounded-xl mt-2" data-testid="save-product-btn">
                 Create Product
               </Button>
@@ -492,7 +515,11 @@ export default function InventoryPage() {
             <div className="flex gap-2 w-full md:w-auto shrink-0 justify-end">
               <Button
                 variant={showLowStock ? "default" : "outline"}
-                onClick={() => setShowLowStock(!showLowStock)}
+                onClick={() => {
+                  setShowLowStock(!showLowStock);
+                  setShowShortage(false);
+                  setShowExpiringSoon(false);
+                }}
                 className={`h-10 text-xs font-bold px-4 rounded-xl border ${
                   showLowStock 
                     ? "bg-amber-500/10 text-amber-500 border-amber-500/30 hover:bg-amber-500/20" 
@@ -505,8 +532,30 @@ export default function InventoryPage() {
               </Button>
 
               <Button
+                variant={showShortage ? "default" : "outline"}
+                onClick={() => {
+                  setShowShortage(!showShortage);
+                  setShowLowStock(false);
+                  setShowExpiringSoon(false);
+                }}
+                className={`h-10 text-xs font-bold px-4 rounded-xl border ${
+                  showShortage 
+                    ? "bg-orange-500/10 text-orange-500 border-orange-500/30 hover:bg-orange-500/20" 
+                    : "border-border/80 hover:bg-muted"
+                }`}
+                data-testid="shortage-filter-btn"
+              >
+                <AlertTriangle className="w-3.5 h-3.5 mr-2" />
+                Shortage List {shortageCount > 0 && <Badge className="ml-1.5 bg-orange-500 text-white border-0 text-[10px] px-1.5 py-0.5 font-bold rounded-full">{shortageCount}</Badge>}
+              </Button>
+
+              <Button
                 variant={showExpiringSoon ? "default" : "outline"}
-                onClick={() => setShowExpiringSoon(!showExpiringSoon)}
+                onClick={() => {
+                  setShowExpiringSoon(!showExpiringSoon);
+                  setShowLowStock(false);
+                  setShowShortage(false);
+                }}
                 className={`h-10 text-xs font-bold px-4 rounded-xl border ${
                   showExpiringSoon 
                     ? "bg-destructive/10 text-destructive border-destructive/30 hover:bg-destructive/20" 
@@ -518,12 +567,13 @@ export default function InventoryPage() {
                 Expiring Soon
               </Button>
               
-              {(search || showLowStock || showExpiringSoon) && (
+              {(search || showLowStock || showShortage || showExpiringSoon) && (
                 <Button
                   variant="outline"
                   onClick={() => {
                     setSearch("");
                     setShowLowStock(false);
+                    setShowShortage(false);
                     setShowExpiringSoon(false);
                   }}
                   className="h-10 text-xs font-bold px-4 rounded-xl border border-border/80 hover:bg-muted"
@@ -621,6 +671,7 @@ export default function InventoryPage() {
                   const costPerUnit = item.purchase_price || 0;
                   const mrpPerUnit = item.mrp || 0;
                   const stockValue = availableUnits * costPerUnit;
+                  const matchedProduct = products.find((p) => p.id === item.product_id);
                   
                   // Calculate packs + loose units display
                   const fullPacks = Math.floor(availableUnits / unitsPerPack);
@@ -656,7 +707,14 @@ export default function InventoryPage() {
                           }}
                         />
                       </TableCell>
-                      <TableCell className="font-bold text-sm text-foreground">{item.product_name}</TableCell>
+                      <TableCell className="font-bold text-sm text-foreground">
+                        <div>{item.product_name}</div>
+                        {matchedProduct && (
+                          <div className="text-[10px] text-muted-foreground/80 font-semibold mt-0.5">
+                            Shortage Thresh: {matchedProduct.shortage_threshold !== undefined && matchedProduct.shortage_threshold !== null ? matchedProduct.shortage_threshold : (settings?.shortage_threshold || 10)} units
+                          </div>
+                        )}
+                      </TableCell>
                       <TableCell className="text-xs font-semibold text-muted-foreground">{item.manufacturer || "-"}</TableCell>
                       <TableCell className="font-mono text-xs font-semibold text-muted-foreground">{item.batch_no}</TableCell>
                       <TableCell className="text-xs font-semibold text-muted-foreground">{packType}</TableCell>
@@ -677,8 +735,12 @@ export default function InventoryPage() {
                           <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/10 text-amber-500 border border-amber-500/20">
                             Expiring Soon
                           </span>
-                        ) : availableUnits <= 10 ? (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-orange-500/10 text-orange-500 border border-orange-500/20">
+                        ) : availableUnits <= (matchedProduct?.shortage_threshold !== undefined && matchedProduct?.shortage_threshold !== null ? Number(matchedProduct.shortage_threshold) : (settings?.shortage_threshold || 10)) ? (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-orange-600/10 text-orange-600 border border-orange-600/20 dark:text-orange-400 dark:border-orange-500/20">
+                            Shortage
+                          </span>
+                        ) : availableUnits <= (matchedProduct?.low_stock_threshold || 10) ? (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/10 text-amber-500 border border-amber-500/20">
                             Low Stock
                           </span>
                         ) : (
@@ -796,7 +858,7 @@ export default function InventoryPage() {
                   <div className="flex-1 min-w-0">
                     <p className="font-bold text-sm text-foreground truncate">{product.name}</p>
                     <p className="text-[10px] font-bold text-muted-foreground/80 mt-0.5 uppercase tracking-wide">
-                      {product.category} • THRESHOLD: {product.low_stock_threshold}
+                      {product.category} • THRESHOLD: {product.low_stock_threshold} • SHORTAGE: {product.shortage_threshold !== undefined && product.shortage_threshold !== null ? product.shortage_threshold : (settings?.shortage_threshold || 10)}
                     </p>
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
@@ -1144,6 +1206,10 @@ export default function InventoryPage() {
                   <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Low Stock Threshold</p>
                   <p className="text-sm font-semibold text-foreground mt-0.5">{detailProduct?.low_stock_threshold || 10} units</p>
                 </div>
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Shortage Threshold</p>
+                  <p className="text-sm font-semibold text-foreground mt-0.5">{detailProduct?.shortage_threshold !== undefined && detailProduct?.shortage_threshold !== null ? detailProduct.shortage_threshold : (settings?.shortage_threshold || 10)} units</p>
+                </div>
                 {detailBatches.length > 0 && (
                   <>
                     <div className="md:col-span-2">
@@ -1191,6 +1257,7 @@ export default function InventoryPage() {
                       ) : (
                         detailBatches.map((batch) => {
                           const isExpired = batch.expiry_date && new Date(batch.expiry_date) < new Date();
+                          const isShortage = batch.available_quantity <= (detailProduct?.shortage_threshold !== undefined && detailProduct?.shortage_threshold !== null ? Number(detailProduct.shortage_threshold) : (settings?.shortage_threshold || 10));
                           const isLowStock = batch.available_quantity <= (detailProduct?.low_stock_threshold || 10);
                           let statusLabel = "In Stock";
                           
@@ -1198,6 +1265,8 @@ export default function InventoryPage() {
                             statusLabel = "Expired";
                           } else if (batch.available_quantity <= 0) {
                             statusLabel = "Out of Stock";
+                          } else if (isShortage) {
+                            statusLabel = "Shortage";
                           } else if (isLowStock) {
                             statusLabel = "Low Stock";
                           }
@@ -1220,6 +1289,8 @@ export default function InventoryPage() {
                                   className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${
                                     statusLabel === "Expired" || statusLabel === "Out of Stock"
                                       ? "bg-red-500/10 text-red-500 hover:bg-red-500/15"
+                                      : statusLabel === "Shortage"
+                                      ? "bg-orange-500/10 text-orange-500 hover:bg-orange-500/15"
                                       : statusLabel === "Low Stock"
                                       ? "bg-amber-500/10 text-amber-500 hover:bg-amber-500/15"
                                       : "bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/15"
