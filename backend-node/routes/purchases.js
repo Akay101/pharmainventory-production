@@ -358,6 +358,7 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
         cgst: cgst,
         sgst: sgst,
         discount: discount,
+        shortage_threshold: item.shortage_threshold !== undefined && item.shortage_threshold !== null && item.shortage_threshold !== "" ? Number(item.shortage_threshold) : null,
       };
       processedItems.push(processedItem);
 
@@ -387,6 +388,7 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
               sgst: sgst,
               discount: discount,
               scheme: scheme,
+              shortage_threshold: item.shortage_threshold !== undefined && item.shortage_threshold !== null && item.shortage_threshold !== "" ? Number(item.shortage_threshold) : (existingInventory.shortage_threshold !== undefined ? existingInventory.shortage_threshold : null),
             },
           },
           { session }
@@ -418,6 +420,7 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
           discount: discount,
           purchase_id: purchaseId,
           supplier_id: supplier_id,
+          shortage_threshold: item.shortage_threshold !== undefined && item.shortage_threshold !== null && item.shortage_threshold !== "" ? Number(item.shortage_threshold) : null,
           created_at: new Date().toISOString(),
         }, { session });
       }
@@ -671,6 +674,7 @@ router.put(
           cgst: cgst,
           sgst: sgst,
           discount: discount,
+          shortage_threshold: item.shortage_threshold !== undefined && item.shortage_threshold !== null && item.shortage_threshold !== "" ? Number(item.shortage_threshold) : null,
         });
 
         if (updateInventory) {
@@ -693,6 +697,7 @@ router.put(
                   sgst: sgst,
                   discount: discount,
                   scheme: scheme,
+                  shortage_threshold: item.shortage_threshold !== undefined && item.shortage_threshold !== null && item.shortage_threshold !== "" ? Number(item.shortage_threshold) : (existingInventory.shortage_threshold !== undefined ? existingInventory.shortage_threshold : null),
                 },
               },
               { session }
@@ -716,6 +721,7 @@ router.put(
               sgst: sgst,
               discount: discount,
               purchase_id: req.params.purchase_id,
+              shortage_threshold: item.shortage_threshold !== undefined && item.shortage_threshold !== null && item.shortage_threshold !== "" ? Number(item.shortage_threshold) : null,
               created_at: new Date().toISOString(),
             }, { session });
           }

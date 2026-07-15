@@ -595,6 +595,7 @@ export default function PurchasesPage() {
     sgst: "", // SGST (%)
     discount: "", // Discount (%)
     scheme: "", // Scheme Qty (free packs)
+    shortage_threshold: "", // Shortage Threshold Qty
     _is_auto_filled_rate: true, // Prevent price history ping until manually edited
   };
 
@@ -1906,6 +1907,7 @@ export default function PurchasesPage() {
           sgst: parseFloat(item.sgst) || 0,
           discount: parseFloat(item.discount) || 0,
           scheme: parseInt(item.scheme) || 0,
+          shortage_threshold: item.shortage_threshold !== "" && item.shortage_threshold !== undefined && item.shortage_threshold !== null ? Number(item.shortage_threshold) : null,
         })),
         payment_status: paymentStatus,
         amount_paid:
@@ -2010,6 +2012,7 @@ export default function PurchasesPage() {
       sgst: item.sgst !== undefined ? item.sgst : "",
       discount: item.discount !== undefined ? item.discount : "",
       scheme: item.scheme !== undefined ? item.scheme : "",
+      shortage_threshold: item.shortage_threshold !== undefined && item.shortage_threshold !== null ? String(item.shortage_threshold) : "",
     }));
 
     setPurchaseItems(mappedItems);
@@ -2037,6 +2040,11 @@ export default function PurchasesPage() {
             pack_price: parseFloat(item.pack_price) || 0,
             mrp_per_unit: parseFloat(item.mrp_per_unit) || 0,
             hsn_no: item.hsn_no || null,
+            cgst: parseFloat(item.cgst) || 0,
+            sgst: parseFloat(item.sgst) || 0,
+            discount: parseFloat(item.discount) || 0,
+            scheme: parseInt(item.scheme) || 0,
+            shortage_threshold: item.shortage_threshold !== "" && item.shortage_threshold !== undefined && item.shortage_threshold !== null ? Number(item.shortage_threshold) : null,
           })),
         }
       );
@@ -2790,7 +2798,7 @@ export default function PurchasesPage() {
                       Batch / Expiry
                     </TableHead>
                     <TableHead className="w-[120px] font-bold text-foreground">
-                      HSN / Pack Type
+                      HSN / Pack / Shortage
                     </TableHead>
                     <TableHead className="w-[150px] text-center font-bold text-foreground">
                       <div className="flex flex-col items-center gap-1">
@@ -3386,6 +3394,19 @@ export default function PurchasesPage() {
                                 ))}
                               </SelectContent>
                             </Select>
+                            <Input
+                              type="number"
+                              value={item.shortage_threshold !== undefined ? item.shortage_threshold : ""}
+                              onChange={(e) =>
+                                handleItemFieldChange(
+                                  item.id,
+                                  "shortage_threshold",
+                                  e.target.value
+                                )
+                              }
+                              placeholder="Shortage Qty"
+                              className="h-7 text-[10px]"
+                            />
                           </div>
                         </TableCell>
 
@@ -3903,21 +3924,40 @@ export default function PurchasesPage() {
                             }`}
                           >
                             <TableCell>
-                              <Input
-                                value={item.product_name}
-                                onChange={(e) => {
-                                  const items = [...editingPurchase.items];
-                                  items[idx] = {
-                                    ...items[idx],
-                                    product_name: e.target.value,
-                                  };
-                                  setEditingPurchase((prev) => ({
-                                    ...prev,
-                                    items,
-                                  }));
-                                }}
-                                className="h-8 text-xs"
-                              />
+                              <div className="flex flex-col gap-1">
+                                <Input
+                                  value={item.product_name}
+                                  onChange={(e) => {
+                                    const items = [...editingPurchase.items];
+                                    items[idx] = {
+                                      ...items[idx],
+                                      product_name: e.target.value,
+                                    };
+                                    setEditingPurchase((prev) => ({
+                                      ...prev,
+                                      items,
+                                    }));
+                                  }}
+                                  className="h-8 text-xs font-semibold"
+                                />
+                                <Input
+                                  type="number"
+                                  placeholder="Shortage Qty"
+                                  value={item.shortage_threshold !== undefined ? item.shortage_threshold : ""}
+                                  onChange={(e) => {
+                                    const items = [...editingPurchase.items];
+                                    items[idx] = {
+                                      ...items[idx],
+                                      shortage_threshold: e.target.value,
+                                    };
+                                    setEditingPurchase((prev) => ({
+                                      ...prev,
+                                      items,
+                                    }));
+                                  }}
+                                  className="h-6 text-[10px]"
+                                />
+                              </div>
                             </TableCell>
                             <TableCell>
                               <Input
@@ -4353,7 +4393,10 @@ export default function PurchasesPage() {
                                   return (
                                     <TableRow key={idx}>
                                       <TableCell className="font-medium">
-                                        {item.product_name}
+                                        <div>{item.product_name}</div>
+                                        {item.shortage_threshold !== undefined && item.shortage_threshold !== null && (
+                                          <div className="text-[10px] text-muted-foreground font-semibold">Shortage: {item.shortage_threshold} units</div>
+                                        )}
                                       </TableCell>
                                       <TableCell>{item.batch_no}</TableCell>
                                       <TableCell>{item.expiry_date}</TableCell>

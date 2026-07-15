@@ -39,7 +39,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "../components/ui/alert-dialog";
-import { Search, Plus, Package, AlertTriangle, ChevronLeft, ChevronRight, ArrowUpDown, Trash2, Loader2 } from "lucide-react";
+import { Search, Plus, Package, AlertTriangle, ChevronLeft, ChevronRight, ArrowUpDown, Trash2, Loader2, BellOff } from "lucide-react";
 import { toast } from "sonner";
 
 export default function InventoryPage() {
@@ -56,6 +56,7 @@ export default function InventoryPage() {
   const [showExpiringSoon, setShowExpiringSoon] = useState(false);
   const [shortageCount, setShortageCount] = useState(0);
   const [deleteDialog, setDeleteDialog] = useState({ open: false, item: null, type: null });
+  const [removeShortageDialog, setRemoveShortageDialog] = useState({ open: false, item: null, newThreshold: "" });
   const [addStockDialog, setAddStockDialog] = useState({ open: false, item: null, quantityToAdd: "" });
   const [productDialog, setProductDialog] = useState(false);
   const [newProduct, setNewProduct] = useState({
@@ -709,11 +710,9 @@ export default function InventoryPage() {
                       </TableCell>
                       <TableCell className="font-bold text-sm text-foreground">
                         <div>{item.product_name}</div>
-                        {matchedProduct && (
-                          <div className="text-[10px] text-muted-foreground/80 font-semibold mt-0.5">
-                            Shortage Thresh: {matchedProduct.shortage_threshold !== undefined && matchedProduct.shortage_threshold !== null ? matchedProduct.shortage_threshold : (settings?.shortage_threshold || 10)} units
-                          </div>
-                        )}
+                        <div className="text-[10px] text-muted-foreground/80 font-semibold mt-0.5">
+                          Shortage Thresh: {item.shortage_threshold !== undefined && item.shortage_threshold !== null ? item.shortage_threshold : (settings?.shortage_threshold || 10)} units
+                        </div>
                       </TableCell>
                       <TableCell className="text-xs font-semibold text-muted-foreground">{item.manufacturer || "-"}</TableCell>
                       <TableCell className="font-mono text-xs font-semibold text-muted-foreground">{item.batch_no}</TableCell>
@@ -735,7 +734,7 @@ export default function InventoryPage() {
                           <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/10 text-amber-500 border border-amber-500/20">
                             Expiring Soon
                           </span>
-                        ) : availableUnits <= (matchedProduct?.shortage_threshold !== undefined && matchedProduct?.shortage_threshold !== null ? Number(matchedProduct.shortage_threshold) : (settings?.shortage_threshold || 10)) ? (
+                        ) : availableUnits <= (item.shortage_threshold !== undefined && item.shortage_threshold !== null ? Number(item.shortage_threshold) : (settings?.shortage_threshold || 10)) ? (
                           <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-orange-600/10 text-orange-600 border border-orange-600/20 dark:text-orange-400 dark:border-orange-500/20">
                             Shortage
                           </span>
@@ -749,6 +748,18 @@ export default function InventoryPage() {
                       </TableCell>
                       <TableCell>
                         <div className="flex gap-1 justify-end">
+                          {showShortage && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="text-amber-500 hover:text-amber-600 hover:bg-amber-500/10 rounded-lg h-8 w-8 shrink-0"
+                              onClick={() => setRemoveShortageDialog({ open: true, item, newThreshold: "" })}
+                              title="Remove from shortage list"
+                              data-testid={`remove-shortage-${item.id}`}
+                            >
+                              <BellOff className="w-4 h-4" />
+                            </Button>
+                          )}
                           <Button
                             variant="ghost"
                             size="icon"
@@ -1309,6 +1320,58 @@ export default function InventoryPage() {
               </div>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Remove from Shortage Dialog */}
+      <Dialog open={removeShortageDialog.open} onOpenChange={(o) => setRemoveShortageDialog(prev => ({ ...prev, open: o }))}>
+        <DialogContent className="max-w-md rounded-2xl border border-border/40 shadow-2xl p-6">
+          <DialogHeader className="border-b border-border/40 pb-4">
+            <DialogTitle className="font-extrabold text-base tracking-tight text-foreground flex items-center gap-2">
+              <BellOff className="w-5 h-5 text-amber-500" />
+              Remove Item from Shortage List
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 pt-4">
+            <div className="text-xs font-semibold text-muted-foreground">
+              To remove <span className="text-foreground font-bold">{removeShortageDialog.item?.product_name}</span> (Current stock: <span className="text-primary font-bold">{removeShortageDialog.item?.available_quantity} units</span>) from the shortage list, set a shortage threshold lower than the current stock.
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-xs font-bold text-muted-foreground/80">New Shortage Threshold</Label>
+              <Input
+                type="number"
+                placeholder={`Must be less than ${removeShortageDialog.item?.available_quantity || 0}`}
+                value={removeShortageDialog.newThreshold}
+                onChange={(e) => setRemoveShortageDialog(prev => ({ ...prev, newThreshold: e.target.value }))}
+                className="h-10 text-sm font-bold border-border/80 focus:border-primary bg-card/25"
+              />
+            </div>
+
+            <Button
+              onClick={async () => {
+                const { item, newThreshold } = removeShortageDialog;
+                if (!item) return;
+                
+                try {
+                  const newThreshVal = newThreshold === "" ? null : Number(newThreshold);
+
+                  await axios.put(`${API}/inventory/${item.id}`, {
+                    shortage_threshold: newThreshVal
+                  });
+
+                  toast.success("Shortage threshold updated and item removed from shortage list");
+                  setRemoveShortageDialog({ open: false, item: null, newThreshold: "" });
+                  fetchData(); // refresh inventory list
+                } catch (error) {
+                  toast.error("Failed to remove item from shortage list");
+                }
+              }}
+              className="w-full bg-primary hover:bg-primary/95 text-primary-foreground h-10 text-xs font-bold shadow-md shadow-primary/10 rounded-xl mt-2"
+            >
+              Save New Threshold
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

@@ -101,6 +101,7 @@ export default function BillingPage() {
     customer_mobile: "",
     customer_email: "",
   });
+  const [selectedCustomerStats, setSelectedCustomerStats] = useState(null);
   const [billDiscount, setBillDiscount] = useState(0);
   const [isPaid, setIsPaid] = useState(true);
   const [paymentMode, setPaymentMode] = useState("");
@@ -832,6 +833,37 @@ export default function BillingPage() {
     return () => clearTimeout(debounce);
   }, [customerSearch]);
 
+  // Fetch real-time stats for the selected customer
+  useEffect(() => {
+    const custId = editingBillId ? editingBillData?.customer_id : customerInfo?.customer_id;
+    if (!custId) {
+      setSelectedCustomerStats(null);
+      return;
+    }
+
+    const fetchSelectedCustomerStats = async () => {
+      try {
+        const res = await axios.get(`${API}/customers/${custId}`);
+        const customer = res.data.customer;
+        const bills = res.data.bills || [];
+        
+        const totalDebt = customer?.total_debt || 0;
+        const totalBills = bills.length;
+        const totalItems = bills.reduce((acc, b) => acc + (b.items?.length || 0), 0);
+
+        setSelectedCustomerStats({
+          totalDebt,
+          totalBills,
+          totalItems
+        });
+      } catch (err) {
+        console.error("Failed to fetch selected customer stats", err);
+      }
+    };
+
+    fetchSelectedCustomerStats();
+  }, [customerInfo?.customer_id, editingBillData?.customer_id, editingBillId]);
+
   const loadMoreCustomerSuggestions = async () => {
     if (loadingCustomerSuggestions || !hasMoreCustomerSuggestions) return;
 
@@ -1203,7 +1235,7 @@ export default function BillingPage() {
       });
     }
 
-    setCustomerSearch("");
+    setCustomerSearch(customer.name);
     setShowCustomerSuggestions(false);
   };
 
@@ -2373,10 +2405,10 @@ export default function BillingPage() {
                 />
               </div>
 
-              <div className="space-y-2 relative">
+              <div className="space-y-2 relative md:col-span-2">
                 <Label className="flex items-center justify-between text-xs font-bold text-muted-foreground/80 uppercase tracking-wider">
                   <span className="flex items-center gap-1">
-                    <User className="w-3.5 h-3.5 text-primary" /> Customer
+                    <User className="w-3.5 h-3.5 text-primary" /> Customer Name *
                   </span>
                   {customerInfo.customer_id && (
                     <Button
@@ -2391,10 +2423,16 @@ export default function BillingPage() {
                   )}
                 </Label>
                 <Input
-                  placeholder="Search existing customer..."
+                  placeholder="Search existing customer or enter name..."
                   value={customerSearch}
                   onChange={(e) => {
-                    setCustomerSearch(e.target.value);
+                    const val = e.target.value;
+                    setCustomerSearch(val);
+                    setCustomerInfo((prev) => ({
+                      ...prev,
+                      customer_id: "",
+                      customer_name: val,
+                    }));
                     setShowCustomerSuggestions(true);
                   }}
                   onFocus={() => setShowCustomerSuggestions(true)}
@@ -2404,48 +2442,64 @@ export default function BillingPage() {
                   className="h-10 border-border/80 rounded-xl focus-visible:ring-1 focus-visible:ring-primary focus-visible:border-primary transition-all duration-200"
                   data-testid="customer-search"
                 />
-                {showCustomerSuggestions &&
-                  customerSearch &&
-                  (customerSuggestions.length > 0 || loadingCustomerSuggestions) && (
+                {showCustomerSuggestions && customerSearch && (
+                  <div
+                    onScroll={handleScrollCustomerSuggestions}
+                    className="absolute z-[100] w-full mt-1 bg-card/95 backdrop-blur-md border border-border shadow-xl rounded-xl max-h-48 overflow-y-auto top-full overflow-x-hidden transition-all duration-150 animate-in fade-in slide-in-from-top-2"
+                  >
+                    {customerSuggestions.map((customer) => (
+                      <div
+                        key={customer.id}
+                        className="p-2.5 hover:bg-primary/10 cursor-pointer border-b border-border/50 last:border-0 transition-colors duration-150"
+                        onMouseDown={() => handleSelectCustomer(customer)}
+                      >
+                        <p className="font-semibold text-sm">{customer.name}</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          {customer.mobile}
+                        </p>
+                      </div>
+                    ))}
+                    {loadingCustomerSuggestions && (
+                      <div className="p-3 text-center text-xs text-muted-foreground border-b border-border/50">
+                        Loading...
+                      </div>
+                    )}
                     <div
-                      onScroll={handleScrollCustomerSuggestions}
-                      className="absolute z-[100] w-full mt-1 bg-card/95 backdrop-blur-md border border-border shadow-xl rounded-xl max-h-48 overflow-y-auto top-full overflow-x-hidden transition-all duration-150 animate-in fade-in slide-in-from-top-2"
+                      className="p-2.5 hover:bg-primary/10 cursor-pointer font-bold text-primary text-xs flex items-center justify-between sticky bottom-0 bg-card/95 backdrop-blur-md border-t border-border/60"
+                      onMouseDown={() => {
+                        setCustomerInfo((prev) => ({
+                          ...prev,
+                          customer_id: "",
+                          customer_name: customerSearch,
+                        }));
+                        setShowCustomerSuggestions(false);
+                        setSelectedCustomerStats(null);
+                      }}
                     >
-                      {customerSuggestions.map((customer) => (
-                        <div
-                          key={customer.id}
-                          className="p-2.5 hover:bg-primary/10 cursor-pointer border-b border-border/50 last:border-0 transition-colors duration-150"
-                          onMouseDown={() => handleSelectCustomer(customer)}
-                        >
-                          <p className="font-semibold text-sm">{customer.name}</p>
-                          <p className="text-xs text-muted-foreground mt-0.5">
-                            {customer.mobile}
-                          </p>
-                        </div>
-                      ))}
-                      {loadingCustomerSuggestions && (
-                        <div className="p-3 text-center text-xs text-muted-foreground">
-                          Loading...
-                        </div>
-                      )}
+                      <span className="flex items-center gap-1">
+                        <Plus className="w-3.5 h-3.5" /> New Customer "{customerSearch}"
+                      </span>
                     </div>
-                  )}
-              </div>
-              <div className="space-y-2">
-                <Label className="text-xs font-bold text-muted-foreground/80 uppercase tracking-wider">Name *</Label>
-                <Input
-                  placeholder="Customer name (Tab for 'Walk-in')"
-                  value={customerInfo.customer_name}
-                  onChange={(e) =>
-                    setCustomerInfo({
-                      ...customerInfo,
-                      customer_name: e.target.value,
-                    })
-                  }
-                  onKeyDown={(e) => handleTabDefault(e, "customer_name")}
-                  className="h-10 border-border/80 rounded-xl focus-visible:ring-1 focus-visible:ring-primary focus-visible:border-primary transition-all duration-200"
-                  data-testid="customer-name"
-                />
+                  </div>
+                )}
+                {selectedCustomerStats && (
+                  <div className="flex gap-4 mt-2 px-3 py-1.5 rounded-lg bg-primary/5 border border-primary/10 text-[11px] font-semibold text-muted-foreground w-full animate-in fade-in slide-in-from-top-1">
+                    <div className="flex items-center gap-1">
+                      <span className="text-muted-foreground/60">Total Debt:</span>
+                      <span className="text-red-500 font-bold">₹{selectedCustomerStats.totalDebt.toFixed(2)}</span>
+                    </div>
+                    <div className="h-3 w-[1px] bg-border/60 self-center" />
+                    <div className="flex items-center gap-1">
+                      <span className="text-muted-foreground/60">Past Bills:</span>
+                      <span className="text-foreground font-bold">{selectedCustomerStats.totalBills}</span>
+                    </div>
+                    <div className="h-3 w-[1px] bg-border/60 self-center" />
+                    <div className="flex items-center gap-1">
+                      <span className="text-muted-foreground/60">Total Items Bought:</span>
+                      <span className="text-foreground font-bold">{selectedCustomerStats.totalItems}</span>
+                    </div>
+                  </div>
+                )}
               </div>
               <div className="space-y-2">
                 <Label className="text-xs font-bold text-muted-foreground/80 uppercase tracking-wider">Mobile *</Label>
@@ -3303,20 +3357,35 @@ export default function BillingPage() {
           </CardHeader>
           <CardContent className="space-y-6 px-0 pb-0">
             {/* Customer Info */}
-            <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-              <div className="space-y-2 relative">
-                <Label className="flex items-center gap-1 text-xs font-bold text-muted-foreground/80 uppercase tracking-wider">
-                  <User className="w-3.5 h-3.5 text-amber-500" /> Customer Name *
+            <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
+              <div className="space-y-2 relative md:col-span-2">
+                <Label className="flex items-center justify-between text-xs font-bold text-muted-foreground/80 uppercase tracking-wider">
+                  <span className="flex items-center gap-1">
+                    <User className="w-3.5 h-3.5 text-amber-500" /> Customer Name *
+                  </span>
+                  {editingBillData.customer_id && (
+                    <Button
+                      type="button"
+                      variant="link"
+                      size="sm"
+                      onClick={() => fetchCustomerProfileData(editingBillData.customer_id)}
+                      className="h-auto p-0 text-amber-500 font-bold text-xs flex items-center gap-1 animate-in fade-in"
+                    >
+                      <Eye className="w-3.5 h-3.5" /> See Profile
+                    </Button>
+                  )}
                 </Label>
                 <Input
-                  placeholder="Search customer..."
+                  placeholder="Search existing customer or enter name..."
                   value={editingBillData.customer_name || ""}
                   onChange={(e) => {
+                    const val = e.target.value;
                     setEditingBillData({
                       ...editingBillData,
-                      customer_name: e.target.value,
+                      customer_id: "",
+                      customer_name: val,
                     });
-                    setCustomerSearch(e.target.value);
+                    setCustomerSearch(val);
                     setShowCustomerSuggestions(true);
                   }}
                   onFocus={() => setShowCustomerSuggestions(true)}
@@ -3325,32 +3394,64 @@ export default function BillingPage() {
                   }
                   className="h-10 border-border/80 rounded-xl focus-visible:ring-1 focus-visible:ring-amber-500 focus-visible:border-amber-500 transition-all duration-200"
                 />
-                {showCustomerSuggestions &&
-                  customerSearch &&
-                  (customerSuggestions.length > 0 || loadingCustomerSuggestions) && (
+                {showCustomerSuggestions && customerSearch && (
+                  <div
+                    onScroll={handleScrollCustomerSuggestions}
+                    className="absolute z-[100] w-full mt-1 bg-card/95 backdrop-blur-md border border-border shadow-xl rounded-xl max-h-48 overflow-y-auto top-full overflow-x-hidden transition-all duration-150 animate-in fade-in slide-in-from-top-2"
+                  >
+                    {customerSuggestions.map((customer) => (
+                      <div
+                        key={customer.id}
+                        className="p-2.5 hover:bg-amber-500/10 cursor-pointer border-b border-border/50 last:border-0 transition-colors duration-150"
+                        onMouseDown={() => handleSelectCustomer(customer)}
+                      >
+                        <p className="font-semibold text-sm">{customer.name}</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          {customer.mobile}
+                        </p>
+                      </div>
+                    ))}
+                    {loadingCustomerSuggestions && (
+                      <div className="p-3 text-center text-xs text-muted-foreground border-b border-border/50">
+                        Loading...
+                      </div>
+                    )}
                     <div
-                      onScroll={handleScrollCustomerSuggestions}
-                      className="absolute z-[100] w-full mt-1 bg-card/95 backdrop-blur-md border border-border shadow-xl rounded-xl max-h-48 overflow-y-auto top-full overflow-x-hidden transition-all duration-150 animate-in fade-in slide-in-from-top-2"
+                      className="p-2.5 hover:bg-amber-500/10 cursor-pointer font-bold text-amber-600 text-xs flex items-center justify-between sticky bottom-0 bg-card/95 backdrop-blur-md border-t border-border/60"
+                      onMouseDown={() => {
+                        setEditingBillData((prev) => ({
+                          ...prev,
+                          customer_id: "",
+                          customer_name: customerSearch,
+                        }));
+                        setShowCustomerSuggestions(false);
+                        setSelectedCustomerStats(null);
+                      }}
                     >
-                      {customerSuggestions.map((customer) => (
-                        <div
-                          key={customer.id}
-                          className="p-2.5 hover:bg-amber-500/10 cursor-pointer border-b border-border/50 last:border-0 transition-colors duration-150"
-                          onMouseDown={() => handleSelectCustomer(customer)}
-                        >
-                          <p className="font-semibold text-sm">{customer.name}</p>
-                          <p className="text-xs text-muted-foreground mt-0.5">
-                            {customer.mobile}
-                          </p>
-                        </div>
-                      ))}
-                      {loadingCustomerSuggestions && (
-                        <div className="p-3 text-center text-xs text-muted-foreground">
-                          Loading...
-                        </div>
-                      )}
+                      <span className="flex items-center gap-1">
+                        <Plus className="w-3.5 h-3.5" /> New Customer "{customerSearch}"
+                      </span>
                     </div>
-                  )}
+                  </div>
+                )}
+                {selectedCustomerStats && (
+                  <div className="flex gap-4 mt-2 px-3 py-1.5 rounded-lg bg-amber-500/5 border border-amber-500/10 text-[11px] font-semibold text-muted-foreground w-full animate-in fade-in slide-in-from-top-1">
+                    <div className="flex items-center gap-1">
+                      <span className="text-muted-foreground/60">Total Debt:</span>
+                      <span className="text-red-500 font-bold">₹{selectedCustomerStats.totalDebt.toFixed(2)}</span>
+                    </div>
+                    <div className="h-3 w-[1px] bg-border/60 self-center" />
+                    <div className="flex items-center gap-1">
+                      <span className="text-muted-foreground/60">Past Bills:</span>
+                      <span className="text-foreground font-bold">{selectedCustomerStats.totalBills}</span>
+                    </div>
+                    <div className="h-3 w-[1px] bg-border/60 self-center" />
+                    <div className="flex items-center gap-1">
+                      <span className="text-muted-foreground/60">Total Items Bought:</span>
+                      <span className="text-foreground font-bold">{selectedCustomerStats.totalItems}</span>
+                    </div>
+                  </div>
+                )}
               </div>
               <div className="space-y-2">
                 <Label className="text-xs font-bold text-muted-foreground/80 uppercase tracking-wider">Mobile *</Label>

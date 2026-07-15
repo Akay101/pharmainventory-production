@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import axios from "axios";
 import { API, useAuth } from "../App";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../components/ui/card";
@@ -22,7 +22,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from "../components/ui/dialog";
-import { Settings, Building2, User, Camera, Loader2, Save, Upload, Database, Download, FileJson, Edit2, KeyRound, Mail, Layout, Sliders } from "lucide-react";
+import { Settings, Building2, User, Camera, Loader2, Save, Upload, Database, Download, FileJson, Edit2, KeyRound, Mail, Layout, Sliders, Search } from "lucide-react";
 import { toast } from "sonner";
 import { Switch } from "../components/ui/switch";
 
@@ -68,6 +68,96 @@ export default function SettingsPage() {
   const [otp, setOtp] = useState("");
   const [displayedOtp, setDisplayedOtp] = useState(null); // For fallback when email fails
   const [verifyingOtp, setVerifyingOtp] = useState(false);
+
+  const [customThresholdModalOpen, setCustomThresholdModalOpen] = useState(false);
+  const [productsForThreshold, setProductsForThreshold] = useState([]);
+  const [thresholdSearch, setThresholdSearch] = useState("");
+  const [savingProductId, setSavingProductId] = useState("");
+  const [loadingThresholdProducts, setLoadingThresholdProducts] = useState(false);
+  const [loadingMoreThresholdProducts, setLoadingMoreThresholdProducts] = useState(false);
+  const [thresholdInputValues, setThresholdInputValues] = useState({});
+  const [thresholdProductsPage, setThresholdProductsPage] = useState(1);
+  const [hasMoreThresholdProducts, setHasMoreThresholdProducts] = useState(true);
+
+  const fetchInitialThresholdProducts = async () => {
+    setLoadingThresholdProducts(true);
+    setThresholdProductsPage(1);
+    setHasMoreThresholdProducts(true);
+    try {
+      const response = await axios.get(`${API}/inventory`, {
+        params: {
+          search: thresholdSearch,
+          page: 1,
+          limit: 30
+        }
+      });
+      const items = response.data.inventory || [];
+      setProductsForThreshold(items);
+      
+      const initialVals = {};
+      items.forEach(p => {
+        initialVals[p.id] = p.shortage_threshold !== undefined && p.shortage_threshold !== null ? String(p.shortage_threshold) : "";
+      });
+      setThresholdInputValues(initialVals);
+
+      const total = response.data.pagination?.total || 0;
+      setHasMoreThresholdProducts(items.length < total);
+    } catch (error) {
+      toast.error("Failed to load inventory items");
+    } finally {
+      setLoadingThresholdProducts(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!customThresholdModalOpen) return;
+    const debounce = setTimeout(fetchInitialThresholdProducts, 300);
+    return () => clearTimeout(debounce);
+  }, [customThresholdModalOpen, thresholdSearch]);
+
+  const loadMoreThresholdProducts = async () => {
+    if (loadingMoreThresholdProducts || !hasMoreThresholdProducts) return;
+    setLoadingMoreThresholdProducts(true);
+    const nextPage = thresholdProductsPage + 1;
+    try {
+      const response = await axios.get(`${API}/inventory`, {
+        params: {
+          search: thresholdSearch,
+          page: nextPage,
+          limit: 30
+        }
+      });
+      const items = response.data.inventory || [];
+      if (items.length > 0) {
+        setProductsForThreshold(prev => [...prev, ...items]);
+        
+        setThresholdInputValues(prev => {
+          const updated = { ...prev };
+          items.forEach(p => {
+            updated[p.id] = p.shortage_threshold !== undefined && p.shortage_threshold !== null ? String(p.shortage_threshold) : "";
+          });
+          return updated;
+        });
+
+        setThresholdProductsPage(nextPage);
+      }
+      
+      const total = response.data.pagination?.total || 0;
+      const loadedCount = productsForThreshold.length + items.length;
+      setHasMoreThresholdProducts(loadedCount < total);
+    } catch (error) {
+      toast.error("Failed to load more items");
+    } finally {
+      setLoadingMoreThresholdProducts(false);
+    }
+  };
+
+  const handleScrollThresholdProducts = (e) => {
+    const { scrollTop, scrollHeight, clientHeight } = e.target;
+    if (scrollHeight - scrollTop - clientHeight < 50) {
+      loadMoreThresholdProducts();
+    }
+  };
 
   const handleSavePharmacy = async () => {
     setSaving(true);
@@ -815,12 +905,24 @@ export default function SettingsPage() {
                         )}
                         
                         {setting.type === 'number' && (
-                          <Input
-                            type="number"
-                            value={settings[setting.key] !== undefined ? settings[setting.key] : setting.default}
-                            onChange={(e) => updateSetting(setting.key, Number(e.target.value))}
-                            className="w-[120px] bg-background/50 h-9 rounded-xl border border-border/50 text-xs font-semibold"
-                          />
+                          <div className="flex flex-col items-end gap-1.5">
+                            <Input
+                              type="number"
+                              value={settings[setting.key] !== undefined ? settings[setting.key] : setting.default}
+                              onChange={(e) => updateSetting(setting.key, Number(e.target.value))}
+                              className="w-[120px] bg-background/50 h-9 rounded-xl border border-border/50 text-xs font-semibold text-right pr-3"
+                            />
+                            {setting.key === 'shortage_threshold' && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setCustomThresholdModalOpen(true)}
+                                className="h-7 text-[10px] font-bold border-primary/40 hover:bg-primary/10 text-primary mt-1 px-2.5 rounded-lg shadow-sm"
+                              >
+                                Set custom thresholds per product
+                              </Button>
+                            )}
+                          </div>
                         )}
                       </div>
                     ))}
@@ -973,6 +1075,109 @@ export default function SettingsPage() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Custom Threshold Modal */}
+      <Dialog open={customThresholdModalOpen} onOpenChange={setCustomThresholdModalOpen}>
+        <DialogContent className="max-w-2xl bg-card border border-border shadow-2xl rounded-2xl p-6">
+          <DialogHeader className="border-b border-border/40 pb-4">
+            <DialogTitle className="font-extrabold text-base tracking-tight text-foreground flex items-center gap-2">
+              <Sliders className="w-5 h-5 text-primary" />
+              Custom Shortage Thresholds per Product
+            </DialogTitle>
+            <DialogDescription className="text-xs text-muted-foreground mt-1">
+              Set custom shortage quantities for individual products. If left empty, the global threshold ({settings?.shortage_threshold || 10}) will be used.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 pt-4">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground/60" />
+              <Input
+                placeholder="Search products by name..."
+                value={thresholdSearch}
+                onChange={(e) => setThresholdSearch(e.target.value)}
+                className="pl-9 h-10 text-sm border-border/80 focus:border-primary bg-card/25 rounded-xl"
+              />
+            </div>
+
+            <div 
+              onScroll={handleScrollThresholdProducts}
+              className="max-h-[350px] overflow-y-auto border border-border/40 rounded-xl bg-card/10 p-2 space-y-2"
+            >
+              {loadingThresholdProducts ? (
+                <div className="flex items-center justify-center py-10">
+                  <Loader2 className="w-6 h-6 animate-spin text-primary" />
+                </div>
+              ) : productsForThreshold.length === 0 ? (
+                <div className="text-center py-10 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                  No products found
+                </div>
+              ) : (
+                <>
+                  {productsForThreshold.map((prod) => (
+                    <div
+                      key={prod.id}
+                      className="flex items-center justify-between p-3 rounded-lg border border-border/20 bg-muted/5 hover:bg-muted/10 transition-all"
+                    >
+                      <div className="flex flex-col gap-0.5">
+                        <span className="font-bold text-sm text-foreground">{prod.product_name}</span>
+                        <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
+                          Batch: {prod.batch_no} | Qty: {prod.available_quantity} units
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <Input
+                          type="number"
+                          placeholder={`${settings?.shortage_threshold || 10} (Global)`}
+                          value={thresholdInputValues[prod.id] !== undefined ? thresholdInputValues[prod.id] : ""}
+                          onChange={(e) => {
+                            setThresholdInputValues((prev) => ({
+                              ...prev,
+                              [prod.id]: e.target.value,
+                            }));
+                          }}
+                          className="w-[100px] h-8 text-xs font-semibold text-center border-border focus:border-primary bg-background/50"
+                        />
+                        <Button
+                          size="sm"
+                          disabled={savingProductId === prod.id}
+                          onClick={async () => {
+                            setSavingProductId(prod.id);
+                            try {
+                              const val = thresholdInputValues[prod.id];
+                              await axios.put(`${API}/inventory/${prod.id}`, {
+                                shortage_threshold: val === "" || val === null ? null : Number(val),
+                              });
+                              toast.success(`Updated shortage threshold for ${prod.product_name}`);
+                            } catch (err) {
+                              toast.error("Failed to update threshold");
+                            } finally {
+                              setSavingProductId("");
+                            }
+                          }}
+                          className="h-8 px-3 text-xs bg-primary text-primary-foreground font-bold rounded-lg"
+                        >
+                          {savingProductId === prod.id ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            "Save"
+                          )}
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                  {loadingMoreThresholdProducts && (
+                    <div className="flex items-center justify-center py-4">
+                      <Loader2 className="w-5 h-5 animate-spin text-primary" />
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
