@@ -80,6 +80,7 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
       email: email || null,
       address: address || null,
       total_debt: 0,
+      total_advance: 0,
       created_at: new Date().toISOString(),
     };
 
@@ -235,14 +236,34 @@ router.get(
         .sort({ billing_date: -1 })
         .toArray();
 
-      const totalDebt = bills.reduce(
-        (sum, b) => sum + (b.total_amount || b.grand_total || 0),
-        0
-      );
+      const totalDebt = bills.reduce((sum, b) => {
+        const grandTotal = b.grand_total || b.total_amount || 0;
+        const currentPaid = b.total_paid !== undefined ? b.total_paid : (b.is_paid ? grandTotal : (b.advance_amount || 0));
+        let deliveredValue = 0;
+        if (b.is_advance_paid) {
+          deliveredValue = (b.items || []).reduce((s, i) => i.delivery_status === "Delivered" ? s + (i.item_total || 0) : s, 0);
+        } else {
+          deliveredValue = grandTotal;
+        }
+        return sum + Math.max(0, deliveredValue - currentPaid);
+      }, 0);
+
+      const totalAdvance = bills.reduce((sum, b) => {
+        const grandTotal = b.grand_total || b.total_amount || 0;
+        const currentPaid = b.total_paid !== undefined ? b.total_paid : (b.is_paid ? grandTotal : (b.advance_amount || 0));
+        let deliveredValue = 0;
+        if (b.is_advance_paid) {
+          deliveredValue = (b.items || []).reduce((s, i) => i.delivery_status === "Delivered" ? s + (i.item_total || 0) : s, 0);
+        } else {
+          deliveredValue = grandTotal;
+        }
+        return sum + Math.max(0, currentPaid - deliveredValue);
+      }, 0);
 
       res.json({
         unpaid_bills: bills,
         total_debt: totalDebt,
+        total_advance: totalAdvance,
       });
     } catch (error) {
       next(error);
@@ -269,20 +290,40 @@ router.post(
         return res.status(404).json({ detail: "Customer not found" });
       }
 
-      // Mark all unpaid bills as paid
-      await db
-        .collection("bills")
-        .updateMany(
-          { customer_id: req.params.customer_id, is_paid: false },
-          { $set: { is_paid: true, paid_at: new Date().toISOString() } }
+      // Find all unpaid bills
+      const unpaidBills = await db.collection("bills").find({ customer_id: req.params.customer_id, is_paid: false }).toArray();
+      
+      for (const bill of unpaidBills) {
+        const grandTotal = bill.grand_total || bill.total_amount || 0;
+        await db.collection("bills").updateOne(
+          { id: bill.id },
+          { $set: { is_paid: true, total_paid: grandTotal, paid_at: new Date().toISOString() } }
         );
+      }
 
-      // Clear debt
+      // Recalculate customer total_debt and total_advance across all bills to ensure no drift
+      const allCustomerBills = await db.collection("bills").find({ customer_id: req.params.customer_id }).toArray();
+      let totalDebt = 0;
+      let totalAdvance = 0;
+
+      allCustomerBills.forEach(b => {
+        const grandTotal = b.grand_total || b.total_amount || 0;
+        const currentPaid = b.total_paid !== undefined ? b.total_paid : (b.is_paid ? grandTotal : (b.advance_amount || 0));
+        let deliveredValue = 0;
+        if (b.is_advance_paid) {
+          deliveredValue = (b.items || []).reduce((sum, i) => i.delivery_status === "Delivered" ? sum + (i.item_total || 0) : sum, 0);
+        } else {
+          deliveredValue = grandTotal;
+        }
+        totalDebt += Math.max(0, deliveredValue - currentPaid);
+        totalAdvance += Math.max(0, currentPaid - deliveredValue);
+      });
+
       await db
         .collection("customers")
-        .updateOne({ id: req.params.customer_id }, { $set: { total_debt: 0 } });
+        .updateOne({ id: req.params.customer_id }, { $set: { total_debt: totalDebt, total_advance: totalAdvance } });
 
-      res.json({ message: "Debt cleared", previous_debt: customer.total_debt });
+      res.json({ message: "Debt cleared", previous_debt: customer.total_debt, remaining_debt: totalDebt });
     } catch (error) {
       next(error);
     }

@@ -65,6 +65,7 @@ import {
   Package,
   CreditCard,
   RotateCcw,
+  History,
   ChevronDown,
   ChevronUp,
   Save,
@@ -105,6 +106,17 @@ export default function BillingPage() {
   const [billDiscount, setBillDiscount] = useState(0);
   const [isPaid, setIsPaid] = useState(true);
   const [paymentMode, setPaymentMode] = useState("");
+  const [isAdvancePaid, setIsAdvancePaid] = useState(false);
+  const [advanceAmount, setAdvanceAmount] = useState("");
+  const [recordPaymentDialog, setRecordPaymentDialog] = useState({
+    open: false,
+    billId: "",
+    billNo: "",
+    remainingUnpaid: 0,
+    amount: "",
+    paymentMode: "Cash"
+  });
+  const [activeCustomerSuggestionIndex, setActiveCustomerSuggestionIndex] = useState(-1);
   
   // Customer Profile Modal state
   const [showCustomerProfileModal, setShowCustomerProfileModal] = useState(false);
@@ -265,9 +277,20 @@ export default function BillingPage() {
     }
   }, [highlightedEditingSuggestion, showEditingInventorySuggestions]);
 
+  useEffect(() => {
+    if (showCustomerSuggestions && activeCustomerSuggestionIndex >= 0) {
+      const el = document.getElementById(`customer-suggestion-${activeCustomerSuggestionIndex}`);
+      el?.scrollIntoView({ block: "nearest" });
+    }
+  }, [activeCustomerSuggestionIndex, showCustomerSuggestions]);
+
+  useEffect(() => {
+    setActiveCustomerSuggestionIndex(-1);
+  }, [customerSuggestions, showCustomerSuggestions]);
+
   // Default payment mode settings synchronization
   useEffect(() => {
-    if (!isPaid) {
+    if (!isPaid && !isAdvancePaid) {
       if (paymentMode !== "") {
         setPaymentMode("");
       }
@@ -277,12 +300,13 @@ export default function BillingPage() {
     if (defaultMode && defaultMode !== "none" && paymentMode === "") {
       setPaymentMode(defaultMode);
     }
-  }, [settings, paymentMode, isPaid]);
+  }, [settings, paymentMode, isPaid, isAdvancePaid]);
 
   // Pagination
   const [page, setPage] = useState(1);
   const [limit] = useState(10);
   const [totalPages, setTotalPages] = useState(1);
+  const [filterBillType, setFilterBillType] = useState("all");
 
   // Search
   const [searchQuery, setSearchQuery] = useState("");
@@ -381,6 +405,8 @@ export default function BillingPage() {
                   isPaid,
                   paymentMode,
                   doctorName,
+                  isAdvancePaid,
+                  advanceAmount,
                 },
               }
             : t
@@ -401,6 +427,8 @@ export default function BillingPage() {
     isPaid,
     paymentMode,
     doctorName,
+    isAdvancePaid,
+    advanceAmount,
     activeTabId,
     user?.id,
   ]);
@@ -438,6 +466,8 @@ export default function BillingPage() {
         billDiscount: 0,
         isPaid: true,
         paymentMode: initialMode,
+        isAdvancePaid: false,
+        advanceAmount: "",
       },
     };
     setTabs((prev) => [...prev, newTab]);
@@ -454,6 +484,8 @@ export default function BillingPage() {
     setBillDiscount(0);
     setIsPaid(true);
     setPaymentMode(initialMode);
+    setIsAdvancePaid(false);
+    setAdvanceAmount("");
     setShowNewBill(true);
     setTimeout(() => productInputRef.current?.focus(), 150);
   };
@@ -480,6 +512,8 @@ export default function BillingPage() {
     setBillDiscount(target.data.billDiscount || 0);
     setIsPaid(target.data.isPaid !== false);
     setPaymentMode(target.data.paymentMode || "");
+    setIsAdvancePaid(target.data.isAdvancePaid || false);
+    setAdvanceAmount(target.data.advanceAmount || "");
     setShowNewBill(true);
     setTimeout(() => productInputRef.current?.focus(), 150);
   };
@@ -509,6 +543,8 @@ export default function BillingPage() {
       setBillDiscount(0);
       setIsPaid(true);
       setPaymentMode("");
+      setIsAdvancePaid(false);
+      setAdvanceAmount("");
       setShowNewBill(false);
     }
 
@@ -652,7 +688,7 @@ export default function BillingPage() {
       }
     }
     fetchData();
-  }, [page, startDate, endDate, filterCustomer, debouncedSearchQuery]);
+  }, [page, startDate, endDate, filterCustomer, debouncedSearchQuery, filterBillType]);
 
 
   // Fetch Insights when dates change
@@ -969,6 +1005,7 @@ export default function BillingPage() {
           customer_id: filterCustomer !== "all" ? filterCustomer : undefined,
           search: debouncedSearchQuery || undefined,
           highlight_id: hlId || undefined,
+          is_advance_paid: filterBillType === "advance" ? "true" : (filterBillType === "regular" ? "false" : undefined),
         },
       });
 
@@ -1043,6 +1080,10 @@ export default function BillingPage() {
       customer_email: "",
     });
     setBillDiscount(0);
+    setIsPaid(true);
+    setIsAdvancePaid(false);
+    setAdvanceAmount("");
+    setPaymentMode("");
     setNewItemRow(null);
     clearDraft();
   };
@@ -1481,6 +1522,8 @@ export default function BillingPage() {
         discount_percent: billDiscount,
         is_paid: isPaid,
         payment_mode: (paymentMode && paymentMode !== "none") ? paymentMode : null,
+        is_advance_paid: isAdvancePaid,
+        advance_amount: isAdvancePaid ? (parseFloat(advanceAmount) || 0) : 0,
       });
 
       toast.success(`Bill ${response.data.bill.bill_no} created successfully`);
@@ -1832,6 +1875,59 @@ export default function BillingPage() {
   };
 
   // ============ BILL ACTIONS ============
+
+  const handleUpdateItemDelivery = async (billId, itemIndex, status) => {
+    try {
+      await axios.put(`${API}/bills/${billId}/delivery`, {
+        item_index: itemIndex,
+        delivery_status: status
+      });
+      toast.success(`Item delivery status updated to ${status}`);
+      fetchData();
+    } catch (error) {
+      toast.error(error.response?.data?.detail || "Failed to update item delivery status");
+    }
+  };
+
+  const handleDeliverAllItems = async (billId) => {
+    try {
+      await axios.put(`${API}/bills/${billId}/delivery-all`);
+      toast.success("All items marked as delivered");
+      fetchData();
+    } catch (error) {
+      toast.error(error.response?.data?.detail || "Failed to deliver all items");
+    }
+  };
+
+  const handleRecordPaymentSubmit = async () => {
+    try {
+      const amt = parseFloat(recordPaymentDialog.amount);
+      if (isNaN(amt) || amt <= 0) {
+        toast.error("Please enter a valid amount");
+        return;
+      }
+      if (amt > recordPaymentDialog.remainingUnpaid + 0.01) {
+        toast.error("Amount paid cannot exceed remaining amount");
+        return;
+      }
+      await axios.post(`${API}/bills/${recordPaymentDialog.billId}/record-payment`, {
+        amount: amt,
+        payment_mode: recordPaymentDialog.paymentMode
+      });
+      toast.success("Payment recorded successfully");
+      setRecordPaymentDialog({
+        open: false,
+        billId: "",
+        billNo: "",
+        remainingUnpaid: 0,
+        amount: "",
+        paymentMode: "Cash"
+      });
+      fetchData();
+    } catch (error) {
+      toast.error(error.response?.data?.detail || "Failed to record payment");
+    }
+  };
 
   const handleMarkPaid = async (billId) => {
     try {
@@ -2439,6 +2535,49 @@ export default function BillingPage() {
                   onBlur={() =>
                     setTimeout(() => setShowCustomerSuggestions(false), 200)
                   }
+                  onKeyDown={(e) => {
+                    if (e.key === "Tab" && !e.shiftKey) {
+                      const value = e.target.value;
+                      if (!value || value.trim() === "") {
+                        e.preventDefault();
+                        setCustomerSearch("Walk-in");
+                        setCustomerInfo((prev) => ({
+                          ...prev,
+                          customer_name: "Walk-in",
+                          customer_id: "",
+                        }));
+                        setTimeout(() => {
+                          document.querySelector('[data-testid="customer-mobile"]')?.focus();
+                        }, 50);
+                        return;
+                      }
+                    }
+                    if (!showCustomerSuggestions) return;
+                    const maxIndex = customerSuggestions.length; // customerSuggestions (0 to length-1) + New Customer (index length)
+                    if (e.key === "ArrowDown") {
+                      e.preventDefault();
+                      setActiveCustomerSuggestionIndex((prev) => (prev < maxIndex ? prev + 1 : 0));
+                    } else if (e.key === "ArrowUp") {
+                      e.preventDefault();
+                      setActiveCustomerSuggestionIndex((prev) => (prev > 0 ? prev - 1 : maxIndex));
+                    } else if (e.key === "Enter") {
+                      if (activeCustomerSuggestionIndex >= 0 && activeCustomerSuggestionIndex < customerSuggestions.length) {
+                        e.preventDefault();
+                        handleSelectCustomer(customerSuggestions[activeCustomerSuggestionIndex]);
+                      } else if (activeCustomerSuggestionIndex === customerSuggestions.length) {
+                        e.preventDefault();
+                        setCustomerInfo((prev) => ({
+                          ...prev,
+                          customer_id: "",
+                          customer_name: customerSearch,
+                        }));
+                        setShowCustomerSuggestions(false);
+                        setSelectedCustomerStats(null);
+                      }
+                    } else if (e.key === "Escape") {
+                      setShowCustomerSuggestions(false);
+                    }
+                  }}
                   className="h-10 border-border/80 rounded-xl focus-visible:ring-1 focus-visible:ring-primary focus-visible:border-primary transition-all duration-200"
                   data-testid="customer-search"
                 />
@@ -2447,10 +2586,15 @@ export default function BillingPage() {
                     onScroll={handleScrollCustomerSuggestions}
                     className="absolute z-[100] w-full mt-1 bg-card/95 backdrop-blur-md border border-border shadow-xl rounded-xl max-h-48 overflow-y-auto top-full overflow-x-hidden transition-all duration-150 animate-in fade-in slide-in-from-top-2"
                   >
-                    {customerSuggestions.map((customer) => (
+                    {customerSuggestions.map((customer, idx) => (
                       <div
                         key={customer.id}
-                        className="p-2.5 hover:bg-primary/10 cursor-pointer border-b border-border/50 last:border-0 transition-colors duration-150"
+                        id={`customer-suggestion-${idx}`}
+                        className={`p-2.5 cursor-pointer border-b border-border/50 last:border-0 transition-colors duration-150 ${
+                          activeCustomerSuggestionIndex === idx
+                            ? "bg-primary/20"
+                            : "hover:bg-primary/10"
+                        }`}
                         onMouseDown={() => handleSelectCustomer(customer)}
                       >
                         <p className="font-semibold text-sm">{customer.name}</p>
@@ -2465,7 +2609,12 @@ export default function BillingPage() {
                       </div>
                     )}
                     <div
-                      className="p-2.5 hover:bg-primary/10 cursor-pointer font-bold text-primary text-xs flex items-center justify-between sticky bottom-0 bg-card/95 backdrop-blur-md border-t border-border/60"
+                      id={`customer-suggestion-${customerSuggestions.length}`}
+                      className={`p-2.5 cursor-pointer font-bold text-primary text-xs flex items-center justify-between sticky bottom-0 border-t border-border/60 ${
+                        activeCustomerSuggestionIndex === customerSuggestions.length
+                          ? "bg-primary/20"
+                          : "bg-card/95 hover:bg-primary/10"
+                      }`}
                       onMouseDown={() => {
                         setCustomerInfo((prev) => ({
                           ...prev,
@@ -2487,6 +2636,11 @@ export default function BillingPage() {
                     <div className="flex items-center gap-1">
                       <span className="text-muted-foreground/60">Total Debt:</span>
                       <span className="text-red-500 font-bold">₹{selectedCustomerStats.totalDebt.toFixed(2)}</span>
+                    </div>
+                    <div className="h-3 w-[1px] bg-border/60 self-center" />
+                    <div className="flex items-center gap-1">
+                      <span className="text-muted-foreground/60">Total Advance:</span>
+                      <span className="text-emerald-500 font-bold">₹{(selectedCustomerStats.totalAdvance || 0).toFixed(2)}</span>
                     </div>
                     <div className="h-3 w-[1px] bg-border/60 self-center" />
                     <div className="flex items-center gap-1">
@@ -3212,10 +3366,13 @@ export default function BillingPage() {
                     <Checkbox
                       id="isPaid"
                       checked={isPaid}
-                      disabled={settings?.billing_payment_mode_mandatory}
+                      disabled={isAdvancePaid || settings?.billing_payment_mode_mandatory}
                       onCheckedChange={(val) => {
                         setIsPaid(val);
-                        if (!val) {
+                        if (val) {
+                          setIsAdvancePaid(false);
+                          setAdvanceAmount("");
+                        } else {
                           setPaymentMode("");
                         }
                       }}
@@ -3224,17 +3381,50 @@ export default function BillingPage() {
                       Paid
                     </Label>
                   </div>
+
+                  <div className="flex items-center gap-2 bg-muted/20 px-3 h-9 rounded-xl border border-border/50">
+                    <Checkbox
+                      id="isAdvancePaid"
+                      checked={isAdvancePaid}
+                      disabled={isPaid}
+                      onCheckedChange={(val) => {
+                        setIsAdvancePaid(val);
+                        if (val) {
+                          setIsPaid(false);
+                        } else {
+                          setAdvanceAmount("");
+                          setPaymentMode("");
+                        }
+                      }}
+                    />
+                    <Label htmlFor="isAdvancePaid" className="text-sm font-semibold text-foreground/80 cursor-pointer select-none">
+                      Advance Paid
+                    </Label>
+                  </div>
+
+                  {isAdvancePaid && (
+                    <div className="flex items-center gap-2 animate-in fade-in slide-in-from-left-2 duration-200">
+                      <Input
+                        type="number"
+                        placeholder="Advance Amount *"
+                        value={advanceAmount}
+                        onChange={(e) => setAdvanceAmount(e.target.value)}
+                        className="h-9 w-36 border-border/80 focus-visible:ring-1 focus-visible:ring-primary focus-visible:border-primary rounded-xl text-xs font-semibold"
+                      />
+                    </div>
+                  )}
+
                   <div className="flex items-center gap-2">
                     <Select
                       value={paymentMode}
                       onValueChange={setPaymentMode}
-                      disabled={!isPaid}
+                      disabled={!isPaid && !isAdvancePaid}
                     >
-                      <SelectTrigger className="h-9 w-36 bg-muted/20 border border-border/50 rounded-xl text-xs font-semibold" disabled={!isPaid}>
+                      <SelectTrigger className="h-9 w-36 bg-muted/20 border border-border/50 rounded-xl text-xs font-semibold" disabled={!isPaid && !isAdvancePaid}>
                         <SelectValue placeholder="Payment Mode" />
                       </SelectTrigger>
                       <SelectContent>
-                        {!settings?.billing_payment_mode_mandatory && (
+                        {(!settings?.billing_payment_mode_mandatory && !isAdvancePaid) && (
                           <SelectItem value="none">None</SelectItem>
                         )}
                         <SelectItem value="Cash">Cash</SelectItem>
@@ -3392,6 +3582,49 @@ export default function BillingPage() {
                   onBlur={() =>
                     setTimeout(() => setShowCustomerSuggestions(false), 200)
                   }
+                  onKeyDown={(e) => {
+                    if (e.key === "Tab" && !e.shiftKey) {
+                      const value = e.target.value;
+                      if (!value || value.trim() === "") {
+                        e.preventDefault();
+                        setCustomerSearch("Walk-in");
+                        setEditingBillData((prev) => ({
+                          ...prev,
+                          customer_name: "Walk-in",
+                          customer_id: "",
+                        }));
+                        setTimeout(() => {
+                          document.querySelector('[data-testid="edit-customer-mobile"]')?.focus();
+                        }, 50);
+                        return;
+                      }
+                    }
+                    if (!showCustomerSuggestions) return;
+                    const maxIndex = customerSuggestions.length; // customerSuggestions (0 to length-1) + New Customer (index length)
+                    if (e.key === "ArrowDown") {
+                      e.preventDefault();
+                      setActiveCustomerSuggestionIndex((prev) => (prev < maxIndex ? prev + 1 : 0));
+                    } else if (e.key === "ArrowUp") {
+                      e.preventDefault();
+                      setActiveCustomerSuggestionIndex((prev) => (prev > 0 ? prev - 1 : maxIndex));
+                    } else if (e.key === "Enter") {
+                      if (activeCustomerSuggestionIndex >= 0 && activeCustomerSuggestionIndex < customerSuggestions.length) {
+                        e.preventDefault();
+                        handleSelectCustomer(customerSuggestions[activeCustomerSuggestionIndex]);
+                      } else if (activeCustomerSuggestionIndex === customerSuggestions.length) {
+                        e.preventDefault();
+                        setEditingBillData((prev) => ({
+                          ...prev,
+                          customer_id: "",
+                          customer_name: customerSearch,
+                        }));
+                        setShowCustomerSuggestions(false);
+                        setSelectedCustomerStats(null);
+                      }
+                    } else if (e.key === "Escape") {
+                      setShowCustomerSuggestions(false);
+                    }
+                  }}
                   className="h-10 border-border/80 rounded-xl focus-visible:ring-1 focus-visible:ring-amber-500 focus-visible:border-amber-500 transition-all duration-200"
                 />
                 {showCustomerSuggestions && customerSearch && (
@@ -3399,10 +3632,15 @@ export default function BillingPage() {
                     onScroll={handleScrollCustomerSuggestions}
                     className="absolute z-[100] w-full mt-1 bg-card/95 backdrop-blur-md border border-border shadow-xl rounded-xl max-h-48 overflow-y-auto top-full overflow-x-hidden transition-all duration-150 animate-in fade-in slide-in-from-top-2"
                   >
-                    {customerSuggestions.map((customer) => (
+                    {customerSuggestions.map((customer, idx) => (
                       <div
                         key={customer.id}
-                        className="p-2.5 hover:bg-amber-500/10 cursor-pointer border-b border-border/50 last:border-0 transition-colors duration-150"
+                        id={`customer-suggestion-${idx}`}
+                        className={`p-2.5 cursor-pointer border-b border-border/50 last:border-0 transition-colors duration-150 ${
+                          activeCustomerSuggestionIndex === idx
+                            ? "bg-amber-500/20"
+                            : "hover:bg-amber-500/10"
+                        }`}
                         onMouseDown={() => handleSelectCustomer(customer)}
                       >
                         <p className="font-semibold text-sm">{customer.name}</p>
@@ -3417,7 +3655,12 @@ export default function BillingPage() {
                       </div>
                     )}
                     <div
-                      className="p-2.5 hover:bg-amber-500/10 cursor-pointer font-bold text-amber-600 text-xs flex items-center justify-between sticky bottom-0 bg-card/95 backdrop-blur-md border-t border-border/60"
+                      id={`customer-suggestion-${customerSuggestions.length}`}
+                      className={`p-2.5 cursor-pointer font-bold text-amber-600 text-xs flex items-center justify-between sticky bottom-0 border-t border-border/60 ${
+                        activeCustomerSuggestionIndex === customerSuggestions.length
+                          ? "bg-amber-500/20"
+                          : "bg-card/95 hover:bg-amber-500/10"
+                      }`}
                       onMouseDown={() => {
                         setEditingBillData((prev) => ({
                           ...prev,
@@ -3439,6 +3682,11 @@ export default function BillingPage() {
                     <div className="flex items-center gap-1">
                       <span className="text-muted-foreground/60">Total Debt:</span>
                       <span className="text-red-500 font-bold">₹{selectedCustomerStats.totalDebt.toFixed(2)}</span>
+                    </div>
+                    <div className="h-3 w-[1px] bg-border/60 self-center" />
+                    <div className="flex items-center gap-1">
+                      <span className="text-muted-foreground/60">Total Advance:</span>
+                      <span className="text-emerald-500 font-bold">₹{(selectedCustomerStats.totalAdvance || 0).toFixed(2)}</span>
                     </div>
                     <div className="h-3 w-[1px] bg-border/60 self-center" />
                     <div className="flex items-center gap-1">
@@ -3464,6 +3712,7 @@ export default function BillingPage() {
                       customer_mobile: e.target.value,
                     })
                   }
+                  data-testid="edit-customer-mobile"
                   className="h-10 border-border/80 rounded-xl focus-visible:ring-1 focus-visible:ring-amber-500 focus-visible:border-amber-500 transition-all duration-200"
                 />
               </div>
@@ -4322,6 +4571,28 @@ export default function BillingPage() {
                 />
               </div>
 
+              <div className="space-y-2">
+                <Label className="text-xs font-bold text-muted-foreground/80 uppercase tracking-wider">Bill Type</Label>
+                <div className="mt-1">
+                  <Select
+                    value={filterBillType}
+                    onValueChange={(val) => {
+                      setPage(1);
+                      setFilterBillType(val);
+                    }}
+                  >
+                    <SelectTrigger className="w-40 h-10 border-border/80 rounded-xl focus:ring-1 focus:ring-primary focus:border-primary transition-all duration-200 bg-background/50 text-xs font-semibold">
+                      <SelectValue placeholder="All Bills" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Bills</SelectItem>
+                      <SelectItem value="regular">Regular Bills</SelectItem>
+                      <SelectItem value="advance">Advance Bills</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
               <div className="flex gap-2 h-10 items-center">
                 <Button
                   variant="outline"
@@ -4652,7 +4923,7 @@ export default function BillingPage() {
                           </TableCell>
 
                           <TableCell className="text-center">
-                            <div>
+                            <div className="flex flex-col items-center gap-1 justify-center">
                               {bill.is_paid ? (
                                 <Badge className="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20 rounded-full font-bold px-2.5 py-0.5 text-xs transition-colors">
                                   Paid
@@ -4660,6 +4931,11 @@ export default function BillingPage() {
                               ) : (
                                 <Badge className="bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20 hover:bg-amber-500/20 rounded-full font-bold px-2.5 py-0.5 text-xs transition-colors">
                                   Unpaid
+                                </Badge>
+                              )}
+                              {bill.is_advance_paid && (
+                                <Badge className="bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20 rounded-full font-bold px-2.5 py-0.5 text-[10px] whitespace-nowrap">
+                                  Advance Paid
                                 </Badge>
                               )}
                             </div>
@@ -4700,7 +4976,7 @@ export default function BillingPage() {
                                   className="h-8 w-8 rounded-xl hover:bg-emerald-500/10 text-muted-foreground hover:text-emerald-600 transition-all duration-200"
                                   data-testid={`mark-paid-btn-${bill.id}`}
                                 >
-                                  <Receipt className="w-4 h-4" />
+                                  <Check className="w-4 h-4" />
                                 </Button>
                               )}
                               <Button
@@ -4757,6 +5033,11 @@ export default function BillingPage() {
                                         <TableHead className="text-xs font-bold text-right text-muted-foreground uppercase tracking-wider">
                                           Profit
                                         </TableHead>
+                                        {bill.is_advance_paid && (
+                                          <TableHead className="text-xs font-bold text-center text-muted-foreground uppercase tracking-wider">
+                                            Delivery
+                                          </TableHead>
+                                        )}
                                       </TableRow>
                                     </TableHeader>
                                     <TableBody>
@@ -4817,6 +5098,29 @@ export default function BillingPage() {
                                             >
                                               ₹{item.profit.toFixed(2)}
                                             </TableCell>
+                                            {bill.is_advance_paid && (
+                                              <TableCell className="text-center">
+                                                {item.delivery_status === "Delivered" ? (
+                                                  <Badge className="bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 font-bold rounded-full py-0.5 px-2">
+                                                    ✓ Delivered
+                                                  </Badge>
+                                                ) : (
+                                                  <div className="flex justify-center items-center gap-1.5">
+                                                    <Badge className="bg-yellow-500/10 text-yellow-600 border border-yellow-500/20 font-bold rounded-full py-0.5 px-2 animate-pulse">
+                                                      Pending
+                                                    </Badge>
+                                                    <Button
+                                                      variant="outline"
+                                                      size="xs"
+                                                      className="h-6 text-[10px] font-bold border-emerald-500/30 text-emerald-600 hover:bg-emerald-500/10 rounded-lg py-0 px-2 transition-all"
+                                                      onClick={() => handleUpdateItemDelivery(bill.id, idx, "Delivered")}
+                                                    >
+                                                      Deliver
+                                                    </Button>
+                                                  </div>
+                                                )}
+                                              </TableCell>
+                                            )}
                                           </TableRow>
                                         );
                                       })}
@@ -4878,6 +5182,162 @@ export default function BillingPage() {
                                     </span>
                                   </div>
                                 </div>
+
+                                {/* Advance Paid Summary, Payments Timeline and Edit History */}
+                                {bill.is_advance_paid && (() => {
+                                  const currentPaid = bill.total_paid !== undefined ? bill.total_paid : (bill.is_paid ? billTotal : (bill.advance_amount || 0));
+                                  const deliveredValue = (bill.items || []).reduce((sum, item) => item.delivery_status === "Delivered" ? sum + (item.item_total || 0) : sum, 0);
+                                  const remainingUnpaid = Math.max(0, billTotal - currentPaid);
+                                  return (
+                                    <div className="mt-4 p-4 bg-muted/40 rounded-xl border border-border/60 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 w-full">
+                                      <div className="space-y-1">
+                                        <div className="flex items-center gap-2">
+                                          <span className="text-xs font-bold text-muted-foreground uppercase">Delivery Status:</span>
+                                          <Badge className={`font-bold rounded-full py-0.5 px-2.5 text-xs ${
+                                            bill.delivery_status === "Delivered" 
+                                              ? "bg-emerald-500/10 text-emerald-500 border border-emerald-500/20" 
+                                              : (bill.delivery_status === "Partially Delivered" ? "bg-blue-500/10 text-blue-500 border border-blue-500/20" : "bg-yellow-500/10 text-yellow-600 border border-yellow-500/20 animate-pulse")
+                                          }`}>
+                                            {bill.delivery_status}
+                                          </Badge>
+                                        </div>
+                                        <p className="text-xs font-medium text-muted-foreground">
+                                          Delivered value: ₹{deliveredValue.toFixed(2)} of ₹{billTotal.toFixed(2)}
+                                        </p>
+                                      </div>
+                                      <div className="flex flex-col md:flex-row items-stretch md:items-center gap-4">
+                                        <div className="text-right">
+                                          <p className="text-xs font-bold text-muted-foreground uppercase">Remaining to Pay</p>
+                                          <p className={`text-base font-mono font-extrabold ${remainingUnpaid > 0 ? "text-red-500" : "text-emerald-500"}`}>
+                                            ₹{remainingUnpaid.toFixed(2)}
+                                          </p>
+                                        </div>
+                                        {remainingUnpaid > 0 && (
+                                          <Button
+                                            size="sm"
+                                            onClick={() => setRecordPaymentDialog({
+                                              open: true,
+                                              billId: bill.id,
+                                              billNo: bill.bill_no,
+                                              remainingUnpaid: remainingUnpaid,
+                                              amount: remainingUnpaid.toFixed(2),
+                                              paymentMode: "Cash"
+                                            })}
+                                            className="rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white font-bold h-9 px-4 shadow-md shadow-emerald-500/10 transition-all hover:scale-[1.02] active:scale-[0.98]"
+                                          >
+                                            Record Payment
+                                          </Button>
+                                        )}
+                                      </div>
+                                    </div>
+                                  );
+                                })()}
+
+                                {/* Payments Timeline */}
+                                {bill.is_advance_paid && (
+                                  <div className="mt-4 p-4 rounded-xl bg-card border border-border/50 shadow-sm space-y-3">
+                                    <h4 className="font-bold text-xs text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+                                      <CreditCard className="w-3.5 h-3.5 text-primary" />
+                                      Payment Timeline
+                                    </h4>
+                                    <div className="space-y-4">
+                                      {/* Initial Advance Payment */}
+                                      <div className="flex relative pl-5 before:absolute before:left-[7px] before:top-2 before:bottom-[-20px] last:before:hidden before:w-[2px] before:bg-muted-foreground/20 text-xs">
+                                        <div className="absolute left-0 top-1.5 w-[16px] h-[16px] rounded-full bg-primary/20 flex items-center justify-center ring-4 ring-background">
+                                          <div className="w-[8px] h-[8px] rounded-full bg-primary"></div>
+                                        </div>
+                                        <div className="flex justify-between items-center text-[11px] text-muted-foreground font-semibold w-full">
+                                          <div>
+                                            <p className="text-foreground/90 font-bold text-sm">₹{(bill.advance_amount || 0).toFixed(2)}</p>
+                                            <p className="text-[10px] text-muted-foreground/80 font-semibold uppercase mt-0.5">{bill.payment_mode || "Cash"} • Advance Paid</p>
+                                          </div>
+                                          <span className="font-mono">{new Date(bill.created_at || bill.billing_date).toLocaleString("en-IN", {
+                                            day: "2-digit",
+                                            month: "short",
+                                            hour: "2-digit",
+                                            minute: "2-digit",
+                                            hour12: true
+                                          })}</span>
+                                        </div>
+                                      </div>
+
+                                      {/* Subsequent Payments */}
+                                      {bill.payments && bill.payments.map((pmt, pIdx) => (
+                                        <div key={pIdx} className="flex relative pl-5 before:absolute before:left-[7px] before:top-2 before:bottom-[-20px] last:before:hidden before:w-[2px] before:bg-muted-foreground/20 text-xs">
+                                          <div className="absolute left-0 top-1.5 w-[16px] h-[16px] rounded-full bg-primary/20 flex items-center justify-center ring-4 ring-background">
+                                            <div className="w-[8px] h-[8px] rounded-full bg-primary"></div>
+                                          </div>
+                                          <div className="flex justify-between items-center text-[11px] text-muted-foreground font-semibold w-full">
+                                            <div>
+                                              <p className="text-foreground/90 font-bold text-sm">₹{(pmt.amount || 0).toFixed(2)}</p>
+                                              <p className="text-[10px] text-muted-foreground/80 font-semibold uppercase mt-0.5">{pmt.payment_mode || "Cash"} • Subsequent Payment</p>
+                                            </div>
+                                            <span className="font-mono">{new Date(pmt.paid_at).toLocaleString("en-IN", {
+                                              day: "2-digit",
+                                              month: "short",
+                                              hour: "2-digit",
+                                              minute: "2-digit",
+                                              hour12: true
+                                            })}</span>
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+
+                                {/* Edit History Section */}
+                                {bill.history && bill.history.length > 0 && (
+                                  <div className="mt-4 p-4 rounded-xl bg-muted/20 border border-border/60 shadow-sm space-y-3">
+                                    <h4 className="font-bold text-xs text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+                                      <History className="w-3.5 h-3.5 text-amber-500" />
+                                      Bill Edit History ({bill.history.length})
+                                    </h4>
+                                    <div className="space-y-4 max-h-60 overflow-y-auto pr-1">
+                                      {bill.history.map((hist, hIdx) => {
+                                        const name = hist.updated_by_name || "Unknown User";
+                                        const initial = name.charAt(0).toUpperCase();
+                                        return (
+                                          <div key={hIdx} className="flex gap-3 text-xs border-b border-border/30 pb-3 last:border-0 last:pb-0">
+                                            {hist.updated_by_avatar ? (
+                                              <img
+                                                src={hist.updated_by_avatar}
+                                                alt={name}
+                                                className="w-7 h-7 rounded-full object-cover border border-border shrink-0"
+                                              />
+                                            ) : (
+                                              <div className="w-7 h-7 rounded-full bg-amber-500/10 text-amber-500 flex items-center justify-center font-bold border border-amber-500/20 shrink-0 text-[11px]">
+                                                {initial}
+                                              </div>
+                                            )}
+                                            <div className="flex-1 space-y-1.5">
+                                              <div className="flex justify-between items-center text-[11px] text-muted-foreground font-semibold">
+                                                <span className="text-foreground/95 font-bold">{name}</span>
+                                                <span className="font-mono">
+                                                  {new Date(hist.updated_at).toLocaleString("en-IN", {
+                                                    day: "2-digit",
+                                                    month: "short",
+                                                    year: "numeric",
+                                                    hour: "2-digit",
+                                                    minute: "2-digit",
+                                                    hour12: true
+                                                  })}
+                                                </span>
+                                              </div>
+                                              <div className="space-y-1 text-foreground/80 font-medium">
+                                                {hist.changes.map((ch, cIdx) => (
+                                                  <div key={cIdx} className="bg-background/50 px-3 py-1.5 rounded-xl border border-border/40 text-[11px]">
+                                                    {ch.description}
+                                                  </div>
+                                                ))}
+                                              </div>
+                                            </div>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                )}
                               </div>
                             </TableCell>
                           </TableRow>
@@ -5095,6 +5555,66 @@ export default function BillingPage() {
               className="rounded-xl bg-amber-600 hover:bg-amber-700 text-white shadow-md shadow-amber-600/20 h-10 px-4 font-semibold transition-all hover:scale-[1.02] active:scale-[0.98]"
             >
               Confirm
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Record Payment Dialog */}
+      <AlertDialog
+        open={recordPaymentDialog.open}
+        onOpenChange={(open) =>
+          setRecordPaymentDialog((prev) => ({ ...prev, open }))
+        }
+      >
+        <AlertDialogContent className="glass bg-card/95 backdrop-blur-xl border border-border/80 shadow-2xl rounded-2xl p-6 max-w-sm">
+          <AlertDialogHeader className="space-y-3">
+            <AlertDialogTitle className="text-xl font-bold flex items-center gap-2 text-foreground">
+              <CreditCard className="w-5 h-5 text-primary" />
+              Record Payment
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-sm text-muted-foreground/90 font-medium leading-relaxed">
+              Record subsequent payment for Bill <span className="font-mono font-bold text-foreground">#{recordPaymentDialog.billNo}</span>.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-4 my-4">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-bold text-muted-foreground/80 uppercase tracking-wider">Amount Paid (₹)</Label>
+              <Input
+                type="number"
+                placeholder="0.00"
+                value={recordPaymentDialog.amount}
+                onChange={(e) => setRecordPaymentDialog((prev) => ({ ...prev, amount: e.target.value }))}
+                className="h-10 border-border/80 rounded-xl focus-visible:ring-1 focus-visible:ring-primary focus-visible:border-primary font-mono font-bold"
+              />
+              <span className="text-[10px] text-muted-foreground/80 block mt-0.5">Remaining unpaid: ₹{recordPaymentDialog.remainingUnpaid.toFixed(2)}</span>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-bold text-muted-foreground/80 uppercase tracking-wider">Payment Mode</Label>
+              <Select
+                value={recordPaymentDialog.paymentMode}
+                onValueChange={(val) => setRecordPaymentDialog((prev) => ({ ...prev, paymentMode: val }))}
+              >
+                <SelectTrigger className="h-10 border-border/80 rounded-xl focus:ring-1 focus:ring-primary focus:border-primary bg-background/50 text-xs font-semibold">
+                  <SelectValue placeholder="Select Payment Mode" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Cash">Cash</SelectItem>
+                  <SelectItem value="UPI">UPI</SelectItem>
+                  <SelectItem value="Card">Card</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <AlertDialogFooter className="gap-2">
+            <AlertDialogCancel className="rounded-xl border-border/80 hover:bg-muted/80 h-10 px-4 transition-all">
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleRecordPaymentSubmit}
+              className="rounded-xl bg-primary text-primary-foreground hover:bg-primary/90 shadow-md shadow-primary/10 h-10 px-4 font-semibold transition-all"
+            >
+              Record Payment
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

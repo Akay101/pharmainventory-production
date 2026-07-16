@@ -753,6 +753,131 @@ router.put(
       if (supplier_id !== undefined) updatePayload.supplier_id = supplier_id;
       if (supplier_name !== undefined) updatePayload.supplier_name = supplier_name;
 
+      // Calculate Edit History Changes
+      const changes = [];
+      const compareField = (fieldName, label, formatter = (v) => v) => {
+        const oldVal = purchase[fieldName];
+        const newVal = updatePayload[fieldName];
+        const normalizedOld = (oldVal === undefined || oldVal === null) ? "" : oldVal;
+        const normalizedNew = (newVal === undefined || newVal === null) ? "" : newVal;
+        if (normalizedOld !== normalizedNew) {
+          changes.push({
+            field: fieldName,
+            old_value: formatter(oldVal),
+            new_value: formatter(newVal),
+            description: `Changed ${label} from "${formatter(oldVal) || "none"}" to "${formatter(newVal) || "none"}"`
+          });
+        }
+      };
+
+      compareField("supplier_name", "Supplier Name");
+      compareField("invoice_no", "Invoice Number");
+      compareField("purchase_date", "Purchase Date", (v) => v ? new Date(v).toLocaleDateString() : "");
+      compareField("payment_status", "Payment Status");
+      compareField("amount_paid", "Amount Paid", (v) => v !== undefined && v !== null ? `₹${Number(v).toFixed(2)}` : "₹0.00");
+      compareField("payment_mode", "Payment Mode");
+      compareField("total_amount", "Total Amount", (v) => v !== undefined && v !== null ? `₹${Number(v).toFixed(2)}` : "₹0.00");
+
+      // Items Comparison
+      const oldItemsMap = {};
+      const oldCounts = {};
+      (purchase.items || []).forEach(item => {
+        const pId = item.product_id || item.product_name;
+        oldCounts[pId] = (oldCounts[pId] || 0) + 1;
+        const key = `${pId}_${oldCounts[pId]}`;
+        oldItemsMap[key] = item;
+      });
+
+      const newItemsMap = {};
+      const newCounts = {};
+      processedItems.forEach(item => {
+        const pId = item.product_id || item.product_name;
+        newCounts[pId] = (newCounts[pId] || 0) + 1;
+        const key = `${pId}_${newCounts[pId]}`;
+        newItemsMap[key] = item;
+      });
+
+      const itemChanges = [];
+      processedItems.forEach(item => {
+        const pId = item.product_id || item.product_name;
+        const count = newCounts[pId] || 0;
+        const key = `${pId}_${count}`;
+        const oldItem = oldItemsMap[key];
+        
+        if (!oldItem) {
+          itemChanges.push(`Added item ${item.product_name} (Qty: ${item.total_units || item.quantity})`);
+        } else {
+          const changesList = [];
+          
+          const checkItemField = (oldField, newField, label, formatter = (v) => v) => {
+            const oldVal = oldItem[oldField];
+            const newVal = item[newField];
+            const normalizedOld = (oldVal === undefined || oldVal === null) ? "" : String(oldVal).trim();
+            const normalizedNew = (newVal === undefined || newVal === null) ? "" : String(newVal).trim();
+            if (normalizedOld !== normalizedNew) {
+              changesList.push(`${label}: ${formatter(oldVal) || "none"} -> ${formatter(newVal) || "none"}`);
+            }
+          };
+
+          const oldQty = oldItem.total_units !== undefined ? oldItem.total_units : oldItem.quantity;
+          const newQty = item.total_units !== undefined ? item.total_units : item.quantity;
+          if (parseInt(oldQty) !== parseInt(newQty)) {
+            changesList.push(`Qty: ${oldQty} -> ${newQty}`);
+          }
+          
+          checkItemField("batch_no", "batch_no", "Batch");
+          checkItemField("hsn_no", "hsn_no", "HSN");
+          checkItemField("expiry_date", "expiry_date", "Expiry");
+          checkItemField("cgst", "cgst", "CGST", (v) => `${v}%`);
+          checkItemField("sgst", "sgst", "SGST", (v) => `${v}%`);
+          checkItemField("discount", "discount", "Discount", (v) => `${v}%`);
+          checkItemField("scheme", "scheme", "Scheme");
+          checkItemField("shortage_threshold", "shortage_threshold", "Shortage Threshold");
+
+          const oldPrice = oldItem.purchase_price || oldItem.pack_price || 0;
+          const newPrice = item.purchase_price || item.pack_price || 0;
+          if (parseFloat(oldPrice).toFixed(2) !== parseFloat(newPrice).toFixed(2)) {
+            changesList.push(`Price: ₹${parseFloat(oldPrice).toFixed(2)} -> ₹${parseFloat(newPrice).toFixed(2)}`);
+          }
+
+          const oldMrp = oldItem.mrp || oldItem.mrp_per_unit || 0;
+          const newMrp = item.mrp || item.mrp_per_unit || 0;
+          if (parseFloat(oldMrp).toFixed(2) !== parseFloat(newMrp).toFixed(2)) {
+            changesList.push(`MRP: ₹${parseFloat(oldMrp).toFixed(2)} -> ₹${parseFloat(newMrp).toFixed(2)}`);
+          }
+
+          if (changesList.length > 0) {
+            itemChanges.push(`Updated item ${item.product_name} (${changesList.join(", ")})`);
+          }
+        }
+      });
+
+      (purchase.items || []).forEach(item => {
+        const pId = item.product_id || item.product_name;
+        const key = `${pId}_${oldCounts[pId] || 1}`;
+        if (!newItemsMap[key]) {
+          itemChanges.push(`Removed item ${item.product_name}`);
+        }
+      });
+
+      if (itemChanges.length > 0) {
+        changes.push({
+          field: "items",
+          description: itemChanges.join("; ")
+        });
+      }
+
+      if (changes.length > 0) {
+        const historyEntry = {
+          updated_at: new Date().toISOString(),
+          updated_by_id: req.user.id,
+          updated_by_name: req.user.name,
+          updated_by_avatar: req.user.image_url || null,
+          changes: changes
+        };
+        updatePayload.history = [...(purchase.history || []), historyEntry];
+      }
+
       await db.collection("purchases").updateOne(
         { id: req.params.purchase_id },
         { $set: updatePayload },

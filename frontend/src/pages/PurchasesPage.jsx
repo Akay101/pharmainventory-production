@@ -65,6 +65,7 @@ import {
   Package,
   Keyboard,
   RotateCcw,
+  History,
   ArrowRight,
   FileText,
   AlertCircle,
@@ -4549,6 +4550,58 @@ export default function PurchasesPage() {
                               </div>
                             </div>
                           </div>
+                          {/* Purchase Edit History Section */}
+                          {purchase.history && purchase.history.length > 0 && (
+                            <div className="mt-4 p-4 rounded-xl bg-muted/20 border border-border/60 shadow-sm space-y-3">
+                              <h4 className="font-bold text-xs text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+                                <History className="w-3.5 h-3.5 text-amber-500" />
+                                Purchase Edit History ({purchase.history.length})
+                              </h4>
+                              <div className="space-y-4 max-h-60 overflow-y-auto pr-1">
+                                {purchase.history.map((hist, hIdx) => {
+                                  const name = hist.updated_by_name || "Unknown User";
+                                  const initial = name.charAt(0).toUpperCase();
+                                  return (
+                                    <div key={hIdx} className="flex gap-3 text-xs border-b border-border/30 pb-3 last:border-0 last:pb-0 text-left">
+                                      {hist.updated_by_avatar ? (
+                                        <img
+                                          src={hist.updated_by_avatar}
+                                          alt={name}
+                                          className="w-7 h-7 rounded-full object-cover border border-border shrink-0"
+                                        />
+                                      ) : (
+                                        <div className="w-7 h-7 rounded-full bg-amber-500/10 text-amber-500 flex items-center justify-center font-bold border border-amber-500/20 shrink-0 text-[11px]">
+                                          {initial}
+                                        </div>
+                                      )}
+                                      <div className="flex-1 space-y-1.5">
+                                        <div className="flex justify-between items-center text-[11px] text-muted-foreground font-semibold">
+                                          <span className="text-foreground/95 font-bold">{name}</span>
+                                          <span className="font-mono">
+                                            {new Date(hist.updated_at).toLocaleString("en-IN", {
+                                              day: "2-digit",
+                                              month: "short",
+                                              year: "numeric",
+                                              hour: "2-digit",
+                                              minute: "2-digit",
+                                              hour12: true
+                                            })}
+                                          </span>
+                                        </div>
+                                        <div className="space-y-1 text-foreground/80 font-medium">
+                                          {hist.changes.map((ch, cIdx) => (
+                                            <div key={cIdx} className="bg-background/50 px-3 py-1.5 rounded-xl border border-border/40 text-[11px]">
+                                              {ch.description}
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
                         </TableCell>
                       </TableRow>
                     )}

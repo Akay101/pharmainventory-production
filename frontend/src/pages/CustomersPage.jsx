@@ -266,6 +266,7 @@ export default function CustomersPage() {
 
   // Stats calculation for the current page
   const totalDebtOnPage = customers.reduce((sum, c) => sum + (c.total_debt || 0), 0);
+  const totalAdvanceOnPage = customers.reduce((sum, c) => sum + (c.total_advance || 0), 0);
   const topDebtor = customers.reduce((max, c) => {
     if ((c.total_debt || 0) > (max?.total_debt || 0)) return c;
     return max;
@@ -284,7 +285,7 @@ export default function CustomersPage() {
       </div>
 
       {/* Metrics Dashboard Overview */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         {/* Total Customers */}
         <Card className="glass bg-card/45 border-border/70 shadow-md rounded-2xl relative overflow-hidden group hover:border-primary/30 transition-all">
           <div className="absolute top-0 right-0 w-24 h-24 bg-primary/5 rounded-full blur-2xl transform translate-x-4 -translate-y-4"></div>
@@ -316,6 +317,28 @@ export default function CustomersPage() {
                 totalDebtOnPage > 0 ? "text-yellow-500" : "text-green-500"
               }`}>
                 ₹{totalDebtOnPage.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </h3>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Total Page Advance */}
+        <Card className="glass bg-card/45 border-border/70 shadow-md rounded-2xl relative overflow-hidden group hover:border-emerald-500/30 transition-all">
+          <div className="absolute top-0 right-0 w-24 h-24 bg-emerald-500/5 rounded-full blur-2xl transform translate-x-4 -translate-y-4"></div>
+          <CardContent className="p-6 flex items-center gap-4">
+            <div className={`w-12 h-12 rounded-xl flex items-center justify-center border shrink-0 ${
+              totalAdvanceOnPage > 0 
+                ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/20 shadow-lg shadow-emerald-500/10" 
+                : "bg-muted/10 text-muted-foreground border-border/20 shadow-lg"
+            }`}>
+              <CreditCard className="w-6 h-6 text-emerald-500" />
+            </div>
+            <div>
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Page Total Advance</p>
+              <h3 className={`text-2xl font-black font-mono tracking-tight mt-1 ${
+                totalAdvanceOnPage > 0 ? "text-emerald-500" : "text-muted-foreground"
+              }`}>
+                ₹{totalAdvanceOnPage.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </h3>
             </div>
           </CardContent>
@@ -406,7 +429,7 @@ export default function CustomersPage() {
               </div>
 
               {/* Stats Overview */}
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-3 gap-4">
                 <div className="p-4 rounded-xl bg-primary/5 border border-primary/10">
                   <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-1">
                     Total Purchases
@@ -446,6 +469,24 @@ export default function CustomersPage() {
                     </Button>
                   )}
                 </div>
+                <div
+                  className={`p-4 rounded-xl relative overflow-hidden transition-all ${
+                    selectedCustomer.total_advance > 0
+                      ? "bg-emerald-500/5 border border-emerald-500/20"
+                      : "bg-muted/30 border border-border/40"
+                  }`}
+                >
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-1">
+                    Active Advance
+                  </p>
+                  <p
+                    className={`text-2xl font-black font-mono tracking-tight ${
+                      selectedCustomer.total_advance > 0 ? "text-emerald-500" : "text-muted-foreground/60"
+                    }`}
+                  >
+                    ₹{selectedCustomer.total_advance?.toLocaleString("en-IN") || 0}
+                  </p>
+                </div>
               </div>
 
               {/* Unpaid Bills */}
@@ -470,23 +511,63 @@ export default function CustomersPage() {
                           </p>
                         </div>
 
-                        <div className="flex items-center gap-3">
-                          <span className="font-mono text-yellow-500 font-black text-sm">
-                            ₹
-                            {(
-                              bill.grand_total ||
-                              bill.total_amount ||
-                              0
-                            ).toFixed(2)}
-                          </span>
+                        <div className="flex items-center gap-3 flex-wrap">
+                          {bill.is_advance_paid ? (() => {
+                            const currentPaid = bill.total_paid !== undefined ? bill.total_paid : (bill.is_paid ? (bill.grand_total || bill.total_amount || 0) : (bill.advance_amount || 0));
+                            const remainingUnpaid = Math.max(0, (bill.grand_total || bill.total_amount || 0) - currentPaid);
+                            return (
+                              <div className="flex items-center gap-2">
+                                <Badge className={`font-bold rounded-full py-0.5 px-2 text-[10px] uppercase ${
+                                  bill.delivery_status === "Delivered" 
+                                    ? "bg-emerald-500/10 text-emerald-500 border border-emerald-500/20" 
+                                    : (bill.delivery_status === "Partially Delivered" ? "bg-blue-500/10 text-blue-500 border border-blue-500/20" : "bg-yellow-500/10 text-yellow-600 border border-yellow-500/20 animate-pulse")
+                                }`}>
+                                  {bill.delivery_status}
+                                </Badge>
+                                {remainingUnpaid > 0 ? (
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-mono text-red-500 font-bold text-xs">
+                                      Unpaid: ₹{remainingUnpaid.toFixed(2)}
+                                    </span>
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      className="border-primary/50 text-primary hover:bg-primary/5 h-8 font-bold text-xs"
+                                      onClick={() => {
+                                        setDetailsOpen(false);
+                                        navigate(`/billing?highlightId=${bill.id}`);
+                                      }}
+                                    >
+                                      Pay
+                                    </Button>
+                                  </div>
+                                ) : (
+                                  <span className="font-mono text-emerald-500 font-bold text-xs">
+                                    Paid
+                                  </span>
+                                )}
+                              </div>
+                            );
+                          })() : (
+                            <>
+                              <span className="font-mono text-yellow-500 font-black text-sm">
+                                ₹
+                                {(
+                                  bill.grand_total ||
+                                  bill.total_amount ||
+                                  0
+                                ).toFixed(2)}
+                              </span>
 
-                          <Button
-                            size="sm"
-                            className="btn-primary h-8 font-bold text-xs"
-                            onClick={() => handlePayBill(bill)}
-                          >
-                            Mark Paid
-                          </Button>
+                              <Button
+                                size="sm"
+                                className="btn-primary h-8 font-bold text-xs"
+                                onClick={() => handlePayBill(bill)}
+                              >
+                                Mark Paid
+                              </Button>
+                            </>
+                          )}
                         </div>
                       </div>
                     ))}
@@ -521,15 +602,22 @@ export default function CustomersPage() {
                           <p className="font-mono font-bold text-primary text-sm">
                             ₹{bill.grand_total?.toFixed(2)}
                           </p>
-                          {bill.is_paid ? (
-                            <Badge className="bg-primary/10 text-primary border border-primary/20 text-[9px] font-bold uppercase tracking-wider rounded-full mt-0.5">
-                              Paid
-                            </Badge>
-                          ) : (
-                            <Badge className="bg-yellow-500/10 text-yellow-500 border border-yellow-500/20 text-[9px] font-bold uppercase tracking-wider rounded-full mt-0.5">
-                              Unpaid
-                            </Badge>
-                          )}
+                           <div className="flex items-center gap-1 mt-0.5 justify-end">
+                            {bill.is_paid ? (
+                              <Badge className="bg-primary/10 text-primary border border-primary/20 text-[9px] font-bold uppercase tracking-wider rounded-full">
+                                Paid
+                              </Badge>
+                            ) : (
+                              <Badge className="bg-yellow-500/10 text-yellow-500 border border-yellow-500/20 text-[9px] font-bold uppercase tracking-wider rounded-full">
+                                Unpaid
+                              </Badge>
+                            )}
+                            {bill.is_advance_paid && (
+                              <Badge className="bg-blue-500/10 text-blue-500 border border-blue-500/20 text-[9px] font-bold uppercase tracking-wider rounded-full">
+                                Advance
+                              </Badge>
+                            )}
+                          </div>
                         </div>
                       </div>
                     ))}
@@ -633,18 +721,30 @@ export default function CustomersPage() {
                           ₹0
                         </span>
                       )}
+                      {customer.total_advance > 0 && (
+                        <div className="text-[10px] text-emerald-500 font-extrabold mt-0.5" title="Customer active advance payments">
+                          Advance: ₹{customer.total_advance?.toLocaleString("en-IN")}
+                        </div>
+                      )}
                     </TableCell>
                     <TableCell>
-                      {customer.total_debt > 0 ? (
-                        <Badge className="bg-yellow-500/10 text-yellow-500 border border-yellow-500/20 font-bold text-[10px] uppercase tracking-wider rounded-full">
-                          <AlertCircle className="w-3 h-3 mr-1" />
-                          Has Debt
-                        </Badge>
-                      ) : (
-                        <Badge className="bg-primary/10 text-primary border border-primary/20 font-bold text-[10px] uppercase tracking-wider rounded-full">
-                          Clear
-                        </Badge>
-                      )}
+                      <div className="flex flex-wrap gap-1">
+                        {customer.total_debt > 0 ? (
+                          <Badge className="bg-yellow-500/10 text-yellow-500 border border-yellow-500/20 font-bold text-[10px] uppercase tracking-wider rounded-full">
+                            <AlertCircle className="w-3 h-3 mr-1" />
+                            Has Debt
+                          </Badge>
+                        ) : (
+                          <Badge className="bg-primary/10 text-primary border border-primary/20 font-bold text-[10px] uppercase tracking-wider rounded-full">
+                            Clear
+                          </Badge>
+                        )}
+                        {customer.total_advance > 0 && (
+                          <Badge className="bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 font-bold text-[10px] uppercase tracking-wider rounded-full">
+                            Advance
+                          </Badge>
+                        )}
+                      </div>
                     </TableCell>
                     <TableCell
                       className="text-center"

@@ -25,11 +25,12 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
       search,
       customer_id,
       is_paid,
+      is_advance_paid,
       start_date,
       end_date,
       page = 1,
       limit = 20,
-      sort_by = "billing_date", // ✅ default changed
+      sort_by = "billing_date",
       sort_order = "desc",
       highlight_id,
     } = req.query;
@@ -57,6 +58,10 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
     // 💰 Paid filter
     if (is_paid !== undefined) {
       query.is_paid = is_paid === "true";
+    }
+
+    if (is_advance_paid !== undefined) {
+      query.is_advance_paid = is_advance_paid === "true";
     }
 
     // 📅 Date range filter (billing_date)
@@ -232,6 +237,8 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
       due_date,
       billing_date,
       payment_mode,
+      is_advance_paid = false,
+      advance_amount = 0,
     } = req.body;
     const db = mongoose.connection.db;
 
@@ -284,6 +291,7 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
         is_manual: !item.inventory_id, // Mark as manual if no inventory_id
         cgst: parseFloat(item.cgst) || 0,
         sgst: parseFloat(item.sgst) || 0,
+        delivery_status: is_advance_paid ? "Pending" : "Delivered",
       });
 
       // Update inventory only for items from inventory (not manual entries)
@@ -337,13 +345,25 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
       }
     }
 
-    // Update customer debt if unpaid
-    if (!is_paid && finalCustomerId) {
+    // Calculate final customer debt and advance increments
+    let activeDebt = 0;
+    let activeAdvance = 0;
+    const totalPaid = is_paid ? totalAmount : (is_advance_paid ? (Number(advance_amount) || 0) : 0);
+
+    if (is_advance_paid) {
+      activeAdvance = totalPaid;
+      activeDebt = 0;
+    } else {
+      activeDebt = is_paid ? 0 : totalAmount;
+      activeAdvance = 0;
+    }
+
+    if (finalCustomerId) {
       await db
         .collection("customers")
         .updateOne(
           { id: finalCustomerId },
-          { $inc: { total_debt: totalAmount } }
+          { $inc: { total_debt: activeDebt, total_advance: activeAdvance } }
         );
     }
 
@@ -379,6 +399,15 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
       inventory_billed_qty: inventoryBilledQty,
       negative_billed_qty: negativeBilledQty,
       is_paid,
+      is_advance_paid: is_advance_paid || false,
+      advance_amount: is_advance_paid ? (Number(advance_amount) || 0) : 0,
+      total_paid: totalPaid,
+      payments: is_paid 
+        ? [{ amount: totalAmount, payment_mode: payment_mode || "Cash", paid_at: new Date().toISOString() }]
+        : (is_advance_paid && Number(advance_amount) > 0 
+          ? [{ amount: Number(advance_amount), payment_mode: payment_mode || "Cash", paid_at: new Date().toISOString() }]
+          : []),
+      delivery_status: is_advance_paid ? "Pending" : "Delivered",
       due_date: due_date || null,
       payment_date: is_paid ? new Date().toISOString() : null,
       payment_mode: payment_mode || null,
@@ -454,6 +483,8 @@ router.put("/:bill_id", auth, requireSubscription(), async (req, res, next) => {
       due_date,
       billing_date,
       payment_mode,
+      is_advance_paid,
+      advance_amount,
     } = req.body;
 
     const db = mongoose.connection.db;
@@ -511,6 +542,13 @@ router.put("/:bill_id", auth, requireSubscription(), async (req, res, next) => {
       subtotal += itemTotal;
       totalProfit += itemProfit;
 
+      const isAdvance = is_advance_paid !== undefined ? is_advance_paid : bill.is_advance_paid;
+      let finalDeliveryStatus = "Delivered";
+      if (isAdvance) {
+        const matchingOld = bill.items?.find(o => o.product_name === item.product_name && o.batch_no === item.batch_no);
+        finalDeliveryStatus = matchingOld ? (matchingOld.delivery_status || "Pending") : "Pending";
+      }
+
       processedItems.push({
         inventory_id: item.inventory_id || null,
         product_name: item.product_name,
@@ -525,6 +563,7 @@ router.put("/:bill_id", auth, requireSubscription(), async (req, res, next) => {
         is_manual: !item.inventory_id,
         cgst: parseFloat(item.cgst) || 0,
         sgst: parseFloat(item.sgst) || 0,
+        delivery_status: finalDeliveryStatus,
       });
 
       // Deduct inventory if item linked to inventory
@@ -597,27 +636,71 @@ router.put("/:bill_id", auth, requireSubscription(), async (req, res, next) => {
       }
     }
 
-    /* ---------------- Adjust customer debt ---------------- */
+    /* ---------------- Adjust customer debt and advance ---------------- */
 
-    if (bill.customer_id && !bill.is_paid) {
-      await db
-        .collection("customers")
-        .updateOne(
-          { id: bill.customer_id },
-          { $inc: { total_debt: -bill.total_amount } }
-        );
+    // Calculate old active values
+    const oldPaid = bill.total_paid !== undefined ? bill.total_paid : (bill.is_paid ? bill.total_amount : (bill.advance_amount || 0));
+    let oldDeliveredValue = 0;
+    if (bill.is_advance_paid) {
+      oldDeliveredValue = (bill.items || []).reduce((sum, i) => i.delivery_status === "Delivered" ? sum + (i.item_total || 0) : sum, 0);
+    } else {
+      oldDeliveredValue = bill.total_amount;
     }
+    const oldDebt = Math.max(0, oldDeliveredValue - oldPaid);
+    const oldAdvance = Math.max(0, oldPaid - oldDeliveredValue);
 
-    if (!is_paid && finalCustomerId) {
-      await db
-        .collection("customers")
-        .updateOne(
+    // Calculate new active values
+    const finalIsPaid = is_paid !== undefined ? is_paid : bill.is_paid;
+    const finalIsAdvancePaid = is_advance_paid !== undefined ? is_advance_paid : bill.is_advance_paid;
+    const finalAdvanceAmount = is_advance_paid !== undefined ? (Number(advance_amount) || 0) : (bill.advance_amount || 0);
+
+    const newPaid = finalIsPaid ? totalAmount : (finalIsAdvancePaid ? finalAdvanceAmount : 0);
+    let newDeliveredValue = 0;
+    if (finalIsAdvancePaid) {
+      newDeliveredValue = processedItems.reduce((sum, i) => i.delivery_status === "Delivered" ? sum + (i.item_total || 0) : sum, 0);
+    } else {
+      newDeliveredValue = totalAmount;
+    }
+    const newDebt = Math.max(0, newDeliveredValue - newPaid);
+    const newAdvance = Math.max(0, newPaid - newDeliveredValue);
+
+    // Deltas
+    const deltaDebt = newDebt - oldDebt;
+    const deltaAdvance = newAdvance - oldAdvance;
+
+    if (bill.customer_id && bill.customer_id !== finalCustomerId) {
+      // Customer changed
+      await db.collection("customers").updateOne(
+        { id: bill.customer_id },
+        { $inc: { total_debt: -oldDebt, total_advance: -oldAdvance } }
+      );
+      if (finalCustomerId) {
+        await db.collection("customers").updateOne(
           { id: finalCustomerId },
-          { $inc: { total_debt: totalAmount } }
+          { $inc: { total_debt: newDebt, total_advance: newAdvance } }
         );
+      }
+    } else if (finalCustomerId) {
+      await db.collection("customers").updateOne(
+        { id: finalCustomerId },
+        { $inc: { total_debt: deltaDebt, total_advance: deltaAdvance } }
+      );
     }
 
     /* ---------------- Update bill ---------------- */
+
+    let finalPayments = bill.payments || [];
+    if (finalIsPaid) {
+      finalPayments = [{ amount: totalAmount, payment_mode: payment_mode || bill.payment_mode || "Cash", paid_at: new Date().toISOString() }];
+    } else if (finalIsAdvancePaid) {
+      if (finalPayments.length === 0 && finalAdvanceAmount > 0) {
+        finalPayments = [{ amount: finalAdvanceAmount, payment_mode: payment_mode || bill.payment_mode || "Cash", paid_at: new Date().toISOString() }];
+      } else if (finalPayments.length > 0 && finalAdvanceAmount !== bill.advance_amount) {
+        finalPayments[0] = { ...finalPayments[0], amount: finalAdvanceAmount };
+      }
+    } else {
+      finalPayments = [];
+    }
 
     const updates = {
       customer_id: finalCustomerId || null,
@@ -635,14 +718,140 @@ router.put("/:bill_id", auth, requireSubscription(), async (req, res, next) => {
       profit: totalProfit,
       inventory_billed_qty: inventoryBilledQty,
       negative_billed_qty: negativeBilledQty,
-      is_paid,
+      is_paid: finalIsPaid,
+      is_advance_paid: finalIsAdvancePaid,
+      advance_amount: finalAdvanceAmount,
+      total_paid: newPaid,
+      payments: finalPayments,
+      delivery_status: finalIsAdvancePaid 
+        ? (processedItems.every(i => i.delivery_status === "Delivered") 
+          ? "Delivered" 
+          : (processedItems.some(i => i.delivery_status === "Delivered") ? "Partially Delivered" : "Pending"))
+        : "Delivered",
       due_date: due_date || null,
-      payment_date: is_paid ? new Date().toISOString() : null,
+      payment_date: finalIsPaid ? new Date().toISOString() : null,
       payment_mode: payment_mode || null,
       notes: notes || null,
       doctor: doctor || null,
       updated_at: new Date().toISOString(),
     };
+
+    // Calculate Edit History Changes
+    const changes = [];
+    const compareField = (fieldName, label, formatter = (v) => v) => {
+      const oldVal = bill[fieldName];
+      const newVal = updates[fieldName];
+      const normalizedOld = (oldVal === undefined || oldVal === null) ? "" : oldVal;
+      const normalizedNew = (newVal === undefined || newVal === null) ? "" : newVal;
+      if (normalizedOld !== normalizedNew) {
+        changes.push({
+          field: fieldName,
+          old_value: formatter(oldVal),
+          new_value: formatter(newVal),
+          description: `Changed ${label} from "${formatter(oldVal) || "none"}" to "${formatter(newVal) || "none"}"`
+        });
+      }
+    };
+
+    compareField("customer_name", "Customer Name");
+    compareField("customer_mobile", "Customer Mobile");
+    compareField("doctor", "Doctor");
+    compareField("discount_percent", "Discount %", (v) => v !== undefined && v !== null ? `${v}%` : "0%");
+    compareField("grand_total", "Grand Total", (v) => v !== undefined && v !== null ? `₹${Number(v).toFixed(2)}` : "₹0.00");
+    compareField("is_paid", "Payment Status", (v) => v ? "Paid" : "Unpaid");
+    compareField("is_advance_paid", "Is Advance Paid", (v) => v ? "Yes" : "No");
+    compareField("advance_amount", "Advance Amount", (v) => v !== undefined && v !== null ? `₹${Number(v).toFixed(2)}` : "₹0.00");
+    compareField("payment_mode", "Payment Mode");
+    compareField("due_date", "Due Date", (v) => v ? new Date(v).toLocaleDateString() : "");
+    compareField("billing_date", "Billing Date", (v) => v ? new Date(v).toLocaleDateString() : "");
+
+    // Items Comparison
+    const oldItemsMap = {};
+    const oldCounts = {};
+    (bill.items || []).forEach(item => {
+      const pId = item.inventory_id || item.product_name;
+      oldCounts[pId] = (oldCounts[pId] || 0) + 1;
+      const key = `${pId}_${oldCounts[pId]}`;
+      oldItemsMap[key] = item;
+    });
+
+    const newItemsMap = {};
+    const newCounts = {};
+    processedItems.forEach(item => {
+      const pId = item.inventory_id || item.product_name;
+      newCounts[pId] = (newCounts[pId] || 0) + 1;
+      const key = `${pId}_${newCounts[pId]}`;
+      newItemsMap[key] = item;
+    });
+
+    const itemChanges = [];
+    processedItems.forEach(item => {
+      const pId = item.inventory_id || item.product_name;
+      const count = newCounts[pId] || 0;
+      const key = `${pId}_${count}`;
+      const oldItem = oldItemsMap[key];
+      if (!oldItem) {
+        itemChanges.push(`Added item ${item.product_name} (Qty: ${item.quantity})`);
+      } else {
+        const changesList = [];
+        
+        const checkItemField = (oldField, newField, label, formatter = (v) => v) => {
+          const oldVal = oldItem[oldField];
+          const newVal = item[newField];
+          const normalizedOld = (oldVal === undefined || oldVal === null) ? "" : String(oldVal).trim();
+          const normalizedNew = (newVal === undefined || newVal === null) ? "" : String(newVal).trim();
+          if (normalizedOld !== normalizedNew) {
+            changesList.push(`${label}: ${formatter(oldVal) || "none"} -> ${formatter(newVal) || "none"}`);
+          }
+        };
+
+        if (parseInt(oldItem.quantity) !== parseInt(item.quantity)) {
+          changesList.push(`Qty: ${oldItem.quantity} -> ${item.quantity}`);
+        }
+
+        checkItemField("batch_no", "batch_no", "Batch");
+        checkItemField("expiry_date", "expiry_date", "Expiry");
+        checkItemField("cgst", "cgst", "CGST", (v) => `${v}%`);
+        checkItemField("sgst", "sgst", "SGST", (v) => `${v}%`);
+        checkItemField("discount_percent", "discount_percent", "Discount", (v) => `${v}%`);
+
+        const oldPrice = oldItem.unit_price || 0;
+        const newPrice = item.unit_price || 0;
+        if (parseFloat(oldPrice).toFixed(2) !== parseFloat(newPrice).toFixed(2)) {
+          changesList.push(`Rate: ₹${parseFloat(oldPrice).toFixed(2)} -> ₹${parseFloat(newPrice).toFixed(2)}`);
+        }
+
+        if (changesList.length > 0) {
+          itemChanges.push(`Updated item ${item.product_name} (${changesList.join(", ")})`);
+        }
+      }
+    });
+
+    (bill.items || []).forEach(item => {
+      const pId = item.inventory_id || item.product_name;
+      const key = `${pId}_${oldCounts[pId] || 1}`;
+      if (!newItemsMap[key]) {
+        itemChanges.push(`Removed item ${item.product_name}`);
+      }
+    });
+
+    if (itemChanges.length > 0) {
+      changes.push({
+        field: "items",
+        description: itemChanges.join("; ")
+      });
+    }
+
+    if (changes.length > 0) {
+      const historyEntry = {
+        updated_at: new Date().toISOString(),
+        updated_by_id: req.user.id,
+        updated_by_name: req.user.name,
+        updated_by_avatar: req.user.image_url || null,
+        changes: changes
+      };
+      updates.history = [...(bill.history || []), historyEntry];
+    }
 
     await db
       .collection("bills")
@@ -710,13 +919,23 @@ router.delete(
         }
       }
 
-      // Update customer debt if unpaid
-      if (!bill.is_paid && bill.customer_id) {
+      // Update customer debt and advance
+      if (bill.customer_id) {
+        const totalPaid = bill.total_paid !== undefined ? bill.total_paid : (bill.is_paid ? bill.total_amount : (bill.advance_amount || 0));
+        let deliveredValue = 0;
+        if (bill.is_advance_paid) {
+          deliveredValue = (bill.items || []).reduce((sum, i) => i.delivery_status === "Delivered" ? sum + (i.item_total || 0) : sum, 0);
+        } else {
+          deliveredValue = bill.total_amount;
+        }
+        const activeDebt = Math.max(0, deliveredValue - totalPaid);
+        const activeAdvance = Math.max(0, totalPaid - deliveredValue);
+
         await db
           .collection("customers")
           .updateOne(
             { id: bill.customer_id },
-            { $inc: { total_debt: -bill.total_amount } }
+            { $inc: { total_debt: -activeDebt, total_advance: -activeAdvance } }
           );
       }
 
@@ -754,24 +973,40 @@ router.post(
         return res.status(400).json({ detail: "Bill already paid" });
       }
 
+      const grandTotal = bill.grand_total || bill.total_amount || 0;
+      const oldPaid = bill.total_paid !== undefined ? bill.total_paid : (bill.is_paid ? grandTotal : (bill.advance_amount || 0));
+      let oldDeliveredValue = 0;
+      if (bill.is_advance_paid) {
+        oldDeliveredValue = (bill.items || []).reduce((sum, i) => i.delivery_status === "Delivered" ? sum + (i.item_total || 0) : sum, 0);
+      } else {
+        oldDeliveredValue = grandTotal;
+      }
+      const oldDebt = Math.max(0, oldDeliveredValue - oldPaid);
+      const oldAdvance = Math.max(0, oldPaid - oldDeliveredValue);
+
+      // Fully paid updates
+      const newPaid = grandTotal;
+      const newDebt = 0;
+      const newAdvance = Math.max(0, newPaid - oldDeliveredValue);
+
+      const deltaDebt = newDebt - oldDebt;
+      const deltaAdvance = newAdvance - oldAdvance;
+
+      if (bill.customer_id) {
+        await db.collection("customers").updateOne(
+          { id: bill.customer_id },
+          { $inc: { total_debt: deltaDebt, total_advance: deltaAdvance } }
+        );
+      }
+
       await db
         .collection("bills")
         .updateOne(
           { id: req.params.bill_id },
-          { $set: { is_paid: true, paid_at: new Date().toISOString() } }
+          { $set: { is_paid: true, total_paid: newPaid, paid_at: new Date().toISOString() } }
         );
       
       await logActivity(db, req.user.pharmacy_id, req.user.id, req.user.name, "UPDATE", "BILLING", req.params.bill_id, `Marked Bill ${bill.bill_no} as Paid`, `/billing`);
-
-      // Update customer debt
-      if (bill.customer_id) {
-        await db
-          .collection("customers")
-          .updateOne(
-            { id: bill.customer_id },
-            { $inc: { total_debt: -bill.total_amount } }
-          );
-      }
 
       res.json({ message: "Bill marked as paid" });
     } catch (error) {
@@ -940,6 +1175,187 @@ router.post(
       }
 
       res.json({ message: "Email sent successfully" });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+// POST /api/bills/:bill_id/record-payment
+router.post(
+  "/:bill_id/record-payment",
+  auth,
+  requireSubscription(),
+  async (req, res, next) => {
+    try {
+      const db = mongoose.connection.db;
+      const { amount, payment_mode } = req.body;
+
+      const paymentAmount = Number(amount);
+      if (isNaN(paymentAmount) || paymentAmount <= 0) {
+        return res.status(400).json({ detail: "Invalid payment amount" });
+      }
+
+      const bill = await db.collection("bills").findOne({
+        id: req.params.bill_id,
+        pharmacy_id: req.user.pharmacy_id,
+      });
+
+      if (!bill) {
+        return res.status(404).json({ detail: "Bill not found" });
+      }
+
+      const grandTotal = bill.grand_total || bill.total_amount || 0;
+      const currentPaid = bill.total_paid !== undefined ? bill.total_paid : (bill.is_paid ? grandTotal : (bill.advance_amount || 0));
+      const remainingUnpaid = Math.max(0, grandTotal - currentPaid);
+
+      if (paymentAmount > remainingUnpaid) {
+        return res.status(400).json({ detail: `Payment amount ₹${paymentAmount} exceeds remaining unpaid balance of ₹${remainingUnpaid}` });
+      }
+
+      // Calculate old debt/advance
+      let oldDeliveredValue = 0;
+      if (bill.is_advance_paid) {
+        oldDeliveredValue = (bill.items || []).reduce((sum, i) => i.delivery_status === "Delivered" ? sum + (i.item_total || 0) : sum, 0);
+      } else {
+        oldDeliveredValue = grandTotal;
+      }
+      const oldDebt = Math.max(0, oldDeliveredValue - currentPaid);
+      const oldAdvance = Math.max(0, currentPaid - oldDeliveredValue);
+
+      // New paid amount
+      const newPaid = currentPaid + paymentAmount;
+      const isPaid = newPaid >= grandTotal;
+
+      // New debt/advance
+      const newDebt = Math.max(0, oldDeliveredValue - newPaid);
+      const newAdvance = Math.max(0, newPaid - oldDeliveredValue);
+
+      const deltaDebt = newDebt - oldDebt;
+      const deltaAdvance = newAdvance - oldAdvance;
+
+      if (bill.customer_id) {
+        await db.collection("customers").updateOne(
+          { id: bill.customer_id },
+          { $inc: { total_debt: deltaDebt, total_advance: deltaAdvance } }
+        );
+      }
+
+      let paymentsList = bill.payments || [];
+      if (paymentsList.length === 0 && currentPaid > 0) {
+        paymentsList = [
+          {
+            amount: currentPaid,
+            payment_mode: bill.payment_mode || "Cash",
+            paid_at: bill.created_at || bill.billing_date || new Date().toISOString()
+          }
+        ];
+      }
+      paymentsList.push({
+        amount: paymentAmount,
+        payment_mode: payment_mode || "Cash",
+        paid_at: new Date().toISOString()
+      });
+
+      await db.collection("bills").updateOne(
+        { id: req.params.bill_id },
+        { 
+          $set: { 
+            total_paid: newPaid,
+            is_paid: isPaid,
+            payment_date: new Date().toISOString(),
+            payment_mode: payment_mode || bill.payment_mode,
+            payments: paymentsList
+          } 
+        }
+      );
+
+      await logActivity(db, req.user.pharmacy_id, req.user.id, req.user.name, "UPDATE", "BILLING", req.params.bill_id, `Recorded payment of ₹${paymentAmount} for Bill ${bill.bill_no}`, `/billing`);
+
+      res.json({ message: "Payment recorded successfully", total_paid: newPaid, is_paid: isPaid });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+// POST /api/bills/:bill_id/update-delivery
+router.post(
+  "/:bill_id/update-delivery",
+  auth,
+  requireSubscription(),
+  async (req, res, next) => {
+    try {
+      const db = mongoose.connection.db;
+      const { items_delivery } = req.body; // Array of { item_index: number, delivery_status: "Pending" | "Delivered" }
+
+      const bill = await db.collection("bills").findOne({
+        id: req.params.bill_id,
+        pharmacy_id: req.user.pharmacy_id,
+      });
+
+      if (!bill) {
+        return res.status(404).json({ detail: "Bill not found" });
+      }
+
+      const grandTotal = bill.grand_total || bill.total_amount || 0;
+      const currentPaid = bill.total_paid !== undefined ? bill.total_paid : (bill.is_paid ? grandTotal : (bill.advance_amount || 0));
+
+      // Calculate old stats
+      let oldDeliveredValue = 0;
+      if (bill.is_advance_paid) {
+        oldDeliveredValue = (bill.items || []).reduce((sum, i) => i.delivery_status === "Delivered" ? sum + (i.item_total || 0) : sum, 0);
+      } else {
+        oldDeliveredValue = grandTotal;
+      }
+      const oldDebt = Math.max(0, oldDeliveredValue - currentPaid);
+      const oldAdvance = Math.max(0, currentPaid - oldDeliveredValue);
+
+      // Update bill items
+      const updatedItems = [...bill.items];
+      items_delivery.forEach(({ item_index, delivery_status }) => {
+        if (updatedItems[item_index]) {
+          updatedItems[item_index].delivery_status = delivery_status;
+          if (delivery_status === "Delivered") {
+            updatedItems[item_index].delivered_at = new Date().toISOString();
+          } else {
+            delete updatedItems[item_index].delivered_at;
+          }
+        }
+      });
+
+      // Calculate new stats
+      const newDeliveredValue = updatedItems.reduce((sum, i) => i.delivery_status === "Delivered" ? sum + (i.item_total || 0) : sum, 0);
+      const newDebt = Math.max(0, newDeliveredValue - currentPaid);
+      const newAdvance = Math.max(0, currentPaid - newDeliveredValue);
+
+      const deltaDebt = newDebt - oldDebt;
+      const deltaAdvance = newAdvance - oldAdvance;
+
+      if (bill.customer_id) {
+        await db.collection("customers").updateOne(
+          { id: bill.customer_id },
+          { $inc: { total_debt: deltaDebt, total_advance: deltaAdvance } }
+        );
+      }
+
+      const allDelivered = updatedItems.every(i => i.delivery_status === "Delivered");
+      const someDelivered = updatedItems.some(i => i.delivery_status === "Delivered");
+      const overallDeliveryStatus = allDelivered ? "Delivered" : (someDelivered ? "Partially Delivered" : "Pending");
+
+      await db.collection("bills").updateOne(
+        { id: req.params.bill_id },
+        { 
+          $set: { 
+            items: updatedItems,
+            delivery_status: overallDeliveryStatus
+          } 
+        }
+      );
+
+      await logActivity(db, req.user.pharmacy_id, req.user.id, req.user.name, "UPDATE", "BILLING", req.params.bill_id, `Updated delivery status of Bill ${bill.bill_no} to ${overallDeliveryStatus}`, `/billing`);
+
+      res.json({ message: "Delivery status updated successfully", delivery_status: overallDeliveryStatus });
     } catch (error) {
       next(error);
     }
