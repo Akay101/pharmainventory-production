@@ -1861,12 +1861,14 @@ export default function PurchasesPage() {
       return;
     }
 
+    const isPaidOrPartial = paymentStatus === "Paid" || paymentStatus === "Partial";
     if (
       settings?.purchase_payment_mode_mandatory &&
+      isPaidOrPartial &&
       (!paymentMode || paymentMode === "none")
     ) {
       toast.error(
-        "Payment mode is mandatory. Please select Cash, UPI, or Card."
+        "Payment mode is mandatory for Paid or Partial purchases. Please select Cash, UPI, or Card."
       );
       return;
     }
@@ -2697,13 +2699,14 @@ export default function PurchasesPage() {
               <div className="space-y-2 lg:col-span-2">
                 <Label>Payment Status</Label>
                 <div className="flex bg-muted/50 p-1 rounded-lg">
-                  {["Unpaid", "Partial", "Paid"].map((status) => (
+                  {["Unpaid", "Partial", "Paid"]
+                    .filter(status => !(settings?.lock_unpaid_purchases && status === "Unpaid"))
+                    .map((status) => (
                     <button
                       key={status}
                       type="button"
                       disabled={
-                        processingRowId !== null ||
-                        (settings?.purchase_payment_mode_mandatory && status === "Unpaid")
+                        processingRowId !== null
                       }
                       onClick={() => {
                         setPaymentStatus(status);

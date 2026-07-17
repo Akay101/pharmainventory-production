@@ -247,7 +247,9 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
     const preferences = userPrefs?.preferences || {};
     const isModeMandatory = preferences.billing_payment_mode_mandatory === true;
 
-    if (isModeMandatory && (!payment_mode || !["Cash", "UPI", "Card"].includes(payment_mode))) {
+    const isPaidFlag = is_paid === true || is_paid === 'true';
+    const isAdvancePaidFlag = is_advance_paid === true || is_advance_paid === 'true';
+    if (isModeMandatory && (isPaidFlag || isAdvancePaidFlag) && (!payment_mode || !["Cash", "UPI", "Card"].includes(payment_mode))) {
       return res.status(400).json({ detail: "Payment mode is mandatory" });
     }
 
@@ -494,7 +496,9 @@ router.put("/:bill_id", auth, requireSubscription(), async (req, res, next) => {
     const preferences = userPrefs?.preferences || {};
     const isModeMandatory = preferences.billing_payment_mode_mandatory === true;
 
-    if (isModeMandatory && (!payment_mode || !["Cash", "UPI", "Card"].includes(payment_mode))) {
+    const isPaidFlag = is_paid === true || is_paid === 'true';
+    const isAdvancePaidFlag = is_advance_paid === true || is_advance_paid === 'true';
+    if (isModeMandatory && (isPaidFlag || isAdvancePaidFlag) && (!payment_mode || !["Cash", "UPI", "Card"].includes(payment_mode))) {
       return res.status(400).json({ detail: "Payment mode is mandatory" });
     }
 

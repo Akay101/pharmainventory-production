@@ -1326,6 +1326,8 @@ export default function BillingPage() {
 
     if (field === "product_name") {
       setInventorySearch(value);
+      setShowInventorySuggestions(true);
+      setActiveBillItemId(itemId);
     }
   };
 
@@ -1461,8 +1463,8 @@ export default function BillingPage() {
       return;
     }
 
-    if (settings?.billing_payment_mode_mandatory && (!paymentMode || paymentMode === "none")) {
-      toast.error("Payment mode is mandatory. Please select Cash, UPI, or Card.");
+    if (settings?.billing_payment_mode_mandatory && (isPaid || isAdvancePaid) && (!paymentMode || paymentMode === "none")) {
+      toast.error("Payment mode is mandatory for paid or advance paid bills. Please select Cash, UPI, or Card.");
       return;
     }
 
@@ -1673,6 +1675,8 @@ export default function BillingPage() {
 
     if (field === "product_name") {
       setEditingInventorySearch(value);
+      setShowEditingInventorySuggestions(true);
+      setActiveEditingItemId(itemId);
     }
   };
 
@@ -1819,8 +1823,8 @@ export default function BillingPage() {
       return;
     }
 
-    if (settings?.billing_payment_mode_mandatory && (!editingBillData.payment_mode || editingBillData.payment_mode === "none")) {
-      toast.error("Payment mode is mandatory. Please select Cash, UPI, or Card.");
+    if (settings?.billing_payment_mode_mandatory && (editingBillData.is_paid || editingBillData.is_advance_paid) && (!editingBillData.payment_mode || editingBillData.payment_mode === "none")) {
+      toast.error("Payment mode is mandatory for paid or advance paid bills. Please select Cash, UPI, or Card.");
       return;
     }
 
@@ -3366,7 +3370,7 @@ export default function BillingPage() {
                     <Checkbox
                       id="isPaid"
                       checked={isPaid}
-                      disabled={isAdvancePaid || settings?.billing_payment_mode_mandatory}
+                      disabled={isAdvancePaid || settings?.lock_unpaid_bills}
                       onCheckedChange={(val) => {
                         setIsPaid(val);
                         if (val) {
@@ -3386,7 +3390,7 @@ export default function BillingPage() {
                     <Checkbox
                       id="isAdvancePaid"
                       checked={isAdvancePaid}
-                      disabled={isPaid}
+                      disabled={isPaid || settings?.lock_unpaid_bills}
                       onCheckedChange={(val) => {
                         setIsAdvancePaid(val);
                         if (val) {
@@ -4356,13 +4360,13 @@ export default function BillingPage() {
                     <Checkbox
                       id="editIsPaid"
                       checked={editingBillData.is_paid}
-                      disabled={settings?.billing_payment_mode_mandatory}
+                      disabled={settings?.lock_unpaid_bills}
                       onCheckedChange={(v) =>
                         setEditingBillData({
                           ...editingBillData,
                           is_paid: v,
                           due_date: v ? null : editingBillData.due_date,
-                          payment_mode: v ? editingBillData.payment_mode : "",
+                          payment_mode: v ? (editingBillData.payment_mode || "Cash") : "",
                         })
                       }
                     />

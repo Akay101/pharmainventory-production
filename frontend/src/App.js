@@ -184,6 +184,7 @@ const AuthProvider = ({ children }) => {
     settings,
     settingsDefinitions,
     updateSetting,
+    fetchSettings,
     isAdmin: user?.role === "ADMIN",
   };
 

@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const mongoose = require("mongoose");
 const { auth, adminOnly } = require("../middleware/auth");
+const { sendOTPEmail } = require("../services/email");
 
 /**
  * Registry of all available settings.
@@ -86,6 +87,22 @@ const DEFAULT_REGISTRY = [
     category: "Preferences",
     description: "Default minimum stock quantity threshold for Shortage List alert.",
   },
+  {
+    key: "lock_unpaid_purchases",
+    label: "Lock Unpaid Purchases",
+    type: "boolean",
+    default: false,
+    category: "Preferences",
+    description: "Hide the Unpaid option when creating/editing purchases.",
+  },
+  {
+    key: "lock_unpaid_bills",
+    label: "Lock Unpaid Bills",
+    type: "boolean",
+    default: false,
+    category: "Preferences",
+    description: "Prevent unticking the Paid option when creating/editing bills.",
+  },
 ];
 
 // Helper to ensure registry exists in DB
@@ -160,12 +177,26 @@ router.post("/update", auth, async (req, res, next) => {
       return res.status(400).json({ detail: "Setting key is required" });
     }
 
-    // If setting purchase_payment_mode_mandatory to true, ensure purchase_payment_status is not Unpaid
+    if (key === "lock_unpaid_purchases" || key === "lock_unpaid_bills") {
+      return res.status(400).json({ detail: "OTP verification is required to toggle this setting" });
+    }
+
+    // If setting purchase_payment_mode_mandatory to true, ensure purchase_payment_status is not Unpaid, and default mode is not none
     let extraUpdates = {};
     if (key === "purchase_payment_mode_mandatory" && value === true) {
       const userSettings = await db.collection("user_settings").findOne({ user_id: userId });
       if (userSettings?.preferences?.purchase_payment_status === "Unpaid" || !userSettings?.preferences?.purchase_payment_status) {
         extraUpdates["preferences.purchase_payment_status"] = "Paid";
+      }
+      if (userSettings?.preferences?.purchase_payment_mode_default === "none" || !userSettings?.preferences?.purchase_payment_mode_default) {
+        extraUpdates["preferences.purchase_payment_mode_default"] = "Cash";
+      }
+    }
+    // If setting billing_payment_mode_mandatory to true, ensure default mode is not none
+    if (key === "billing_payment_mode_mandatory" && value === true) {
+      const userSettings = await db.collection("user_settings").findOne({ user_id: userId });
+      if (userSettings?.preferences?.billing_payment_mode_default === "none" || !userSettings?.preferences?.billing_payment_mode_default) {
+        extraUpdates["preferences.billing_payment_mode_default"] = "Cash";
       }
     }
     // If setting purchase_payment_status to Unpaid, ensure purchase_payment_mode_mandatory is false
@@ -173,6 +204,19 @@ router.post("/update", auth, async (req, res, next) => {
       const userSettings = await db.collection("user_settings").findOne({ user_id: userId });
       if (userSettings?.preferences?.purchase_payment_mode_mandatory === true) {
         return res.status(400).json({ detail: "Cannot set default status to Unpaid when payment mode is mandatory" });
+      }
+    }
+    // If setting default payment mode to none, check if it's mandatory
+    if (key === "purchase_payment_mode_default" && value === "none") {
+      const userSettings = await db.collection("user_settings").findOne({ user_id: userId });
+      if (userSettings?.preferences?.purchase_payment_mode_mandatory === true) {
+        return res.status(400).json({ detail: "Default payment mode cannot be 'none' when payment mode is mandatory" });
+      }
+    }
+    if (key === "billing_payment_mode_default" && value === "none") {
+      const userSettings = await db.collection("user_settings").findOne({ user_id: userId });
+      if (userSettings?.preferences?.billing_payment_mode_mandatory === true) {
+        return res.status(400).json({ detail: "Default payment mode cannot be 'none' when payment mode is mandatory" });
       }
     }
 
@@ -189,6 +233,97 @@ router.post("/update", auth, async (req, res, next) => {
         },
         { upsert: true }
       );
+
+    res.json({ message: "Setting updated successfully", key, value });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// POST /api/settings/request-lock-otp
+router.post("/request-lock-otp", auth, async (req, res, next) => {
+  try {
+    const db = mongoose.connection.db;
+    const userId = req.user.id;
+
+    // Generate a 6-digit OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const otpExpiry = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+
+    // Store OTP on user document
+    await db.collection("users").updateOne(
+      { id: userId },
+      {
+        $set: {
+          lock_setting_otp: otp,
+          lock_setting_otp_expiry: otpExpiry
+        }
+      }
+    );
+
+    const emailSent = await sendOTPEmail(req.user.email, req.user.name, otp);
+
+    res.json({
+      message: "OTP sent to your email",
+      email_sent: emailSent,
+      otp: emailSent ? null : otp,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// POST /api/settings/verify-and-update-lock
+router.post("/verify-and-update-lock", auth, async (req, res, next) => {
+  try {
+    const { key, value, otp } = req.body;
+    const db = mongoose.connection.db;
+    const userId = req.user.id;
+
+    if (!key || (key !== "lock_unpaid_purchases" && key !== "lock_unpaid_bills")) {
+      return res.status(400).json({ detail: "Invalid setting key" });
+    }
+
+    if (value === undefined || value === null) {
+      return res.status(400).json({ detail: "Setting value is required" });
+    }
+
+    const user = await db.collection("users").findOne({ id: userId });
+    if (!user) {
+      return res.status(404).json({ detail: "User not found" });
+    }
+
+    if (user.lock_setting_otp !== otp) {
+      return res.status(400).json({ detail: "Invalid OTP" });
+    }
+
+    if (new Date(user.lock_setting_otp_expiry) < new Date()) {
+      return res.status(400).json({ detail: "OTP expired" });
+    }
+
+    // Update setting in user preferences
+    await db
+      .collection("user_settings")
+      .updateOne(
+        { user_id: userId },
+        { 
+          $set: { 
+            [`preferences.${key}`]: value
+          } 
+        },
+        { upsert: true }
+      );
+
+    // Clear OTP
+    await db.collection("users").updateOne(
+      { id: userId },
+      {
+        $unset: {
+          lock_setting_otp: "",
+          lock_setting_otp_expiry: ""
+        }
+      }
+    );
 
     res.json({ message: "Setting updated successfully", key, value });
   } catch (error) {

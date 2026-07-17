@@ -254,7 +254,8 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
     const preferences = userPrefs?.preferences || {};
     const isModeMandatory = preferences.purchase_payment_mode_mandatory === true;
 
-    if (isModeMandatory && (!payment_mode || !["Cash", "UPI", "Card"].includes(payment_mode))) {
+    const isPaidOrPartial = payment_status === "Paid" || payment_status === "Partial";
+    if (isModeMandatory && isPaidOrPartial && (!payment_mode || !["Cash", "UPI", "Card"].includes(payment_mode))) {
       await session.abortTransaction();
       session.endSession();
       return res.status(400).json({ detail: "Payment mode is mandatory" });
@@ -528,7 +529,8 @@ router.put(
       const preferences = userPrefs?.preferences || {};
       const isModeMandatory = preferences.purchase_payment_mode_mandatory === true;
 
-      if (isModeMandatory && (!payment_mode || !["Cash", "UPI", "Card"].includes(payment_mode))) {
+      const isPaidOrPartial = payment_status === "Paid" || payment_status === "Partial";
+      if (isModeMandatory && isPaidOrPartial && (!payment_mode || !["Cash", "UPI", "Card"].includes(payment_mode))) {
         await session.abortTransaction();
         session.endSession();
         return res.status(400).json({ detail: "Payment mode is mandatory" });

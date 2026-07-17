@@ -27,12 +27,76 @@ import { toast } from "sonner";
 import { Switch } from "../components/ui/switch";
 
 export default function SettingsPage() {
-  const { user, pharmacy, setUser, setPharmacy, isAdmin, settings, settingsDefinitions, updateSetting } = useAuth();
+  const { user, pharmacy, setUser, setPharmacy, isAdmin, settings, settingsDefinitions, updateSetting, fetchSettings } = useAuth();
   const [saving, setSaving] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [importingMedicines, setImportingMedicines] = useState(false);
   const [migrating, setMigrating] = useState(false);
+  const [lockOtpDialog, setLockOtpDialog] = useState({
+    open: false,
+    key: "",
+    value: false,
+    otp: "",
+    displayedOtp: "",
+    requesting: false,
+    verifying: false,
+  });
+
+  const handleRequestLockOtp = async (key, value) => {
+    setLockOtpDialog({
+      open: true,
+      key,
+      value,
+      otp: "",
+      displayedOtp: "",
+      requesting: true,
+      verifying: false,
+    });
+
+    try {
+      const res = await axios.post(`${API}/settings/request-lock-otp`);
+      setLockOtpDialog((prev) => ({
+        ...prev,
+        requesting: false,
+        displayedOtp: res.data.otp || "",
+      }));
+      toast.success("OTP sent to your email");
+    } catch (err) {
+      setLockOtpDialog((prev) => ({ ...prev, open: false, requesting: false }));
+      toast.error(err.response?.data?.detail || "Failed to send OTP");
+    }
+  };
+
+  const handleVerifyLockOtp = async () => {
+    if (!lockOtpDialog.otp.trim()) {
+      toast.error("Please enter the OTP");
+      return;
+    }
+    setLockOtpDialog((prev) => ({ ...prev, verifying: true }));
+    try {
+      await axios.post(`${API}/settings/verify-and-update-lock`, {
+        key: lockOtpDialog.key,
+        value: lockOtpDialog.value,
+        otp: lockOtpDialog.otp,
+      });
+      toast.success("Setting updated successfully");
+      await fetchSettings();
+      setLockOtpDialog({
+        open: false,
+        key: "",
+        value: false,
+        otp: "",
+        displayedOtp: "",
+        requesting: false,
+        verifying: false,
+      });
+    } catch (err) {
+      setLockOtpDialog((prev) => ({ ...prev, verifying: false }));
+      toast.error(err.response?.data?.detail || "Failed to verify OTP");
+    }
+  };
+
   const logoInputRef = useRef(null);
   const avatarInputRef = useRef(null);
   const migrationFileRef = useRef(null);
@@ -873,9 +937,13 @@ export default function SettingsPage() {
                             id={setting.key}
                             checked={settings[setting.key] !== undefined ? settings[setting.key] : setting.default}
                             onCheckedChange={async (val) => {
-                              await updateSetting(setting.key, val);
-                              if (setting.key === "purchase_payment_mode_mandatory" && val && settings.purchase_payment_status === "Unpaid") {
-                                await updateSetting("purchase_payment_status", "Paid");
+                              if (setting.key === "lock_unpaid_purchases" || setting.key === "lock_unpaid_bills") {
+                                await handleRequestLockOtp(setting.key, val);
+                              } else {
+                                await updateSetting(setting.key, val);
+                                if (setting.key === "purchase_payment_mode_mandatory" && val && settings.purchase_payment_status === "Unpaid") {
+                                  await updateSetting("purchase_payment_status", "Paid");
+                                }
                               }
                             }}
                           />
@@ -893,6 +961,12 @@ export default function SettingsPage() {
                               {setting.options
                                 .filter(opt => {
                                   if (setting.key === "purchase_payment_status" && settings.purchase_payment_mode_mandatory && opt === "Unpaid") {
+                                    return false;
+                                  }
+                                  if (setting.key === "purchase_payment_mode_default" && settings.purchase_payment_mode_mandatory && opt === "none") {
+                                    return false;
+                                  }
+                                  if (setting.key === "billing_payment_mode_default" && settings.billing_payment_mode_mandatory && opt === "none") {
                                     return false;
                                   }
                                   return true;
@@ -1174,6 +1248,102 @@ export default function SettingsPage() {
                   )}
                 </>
               )}
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Lock Settings OTP Verification Dialog */}
+      <Dialog
+        open={lockOtpDialog.open}
+        onOpenChange={(open) => {
+          if (!open) {
+            setLockOtpDialog({
+              open: false,
+              key: "",
+              value: false,
+              otp: "",
+              displayedOtp: "",
+              requesting: false,
+              verifying: false,
+            });
+          }
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <KeyRound className="w-5 h-5 text-primary" />
+              Verify Lock Settings Change
+            </DialogTitle>
+            <DialogDescription>
+              Enter the OTP sent to your email ({user?.email}) to confirm changing the lock preference.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 pt-4">
+            {lockOtpDialog.displayedOtp && (
+              <div className="p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-lg">
+                <div className="flex items-center gap-2 text-yellow-500 mb-2">
+                  <Mail className="w-4 h-4" />
+                  <span className="text-sm font-medium">Email service unavailable</span>
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  Your OTP is: <span className="font-mono font-bold text-lg text-foreground">{lockOtpDialog.displayedOtp}</span>
+                </p>
+              </div>
+            )}
+            
+            <div className="space-y-2">
+              <Label>Enter OTP</Label>
+              <Input
+                value={lockOtpDialog.otp}
+                onChange={(e) =>
+                  setLockOtpDialog((prev) => ({ ...prev, otp: e.target.value }))
+                }
+                placeholder="Enter 6-digit OTP"
+                maxLength={6}
+                className="text-center text-lg font-mono tracking-widest"
+                data-testid="lock-otp-input"
+                autoFocus
+              />
+            </div>
+            
+            <div className="flex gap-2">
+              <Button 
+                variant="outline" 
+                onClick={() =>
+                  setLockOtpDialog({
+                    open: false,
+                    key: "",
+                    value: false,
+                    otp: "",
+                    displayedOtp: "",
+                    requesting: false,
+                    verifying: false,
+                  })
+                }
+                className="flex-1"
+              >
+                Cancel
+              </Button>
+              <Button 
+                onClick={handleVerifyLockOtp}
+                disabled={lockOtpDialog.verifying || !lockOtpDialog.otp.trim()}
+                className="flex-1 btn-primary"
+                data-testid="verify-lock-otp-btn"
+              >
+                {lockOtpDialog.verifying ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Verifying...
+                  </>
+                ) : (
+                  <>
+                    <Save className="w-4 h-4 mr-2" />
+                    Confirm Change
+                  </>
+                )}
+              </Button>
             </div>
           </div>
         </DialogContent>
