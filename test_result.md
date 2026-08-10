@@ -102,151 +102,55 @@
 # Testing Data - Main Agent and testing sub agent both should log testing data below this section
 #====================================================================================================
 
-## user_problem_statement: "Duplicate product entries in inventory when batch details change. Need unique product grouping in search/billing suggestions, inline batch dropdown selection in billing, and an inventory merge feature to safely consolidate existing duplicates without breaking history."
+## user_problem_statement: "Persist recorded status in MongoDB conversations collection so Confirm Purchase button never reappears upon page refresh, and prevent duplicate purchase creations."
 ## backend:
-##   - task: "Product catalog lookup/creation in Purchases"
+##   - task: "POST /api/chat/mark-recorded Endpoint"
 ##     implemented: true
 ##     working: true
-##     file: "backend-node/routes/purchases.js"
+##     file: "backend-node/routes/chat.js"
 ##     stuck_count: 0
 ##     priority: "high"
 ##     needs_retesting: false
 ##     status_history:
 ##       - working: true
 ##         agent: "main"
-##         comment: "Synchronizes products table during purchase creation/edit and links batches by product_id."
-##   - task: "Purchase discount, scheme integration & PDF layout"
+##         comment: "Added POST /mark-recorded endpoint updating draftState.recorded = true directly inside the MongoDB conversations collection."
+##   - task: "PurchaseAgent Duplicate Guardrail"
 ##     implemented: true
 ##     working: true
-##     file: "backend-node/routes/purchases.js"
+##     file: "backend-node/services/agent/purchaseAgent.js"
 ##     stuck_count: 0
 ##     priority: "high"
 ##     needs_retesting: false
 ##     status_history:
 ##       - working: true
 ##         agent: "main"
-##         comment: "Computes unit cost price factoring in discount and free scheme items, stocks total quantity in inventory, and generates PDF containing DISC% and SCHEME columns, with optimized column widths to prevent header wrapping."
-##   - task: "Grouped medicine search and suggestions"
-##     implemented: true
-##     working: true
-##     file: "backend-node/routes/medicines.js"
-##     stuck_count: 0
-##     priority: "high"
-##     needs_retesting: false
-##     status_history:
-##       - working: true
-##         agent: "main"
-##         comment: "Groups inventory matching items by product name, sum stock quantities, and return a nested batches array. Passed automated tests successfully."
-##   - task: "Inventory Batch Merge API"
-##     implemented: true
-##     working: true
-##     file: "backend-node/routes/inventory.js"
-##     stuck_count: 0
-##     priority: "high"
-##     needs_retesting: false
-##     status_history:
-##       - working: true
-##         agent: "main"
-##         comment: "Handles merging multiple inventory records, consolidating duplicate batches, updating purchases and bills tables nested records, rewriting deleted inventory IDs, and cleaning up unused products. Passed automated integration tests successfully."
+##         comment: "Added duplicate creation guardrail: if state.recorded === true, purchaseAgent blocks creation attempts with 'This purchase order has already been recorded in your ledger.'"
 ## frontend:
-##   - task: "Billing page batch selection dropdown"
+##   - task: "AgentWidget Mark-Recorded Integration"
 ##     implemented: true
 ##     working: true
-##     file: "frontend/src/pages/BillingPage.jsx"
+##     file: "frontend/src/components/Agent/AgentWidget.jsx"
 ##     stuck_count: 0
 ##     priority: "high"
 ##     needs_retesting: false
 ##     status_history:
 ##       - working: true
 ##         agent: "main"
-##         comment: "Renders batch dropdown for inventory items, automatically selects earliest expiry in stock (FEFO), updates pricing and totals dynamically on batch change, and handles loading batches during edit bill."
-##   - task: "Inventory page merge selection UI"
-##     implemented: true
-##     working: true
-##     file: "frontend/src/pages/InventoryPage.jsx"
-##     stuck_count: 0
-##     priority: "high"
-##     needs_retesting: false
-##     status_history:
-##       - working: true
-##         agent: "main"
-##         comment: "Added checkboxes for multi-select, a Merge Selected button, and a merge configuration Dialog with warning details."
-##   - task: "Revamped Purchases items input table & math sync"
-##     implemented: true
-##     working: true
-##     file: "frontend/src/pages/PurchasesPage.jsx"
-##     stuck_count: 0
-##     priority: "high"
-##     needs_retesting: false
-##     status_history:
-##       - working: true
-##         agent: "main"
-##         comment: "Redesigned items table to 9 columns, synchronized CGST/SGST, and auto-adjusted Rate per Pack when total is overridden."
-##   - task: "Batch Dropdown Pagination UI and Supplier Name info"
-##     implemented: true
-##     working: true
-##     file: "frontend/src/pages/BillingPage.jsx"
-##     stuck_count: 0
-##     priority: "high"
-##     needs_retesting: false
-##     status_history:
-##       - working: true
-##         agent: "main"
-##         comment: "Displays supplier name in each batch item inside the dropdown and limits displayed items to 10 by default, offering a Show More button to load subsequent batches without closing the dropdown."
-##   - task: "Database-Level Skip/Limit Pagination"
-##     implemented: true
-##     working: true
-##     file: "backend-node/routes/inventory.js"
-##     stuck_count: 0
-##     priority: "high"
-##     needs_retesting: false
-##     status_history:
-##       - working: true
-##         agent: "main"
-##         comment: "Replaced in-memory slicing pagination with MongoDB native skip() and limit() cursor operations, adding pagination response fields to both the list and search endpoints."
-##   - task: "Product Catalog Details Popup Dialog"
-##     implemented: true
-##     working: true
-##     file: "frontend/src/pages/InventoryPage.jsx"
-##     stuck_count: 0
-##     priority: "high"
-##     needs_retesting: false
-##     status_history:
-##       - working: true
-##         agent: "main"
-##         comment: "Provides a premium modal to view all associated inventory batches of a product catalog card on click, including batch numbers, expiry dates, quantities, prices, supplier names, and status badges."
-##   - task: "Catalog Merge Option inside Details Popup"
-##     implemented: true
-##     working: true
-##     file: "frontend/src/pages/InventoryPage.jsx"
-##     stuck_count: 0
-##     priority: "high"
-##     needs_retesting: false
-##     status_history:
-##       - working: true
-##         agent: "main"
-##         comment: "Added a sub-merge form toggle inside the details popup letting users select other catalog products, fetches their respective batch IDs, and merges all items in a single transaction under the target product."
+##         comment: "Calls POST /api/chat/mark-recorded upon purchase execution success, ensuring MongoDB and restored sessions maintain recorded status."
 ## metadata:
 ##   created_by: "main_agent"
-##   version: "1.4"
-##   test_sequence: 5
+##   version: "7.0"
+##   test_sequence: 11
 ##   run_ui: false
 ## test_plan:
 ##   current_focus:
-##     - "Product catalog lookup/creation in Purchases"
-##     - "Grouped medicine search and suggestions"
-##     - "Inventory Batch Merge API"
-##     - "Billing page batch selection dropdown"
-##     - "Inventory page merge selection UI"
-##     - "Batch Dropdown Pagination UI and Supplier Name info"
-##     - "Database-Level Skip/Limit Pagination"
-##     - "Product Catalog Details Popup Dialog"
-##     - "Catalog Merge Option inside Details Popup"
-##     - "Purchase discount, scheme integration & PDF layout"
-##     - "Revamped Purchases items input table & math sync"
+##     - "POST /api/chat/mark-recorded Endpoint"
+##     - "PurchaseAgent Duplicate Guardrail"
+##     - "AgentWidget Mark-Recorded Integration"
 ##   stuck_tasks: []
 ##   test_all: true
 ##   test_priority: "high_first"
 ## agent_communication:
 ##   - agent: "main"
-##     message: "Successfully implemented discount percentage and scheme quantity math calculations, revamped the purchases table layout into a clean 9-column format, fixed the missing JSX conditional closing tags syntax error, successfully verified build compile, and passed integration calculations unit test."
+##     message: "Successfully implemented permanent draft recording in MongoDB and duplicate purchase prevention guardrail."

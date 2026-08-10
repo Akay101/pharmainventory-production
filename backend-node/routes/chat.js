@@ -6,93 +6,118 @@ const { auth } = require("../middleware/auth");
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const { requireSubscription } = require("../middleware/subscription");
 
-const SCHEMA = {
-  description: "Structure of the Agent response",
-  type: "object",
-  properties: {
-    type: { type: "string", enum: ["text", "action"] },
-    content: { type: "string", description: "The message to show the user" },
-    action: {
-      type: "object",
-      properties: {
-        intent: {
-          type: "string",
-          enum: [
-            "create_purchase",
-            "list_purchases",
-            "delete_purchase",
-            "check_price_history",
-          ],
-        },
-        data: {
-          type: "object",
-          properties: {
-            supplier_name: { type: "string" },
-            purchase_date: { type: "string" },
-            invoice_no: { type: "string" },
-            items: {
-              type: "array",
-              items: {
-                type: "object",
-                properties: {
-                  product_name: { type: "string" },
-                  pack_quantity: { type: "number" },
-                  units_per_pack: { type: "number" },
-                  pack_price: { type: "number" },
-                  mrp_pack: { type: "number" },
-                  batch_no: { type: "string" },
-                  expiry_date: { type: "string" },
-                  hsn_no: { type: "string" },
-                  pack_type: {
-                    type: "string",
-                    enum: ["Strip", "Bottle", "Tube", "Packet", "Box", "Unit"],
-                  },
-                },
-                required: ["product_name", "pack_quantity", "pack_price"],
-              },
-            },
-            purchase_id: { type: "string" },
-          },
-        },
-      },
-    },
-    chips: { type: "array", items: { type: "string" } },
-  },
-  required: ["type", "content"],
-};
+const { routeIntent } = require("../services/agent/router");
+const purchaseAgent = require("../services/agent/purchaseAgent");
 
-const SYSTEM_INSTRUCTION = `YOU ARE THE PHARMALOGY EXPERT AGENT. 
+const GENERAL_SYSTEM_INSTRUCTION = `YOU ARE THE PHARMALOGY EXPERT AGENT. 
 
 IDENTITY:
 - You are a Pharmacy management assistant developed by **Team pharmacy** to help manage pharmacies efficiently.
 - If asked "Who made you?" or similar, answer: "I am a Pharmacy management assistant developed by team pharmacy to help you manage your pharmacy efficiently."
 
 PHARMACY EXPERTISE:
-- You are a specialist in Medicines, Salts, Dosages, and Side Effects.
-- BUSINESS EXPERT: You also helps with Pharmacy Business Management, profit margins, inventory optimization, and sales strategy.
-- You can discuss Generic vs. Patent medicines, profit-earning strategies in a pharmacy, and how to manage inventory for better growth.
-- Provide detailed, professional, and beautifully formatted information.
-- Use Markdown: ## Headers, **Bold** for medicine names, > Blockquotes for warnings, and | Tables | for comparisons/dosages.
+- You are a specialist in Medicines, Salts, Dosages, Side Effects, and Pharmacy Business Strategy.
+- Provide detailed, professional, and beautifully formatted information using Markdown (Headers, Bold, Blockquotes, Tables).
 
 GUARDRAILS (STRICT):
-- If the user asks anything completely UNRELATED to pharmacy, health, medicines, business operations, or your specific actions, you MUST politely refuse.
-- Refusal Message: "I am designed to help you with your pharmacy needs. Please let me know if you have a question about a medication, purchase, or billing."
-- This does NOT apply to basic greetings ("Hi", "How are you?"), your identity, or pharmacy business/growth strategy questions.
+- If the user asks anything completely UNRELATED to pharmacy, health, medicines, business operations, or your specific actions, politely refuse: "I am designed to help you with your pharmacy needs. Please let me know if you have a question about a medication, purchase, or billing."`;
 
-ACTION ENGINE:
-1. IDENTIFY INTENTS: create_purchase, list_purchases, delete_purchase, check_price_history.
-2. SMART CALCULATIONS:
-   - If user says "₹100 total for 5 packs", calculate pack_price = 20.
-   - Default units_per_pack = 1, pack_type = "Strip", batch_no = "BT-" + random, expiry_date = 1 year from now.
-   - MRP: If user says "MRP 20 per unit" and "10 units per pack", calculate mrp_pack = 200.
-3. ENTITY MAPPING: Handle "Supplier X" by populating supplier_name.
-4. MULTI-ITEM SUPPORT: Support adding multiple products in one go.
+// GET /stats - Fetch real-time pharmacy metrics for the agent sidebar
+router.get("/stats", auth, async (req, res) => {
+  try {
+    const db = mongoose.connection.db;
+    const pharmacyId = req.user.pharmacy_id;
 
-RULES:
-- RETURN ONLY JSON.
-- If data is missing for create_purchase, set type="text" and ask using chips.
-- Mandatory fields for create_purchase: supplier_name, items (product_name, pack_quantity, pack_price).
-- Always include the 'items' array inside 'data' for create_purchase.`;
+    // Start of current month (YYYY-MM-01)
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
+
+    // 1. MTD Purchases Total
+    const mtdPurchasesRes = await db
+      .collection("purchases")
+      .aggregate([
+        {
+          $match: {
+            pharmacy_id: pharmacyId,
+            purchase_date: { $gte: startOfMonth },
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: "$total_amount" },
+          },
+        },
+      ])
+      .toArray();
+    const mtd_purchases = mtdPurchasesRes.length > 0 ? mtdPurchasesRes[0].total : 0;
+
+    // 2. Active Suppliers Count
+    const active_suppliers = await db.collection("suppliers").countDocuments({ pharmacy_id: pharmacyId });
+
+    // 3. Supplier Dues Total
+    const unpaidPurchases = await db
+      .collection("purchases")
+      .find({
+        pharmacy_id: pharmacyId,
+        payment_status: { $ne: "Paid" },
+      })
+      .project({ total_amount: 1, amount_paid: 1 })
+      .toArray();
+
+    let supplier_dues = 0;
+    unpaidPurchases.forEach((p) => {
+      const remaining = (p.total_amount || 0) - (p.amount_paid || 0);
+      if (remaining > 0) supplier_dues += remaining;
+    });
+
+    // 4. Low Stock Alerts Count
+    const low_stock_count = await db.collection("inventory").countDocuments({
+      pharmacy_id: pharmacyId,
+      $expr: {
+        $lte: ["$available_quantity", { $ifNull: ["$shortage_threshold", 10] }],
+      },
+    });
+
+    res.json({
+      mtd_purchases,
+      active_suppliers,
+      supplier_dues,
+      low_stock_count,
+    });
+  } catch (error) {
+    console.error("Agent Stats Error:", error);
+    res.status(500).json({ detail: error.message });
+  }
+});
+
+// POST /mark-recorded - Persist draft purchase recorded status in MongoDB
+router.post("/mark-recorded", auth, async (req, res) => {
+  try {
+    const { conversationId, purchase_id } = req.body;
+    if (!conversationId) {
+      return res.status(400).json({ detail: "conversationId is required" });
+    }
+
+    const db = mongoose.connection.db;
+
+    await db.collection("conversations").updateOne(
+      { id: conversationId, user_id: req.user.id },
+      {
+        $set: {
+          "messages.$[elem].draftState.recorded": true,
+          "messages.$[elem].draftState.purchase_id": purchase_id || null,
+        },
+      },
+      { arrayFilters: [{ "elem.draftState": { $exists: true } }] }
+    );
+
+    res.json({ detail: "Draft marked as recorded in DB" });
+  } catch (error) {
+    console.error("Mark Recorded Error:", error);
+    res.status(500).json({ detail: error.message });
+  }
+});
 
 // GET /conversations - List all conversations for the authenticated user
 router.get("/conversations", auth, async (req, res) => {
@@ -102,7 +127,7 @@ router.get("/conversations", auth, async (req, res) => {
       .collection("conversations")
       .find({ user_id: req.user.id })
       .sort({ updated_at: -1 })
-      .project({ messages: 0 }) // Don't return messages in list view
+      .project({ messages: 0 })
       .toArray();
 
     res.json(conversations);
@@ -147,10 +172,10 @@ router.delete("/conversations/:id", auth, async (req, res) => {
   }
 });
 
-// POST / - Chat with the agent
+// POST / - Chat with the Modular Agent Gateway
 router.post("/", auth, requireSubscription(), async (req, res, next) => {
   try {
-    const { message, conversationId, conversationHistory = [] } = req.body;
+    const { message, conversationId, conversationHistory = [], draftState = null } = req.body;
     if (!message)
       return res.status(400).json({ detail: "Message is required" });
 
@@ -158,7 +183,6 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
     let historyToUse = conversationHistory;
     let currentConversation = null;
 
-    // 1. Manage/Restore Conversation from DB if ID provided
     if (conversationId) {
       currentConversation = await db.collection("conversations").findOne({
         id: conversationId,
@@ -169,50 +193,73 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
       }
     }
 
-    const apiKey = process.env.EMERGENT_LLM_KEY || process.env.GEMINI_API_KEY;
-    const genAI = new GoogleGenerativeAI(apiKey);
+    // AI Gateway & Intent Router
+    const routeResult = await routeIntent(message, historyToUse);
 
-    const model = genAI.getGenerativeModel(
-      {
+    let agentResponse = null;
+
+    if (routeResult.module === "purchase") {
+      agentResponse = await purchaseAgent.process({
+        db,
+        message,
+        history: historyToUse,
+        userContext: req.user,
+        draftState,
+        intent: routeResult.intent,
+        entities: routeResult.entities,
+      });
+    } else {
+      const apiKey = process.env.EMERGENT_LLM_KEY || process.env.GEMINI_API_KEY;
+      const genAI = new GoogleGenerativeAI(apiKey);
+      const model = genAI.getGenerativeModel({
         model: "gemini-2.5-flash",
-        systemInstruction: SYSTEM_INSTRUCTION,
-      },
-      { apiVersion: "v1beta" }
-    );
+        systemInstruction: GENERAL_SYSTEM_INSTRUCTION,
+      });
 
-    // Filter and format history for Gemini (limit to last 15 for efficiency)
-    const recentHistory = historyToUse.slice(-15);
-    const firstUserIndex = recentHistory.findIndex((m) => m.role === "user");
+      const recentHistory = historyToUse.slice(-10);
+      const cleanHistory = recentHistory.map((m) => ({
+        role: m.role === "model" ? "model" : "user",
+        parts: [{ text: typeof m.text === "string" ? m.text : JSON.stringify(m.text) }],
+      }));
 
-    const cleanHistory = (
-      firstUserIndex === -1 ? [] : recentHistory.slice(firstUserIndex)
-    ).map((m) => ({
-      role: m.role === "model" ? "model" : "user",
-      parts: [
-        { text: typeof m.text === "string" ? m.text : JSON.stringify(m.text) },
-      ],
-    }));
+      const chat = model.startChat({ history: cleanHistory });
+      const result = await chat.sendMessage(message);
+      const text = result.response.text();
 
-    const chat = model.startChat({
-      history: cleanHistory,
-      generationConfig: {
-        responseMimeType: "application/json",
-        responseSchema: SCHEMA,
-        temperature: 0.1,
-      },
-    });
+      agentResponse = {
+        module: "general",
+        intent: "general_chat",
+        content: text,
+        draftState: null,
+        action: null,
+        chips: ["How to manage inventory?", "Check price history for Dolo 650", "Create purchase for Crocin"],
+        confidence: 1.0,
+      };
+    }
 
-    const result = await chat.sendMessage(message);
-    const response = await result.response;
-    const jsonResponse = JSON.parse(response.text());
+    // Standardize output payload format
+    const jsonResponse = {
+      type: agentResponse.action ? "action" : "text",
+      content: agentResponse.content,
+      module: agentResponse.module,
+      intent: agentResponse.intent,
+      viewType: agentResponse.viewType || null,
+      purchasesData: agentResponse.purchasesData || null,
+      draftState: agentResponse.draftState,
+      action: agentResponse.action,
+      chips: agentResponse.chips || [],
+    };
 
-    // 2. Save Conversation to DB
+    // Save Conversation to DB
     const userMsg = { role: "user", text: message, timestamp: new Date() };
     const modelMsg = {
       role: "model",
       text: jsonResponse.content,
+      viewType: jsonResponse.viewType || null,
+      purchasesData: jsonResponse.purchasesData || null,
       chips: jsonResponse.chips || [],
       action: jsonResponse.action || null,
+      draftState: jsonResponse.draftState || null,
       timestamp: new Date(),
     };
 
@@ -245,7 +292,7 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
 
     return res.json(jsonResponse);
   } catch (error) {
-    console.error("Agent Error:", error);
+    console.error("Agent Gateway Error:", error);
     res.status(500).json({ detail: error.message });
   }
 });

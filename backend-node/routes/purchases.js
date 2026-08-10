@@ -245,9 +245,30 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
   session.startTransaction();
 
   try {
-    const { supplier_id, supplier_name, invoice_no, purchase_date, items, payment_status, amount_paid, payment_mode } =
+    let { supplier_id, supplier_name, invoice_no, purchase_date, items, payment_status, amount_paid, payment_mode } =
       req.body;
     const db = mongoose.connection.db;
+
+    // Auto-resolve or create supplier in suppliers collection if supplier_id is missing
+    if (!supplier_id && supplier_name) {
+      let matchedSupplier = await db.collection("suppliers").findOne({
+        pharmacy_id: req.user.pharmacy_id,
+        name: { $regex: new RegExp("^" + supplier_name.trim().replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&') + "$", "i") }
+      }, { session });
+
+      if (matchedSupplier) {
+        supplier_id = matchedSupplier.id;
+      } else {
+        supplier_id = uuidv4();
+        await db.collection("suppliers").insertOne({
+          id: supplier_id,
+          pharmacy_id: req.user.pharmacy_id,
+          name: supplier_name.trim(),
+          contact: null,
+          created_at: new Date().toISOString()
+        }, { session });
+      }
+    }
 
     // Validate payment mode against mandatory settings preference
     const userPrefs = await db.collection("user_settings").findOne({ user_id: req.user.id });
@@ -268,7 +289,7 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
     }
 
     // [Issue #11] Idempotency Check
-    if (invoice_no) {
+    if (invoice_no && supplier_id) {
       const existingPurchase = await db.collection("purchases").findOne({
         pharmacy_id: req.user.pharmacy_id,
         supplier_id,
