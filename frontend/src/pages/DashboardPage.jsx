@@ -1,17 +1,10 @@
 import { useState, useEffect } from "react";
 import axios from "axios";
 import { API, useAuth } from "../App";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import {
   IndianRupee,
   TrendingUp,
-  TrendingDown,
   Package,
   Receipt,
   AlertTriangle,
@@ -19,11 +12,13 @@ import {
   Sparkles,
   RefreshCw,
   ArrowUpRight,
-  ArrowDownRight,
   Check,
   Truck,
   Calendar,
   Layers,
+  Zap,
+  ShieldCheck,
+  AlertCircle,
 } from "lucide-react";
 import {
   AlertDialog,
@@ -44,8 +39,8 @@ import {
 import { Label } from "../components/ui/label";
 import { Input } from "../components/ui/input";
 import {
-  LineChart,
-  Line,
+  AreaChart,
+  Area,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -55,74 +50,7 @@ import {
   Bar,
 } from "recharts";
 import { toast } from "sonner";
-import PlanBadge from "../components/PlanBadge";
 import Loader from "../components/Loader";
-
-
-const StatCard = ({
-  title,
-  value,
-  icon: Icon,
-  trend,
-  trendValue,
-  color = "primary",
-}) => {
-  const colorClasses = {
-    primary: "text-primary shadow-primary/5",
-    accent: "text-accent shadow-accent/5",
-    destructive: "text-destructive shadow-destructive/5",
-    yellow: "text-amber-500 shadow-amber-500/5",
-  };
-
-  const bgClasses = {
-    primary: "bg-primary/10 border-primary/20",
-    accent: "bg-accent/10 border-accent/20",
-    destructive: "bg-destructive/10 border-destructive/20",
-    yellow: "bg-amber-500/10 border-amber-500/20",
-  };
-
-  return (
-    <Card className="group hover:border-primary/30 dark:hover:border-primary/20 transition-colors duration-300 relative overflow-hidden bg-card/90 border-border/40 shadow-sm hover:shadow-md rounded-xl">
-      <div className="absolute top-0 left-0 w-full h-[1.5px] bg-gradient-to-r from-transparent via-primary/30 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
-      <CardContent className="p-5 flex items-start justify-between">
-        <div className="space-y-1.5 min-w-0">
-          <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/80">
-            {title}
-          </p>
-          <p className="text-2xl font-black font-mono tracking-tight text-foreground truncate">
-            {value}
-          </p>
-          {trend !== undefined && (
-            <div className="flex items-center gap-1.5 pt-1">
-              <span
-                className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                  trend >= 0
-                    ? "bg-primary/10 text-primary"
-                    : "bg-destructive/10 text-destructive"
-                }`}
-              >
-                {trend >= 0 ? (
-                  <ArrowUpRight className="w-3 h-3" />
-                ) : (
-                  <ArrowDownRight className="w-3 h-3" />
-                )}
-                {Math.abs(trendValue || trend)}%
-              </span>
-              <span className="text-[10px] font-bold text-muted-foreground/60">
-                vs last month
-              </span>
-            </div>
-          )}
-        </div>
-        <div
-          className={`p-3 rounded-2xl border transition-all duration-300 shadow-sm group-hover:scale-105 shrink-0 ${bgClasses[color]}`}
-        >
-          <Icon className={`w-5 h-5 ${colorClasses[color]}`} />
-        </div>
-      </CardContent>
-    </Card>
-  );
-};
 
 export default function DashboardPage() {
   const { pharmacy, user } = useAuth();
@@ -176,9 +104,9 @@ export default function DashboardPage() {
         ]);
 
       setStats(statsRes.data);
-      setSalesTrend(trendRes.data.trend);
-      setTopProducts(productsRes.data.top_products);
-      setAlerts(alertsRes.data);
+      setSalesTrend(trendRes.data.trend || []);
+      setTopProducts(productsRes.data.top_products || []);
+      setAlerts(alertsRes.data || { low_stock_alerts: [], expiry_alerts: [] });
       setDebtSummary(debtRes.data);
       setSupplierDues(supplierRes.data);
     } catch (error) {
@@ -196,13 +124,27 @@ export default function DashboardPage() {
       setAiTips(response.data);
     } catch (error) {
       console.error("AI tips error:", error);
-      toast.error("Failed to load AI tips");
+      toast.error("Failed to load tips");
     } finally {
       setTipsLoading(false);
     }
   };
 
   const formatCurrency = (value) => `₹${(value || 0).toLocaleString("en-IN")}`;
+
+  // Helper function to extract stock count cleanly
+  const getStockCount = (item) => {
+    if (item.quantity !== undefined && item.quantity !== null) return item.quantity;
+    if (item.stock !== undefined && item.stock !== null) return item.stock;
+    if (item.available_stock !== undefined && item.available_stock !== null) return item.available_stock;
+    if (item.current_stock !== undefined && item.current_stock !== null) return item.current_stock;
+    return 0;
+  };
+
+  // Sales Trend peak and daily average calculations for chart summary
+  const peakSales = salesTrend.reduce((max, item) => (item.revenue > max ? item.revenue : max), 0);
+  const totalPeriodSales = salesTrend.reduce((sum, item) => sum + (item.revenue || 0), 0);
+  const avgDailySales = salesTrend.length ? Math.round(totalPeriodSales / salesTrend.length) : 0;
 
   const handleClearDebt = (customerId, customerName) => {
     setClearDebtDialog({ open: true, customerId, customerName });
@@ -258,7 +200,7 @@ export default function DashboardPage() {
         amount: parseFloat(amount),
         notes,
       });
-      toast.success("Partial payment registered successfully");
+      toast.success("Payment registered successfully");
       fetchDashboardData();
       setSupplierPartialPaymentDialog({
         ...supplierPartialPaymentDialog,
@@ -278,7 +220,7 @@ export default function DashboardPage() {
     setClearingDebt(true);
     try {
       await axios.post(`${API}/suppliers/${supplierId}/pay-all`);
-      toast.success("All supplier dues cleared successfully");
+      toast.success("Supplier dues cleared successfully");
       fetchDashboardData();
       setSupplierClearDuesDialog({ ...supplierClearDuesDialog, open: false });
     } catch (error) {
@@ -289,597 +231,730 @@ export default function DashboardPage() {
   };
 
   if (loading) {
-    return <Loader size="lg" text="Loading Workspace Stats..." />;
+    return <Loader size="lg" text="Loading Dashboard..." />;
   }
 
   return (
-    <div className="space-y-6 animate-fade-in" data-testid="dashboard-page">
-      {/* Header Panel */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-border/40 pb-5">
-        <div className="space-y-1">
-          <h1 className="text-2xl font-extrabold tracking-tight text-foreground">
-            Dashboard
-          </h1>
-          <p className="text-xs font-medium text-muted-foreground">
-            Welcome back! Here's what's happening at{" "}
-            <span className="text-primary font-bold">{pharmacy?.name}</span>
-          </p>
+    <div className="space-y-8 pb-12 select-none animate-in fade-in slide-in-from-bottom-2 duration-500 ease-out" data-testid="dashboard-page">
+      
+      {/* Asymmetric Top Hero & Key Metrics Bento Grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        
+        {/* Featured Ultra-Sleek Glass Hero Bento Card (Top Left) */}
+        <div className="lg:col-span-5 relative overflow-hidden rounded-[32px] bg-gradient-to-br from-orange-500 via-orange-600 to-amber-500 p-8 text-white shadow-2xl shadow-orange-500/25 border border-orange-400/40 group hover:-translate-y-1 transition-all duration-300 flex flex-col justify-between min-h-[260px]">
+          {/* Smooth Radial Ambient Glow Overlay */}
+          <div className="absolute top-0 right-0 w-80 h-80 bg-gradient-to-bl from-white/25 via-white/5 to-transparent blur-3xl pointer-events-none" />
+          <div className="absolute bottom-0 left-0 w-64 h-64 bg-black/10 blur-2xl pointer-events-none" />
+
+          <div className="relative z-10 space-y-6">
+            <div className="flex items-center justify-between">
+              <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-white/20 backdrop-blur-md border border-white/30 text-xs font-extrabold uppercase tracking-wider text-white shadow-xs">
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>Pharmacy Overview</span>
+              </div>
+              <Button
+                size="sm"
+                onClick={fetchDashboardData}
+                data-testid="refresh-dashboard-btn"
+                className="h-9 px-3.5 font-bold text-xs bg-white/20 hover:bg-white/30 text-white backdrop-blur-md border border-white/30 rounded-xl transition-transform active:scale-95 shadow-xs"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${loading ? "animate-spin" : ""}`} />
+                Refresh
+              </Button>
+            </div>
+
+            <div className="space-y-1">
+              <p className="text-xs font-extrabold uppercase tracking-wider text-white/85">
+                Today's Sales
+              </p>
+              {loading && !stats ? (
+                <div className="h-12 w-48 bg-white/20 animate-pulse rounded-2xl" />
+              ) : (
+                <h2 className="text-4xl sm:text-5xl font-black font-mono tracking-tight text-white drop-shadow-sm transition-all duration-300">
+                  {formatCurrency(stats?.today?.revenue)}
+                </h2>
+              )}
+              <p className="text-xs font-semibold text-white/90 pt-1">
+                Welcome back, <span className="font-extrabold">{user?.name || "Pharmacist"}</span>! Store total for <span className="font-extrabold">{pharmacy?.name}</span>.
+              </p>
+            </div>
+          </div>
+
+          <div className="relative z-10 pt-4 border-t border-white/20 flex items-center justify-between">
+            <span className="text-xs font-extrabold text-white/90 flex items-center gap-1.5">
+              <IndianRupee className="w-3.5 h-3.5" />
+              Daily Billing Summary
+            </span>
+            <span className="text-[10px] font-mono font-bold bg-white/20 px-2.5 py-0.5 rounded-full border border-white/25">
+              POS ACTIVE
+            </span>
+          </div>
         </div>
-        <Button
-          variant="outline"
-          onClick={fetchDashboardData}
-          data-testid="refresh-dashboard-btn"
-          className="h-10 border-border hover:bg-muted font-bold text-xs uppercase tracking-wide px-4 rounded-xl shrink-0 self-start sm:self-center"
-        >
-          <RefreshCw className="w-3.5 h-3.5 mr-2 text-primary" />
-          Refresh Stats
-        </Button>
-      </div>
 
-      {/* Main Stats Grid */}
-      <div className="dashboard-grid">
-        <StatCard
-          title="Today's Revenue"
-          value={formatCurrency(stats?.today?.revenue)}
-          icon={IndianRupee}
-          color="primary"
-        />
-        <StatCard
-          title="Today's Profit"
-          value={formatCurrency(stats?.today?.profit)}
-          icon={TrendingUp}
-          color="primary"
-        />
-        <StatCard
-          title="Monthly Revenue"
-          value={formatCurrency(stats?.month?.revenue)}
-          icon={IndianRupee}
-          color="accent"
-        />
-        <StatCard
-          title="Stock Value"
-          value={formatCurrency(stats?.inventory?.stock_value)}
-          icon={Package}
-          color="accent"
-        />
-      </div>
-
-      {/* Secondary Stats Row */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <StatCard
-          title="Pending Payments"
-          value={formatCurrency(stats?.pending?.amount)}
-          icon={Clock}
-          color="yellow"
-        />
-        <StatCard
-          title="Low Stock Items"
-          value={alerts.low_stock_alerts?.length || 0}
-          icon={AlertTriangle}
-          color={
-            alerts.low_stock_alerts?.length > 0 ? "destructive" : "primary"
-          }
-        />
-        <StatCard
-          title="Expiring Soon"
-          value={alerts.expiry_alerts?.length || 0}
-          icon={AlertTriangle}
-          color={alerts.expiry_alerts?.length > 0 ? "destructive" : "primary"}
-        />
-      </div>
-
-      {/* Charts Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Sales Trend Chart */}
-        <Card className="bg-card/90 border-border/40 shadow-sm rounded-xl overflow-hidden">
-          <CardHeader className="border-b border-border/40 py-4">
-            <CardTitle className="text-sm font-bold tracking-tight text-foreground flex items-center gap-2">
-              <TrendingUp className="w-4 h-4 text-primary" />
-              Sales Trend (30 Days)
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="p-6">
-            <div className="h-64">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={salesTrend}>
-                  <CartesianGrid
-                    strokeDasharray="3 3"
-                    stroke="rgba(255,255,255,0.03)"
-                    vertical={false}
-                  />
-                  <XAxis
-                    dataKey="date"
-                    stroke="hsl(var(--muted-foreground))"
-                    tick={{ fontSize: 10, fontWeight: "bold" }}
-                    tickLine={false}
-                    axisLine={false}
-                    tickFormatter={(value) => value.slice(5)}
-                  />
-                  <YAxis
-                    stroke="hsl(var(--muted-foreground))"
-                    tick={{ fontSize: 10, fontWeight: "bold" }}
-                    tickLine={false}
-                    axisLine={false}
-                    tickFormatter={(value) => `₹${value / 1000}k`}
-                  />
-                  <Tooltip
-                    content={({ active, payload, label }) => {
-                      if (active && payload && payload.length) {
-                        return (
-                          <div className="bg-card/95 border border-border/50 rounded-xl p-3 shadow-xl">
-                            <p className="text-[9px] font-bold text-muted-foreground/80 mb-1">
-                              {label}
-                            </p>
-                            <p className="text-xs font-black font-mono text-primary">
-                              ₹{payload[0].value.toLocaleString("en-IN")}
-                            </p>
-                          </div>
-                        );
-                      }
-                      return null;
-                    }}
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="revenue"
-                    stroke="hsl(var(--primary))"
-                    strokeWidth={3}
-                    dot={false}
-                    isAnimationActive={false}
-                    activeDot={{
-                      r: 5,
-                      strokeWidth: 0,
-                      fill: "hsl(var(--primary))",
-                    }}
-                  />
-                </LineChart>
-              </ResponsiveContainer>
+        {/* Top Right Key Metrics Bento Grid (Stagger Delay 100ms) */}
+        <div className="lg:col-span-7 grid grid-cols-1 sm:grid-cols-3 gap-6">
+          {/* Today's Profit */}
+          <div className="group relative overflow-hidden rounded-[28px] bg-card/85 dark:bg-card/70 border-2 border-border/80 dark:border-border/60 p-6 backdrop-blur-xl shadow-md hover:shadow-xl hover:border-emerald-500/40 hover:-translate-y-1 transition-all duration-300 flex flex-col justify-between">
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-extrabold uppercase tracking-wider text-muted-foreground">
+                Today's Profit
+              </p>
+              <div className="p-2.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-500 group-hover:scale-110 transition-transform shadow-xs">
+                <TrendingUp className="w-4 h-4" />
+              </div>
             </div>
-          </CardContent>
-        </Card>
-
-        {/* Top Selling Products Chart */}
-        <Card className="bg-card/90 border-border/40 shadow-sm rounded-xl overflow-hidden">
-          <CardHeader className="border-b border-border/40 py-4 flex flex-row items-center justify-between flex-wrap gap-2">
-            <div>
-              <CardTitle className="text-sm font-bold tracking-tight text-foreground flex items-center gap-2">
-                <Layers className="w-4 h-4 text-accent" />
-                Top Selling Products
-              </CardTitle>
+            <div className="space-y-1 py-3">
+              {loading && !stats ? (
+                <div className="h-8 w-28 bg-muted/60 animate-pulse rounded-xl" />
+              ) : (
+                <h3 className="text-2xl sm:text-3xl font-black font-mono tracking-tight text-foreground">
+                  {formatCurrency(stats?.today?.profit)}
+                </h3>
+              )}
+              <p className="text-[11px] font-semibold text-muted-foreground">
+                Calculated net gain
+              </p>
             </div>
-            {/* {user?.subscription_plan && (
-              <PlanBadge plan={user.subscription_plan} />
-            )} */}
-          </CardHeader>
-          <CardContent className="p-6">
-            <div className="h-64">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={topProducts} layout="vertical" barSize={12}>
-                  <CartesianGrid
-                    strokeDasharray="3 3"
-                    stroke="rgba(255,255,255,0.03)"
-                    horizontal={false}
-                  />
-                  <XAxis
-                    type="number"
-                    stroke="hsl(var(--muted-foreground))"
-                    tick={{ fontSize: 10, fontWeight: "bold" }}
-                    tickLine={false}
-                    axisLine={false}
-                    tickFormatter={(value) => `₹${value / 1000}k`}
-                  />
-                  <YAxis
-                    dataKey="product_name"
-                    type="category"
-                    stroke="hsl(var(--muted-foreground))"
-                    tick={{ fontSize: 9, fontWeight: "bold" }}
-                    width={100}
-                    tickLine={false}
-                    axisLine={false}
-                    tickFormatter={(value) =>
-                      value && value.length > 15
-                        ? `${value.slice(0, 13)}...`
-                        : value || ""
+            <div className="pt-2 border-t border-border/50">
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-[10px] font-extrabold uppercase tracking-wider">
+                <ArrowUpRight className="w-3 h-3" />
+                Net Margin
+              </span>
+            </div>
+          </div>
+
+          {/* Monthly Sales */}
+          <div className="group relative overflow-hidden rounded-[28px] bg-card/85 dark:bg-card/70 border-2 border-border/80 dark:border-border/60 p-6 backdrop-blur-xl shadow-md hover:shadow-xl hover:border-amber-500/40 hover:-translate-y-1 transition-all duration-300 flex flex-col justify-between">
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-extrabold uppercase tracking-wider text-muted-foreground">
+                Monthly Sales
+              </p>
+              <div className="p-2.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-500 group-hover:scale-110 transition-transform shadow-xs">
+                <IndianRupee className="w-4 h-4" />
+              </div>
+            </div>
+            <div className="space-y-1 py-3">
+              {loading && !stats ? (
+                <div className="h-8 w-28 bg-muted/60 animate-pulse rounded-xl" />
+              ) : (
+                <h3 className="text-2xl sm:text-3xl font-black font-mono tracking-tight text-foreground">
+                  {formatCurrency(stats?.month?.revenue)}
+                </h3>
+              )}
+              <p className="text-[11px] font-semibold text-muted-foreground">
+                Total 30-day billing
+              </p>
+            </div>
+            <div className="pt-2 border-t border-border/50">
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full border border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400 text-[10px] font-extrabold uppercase tracking-wider">
+                <Zap className="w-3 h-3" />
+                30-Day Total
+              </span>
+            </div>
+          </div>
+
+          {/* Total Stock Value */}
+          <div className="group relative overflow-hidden rounded-[28px] bg-card/85 dark:bg-card/70 border-2 border-border/80 dark:border-border/60 p-6 backdrop-blur-xl shadow-md hover:shadow-xl hover:border-orange-500/40 hover:-translate-y-1 transition-all duration-300 flex flex-col justify-between">
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-extrabold uppercase tracking-wider text-muted-foreground">
+                Total Stock Value
+              </p>
+              <div className="p-2.5 rounded-2xl bg-orange-500/10 border border-orange-500/30 text-orange-500 group-hover:scale-110 transition-transform shadow-xs">
+                <Package className="w-4 h-4" />
+              </div>
+            </div>
+            <div className="space-y-1 py-3">
+              {loading && !stats ? (
+                <div className="h-8 w-32 bg-muted/60 animate-pulse rounded-xl" />
+              ) : (
+                <h3 className="text-2xl sm:text-3xl font-black font-mono tracking-tight text-foreground">
+                  {formatCurrency(stats?.inventory?.stock_value)}
+                </h3>
+              )}
+              <p className="text-[11px] font-semibold text-muted-foreground">
+                Current inventory value
+              </p>
+            </div>
+            <div className="pt-2 border-t border-border/50">
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full border border-orange-500/30 bg-orange-500/10 text-orange-600 dark:text-orange-400 text-[10px] font-extrabold uppercase tracking-wider">
+                <Layers className="w-3 h-3" />
+                Active Assets
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Quick Attention Bar */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        {/* Pending Payments */}
+        <div className="group relative overflow-hidden rounded-[24px] bg-card/85 dark:bg-card/70 border-2 border-border/80 dark:border-border/60 p-6 backdrop-blur-xl shadow-md hover:shadow-lg hover:border-amber-500/40 hover:-translate-y-1 transition-all duration-300 flex items-center justify-between">
+          <div className="space-y-1">
+            <p className="text-xs font-extrabold uppercase tracking-wider text-muted-foreground">
+              Pending Payments
+            </p>
+            {loading && !stats ? (
+              <div className="h-7 w-24 bg-muted/60 animate-pulse rounded-lg" />
+            ) : (
+              <h4 className="text-2xl font-black font-mono text-foreground">
+                {formatCurrency(stats?.pending?.amount)}
+              </h4>
+            )}
+            <p className="text-[11px] font-semibold text-muted-foreground">
+              Uncollected customer dues
+            </p>
+          </div>
+          <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-500 shadow-xs shrink-0">
+            <Clock className="w-5 h-5" />
+          </div>
+        </div>
+
+        {/* Low Stock Items */}
+        <div className="group relative overflow-hidden rounded-[24px] bg-card/85 dark:bg-card/70 border-2 border-border/80 dark:border-border/60 p-6 backdrop-blur-xl shadow-md hover:shadow-lg hover:border-rose-500/40 hover:-translate-y-1 transition-all duration-300 flex items-center justify-between">
+          <div className="space-y-1">
+            <p className="text-xs font-extrabold uppercase tracking-wider text-muted-foreground">
+              Low Stock Items
+            </p>
+            {loading && !alerts ? (
+              <div className="h-7 w-16 bg-muted/60 animate-pulse rounded-lg" />
+            ) : (
+              <h4 className="text-2xl font-black font-mono text-foreground">
+                {alerts.low_stock_alerts?.length || 0}
+              </h4>
+            )}
+            <p className="text-[11px] font-semibold text-muted-foreground">
+              Products near shortage limit
+            </p>
+          </div>
+          <div className="p-3 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-500 shadow-xs shrink-0">
+            <AlertTriangle className="w-5 h-5" />
+          </div>
+        </div>
+
+        {/* Expiring Soon */}
+        <div className="group relative overflow-hidden rounded-[24px] bg-card/85 dark:bg-card/70 border-2 border-border/80 dark:border-border/60 p-6 backdrop-blur-xl shadow-md hover:shadow-lg hover:border-rose-500/40 hover:-translate-y-1 transition-all duration-300 flex items-center justify-between">
+          <div className="space-y-1">
+            <p className="text-xs font-extrabold uppercase tracking-wider text-muted-foreground">
+              Expiring Soon
+            </p>
+            {loading && !alerts ? (
+              <div className="h-7 w-16 bg-muted/60 animate-pulse rounded-lg" />
+            ) : (
+              <h4 className="text-2xl font-black font-mono text-foreground">
+                {alerts.expiry_alerts?.length || 0}
+              </h4>
+            )}
+            <p className="text-[11px] font-semibold text-muted-foreground">
+              Batches expiring in 90 days
+            </p>
+          </div>
+          <div className="p-3 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-500 shadow-xs shrink-0">
+            <Calendar className="w-5 h-5" />
+          </div>
+        </div>
+      </div>
+
+      {/* Upgraded Analytics Charts Section */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        {/* Sales Trend AreaChart */}
+        <div className="lg:col-span-7 rounded-[28px] bg-card/85 dark:bg-card/70 border-2 border-border/80 dark:border-border/60 p-6 sm:p-8 backdrop-blur-xl shadow-lg space-y-6 relative overflow-hidden">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-border/60 pb-4 gap-4">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 rounded-2xl bg-orange-500/10 border border-orange-500/30 text-orange-500 shadow-xs">
+                <TrendingUp className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-extrabold text-foreground">Sales Trend (30 Days)</h3>
+                <p className="text-xs font-semibold text-muted-foreground">Daily sales history trajectory</p>
+              </div>
+            </div>
+
+            {/* Quick Chart Summary Pills */}
+            <div className="flex items-center gap-3 self-start sm:self-center font-mono">
+              <div className="px-3 py-1 rounded-xl bg-orange-500/10 border border-orange-500/20 text-right">
+                <span className="text-[9px] uppercase font-bold text-muted-foreground block leading-tight">Peak Single Day</span>
+                <span className="text-xs font-black text-orange-500">{formatCurrency(peakSales)}</span>
+              </div>
+              <div className="px-3 py-1 rounded-xl bg-muted/60 border border-border/60 text-right">
+                <span className="text-[9px] uppercase font-bold text-muted-foreground block leading-tight">Daily Avg</span>
+                <span className="text-xs font-black text-foreground">{formatCurrency(avgDailySales)}</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="h-72 w-full pt-2">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={salesTrend}>
+                <defs>
+                  <linearGradient id="colorSalesGradient" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#f97316" stopOpacity={0.45} />
+                    <stop offset="95%" stopColor="#f97316" stopOpacity={0.0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="4 4" stroke="rgba(249,115,22,0.12)" vertical={false} />
+                <XAxis
+                  dataKey="date"
+                  stroke="hsl(var(--muted-foreground))"
+                  tick={{ fontSize: 10, fontWeight: "bold" }}
+                  tickLine={false}
+                  axisLine={false}
+                  tickFormatter={(val) => val ? val.slice(5) : ""}
+                />
+                <YAxis
+                  stroke="hsl(var(--muted-foreground))"
+                  tick={{ fontSize: 10, fontWeight: "bold" }}
+                  tickLine={false}
+                  axisLine={false}
+                  tickFormatter={(val) => `₹${val / 1000}k`}
+                />
+                <Tooltip
+                  content={({ active, payload, label }) => {
+                    if (active && payload && payload.length) {
+                      return (
+                        <div className="bg-card/95 border-2 border-orange-500/40 rounded-2xl p-3.5 shadow-2xl backdrop-blur-xl space-y-1">
+                          <p className="text-[10px] font-extrabold text-muted-foreground uppercase tracking-wider">
+                            Date: {label}
+                          </p>
+                          <p className="text-base font-black font-mono text-orange-500">
+                            ₹{payload[0].value.toLocaleString("en-IN")}
+                          </p>
+                        </div>
+                      );
                     }
-                  />
-                  <Tooltip
-                    content={({ active, payload }) => {
-                      if (active && payload && payload.length) {
-                        return (
-                          <div className="bg-card/95 border border-border/50 rounded-xl p-3 shadow-xl">
-                            <p className="text-[9px] font-bold text-muted-foreground/80 mb-0.5 truncate max-w-[150px]">
-                              {payload[0].payload.product_name}
-                            </p>
-                            <p className="text-xs font-black font-mono text-accent">
-                              ₹{payload[0].value.toLocaleString("en-IN")}
-                            </p>
-                          </div>
-                        );
-                      }
-                      return null;
-                    }}
-                  />
-                  <Bar
-                    dataKey="revenue"
-                    fill="hsl(var(--accent))"
-                    radius={[0, 4, 4, 0]}
-                    isAnimationActive={false}
-                  />
-                </BarChart>
-              </ResponsiveContainer>
+                    return null;
+                  }}
+                />
+                <Area
+                  type="monotone"
+                  dataKey="revenue"
+                  stroke="#f97316"
+                  strokeWidth={3.5}
+                  fillOpacity={1}
+                  fill="url(#colorSalesGradient)"
+                  activeDot={{
+                    r: 6,
+                    stroke: "#ffffff",
+                    strokeWidth: 3,
+                    fill: "#f97316",
+                  }}
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* Top Selling Products Recharts BarChart */}
+        <div className="lg:col-span-5 rounded-[28px] bg-card/85 dark:bg-card/70 border-2 border-border/80 dark:border-border/60 p-6 sm:p-8 backdrop-blur-xl shadow-lg space-y-6 relative overflow-hidden">
+          <div className="flex items-center justify-between border-b border-border/60 pb-4">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-500 shadow-xs">
+                <Layers className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-extrabold text-foreground">Top Selling Products</h3>
+                <p className="text-xs font-semibold text-muted-foreground">Ranked by revenue volume</p>
+              </div>
             </div>
-          </CardContent>
-        </Card>
+          </div>
+
+          <div className="h-72 w-full pt-2">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={topProducts} layout="vertical" barSize={18}>
+                <defs>
+                  <linearGradient id="topProductsGradient" x1="0" y1="0" x2="1" y2="0">
+                    <stop offset="0%" stopColor="#f97316" />
+                    <stop offset="100%" stopColor="#f59e0b" />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="4 4" stroke="rgba(249,115,22,0.12)" horizontal={false} />
+                <XAxis
+                  type="number"
+                  stroke="hsl(var(--muted-foreground))"
+                  tick={{ fontSize: 10, fontWeight: "bold" }}
+                  tickLine={false}
+                  axisLine={false}
+                  tickFormatter={(val) => `₹${val / 1000}k`}
+                />
+                <YAxis
+                  dataKey="product_name"
+                  type="category"
+                  stroke="hsl(var(--muted-foreground))"
+                  tick={{ fontSize: 10, fontWeight: "bold" }}
+                  width={120}
+                  tickLine={false}
+                  axisLine={false}
+                  tickFormatter={(val) =>
+                    val && val.length > 15 ? `${val.slice(0, 13)}...` : val || ""
+                  }
+                />
+                <Tooltip
+                  content={({ active, payload }) => {
+                    if (active && payload && payload.length) {
+                      return (
+                        <div className="bg-card/95 border-2 border-amber-500/40 rounded-2xl p-3 shadow-2xl backdrop-blur-xl space-y-1">
+                          <p className="text-[10px] font-extrabold text-muted-foreground uppercase tracking-wider truncate max-w-[180px]">
+                            {payload[0].payload.product_name}
+                          </p>
+                          <p className="text-sm font-black font-mono text-amber-500">
+                            ₹{payload[0].value.toLocaleString("en-IN")}
+                          </p>
+                        </div>
+                      );
+                    }
+                    return null;
+                  }}
+                />
+                <Bar
+                  dataKey="revenue"
+                  fill="url(#topProductsGradient)"
+                  radius={[0, 6, 6, 0]}
+                />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
       </div>
 
-      {/* Alerts and AI Insights Panel Row */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Inventory Alerts Card */}
-        <Card className="bg-card/90 border-border/40 shadow-sm rounded-xl overflow-hidden">
-          <CardHeader className="border-b border-border/40 py-4">
-            <CardTitle className="text-sm font-bold tracking-tight text-foreground flex items-center gap-2">
-              <AlertTriangle className="w-4 h-4 text-primary" />
-              Inventory Alerts
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="p-6 space-y-4">
-            {/* Low Stock Alerts */}
+      {/* Stock Warnings & Smart Business Tips */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        
+        {/* Stock Warnings Component with Clean Number Badges */}
+        <div className="lg:col-span-6 rounded-[28px] bg-card/85 dark:bg-card/70 border-2 border-border/80 dark:border-border/60 p-6 sm:p-8 backdrop-blur-xl shadow-lg space-y-6">
+          <div className="flex items-center justify-between border-b border-border/60 pb-4">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-500 shadow-xs">
+                <AlertCircle className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-extrabold text-foreground">Stock Warnings</h3>
+                <p className="text-xs font-semibold text-muted-foreground">Reorder thresholds and batch expiries</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-5">
+            {/* Low Stock Items Section */}
             {alerts.low_stock_alerts?.length > 0 && (
-              <div className="p-4 rounded-xl border border-yellow-500/30 bg-yellow-500/[0.04] space-y-2">
-                <h4 className="font-bold text-yellow-500 text-xs uppercase tracking-wider flex items-center gap-2">
-                  <AlertTriangle className="w-3.5 h-3.5" />
-                  Low Stock ({alerts.low_stock_alerts.length})
-                </h4>
-                <ul className="space-y-1.5 text-xs">
-                  {alerts.low_stock_alerts.slice(0, 5).map((item, i) => (
-                    <li
-                      key={i}
-                      className="flex justify-between items-center py-0.5 border-b border-yellow-500/10 last:border-0"
-                    >
-                      <span className="font-medium text-foreground">
-                        {item.product_name}
-                      </span>
-                      <span className="font-mono font-bold text-yellow-500 bg-yellow-500/10 px-1.5 py-0.5 rounded text-[10px]">
-                        {item.quantity} units left
-                      </span>
-                    </li>
-                  ))}
-                </ul>
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <h4 className="font-extrabold text-amber-600 dark:text-amber-400 text-xs uppercase tracking-wider flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4 text-amber-500" />
+                    Low Stock ({alerts.low_stock_alerts.length})
+                  </h4>
+                </div>
+                <div className="space-y-2">
+                  {alerts.low_stock_alerts.slice(0, 4).map((item, i) => {
+                    const count = getStockCount(item);
+                    return (
+                      <div
+                        key={i}
+                        className="flex justify-between items-center p-3 rounded-2xl bg-background/80 border-2 border-amber-500/25 shadow-2xs"
+                      >
+                        <span className="font-bold text-xs text-foreground truncate max-w-[220px]">
+                          {item.product_name}
+                        </span>
+                        <span className="font-mono font-black text-amber-600 dark:text-amber-400 bg-amber-500/15 border border-amber-500/30 px-3 py-1 rounded-xl text-xs shrink-0">
+                          {count} units left
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             )}
 
-            {/* Expiry Alerts */}
+            {/* Expiring Batches Section */}
             {alerts.expiry_alerts?.length > 0 && (
-              <div className="p-4 rounded-xl border border-destructive/30 bg-destructive/[0.04] space-y-2">
-                <h4 className="font-bold text-destructive text-xs uppercase tracking-wider flex items-center gap-2">
-                  <Clock className="w-3.5 h-3.5" />
-                  Expiring Soon ({alerts.expiry_alerts.length})
+              <div className="space-y-3 pt-2">
+                <h4 className="font-extrabold text-rose-600 dark:text-rose-400 text-xs uppercase tracking-wider flex items-center gap-2">
+                  <Clock className="w-4 h-4 text-rose-500" />
+                  Expiring Batches ({alerts.expiry_alerts.length})
                 </h4>
-                <ul className="space-y-1.5 text-xs">
-                  {alerts.expiry_alerts.slice(0, 5).map((item, i) => (
-                    <li
+                <div className="space-y-2">
+                  {alerts.expiry_alerts.slice(0, 4).map((item, i) => (
+                    <div
                       key={i}
-                      className="flex justify-between items-center py-0.5 border-b border-destructive/10 last:border-0"
+                      className="flex justify-between items-center p-3 rounded-2xl bg-background/80 border-2 border-rose-500/25 shadow-2xs"
                     >
-                      <div className="flex items-center gap-1.5">
-                        <span className="font-medium text-foreground">
+                      <div className="space-y-0.5">
+                        <p className="font-bold text-xs text-foreground truncate max-w-[180px]">
                           {item.product_name}
-                        </span>
-                        <span className="font-mono text-[9px] text-muted-foreground/70 uppercase">
-                          ({item.batch_no})
+                        </p>
+                        <span className="font-mono text-[10px] text-muted-foreground uppercase font-semibold block">
+                          Batch: {item.batch_no}
                         </span>
                       </div>
-                      <span className="font-mono font-bold text-destructive flex items-center gap-1">
-                        <Calendar className="w-3 h-3" />
+                      <span className="font-mono font-black text-rose-500 bg-rose-500/10 border border-rose-500/20 px-2.5 py-1 rounded-xl text-[11px] flex items-center gap-1.5 shrink-0">
+                        <Calendar className="w-3.5 h-3.5" />
                         {item.expiry_date}
                       </span>
-                    </li>
+                    </div>
                   ))}
-                </ul>
+                </div>
               </div>
             )}
 
             {alerts.low_stock_alerts?.length === 0 &&
               alerts.expiry_alerts?.length === 0 && (
-                <div className="p-4 rounded-xl border border-primary/20 bg-primary/[0.04]">
-                  <p className="text-primary text-xs font-bold flex items-center gap-2">
-                    <Check className="w-4 h-4 text-primary" />
-                    All stock thresholds healthy. No alerts active.
-                  </p>
+                <div className="p-6 rounded-2xl border-2 border-emerald-500/30 bg-emerald-500/5 flex items-center gap-3">
+                  <ShieldCheck className="w-6 h-6 text-emerald-500 shrink-0" />
+                  <div>
+                    <p className="text-sm font-extrabold text-foreground">
+                      All Inventory Metrics Healthy
+                    </p>
+                    <p className="text-xs text-muted-foreground font-semibold">
+                      No stock shortages or expiring batches flagged.
+                    </p>
+                  </div>
                 </div>
               )}
-          </CardContent>
-        </Card>
+          </div>
+        </div>
 
-        {/* AI Business Insights Card */}
-        <Card className="bg-card/90 border-border/40 shadow-sm rounded-xl overflow-hidden">
-          <CardHeader className="border-b border-border/40 py-4 flex flex-row items-center justify-between">
-            <CardTitle className="text-sm font-bold tracking-tight text-foreground flex items-center gap-2">
-              <Sparkles className="w-4 h-4 text-accent" />
-              AI Business Insights
-            </CardTitle>
+        {/* Smart Business Tips Component */}
+        <div className="lg:col-span-6 rounded-[28px] bg-card/85 dark:bg-card/70 border-2 border-border/80 dark:border-border/60 p-6 sm:p-8 backdrop-blur-xl shadow-lg flex flex-col justify-between space-y-6">
+          <div className="flex items-center justify-between border-b border-border/60 pb-4">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 rounded-2xl bg-orange-500/10 border border-orange-500/30 text-orange-500 shadow-xs">
+                <Sparkles className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-extrabold text-foreground">Smart Business Tips</h3>
+                <p className="text-xs font-semibold text-muted-foreground">Actionable advice to improve sales</p>
+              </div>
+            </div>
+
             <Button
-              variant="ghost"
+              variant="outline"
               size="sm"
               onClick={fetchAiTips}
               disabled={tipsLoading}
               data-testid="get-ai-tips-btn"
-              className="h-8 border border-border/40 hover:bg-muted font-bold text-[10px] uppercase px-3 rounded-lg text-muted-foreground hover:text-foreground"
+              className="h-9 px-4 font-bold text-xs border-orange-500/30 text-orange-600 dark:text-orange-400 hover:bg-orange-500/10 rounded-xl"
             >
               {tipsLoading ? (
-                <RefreshCw className="w-3 h-3 animate-spin text-accent" />
+                <RefreshCw className="w-4 h-4 animate-spin text-orange-500" />
               ) : (
-                "Get Analysis"
+                <span className="flex items-center gap-1.5">
+                  <Zap className="w-3.5 h-3.5" />
+                  Get Smart Tips
+                </span>
               )}
             </Button>
-          </CardHeader>
-          <CardContent className="p-6">
+          </div>
+
+          <div className="flex-1 flex flex-col justify-center">
             {aiTips ? (
-              <div className="prose prose-invert prose-xs max-w-none">
-                <div className="whitespace-pre-wrap text-muted-foreground text-xs leading-relaxed font-medium bg-muted/20 p-4 border border-border/30 rounded-xl">
-                  {aiTips.tips}
+              <div className="space-y-3">
+                <div className="text-foreground/90 text-xs sm:text-sm leading-relaxed font-semibold bg-background/80 p-5 border-2 border-orange-500/25 rounded-2xl shadow-inner space-y-3">
+                  {aiTips.tips.split('\n').filter(t => t.trim()).map((tip, idx) => (
+                    <div key={idx} className="flex items-start gap-2.5">
+                      <span className="w-5 h-5 rounded-lg bg-orange-500/15 text-orange-500 font-extrabold text-xs flex items-center justify-center shrink-0 mt-0.5">
+                        {idx + 1}
+                      </span>
+                      <p className="text-foreground font-semibold">{tip.replace(/^\d+\.\s*/, '')}</p>
+                    </div>
+                  ))}
                 </div>
-                <p className="text-[9px] text-muted-foreground/45 mt-3 font-semibold text-right">
+                <p className="text-[10px] text-muted-foreground font-bold text-right">
                   Generated: {new Date(aiTips.generated_at).toLocaleString()}
                 </p>
               </div>
             ) : (
-              <div className="text-center py-8">
-                <div className="w-10 h-10 rounded-full bg-accent/10 flex items-center justify-center mx-auto mb-3 shadow shadow-accent/5">
-                  <Sparkles className="w-5 h-5 text-accent animate-pulse" />
+              <div className="text-center py-10 space-y-3">
+                <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-orange-500/15 to-amber-500/15 border-2 border-orange-500/30 flex items-center justify-center mx-auto shadow-md shadow-orange-500/10">
+                  <Sparkles className="w-7 h-7 text-orange-500 animate-pulse" />
                 </div>
-                <p className="text-xs font-bold text-foreground">
-                  Awaiting Input Data
-                </p>
-                <p className="text-[10px] text-muted-foreground/60 max-w-[240px] mx-auto mt-1 leading-relaxed">
-                  Trigger analysis to generate custom reports and stock
-                  optimizations.
-                </p>
+                <div>
+                  <h4 className="text-sm font-extrabold text-foreground">
+                    Get Customized Business Tips
+                  </h4>
+                  <p className="text-xs text-muted-foreground font-semibold max-w-xs mx-auto mt-1">
+                    Click "Get Smart Tips" above to load stock and sales suggestions.
+                  </p>
+                </div>
               </div>
             )}
-          </CardContent>
-        </Card>
+          </div>
+        </div>
       </div>
 
-      {/* Debt summary Ledger Card */}
+      {/* Customer Dues Card */}
       {debtSummary && debtSummary.total_debt > 0 && (
-        <Card className="bg-card/90 border-border/40 shadow-sm rounded-xl overflow-hidden">
-          <CardHeader className="border-b border-border/40 py-4 bg-muted/20">
-            <CardTitle className="text-sm font-bold tracking-tight text-foreground flex items-center gap-2">
-              <Receipt className="w-4 h-4 text-amber-500" />
-              Receivables Ledger (Customers)
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="p-0">
-            <div className="grid grid-cols-1 sm:grid-cols-4 divide-y sm:divide-y-0 sm:divide-x divide-border/40 border-b border-border/40 bg-muted/[0.05]">
-              <div className="p-5 bg-amber-500/[0.02]">
-                <p className="text-[10px] text-amber-500 font-bold uppercase tracking-wider mb-1">
-                  Total Outstanding
-                </p>
-                <p className="text-xl font-bold font-mono text-amber-500">
-                  {formatCurrency(debtSummary.total_debt)}
-                </p>
+        <div className="rounded-[28px] bg-card/85 dark:bg-card/70 border-2 border-border/80 dark:border-border/60 p-6 sm:p-8 backdrop-blur-xl shadow-lg space-y-6">
+          <div className="flex items-center justify-between border-b border-border/60 pb-4">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-500 shadow-xs">
+                <Receipt className="w-5 h-5" />
               </div>
-              <div className="p-5 bg-destructive/[0.02]">
-                <p className="text-[10px] text-destructive font-bold uppercase tracking-wider mb-1">
-                  Overdue Amount
-                </p>
-                <p className="text-xl font-bold font-mono text-destructive">
-                  {formatCurrency(debtSummary.overdue_amount)}
-                </p>
-              </div>
-              <div className="p-5">
-                <p className="text-[10px] text-muted-foreground/80 font-bold uppercase tracking-wider mb-1">
-                  Unpaid Invoices
-                </p>
-                <p className="text-xl font-bold font-mono text-foreground">
-                  {debtSummary.total_unpaid_bills}
-                </p>
-              </div>
-              <div className="p-5">
-                <p className="text-[10px] text-muted-foreground/80 font-bold uppercase tracking-wider mb-1">
-                  Overdue Count
-                </p>
-                <p className="text-xl font-bold font-mono text-destructive/80">
-                  {debtSummary.overdue_count}
-                </p>
+              <div>
+                <h3 className="text-base font-extrabold text-foreground">Customer Dues</h3>
+                <p className="text-xs font-semibold text-muted-foreground">Uncollected customer balances and bills</p>
               </div>
             </div>
+          </div>
 
-            {debtSummary.top_debtors?.length > 0 && (
-              <div className="p-6 space-y-4">
-                <h4 className="text-[10px] font-bold text-muted-foreground/85 uppercase tracking-widest">
-                  Top Outstanding Debts
-                </h4>
-                <div className="space-y-2.5">
-                  {debtSummary.top_debtors.map((debtor, i) => (
-                    <div
-                      key={i}
-                      className="flex items-center justify-between p-3.5 rounded-xl bg-card/25 border border-border/40 hover:border-primary/20 transition-all group shadow-sm hover:shadow-black/5"
-                    >
-                      <div className="flex items-center gap-3 min-w-0">
-                        <div className="w-9 h-9 rounded-full bg-primary/10 text-primary border border-primary/25 flex items-center justify-center font-extrabold text-xs shadow-sm shrink-0">
-                          {debtor.name.charAt(0).toUpperCase()}
-                        </div>
-                        <div className="min-w-0">
-                          <p className="font-bold text-xs text-foreground truncate">
-                            {debtor.name}
-                          </p>
-                          <p className="text-[10px] text-muted-foreground font-semibold">
-                            {debtor.bills_count} unpaid bills
-                          </p>
-                        </div>
+          <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 p-4 rounded-2xl bg-background/80 border-2 border-border/60">
+            <div className="p-3">
+              <p className="text-[10px] text-amber-500 font-extrabold uppercase tracking-wider">Total Outstanding</p>
+              <p className="text-2xl font-black font-mono text-amber-500 mt-1">{formatCurrency(debtSummary.total_debt)}</p>
+            </div>
+            <div className="p-3">
+              <p className="text-[10px] text-rose-500 font-extrabold uppercase tracking-wider">Overdue Amount</p>
+              <p className="text-2xl font-black font-mono text-rose-500 mt-1">{formatCurrency(debtSummary.overdue_amount)}</p>
+            </div>
+            <div className="p-3">
+              <p className="text-[10px] text-muted-foreground font-extrabold uppercase tracking-wider">Unpaid Bills</p>
+              <p className="text-2xl font-black font-mono text-foreground mt-1">{debtSummary.total_unpaid_bills}</p>
+            </div>
+            <div className="p-3">
+              <p className="text-[10px] text-rose-500/80 font-extrabold uppercase tracking-wider">Overdue Count</p>
+              <p className="text-2xl font-black font-mono text-rose-500 mt-1">{debtSummary.overdue_count}</p>
+            </div>
+          </div>
+
+          {debtSummary.top_debtors?.length > 0 && (
+            <div className="space-y-3 pt-2">
+              <h4 className="text-xs font-extrabold text-muted-foreground uppercase tracking-wider">
+                Customers with Pending Dues
+              </h4>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {debtSummary.top_debtors.map((debtor, i) => (
+                  <div
+                    key={i}
+                    className="flex items-center justify-between p-4 rounded-2xl bg-background/80 border-2 border-border/60 hover:border-orange-500/40 transition-all shadow-xs"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-orange-500/15 border border-orange-500/30 text-orange-600 dark:text-orange-400 font-black text-sm flex items-center justify-center shadow-xs shrink-0">
+                        {debtor.name.charAt(0).toUpperCase()}
                       </div>
+                      <div>
+                        <p className="font-extrabold text-sm text-foreground">{debtor.name}</p>
+                        <p className="text-xs font-semibold text-muted-foreground">{debtor.bills_count} unpaid bills</p>
+                      </div>
+                    </div>
 
-                      <div className="flex items-center gap-4 shrink-0">
-                        <div className="text-right">
-                          <p className="font-mono font-bold text-xs text-amber-500">
-                            {formatCurrency(debtor.total_debt)}
-                          </p>
-                          <p className="text-[8px] text-muted-foreground/60 uppercase font-bold tracking-wider">
-                            Balance
-                          </p>
-                        </div>
+                    <div className="flex items-center gap-3">
+                      <span className="font-mono font-black text-sm text-amber-500">{formatCurrency(debtor.total_debt)}</span>
+                      <Button
+                        size="sm"
+                        className="h-9 px-3.5 font-bold text-xs bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl shadow-xs border-none"
+                        onClick={() => handleClearDebt(debtor.id, debtor.name)}
+                      >
+                        <Check className="w-4 h-4 mr-1 stroke-[3]" />
+                        Settle
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
+      {/* Supplier Dues Card */}
+      {supplierDues && supplierDues.total_due > 0 && (
+        <div className="rounded-[28px] bg-card/85 dark:bg-card/70 border-2 border-border/80 dark:border-border/60 p-6 sm:p-8 backdrop-blur-xl shadow-lg space-y-6">
+          <div className="flex items-center justify-between border-b border-border/60 pb-4">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 rounded-2xl bg-orange-500/10 border border-orange-500/30 text-orange-500 shadow-xs">
+                <Truck className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-extrabold text-foreground">Supplier Dues</h3>
+                <p className="text-xs font-semibold text-muted-foreground">Pending supplier bills and payments</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 p-4 rounded-2xl bg-background/80 border-2 border-border/60">
+            <div className="p-3">
+              <p className="text-[10px] text-orange-500 font-extrabold uppercase tracking-wider">Total Outstanding</p>
+              <p className="text-2xl font-black font-mono text-orange-500 mt-1">{formatCurrency(supplierDues.total_due)}</p>
+            </div>
+            <div className="p-3">
+              <p className="text-[10px] text-rose-500 font-extrabold uppercase tracking-wider">Overdue Dues</p>
+              <p className="text-2xl font-black font-mono text-rose-500 mt-1">{formatCurrency(supplierDues.overdue_due)}</p>
+            </div>
+            <div className="p-3">
+              <p className="text-[10px] text-muted-foreground font-extrabold uppercase tracking-wider">Unpaid Bills</p>
+              <p className="text-2xl font-black font-mono text-foreground mt-1">{supplierDues.unpaid_purchases_count}</p>
+            </div>
+            <div className="p-3">
+              <p className="text-[10px] text-rose-500/80 font-extrabold uppercase tracking-wider">Overdue Count</p>
+              <p className="text-2xl font-black font-mono text-rose-500 mt-1">{supplierDues.overdue_count}</p>
+            </div>
+          </div>
+
+          {supplierDues.top_suppliers?.length > 0 && (
+            <div className="space-y-3 pt-2">
+              <h4 className="text-xs font-extrabold text-muted-foreground uppercase tracking-wider">
+                Suppliers with Pending Bills
+              </h4>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {supplierDues.top_suppliers.map((supplier, i) => (
+                  <div
+                    key={i}
+                    className="flex items-center justify-between p-4 rounded-2xl bg-background/80 border-2 border-border/60 hover:border-orange-500/40 transition-all shadow-xs"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-orange-500/15 border border-orange-500/30 text-orange-600 dark:text-orange-400 font-black text-sm flex items-center justify-center shadow-xs shrink-0">
+                        <Truck className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <p className="font-extrabold text-sm text-foreground">{supplier.name}</p>
+                        <p className="text-xs font-semibold text-muted-foreground">{supplier.purchase_count} unpaid purchases</p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                      <span className="font-mono font-black text-sm text-orange-500">{formatCurrency(supplier.total_debt)}</span>
+                      <div className="flex items-center gap-1.5">
                         <Button
                           size="sm"
                           variant="outline"
-                          className="w-8 h-8 p-0 rounded-lg border-primary/20 text-primary hover:bg-primary hover:text-primary-foreground group-hover:border-primary transition-all duration-300"
-                          onClick={() =>
-                            handleClearDebt(debtor.id, debtor.name)
-                          }
-                          title="Mark Invoice as Settled"
+                          className="h-9 px-3 font-bold text-xs border-border/80 hover:bg-orange-500/10 hover:text-orange-500 rounded-xl"
+                          onClick={() => handleSupplierPartialPayment(supplier.id, supplier.name)}
                         >
-                          <Check className="w-4 h-4 stroke-[3]" />
+                          Pay Part
+                        </Button>
+                        <Button
+                          size="sm"
+                          className="h-9 px-3 font-bold text-xs bg-orange-500 hover:bg-orange-600 text-white rounded-xl shadow-xs border-none"
+                          onClick={() => handleSupplierClearDues(supplier.id, supplier.name)}
+                        >
+                          Fully Settled
                         </Button>
                       </div>
                     </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Supplier payables ledger card */}
-      {supplierDues && supplierDues.total_due > 0 && (
-        <Card className="bg-card/90 border-border/40 shadow-sm rounded-xl overflow-hidden">
-          <CardHeader className="border-b border-border/40 py-4 bg-muted/20">
-            <CardTitle className="text-sm font-bold tracking-tight text-foreground flex items-center gap-2">
-              <Truck className="w-4 h-4 text-primary" />
-              Payables Ledger (Suppliers)
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="p-0">
-            <div className="grid grid-cols-1 sm:grid-cols-4 divide-y sm:divide-y-0 sm:divide-x divide-border/40 border-b border-border/40 bg-muted/[0.05]">
-              <div className="p-5 bg-primary/[0.02]">
-                <p className="text-[10px] text-primary font-bold uppercase tracking-wider mb-1">
-                  Total Outstanding
-                </p>
-                <p className="text-xl font-bold font-mono text-primary">
-                  {formatCurrency(supplierDues.total_due)}
-                </p>
-              </div>
-              <div className="p-5 bg-destructive/[0.02]">
-                <p className="text-[10px] text-destructive font-bold uppercase tracking-wider mb-1">
-                  Overdue Dues
-                </p>
-                <p className="text-xl font-bold font-mono text-destructive">
-                  {formatCurrency(supplierDues.overdue_due)}
-                </p>
-              </div>
-              <div className="p-5">
-                <p className="text-[10px] text-muted-foreground/80 font-bold uppercase tracking-wider mb-1">
-                  Unpaid Invoices
-                </p>
-                <p className="text-xl font-bold font-mono text-foreground">
-                  {supplierDues.unpaid_purchases_count}
-                </p>
-              </div>
-              <div className="p-5">
-                <p className="text-[10px] text-muted-foreground/80 font-bold uppercase tracking-wider mb-1">
-                  Overdue Count
-                </p>
-                <p className="text-xl font-bold font-mono text-destructive/80">
-                  {supplierDues.overdue_count}
-                </p>
+                  </div>
+                ))}
               </div>
             </div>
-
-            {supplierDues.top_suppliers?.length > 0 && (
-              <div className="p-6 space-y-4">
-                <h4 className="text-[10px] font-bold text-muted-foreground/85 uppercase tracking-widest">
-                  Top Pending Supplier Invoices
-                </h4>
-                <div className="space-y-2.5">
-                  {supplierDues.top_suppliers.map((supplier, i) => (
-                    <div
-                      key={i}
-                      className="flex items-center justify-between p-3.5 rounded-xl bg-card/25 border border-border/40 hover:border-primary/20 transition-all group shadow-sm hover:shadow-black/5"
-                    >
-                      <div className="flex items-center gap-3 min-w-0">
-                        <div className="w-9 h-9 rounded-full bg-accent/10 text-accent border border-accent/25 flex items-center justify-center shadow-sm shrink-0">
-                          <Truck className="w-4 h-4" />
-                        </div>
-                        <div className="min-w-0">
-                          <p className="font-bold text-xs text-foreground truncate">
-                            {supplier.name}
-                          </p>
-                          <p className="text-[10px] text-muted-foreground font-semibold">
-                            {supplier.purchase_count} unpaid purchases
-                          </p>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-4 shrink-0">
-                        <div className="text-right">
-                          <p className="font-mono font-bold text-xs text-primary">
-                            {formatCurrency(supplier.total_debt)}
-                          </p>
-                          <p className="text-[8px] text-muted-foreground/60 uppercase font-bold tracking-wider">
-                            Outstanding
-                          </p>
-                        </div>
-
-                        <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-all duration-300">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-8 text-[10px] font-bold border-border/60 hover:bg-primary/20 hover:text-primary hover:border-primary px-3 rounded-lg"
-                            onClick={() =>
-                              handleSupplierPartialPayment(
-                                supplier.id,
-                                supplier.name
-                              )
-                            }
-                          >
-                            Pay Part
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-8 text-[10px] font-bold bg-primary/10 border-primary/20 text-primary hover:bg-primary hover:text-primary-foreground px-3 rounded-lg"
-                            onClick={() =>
-                              handleSupplierClearDues(
-                                supplier.id,
-                                supplier.name
-                              )
-                            }
-                          >
-                            Fully Settled
-                          </Button>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </CardContent>
-        </Card>
+          )}
+        </div>
       )}
 
-      {/* Clear Debt Confirmation Dialog */}
+      {/* Clear Customer Debt Dialog */}
       <AlertDialog
         open={clearDebtDialog.open}
         onOpenChange={(open) =>
           !open && setClearDebtDialog({ ...clearDebtDialog, open: false })
         }
       >
-        <AlertDialogContent className="rounded-2xl border border-border/40 shadow-2xl max-w-md">
+        <AlertDialogContent className="rounded-3xl border-2 border-border/80 shadow-2xl max-w-md bg-background/95 backdrop-blur-xl">
           <AlertDialogHeader className="space-y-2">
-            <AlertDialogTitle className="font-extrabold text-base tracking-tight text-foreground flex items-center gap-2">
+            <AlertDialogTitle className="font-black text-lg tracking-tight text-foreground flex items-center gap-2">
               <Receipt className="w-5 h-5 text-amber-500" />
               Settle Customer Account
             </AlertDialogTitle>
-            <AlertDialogDescription className="text-xs leading-relaxed text-muted-foreground font-medium">
-              This action registers cash completion for all outstanding items on{" "}
-              <span className="font-extrabold text-foreground bg-muted/60 px-1.5 py-0.5 rounded">
+            <AlertDialogDescription className="text-xs leading-relaxed text-muted-foreground font-semibold">
+              This action clears all pending dues for{" "}
+              <span className="font-black text-foreground bg-muted px-1.5 py-0.5 rounded-md">
                 {clearDebtDialog.customerName}
               </span>
-              . The customer's active outstanding balance will reset to zero.
-              This ledger write is permanent.
+              . The customer's balance will reset to zero.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter className="mt-4 gap-2">
@@ -890,7 +965,7 @@ export default function DashboardPage() {
               Cancel
             </AlertDialogCancel>
             <AlertDialogAction
-              className="bg-primary hover:bg-primary/95 text-primary-foreground h-10 text-xs font-bold shadow-md shadow-primary/10 rounded-xl"
+              className="bg-orange-500 hover:bg-orange-600 text-white h-10 text-xs font-bold shadow-md shadow-orange-500/25 rounded-xl border-none"
               onClick={(e) => {
                 e.preventDefault();
                 confirmClearDebt();
@@ -899,11 +974,11 @@ export default function DashboardPage() {
             >
               {clearingDebt ? (
                 <span className="flex items-center justify-center gap-1.5">
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  <RefreshCw className="w-4 h-4 animate-spin" />
                   Processing...
                 </span>
               ) : (
-                <span>Yes, Settle Debt</span>
+                <span>Yes, Settle Dues</span>
               )}
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -921,24 +996,24 @@ export default function DashboardPage() {
           })
         }
       >
-        <DialogContent className="rounded-2xl border border-border/40 shadow-2xl max-w-md p-6">
-          <DialogHeader className="border-b border-border/40 pb-4">
-            <DialogTitle className="font-extrabold text-base tracking-tight text-foreground flex items-center gap-2">
-              <Truck className="w-5 h-5 text-primary" />
-              Partial Supplier Payment
+        <DialogContent className="rounded-3xl border-2 border-border/80 shadow-2xl max-w-md p-6 bg-background/95 backdrop-blur-xl">
+          <DialogHeader className="border-b border-border/60 pb-4">
+            <DialogTitle className="font-black text-lg tracking-tight text-foreground flex items-center gap-2">
+              <Truck className="w-5 h-5 text-orange-500" />
+              Pay Part to Supplier
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-3">
-            <div className="p-3 bg-muted/20 border border-border/40 rounded-xl">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/60">
+            <div className="p-3 bg-muted/40 border border-border/60 rounded-2xl">
+              <span className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">
                 Supplier Name
               </span>
-              <p className="text-sm font-extrabold text-foreground mt-0.5">
+              <p className="text-sm font-black text-foreground mt-0.5">
                 {supplierPartialPaymentDialog.supplierName}
               </p>
             </div>
             <div className="space-y-2">
-              <Label className="text-xs font-bold text-muted-foreground/80">
+              <Label className="text-xs font-extrabold uppercase tracking-wider text-foreground">
                 Amount Paid (₹)
               </Label>
               <Input
@@ -953,19 +1028,15 @@ export default function DashboardPage() {
                     amount: e.target.value,
                   })
                 }
-                className="h-10 text-sm font-bold border-border/80 focus:border-primary bg-card/25"
+                className="h-11 text-sm font-bold border-border/90 focus-visible:ring-1 focus-visible:ring-orange-500 bg-background rounded-xl"
               />
-              <p className="text-[9px] text-muted-foreground/60 font-semibold leading-relaxed">
-                This amount will clear purchases in First-In First-Out (FIFO)
-                chronological sequence.
-              </p>
             </div>
             <div className="space-y-2">
-              <Label className="text-xs font-bold text-muted-foreground/80">
-                Reference Notes
+              <Label className="text-xs font-extrabold uppercase tracking-wider text-foreground">
+                Payment Notes / Ref ID
               </Label>
               <Input
-                placeholder="Check #, UPI transaction ID, bank details..."
+                placeholder="Check #, UPI ID, bank reference..."
                 value={supplierPartialPaymentDialog.notes}
                 onChange={(e) =>
                   setSupplierPartialPaymentDialog({
@@ -973,17 +1044,17 @@ export default function DashboardPage() {
                     notes: e.target.value,
                   })
                 }
-                className="h-10 text-sm border-border/80 focus:border-primary bg-card/25"
+                className="h-11 text-sm font-semibold border-border/90 focus-visible:ring-1 focus-visible:ring-orange-500 bg-background rounded-xl"
               />
             </div>
             <Button
               onClick={confirmSupplierPartialPayment}
               disabled={clearingDebt}
-              className="w-full btn-primary h-10 text-xs font-bold bg-primary hover:bg-primary/95 text-primary-foreground shadow-md shadow-primary/10 rounded-xl mt-2"
+              className="w-full h-11 text-xs font-bold bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white shadow-lg shadow-orange-500/25 rounded-xl border-none mt-2"
             >
               {clearingDebt ? (
                 <span className="flex items-center justify-center gap-1.5">
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  <RefreshCw className="w-4 h-4 animate-spin" />
                   Processing...
                 </span>
               ) : (
@@ -1005,20 +1076,18 @@ export default function DashboardPage() {
           })
         }
       >
-        <AlertDialogContent className="rounded-2xl border border-border/40 shadow-2xl max-w-md">
+        <AlertDialogContent className="rounded-3xl border-2 border-border/80 shadow-2xl max-w-md bg-background/95 backdrop-blur-xl">
           <AlertDialogHeader className="space-y-2">
-            <AlertDialogTitle className="font-extrabold text-base tracking-tight text-foreground flex items-center gap-2">
-              <Truck className="w-5 h-5 text-primary" />
+            <AlertDialogTitle className="font-black text-lg tracking-tight text-foreground flex items-center gap-2">
+              <Truck className="w-5 h-5 text-orange-500" />
               Settle Supplier Dues
             </AlertDialogTitle>
-            <AlertDialogDescription className="text-xs leading-relaxed text-muted-foreground font-medium">
-              This action confirms full payment reconciliation for outstanding
-              balances on{" "}
-              <span className="font-extrabold text-foreground bg-muted/60 px-1.5 py-0.5 rounded">
+            <AlertDialogDescription className="text-xs leading-relaxed text-muted-foreground font-semibold">
+              This action confirms full payment for all bills on{" "}
+              <span className="font-black text-foreground bg-muted px-1.5 py-0.5 rounded-md">
                 {supplierClearDuesDialog.supplierName}
               </span>
-              . All unpaid invoice items will flag as settled. This action is
-              irreversible.
+              . All pending bills will be marked as settled.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter className="mt-4 gap-2">
@@ -1029,7 +1098,7 @@ export default function DashboardPage() {
               Cancel
             </AlertDialogCancel>
             <AlertDialogAction
-              className="bg-primary hover:bg-primary/95 text-primary-foreground h-10 text-xs font-bold shadow-md shadow-primary/10 rounded-xl"
+              className="bg-orange-500 hover:bg-orange-600 text-white h-10 text-xs font-bold shadow-md shadow-orange-500/25 rounded-xl border-none"
               onClick={(e) => {
                 e.preventDefault();
                 confirmSupplierClearAllDues();
@@ -1038,11 +1107,11 @@ export default function DashboardPage() {
             >
               {clearingDebt ? (
                 <span className="flex items-center justify-center gap-1.5">
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  <RefreshCw className="w-4 h-4 animate-spin" />
                   Processing...
                 </span>
               ) : (
-                <span>Yes, Settle All Dues</span>
+                <span>Yes, Settle Dues</span>
               )}
             </AlertDialogAction>
           </AlertDialogFooter>

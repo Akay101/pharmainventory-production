@@ -302,14 +302,14 @@ export default function DashboardLayout() {
                     <TooltipTrigger asChild>
                       <NavLink
                         to={item.path}
-                        className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all duration-200 ${
+                        className={`relative flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all duration-300 ease-out active:scale-95 ${
                           isItemActive
                             ? "bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-md shadow-orange-500/25 scale-[1.02]"
                             : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
                         }`}
                         data-testid={`nav-${item.path.slice(1)}`}
                       >
-                        <item.icon className="w-4 h-4 shrink-0" />
+                        <item.icon className="w-4 h-4 shrink-0 transition-transform duration-300" />
                         <span>{item.label}</span>
                       </NavLink>
                     </TooltipTrigger>
@@ -417,7 +417,9 @@ export default function DashboardLayout() {
         {/* Full-Width Seamless Page Content Area */}
         <div className="flex-1 relative flex overflow-hidden w-full">
           <main className="flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto w-full flex flex-col">
-            <Outlet />
+            <div key={location.pathname} className="flex-1 w-full flex flex-col animate-in fade-in duration-300 ease-out">
+              <Outlet />
+            </div>
           </main>
 
           {/* Activity Sidebar overlay backdrop */}

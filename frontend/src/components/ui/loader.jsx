@@ -52,7 +52,7 @@ export default function Loader({
   }
 
   return (
-    <div className="flex items-center justify-center w-full min-h-[50vh] flex-1 my-auto">
+    <div className="flex flex-1 items-center justify-center w-full min-h-[calc(100vh-160px)] my-auto">
       {content}
     </div>
   );

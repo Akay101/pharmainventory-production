@@ -91,13 +91,29 @@ const AuthProvider = ({ children }) => {
 
   useEffect(() => {
     fetchUser();
+    const savedTheme = localStorage.getItem("theme");
+    if (savedTheme === "light") {
+      document.documentElement.classList.add("light");
+    } else if (savedTheme === "dark") {
+      document.documentElement.classList.remove("light");
+    }
   }, []);
 
   const fetchSettings = async () => {
     try {
       const response = await axios.get(`${API}/settings`);
-      setSettings(response.data.preferences);
-      setSettingsDefinitions(response.data.settings);
+      const prefs = response.data.preferences || {};
+      setSettings(prefs);
+      setSettingsDefinitions(response.data.settings || []);
+
+      if (prefs.theme) {
+        localStorage.setItem("theme", prefs.theme);
+        if (prefs.theme === "light") {
+          document.documentElement.classList.add("light");
+        } else if (prefs.theme === "dark") {
+          document.documentElement.classList.remove("light");
+        }
+      }
     } catch (error) {
       console.error("Settings error:", error);
     }
@@ -107,6 +123,15 @@ const AuthProvider = ({ children }) => {
     try {
       // Optimistic update
       setSettings((prev) => ({ ...prev, [key]: value }));
+
+      if (key === "theme") {
+        localStorage.setItem("theme", value);
+        if (value === "light") {
+          document.documentElement.classList.add("light");
+        } else if (value === "dark") {
+          document.documentElement.classList.remove("light");
+        }
+      }
 
       await axios.post(
         `${API}/settings/update`,
@@ -118,7 +143,6 @@ const AuthProvider = ({ children }) => {
       setSettingsDefinitions(response.data.settings);
     } catch (error) {
       console.error("Failed to update setting:", error);
-      // Rollback? Currently just logging.
     }
   };
 

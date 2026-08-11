@@ -8,6 +8,18 @@
       name="description"
       content="Smart Pharmacy Inventory Management System"
     />
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem("theme");
+          if (t === "light") {
+            document.documentElement.classList.add("light");
+          } else if (t === "dark") {
+            document.documentElement.classList.remove("light");
+          }
+        } catch (e) {}
+      })();
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link

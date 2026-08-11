@@ -1,8 +1,12 @@
 import React, { useState, useEffect } from "react";
 import { Button } from "./button";
 import { Sun, Moon } from "lucide-react";
+import { useAuth } from "../../App";
 
 export default function ThemeToggle({ className = "" }) {
+  const auth = useAuth();
+  const updateSetting = auth?.updateSetting;
+
   const [isDark, setIsDark] = useState(() => {
     return !document.documentElement.classList.contains("light");
   });
@@ -23,6 +27,7 @@ export default function ThemeToggle({ className = "" }) {
 
   const toggleTheme = () => {
     const nextDark = !isDark;
+    const themeVal = nextDark ? "dark" : "light";
     setIsDark(nextDark);
     if (nextDark) {
       document.documentElement.classList.remove("light");
@@ -30,6 +35,9 @@ export default function ThemeToggle({ className = "" }) {
     } else {
       document.documentElement.classList.add("light");
       localStorage.setItem("theme", "light");
+    }
+    if (updateSetting) {
+      updateSetting("theme", themeVal);
     }
   };
 
