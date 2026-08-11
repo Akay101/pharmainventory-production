@@ -5,6 +5,7 @@ import { Card, CardContent } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import axios from "axios";
 import { API, getCookie } from "../App";
+import Loader from "../components/Loader";
 
 export default function PaymentSuccessPage() {
   const location = useLocation();
@@ -66,15 +67,10 @@ export default function PaymentSuccessPage() {
           <CardContent className="pt-10 pb-8 px-8 text-center flex flex-col items-center">
             
             {status === "verifying" && (
-              <>
-                <div className="relative mb-6">
-                  <div className="relative bg-blue-100 text-blue-600 p-4 rounded-full">
-                    <Loader2 className="w-12 h-12 animate-spin" />
-                  </div>
-                </div>
-                <h2 className="text-2xl font-extrabold text-slate-900 mb-3 tracking-tight">Verifying Payment...</h2>
-                <p className="text-slate-500 mb-8 max-w-[280px]">Please hold on while we confirm your payment securely.</p>
-              </>
+              <div className="py-4">
+                <Loader size="xl" text="Verifying Payment..." />
+                <p className="text-slate-500 mt-4 mb-8 max-w-[280px]">Please hold on while we confirm your payment securely.</p>
+              </div>
             )}
 
             {status === "success" && (

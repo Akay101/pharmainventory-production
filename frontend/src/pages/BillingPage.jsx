@@ -76,6 +76,8 @@ import {
   Edit,
 } from "lucide-react";
 import { toast } from "sonner";
+import PlanBadge from "../components/PlanBadge";
+import Loader from "../components/Loader";
 import { formatDate } from "./utils";
 import { getOS } from "../hooks/useKeyboard";
 
@@ -2093,11 +2095,7 @@ export default function BillingPage() {
   const editTotalProfit = editGrandTotal - editTotalCost;
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
-      </div>
-    );
+    return <Loader size="lg" text="Loading Billing Workspace..." />;
   }
 
   return (
@@ -2231,9 +2229,9 @@ export default function BillingPage() {
                   </div>
                 </div>
 
-                <div className="p-4 bg-indigo-500/10 border border-indigo-500/25 rounded-xl shadow-sm">
-                  <span className="text-[10px] uppercase font-bold text-indigo-600 dark:text-indigo-400 tracking-wider">Total Profit Given</span>
-                  <div className="text-xl font-extrabold font-mono text-indigo-600 dark:text-indigo-500 mt-1">
+                <div className="p-4 bg-orange-500/10 border border-orange-500/25 rounded-xl shadow-sm">
+                  <span className="text-[10px] uppercase font-bold text-orange-600 dark:text-orange-400 tracking-wider">Total Profit Given</span>
+                  <div className="text-xl font-extrabold font-mono text-orange-600 dark:text-orange-500 mt-1">
                     ₹{(customerProfileData.stats?.total_profit || 0).toFixed(2)}
                   </div>
                 </div>

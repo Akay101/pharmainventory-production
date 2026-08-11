@@ -33,9 +33,8 @@ import {
   Bell,
   Sun,
   Moon,
-  PanelLeftClose,
-  PanelLeft,
   Activity,
+  Sparkles,
 } from "lucide-react";
 
 import RecentActivitySidebar from "./RecentActivitySidebar";
@@ -75,231 +74,46 @@ const navItems = [
   { path: "/settings", label: "Settings", icon: Settings },
 ];
 
-const Sidebar = ({ mobile = false, onClose, collapsed = false, onToggle }) => {
-  const { user, pharmacy, isAdmin } = useAuth();
+export default function DashboardLayout() {
+  const { user, pharmacy, logout, updateSetting, isAdmin } = useAuth();
+  const navigate = useNavigate();
   const location = useLocation();
 
-  const filteredItems = navItems.filter((item) => !item.adminOnly || isAdmin);
-
-  return (
-    <TooltipProvider delayDuration={0}>
-      <div className="flex flex-col h-full bg-zinc-950/10 dark:bg-zinc-950/30">
-        {/* Logo Section */}
-        <div
-          className={`p-4 border-b border-border/40 ${collapsed ? "px-2" : "p-6"}`}
-        >
-          <div
-            className={`flex items-center ${collapsed ? "justify-center" : "gap-3"}`}
-          >
-            {pharmacy?.logo_url ? (
-              <img
-                src={pharmacy.logo_url}
-                alt={pharmacy.name}
-                className={`rounded-xl object-cover border border-border/50 shadow-md shadow-primary/5 transition-transform duration-300 ${
-                  collapsed ? "w-8 h-8" : "w-10 h-10"
-                }`}
-              />
-            ) : (
-              <div
-                className={`rounded-xl bg-primary flex items-center justify-center shadow-lg shadow-primary/20 transition-all duration-300 ${
-                  collapsed ? "w-9 h-9" : "w-10 h-10"
-                }`}
-              >
-                <span
-                  className={`text-primary-foreground font-black tracking-wider ${collapsed ? "text-base" : "text-lg"}`}
-                >
-                  P
-                </span>
-              </div>
-            )}
-            {!collapsed && (
-              <div className="min-w-0 flex-1">
-                <h1 className="font-extrabold text-base text-foreground truncate tracking-tight">
-                  {pharmacy?.name || "Test Instance"}
-                </h1>
-                <p className="text-[10px] font-semibold text-muted-foreground/80 truncate">
-                  {pharmacy?.location}
-                </p>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Collapse Toggle - Desktop only */}
-        {!mobile && (
-          <div
-            className={`px-3 py-2 border-b border-border/40 ${collapsed ? "flex justify-center" : ""}`}
-          >
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={onToggle}
-              className={`w-full text-muted-foreground hover:text-foreground h-9 hover:bg-white/5 active:scale-[0.98] ${
-                collapsed ? "px-2" : "justify-start px-3"
-              }`}
-              data-testid="sidebar-toggle"
-            >
-              {collapsed ? (
-                <PanelLeft className="w-4 h-4 text-primary" />
-              ) : (
-                <div className="flex items-center gap-2">
-                  <PanelLeftClose className="w-4 h-4 text-primary" />
-                  <span className="text-xs font-bold uppercase tracking-wider">
-                    Collapse Sidebar
-                  </span>
-                </div>
-              )}
-            </Button>
-          </div>
-        )}
-
-        {/* Navigation Section */}
-        <nav
-          className={`flex-1 p-2 space-y-1.5 overflow-y-auto ${collapsed ? "px-1" : "p-4"}`}
-        >
-          {filteredItems.map((item) => {
-            const isItemActive =
-              location.pathname === item.path ||
-              (item.path !== "/dashboard" &&
-                location.pathname.startsWith(item.path));
-
-            return collapsed ? (
-              <Tooltip key={item.path}>
-                <TooltipTrigger asChild>
-                  <NavLink
-                    to={item.path}
-                    onClick={onClose}
-                    className={`flex items-center justify-center w-10 h-10 mx-auto rounded-xl transition-all duration-250 cursor-pointer ${
-                      isItemActive
-                        ? "bg-primary text-primary-foreground shadow-lg shadow-primary/20 font-bold opacity-100"
-                        : "text-muted-foreground hover:text-foreground hover:bg-white/5 opacity-70 hover:opacity-100"
-                    }`}
-                    data-testid={`nav-${item.path.slice(1)}`}
-                  >
-                    <item.icon
-                      className={`w-5 h-5 shrink-0 ${isItemActive ? "text-primary-foreground" : "text-muted-foreground"}`}
-                    />
-                  </NavLink>
-                </TooltipTrigger>
-                <TooltipContent side="right" className="font-bold text-xs">
-                  {item.label}
-                </TooltipContent>
-              </Tooltip>
-            ) : (
-              <NavLink
-                key={item.path}
-                to={item.path}
-                onClick={onClose}
-                className={`sidebar-link flex justify-between items-center group py-2.5 px-4 transition-all duration-200 ${
-                  isItemActive ? "nav-item-active" : ""
-                }`}
-                data-testid={`nav-${item.path.slice(1)}`}
-              >
-                <div className="flex items-center gap-3">
-                  <item.icon className="w-5 h-5 shrink-0" />
-                  <span className="text-sm font-semibold">{item.label}</span>
-                </div>
-                {item.shortcut && (
-                  <kbd className="opacity-0 group-hover:opacity-100 transition-opacity text-[9px] font-mono font-bold text-muted-foreground/60 bg-muted/80 dark:bg-white/10 px-1.5 py-0.5 rounded border border-border/30 shadow-sm uppercase">
-                    {formatShortcut(item.shortcut)}
-                  </kbd>
-                )}
-              </NavLink>
-            );
-          })}
-        </nav>
-
-        {/* User Profile Container */}
-        <div
-          className={`p-2 border-t border-border/40 ${collapsed ? "px-1" : "p-4"}`}
-        >
-          {collapsed ? (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <div className="flex justify-center p-1 cursor-pointer">
-                  <Avatar className="w-8 h-8 ring-1 ring-border/50 shadow-md">
-                    <AvatarImage src={user?.image_url} />
-                    <AvatarFallback className="bg-primary/20 text-primary font-bold text-xs">
-                      {user?.name?.charAt(0)?.toUpperCase()}
-                    </AvatarFallback>
-                  </Avatar>
-                </div>
-              </TooltipTrigger>
-              <TooltipContent side="right" className="text-xs font-bold">
-                {user?.name} • {user?.role}
-              </TooltipContent>
-            </Tooltip>
-          ) : (
-            <div className="flex items-center gap-3 p-2.5 rounded-xl bg-card/40 border border-border/30 shadow-sm">
-              <Avatar className="w-9 h-9 ring-1 ring-border/50 shadow-md shrink-0">
-                <AvatarImage src={user?.image_url} />
-                <AvatarFallback className="bg-primary/20 text-primary font-bold">
-                  {user?.name?.charAt(0)?.toUpperCase()}
-                </AvatarFallback>
-              </Avatar>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-bold text-foreground truncate leading-tight">
-                  {user?.name}
-                </p>
-                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold bg-primary/10 text-primary uppercase tracking-wide mt-1">
-                  {user?.role}
-                </span>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-    </TooltipProvider>
-  );
-};
-
-export default function DashboardLayout() {
-  const { user, logout, settings, updateSetting } = useAuth();
-  const navigate = useNavigate();
   const [mobileOpen, setMobileOpen] = useState(false);
-
-  useKeyboardShortcut("b", () => navigate("/billing"), { alt: true });
-  useKeyboardShortcut("p", () => navigate("/purchases"), { alt: true });
-  useKeyboardShortcut("i", () => navigate("/inventory"), { alt: true });
-  useKeyboardShortcut("s", () => navigate("/suppliers"), { alt: true });
-  useKeyboardShortcut("c", () => navigate("/customers"), { alt: true });
-
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
-    const stored = localStorage.getItem("sidebarCollapsed");
-    return stored === "true";
+  const [activityOpen, setActivityOpen] = useState(() => {
+    return localStorage.getItem("activityOpen") === "true";
   });
 
   const [isDark, setIsDark] = useState(() => {
-    const stored = localStorage.getItem("theme");
-    return stored ? stored === "dark" : true;
+    return !document.documentElement.classList.contains("light");
   });
 
-  const [activityOpen, setActivityOpen] = useState(() => {
-    const stored = localStorage.getItem("activityOpen");
-    return stored ? stored === "true" : window.innerWidth >= 1024;
-  });
+  const filteredItems = navItems.filter((item) => !item.adminOnly || isAdmin);
 
-  // Sync settings when loaded
+  // Keyboard Shortcuts
+  useKeyboardShortcut(["alt", "i"], () => navigate("/inventory"));
+  useKeyboardShortcut(["alt", "p"], () => navigate("/purchases"));
+  useKeyboardShortcut(["alt", "b"], () => navigate("/billing"));
+  useKeyboardShortcut(["alt", "s"], () => navigate("/suppliers"));
+  useKeyboardShortcut(["alt", "c"], () => navigate("/customers"));
+  useKeyboardShortcut(["alt", "a"], () => toggleActivity());
+
+  // Listen to dark/light theme mutations
   useEffect(() => {
-    if (settings) {
-      if (settings.sidebar_collapsed !== undefined) {
-        setSidebarCollapsed(settings.sidebar_collapsed);
-      }
-      if (settings.theme !== undefined) {
-        setIsDark(settings.theme === "dark");
-      }
-      if (settings.activity_sidebar_open !== undefined) {
-        setActivityOpen(settings.activity_sidebar_open);
-      }
-    }
-  }, [settings]);
+    const handleClassChange = () => {
+      setIsDark(!document.documentElement.classList.contains("light"));
+    };
 
-  useKeyboardShortcut("a", () => toggleActivity(), {
-    alt: true,
-  });
+    const observer = new MutationObserver(handleClassChange);
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["class"],
+    });
 
-  const location = useLocation();
+    return () => observer.disconnect();
+  }, []);
 
+  // Highlight scroll handler
   useEffect(() => {
     if (location.state?.highlightId) {
       const id = location.state.highlightId;
@@ -327,27 +141,17 @@ export default function DashboardLayout() {
     }
   }, [location.state?.highlightId]);
 
-  useEffect(() => {
-    if (isDark) {
+  const toggleTheme = () => {
+    const nextDark = !isDark;
+    setIsDark(nextDark);
+    if (nextDark) {
       document.documentElement.classList.remove("light");
       localStorage.setItem("theme", "dark");
     } else {
       document.documentElement.classList.add("light");
       localStorage.setItem("theme", "light");
     }
-  }, [isDark]);
-
-  const toggleTheme = () => {
-    const nextDark = !isDark;
-    setIsDark(nextDark);
     updateSetting("theme", nextDark ? "dark" : "light");
-  };
-
-  const toggleSidebar = () => {
-    const nextCollapsed = !sidebarCollapsed;
-    setSidebarCollapsed(nextCollapsed);
-    updateSetting("sidebar_collapsed", nextCollapsed);
-    localStorage.setItem("sidebarCollapsed", String(nextCollapsed));
   };
 
   const toggleActivity = () => {
@@ -369,68 +173,171 @@ export default function DashboardLayout() {
   };
 
   return (
-    <div
-      className="min-h-screen bg-background flex select-none overflow-hidden"
-      data-testid="dashboard-layout"
-    >
-      {/* Desktop Sidebar (Collapsible) */}
-      <aside
-        className={`border-r border-border/40 bg-card/25 backdrop-blur-xl hidden md:flex flex-col fixed h-full z-50 transition-[width] duration-300 ease-in-out ${
-          sidebarCollapsed ? "w-16" : "w-64"
-        }`}
-      >
-        <Sidebar collapsed={sidebarCollapsed} onToggle={toggleSidebar} />
-      </aside>
-
-      {/* Main Content Layout Wrapper */}
+    <TooltipProvider delayDuration={0}>
       <div
-        className={`flex-1 flex flex-col min-h-screen transition-[margin-left] duration-300 ease-in-out ${
-          sidebarCollapsed ? "md:ml-16" : "md:ml-64"
-        }`}
+        className="min-h-screen bg-background flex flex-col select-none overflow-x-hidden"
+        data-testid="dashboard-layout"
       >
-        {/* Floating Glassy Header */}
-        <header className="h-16 border-b border-border/40 bg-card/25 backdrop-blur-xl sticky top-0 z-40 w-full">
-          <div className="h-full px-4 md:px-6 flex items-center justify-between">
-            {/* Mobile Menu Trigger */}
-            <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
-              <SheetTrigger asChild className="md:hidden">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="hover:bg-muted"
-                  data-testid="mobile-menu-btn"
+        {/* Seamless Glassy Top Header Navigation Bar */}
+        <header className="sticky top-0 z-40 w-full border-b border-border/80 dark:border-border/50 bg-background/85 dark:bg-zinc-950/85 backdrop-blur-xl transition-colors duration-200">
+          <div className="w-full h-16 px-4 sm:px-6 flex items-center justify-between gap-4">
+            
+            {/* Left Brand Identifier */}
+            <div className="flex items-center gap-3 shrink-0">
+              {/* Mobile Drawer Sheet Trigger */}
+              <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
+                <SheetTrigger asChild className="xl:hidden">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="hover:bg-muted/80 rounded-xl"
+                    data-testid="mobile-menu-btn"
+                  >
+                    <Menu className="w-5 h-5" />
+                  </Button>
+                </SheetTrigger>
+                <SheetContent
+                  side="left"
+                  className="w-72 p-6 bg-background/95 backdrop-blur-xl border-r border-border/80 flex flex-col justify-between"
                 >
-                  <Menu className="w-5 h-5" />
-                </Button>
-              </SheetTrigger>
-              <SheetContent
-                side="left"
-                className="w-64 p-0 bg-card border-r border-border/40"
+                  <div className="space-y-6">
+                    {/* Sheet Brand Logo */}
+                    <div className="flex items-center gap-3 border-b border-border/50 pb-4">
+                      {pharmacy?.logo_url ? (
+                        <img
+                          src={pharmacy.logo_url}
+                          alt={pharmacy.name}
+                          className="w-10 h-10 rounded-xl object-cover border border-border/50 shadow-sm"
+                        />
+                      ) : (
+                        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-orange-500 to-amber-500 flex items-center justify-center text-white font-black text-base shadow-md shadow-orange-500/20">
+                          {pharmacy?.name?.charAt(0) || "P"}
+                        </div>
+                      )}
+                      <div>
+                        <h2 className="font-black text-sm text-foreground leading-tight">
+                          {pharmacy?.name || "Pharmalogy"}
+                        </h2>
+                        <span className="text-[10px] text-orange-600 dark:text-orange-400 font-extrabold flex items-center gap-1 mt-0.5">
+                          <Sparkles className="w-2.5 h-2.5 text-orange-500" />
+                          {user?.subscription_plan ? `${user.subscription_plan} Plan` : "Agentic Plan"}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Sheet Navigation Items */}
+                    <nav className="space-y-1.5">
+                      {filteredItems.map((item) => {
+                        const isItemActive = location.pathname === item.path;
+                        return (
+                          <NavLink
+                            key={item.path}
+                            to={item.path}
+                            onClick={() => setMobileOpen(false)}
+                            className={`flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold transition-all ${
+                              isItemActive
+                                ? "bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-md shadow-orange-500/25"
+                                : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
+                            }`}
+                          >
+                            <item.icon className="w-5 h-5 shrink-0" />
+                            <span>{item.label}</span>
+                          </NavLink>
+                        );
+                      })}
+                    </nav>
+                  </div>
+
+                  {/* Sheet Footer Logout */}
+                  <div className="border-t border-border/50 pt-4">
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        setMobileOpen(false);
+                        handleLogout();
+                      }}
+                      className="w-full justify-start text-destructive hover:text-destructive hover:bg-destructive/10 border-destructive/20 font-bold rounded-xl h-10"
+                    >
+                      <LogOut className="w-4 h-4 mr-2" />
+                      Logout
+                    </Button>
+                  </div>
+                </SheetContent>
+              </Sheet>
+
+              {/* Desktop Logo & Name */}
+              <div
+                onClick={() => navigate("/dashboard")}
+                className="flex items-center gap-3 cursor-pointer group"
               >
-                <Sidebar mobile onClose={() => setMobileOpen(false)} />
-              </SheetContent>
-            </Sheet>
+                {pharmacy?.logo_url ? (
+                  <img
+                    src={pharmacy.logo_url}
+                    alt={pharmacy.name}
+                    className="w-9 h-9 rounded-xl object-cover border border-border/60 shadow-sm group-hover:scale-105 transition-transform"
+                  />
+                ) : (
+                  <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-orange-500 to-amber-500 flex items-center justify-center text-white font-black text-sm shadow-md shadow-orange-500/20 group-hover:scale-105 transition-transform">
+                    {pharmacy?.name?.charAt(0) || "P"}
+                  </div>
+                )}
+                <div className="hidden sm:flex flex-col">
+                  <span className="font-black text-sm tracking-tight text-foreground group-hover:text-orange-500 transition-colors leading-tight">
+                    {pharmacy?.name || "Pharmalogy"}
+                  </span>
+                  <span className="text-[10px] text-orange-600 dark:text-orange-400 font-extrabold flex items-center gap-1">
+                    <Sparkles className="w-2.5 h-2.5 text-orange-500" />
+                    {user?.subscription_plan ? `${user.subscription_plan} Plan` : "Agentic Plan"}
+                  </span>
+                </div>
+              </div>
+            </div>
 
-            <div className="hidden md:block" />
+            {/* Center Top Horizontal Navigation Bar (Desktop / XL) */}
+            <nav className="hidden xl:flex items-center gap-1 bg-muted/40 dark:bg-muted/20 p-1.5 rounded-2xl border border-border/60 dark:border-border/40 shadow-xs">
+              {filteredItems.map((item) => {
+                const isItemActive = location.pathname === item.path;
+                return (
+                  <Tooltip key={item.path}>
+                    <TooltipTrigger asChild>
+                      <NavLink
+                        to={item.path}
+                        className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all duration-200 ${
+                          isItemActive
+                            ? "bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-md shadow-orange-500/25 scale-[1.02]"
+                            : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
+                        }`}
+                        data-testid={`nav-${item.path.slice(1)}`}
+                      >
+                        <item.icon className="w-4 h-4 shrink-0" />
+                        <span>{item.label}</span>
+                      </NavLink>
+                    </TooltipTrigger>
+                    {item.shortcut && (
+                      <TooltipContent side="bottom" className="font-mono text-[10px] font-bold">
+                        Shortcut: {formatShortcut(item.shortcut)}
+                      </TooltipContent>
+                    )}
+                  </Tooltip>
+                );
+              })}
+            </nav>
 
-            {/* Right Header Navigation Panel */}
-            <div className="flex items-center gap-3">
-              {user?.subscription_plan && (
-                <PlanBadge plan={user.subscription_plan} />
-              )}
-
+            {/* Right Controls Panel */}
+            <div className="flex items-center gap-2.5 shrink-0">
               {/* Theme Toggle Button */}
               <Button
                 variant="ghost"
                 size="icon"
                 onClick={toggleTheme}
                 data-testid="theme-toggle-btn"
-                className="relative hover:bg-muted transition-transform active:scale-95"
+                className="relative hover:bg-muted/80 rounded-xl transition-all active:scale-95 border border-border/60 dark:border-border/40 h-9 w-9"
+                title={isDark ? "Switch to Light Mode" : "Switch to Dark Mode"}
               >
                 {isDark ? (
-                  <Sun className="w-5 h-5 text-amber-400 drop-shadow-[0_0_8px_rgba(251,191,36,0.3)]" />
+                  <Sun className="w-4.5 h-4.5 text-amber-400 drop-shadow-[0_0_8px_rgba(251,191,36,0.4)]" />
                 ) : (
-                  <Moon className="w-5 h-5 text-violet-600 drop-shadow-[0_0_8px_rgba(124,58,237,0.2)]" />
+                  <Moon className="w-4.5 h-4.5 text-orange-600 drop-shadow-[0_0_8px_rgba(234,88,12,0.3)]" />
                 )}
               </Button>
 
@@ -438,10 +345,10 @@ export default function DashboardLayout() {
               <Button
                 variant="ghost"
                 size="icon"
-                className="relative hover:bg-muted"
+                className="relative hover:bg-muted/80 rounded-xl border border-border/60 dark:border-border/40 h-9 w-9"
                 data-testid="notifications-btn"
               >
-                <Bell className="w-5 h-5" />
+                <Bell className="w-4.5 h-4.5 text-foreground" />
                 <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-destructive rounded-full shadow shadow-destructive/50 animate-pulse"></span>
               </Button>
 
@@ -450,31 +357,31 @@ export default function DashboardLayout() {
                 variant="ghost"
                 size="icon"
                 onClick={toggleActivity}
-                className={`relative hover:bg-muted transition-all duration-200 ${
+                className={`relative rounded-xl border border-border/60 dark:border-border/40 h-9 w-9 transition-all duration-200 ${
                   activityOpen
-                    ? "bg-primary/10 text-primary hover:bg-primary/20"
-                    : ""
+                    ? "bg-orange-500/15 text-orange-500 border-orange-500/40"
+                    : "hover:bg-muted/80"
                 }`}
                 title="Recent Activity (Alt + A)"
               >
-                <Activity className="w-5 h-5" />
+                <Activity className="w-4.5 h-4.5" />
               </Button>
 
-              {/* User Dropdown Menu */}
+              {/* User Avatar & Dropdown Menu */}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button
                     variant="ghost"
-                    className="flex items-center gap-2 hover:bg-muted px-2 py-1.5 rounded-xl transition-all"
+                    className="flex items-center gap-2 hover:bg-muted/80 px-2.5 py-1.5 rounded-xl border border-border/60 dark:border-border/40 transition-all h-9"
                     data-testid="user-menu-btn"
                   >
-                    <Avatar className="w-8 h-8 ring-1 ring-border/50 shadow-sm shrink-0">
+                    <Avatar className="w-7 h-7 ring-1 ring-border/60 shadow-xs shrink-0">
                       <AvatarImage src={user?.image_url} />
-                      <AvatarFallback className="bg-primary/20 text-primary text-xs font-bold">
+                      <AvatarFallback className="bg-orange-500/20 text-orange-600 dark:text-orange-400 text-xs font-black">
                         {user?.name?.charAt(0)?.toUpperCase()}
                       </AvatarFallback>
                     </Avatar>
-                    <span className="hidden sm:inline text-sm font-bold text-foreground">
+                    <span className="hidden sm:inline text-xs font-extrabold text-foreground max-w-[100px] truncate">
                       {user?.name}
                     </span>
                     <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
@@ -482,23 +389,23 @@ export default function DashboardLayout() {
                 </DropdownMenuTrigger>
                 <DropdownMenuContent
                   align="end"
-                  className="w-48 mt-1 border border-border/40 shadow-xl rounded-xl"
+                  className="w-52 mt-1 border border-border/80 dark:border-border/50 shadow-xl rounded-2xl p-1.5 bg-background/95 backdrop-blur-xl"
                 >
                   <DropdownMenuItem
                     onClick={() => navigate("/settings")}
                     data-testid="settings-dropdown"
-                    className="cursor-pointer font-medium py-2 rounded-lg"
+                    className="cursor-pointer font-bold py-2 px-3 rounded-xl group hover:bg-orange-500/10 focus:bg-orange-500/10 focus:text-orange-600 dark:focus:text-orange-400"
                   >
-                    <Settings className="w-4 h-4 mr-2 text-primary" />
+                    <Settings className="w-4 h-4 mr-2.5 text-orange-500 group-hover:rotate-45 transition-transform" />
                     Settings
                   </DropdownMenuItem>
-                  <DropdownMenuSeparator className="bg-border/40" />
+                  <DropdownMenuSeparator className="bg-border/50 my-1" />
                   <DropdownMenuItem
                     onClick={handleLogout}
                     data-testid="logout-btn"
-                    className="text-destructive focus:text-destructive cursor-pointer font-medium py-2 rounded-lg"
+                    className="text-destructive focus:text-destructive-foreground focus:bg-destructive cursor-pointer font-bold py-2 px-3 rounded-xl group"
                   >
-                    <LogOut className="w-4 h-4 mr-2" />
+                    <LogOut className="w-4 h-4 mr-2.5 text-destructive group-focus:text-white transition-colors" />
                     Logout
                   </DropdownMenuItem>
                 </DropdownMenuContent>
@@ -507,9 +414,9 @@ export default function DashboardLayout() {
           </div>
         </header>
 
-        {/* Inner Page View Controller */}
-        <div className="flex-1 relative flex overflow-hidden">
-          <main className="flex-1 p-4 md:p-6 lg:p-8 overflow-y-auto w-full">
+        {/* Full-Width Seamless Page Content Area */}
+        <div className="flex-1 relative flex overflow-hidden w-full">
+          <main className="flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto w-full flex flex-col">
             <Outlet />
           </main>
 
@@ -533,10 +440,10 @@ export default function DashboardLayout() {
             />
           </div>
         </div>
-      </div>
 
-      {/* Global AI Agent Interface widget */}
-      <AgentWidget user={user} />
-    </div>
+        {/* Global AI Agent Interface widget */}
+        <AgentWidget user={user} />
+      </div>
+    </TooltipProvider>
   );
 }

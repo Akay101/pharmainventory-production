@@ -74,6 +74,8 @@ import {
   Sparkles,
 } from "lucide-react";
 import { toast } from "sonner";
+import PlanBadge from "../components/PlanBadge";
+import Loader from "../components/Loader";
 import { formatDate } from "./utils";
 import CustomTooltip from "@/components/ui/CustomTooltip";
 import { getOS } from "../hooks/useKeyboard";
@@ -2256,11 +2258,7 @@ export default function PurchasesPage() {
   };
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
-      </div>
-    );
+    return <Loader size="lg" text="Loading Purchases..." />;
   }
 
   return (
@@ -2600,7 +2598,7 @@ export default function PurchasesPage() {
                     <Button
                       variant="default"
                       onClick={handleAutofillWithAI}
-                      className="relative overflow-hidden group bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white shadow-lg shadow-indigo-500/30 border-none transition-all duration-300 font-bold"
+                      className="relative overflow-hidden group bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white shadow-lg shadow-orange-500/30 border-none transition-all duration-300 font-bold"
                       size="sm"
                     >
                       <div className="absolute inset-0 bg-white/20 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-700 ease-in-out skew-x-12"></div>
@@ -3266,10 +3264,10 @@ export default function PurchasesPage() {
                                   searchMedicine.length > 1 && (
                                     <div
                                       id={`purchases-suggestion-${medicineSuggestions.length}`}
-                                      className={`p-3 cursor-pointer border-t border-indigo-100 dark:border-indigo-500/20 bg-indigo-50/50 dark:bg-indigo-500/10 hover:bg-indigo-100/50 dark:hover:bg-indigo-500/20 transition-colors ${
+                                      className={`p-3 cursor-pointer border-t border-orange-500/20 bg-orange-500/10 hover:bg-orange-500/20 transition-colors ${
                                         highlightedSuggestionIndex ===
                                         medicineSuggestions.length
-                                          ? "bg-indigo-100/80 dark:bg-indigo-500/30"
+                                          ? "bg-orange-500/25"
                                           : ""
                                       }`}
                                       onMouseDown={(e) => {
@@ -3285,18 +3283,18 @@ export default function PurchasesPage() {
                                         )
                                       }
                                     >
-                                      <div className="flex items-center gap-2 text-indigo-700 dark:text-indigo-400 font-semibold text-sm">
-                                        <div className="p-1.5 bg-indigo-100 dark:bg-indigo-500/20 rounded-md shadow-sm">
+                                      <div className="flex items-center gap-2 text-orange-500 dark:text-orange-400 font-semibold text-sm">
+                                        <div className="p-1.5 bg-orange-500/20 rounded-md shadow-sm">
                                           ✨
                                         </div>
                                         <span>
                                           Get AI facts for{" "}
-                                          <span className="font-bold underline decoration-indigo-300 dark:decoration-indigo-600 underline-offset-2">
+                                          <span className="font-bold underline decoration-orange-400 underline-offset-2">
                                             "{searchMedicine}"
                                           </span>
                                         </span>
                                       </div>
-                                      <p className="text-[10.5px] font-medium text-indigo-500/80 dark:text-indigo-400/70 mt-1 ml-9">
+                                      <p className="text-[10.5px] font-medium text-orange-500/80 dark:text-orange-400/70 mt-1 ml-9">
                                         Bypass search and instantly extract
                                         properties
                                       </p>

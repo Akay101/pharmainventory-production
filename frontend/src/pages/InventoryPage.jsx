@@ -41,6 +41,7 @@ import {
 } from "../components/ui/alert-dialog";
 import { Search, Plus, Package, AlertTriangle, ChevronLeft, ChevronRight, ArrowUpDown, Trash2, Loader2, BellOff } from "lucide-react";
 import { toast } from "sonner";
+import Loader from "../components/Loader";
 
 export default function InventoryPage() {
   const navigate = useNavigate();
@@ -370,17 +371,7 @@ export default function InventoryPage() {
   };
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <div className="text-center space-y-4">
-          <div className="relative w-12 h-12 mx-auto">
-            <div className="absolute inset-0 rounded-full border-4 border-primary/20"></div>
-            <div className="absolute inset-0 rounded-full border-4 border-primary border-t-transparent animate-spin"></div>
-          </div>
-          <p className="text-xs font-bold text-muted-foreground/80 uppercase tracking-widest animate-pulse">Loading Inventory...</p>
-        </div>
-      </div>
-    );
+    return <Loader size="lg" text="Loading Inventory..." />;
   }
 
   return (
@@ -515,56 +506,53 @@ export default function InventoryPage() {
 
             <div className="flex gap-2 w-full md:w-auto shrink-0 justify-end">
               <Button
-                variant={showLowStock ? "default" : "outline"}
                 onClick={() => {
                   setShowLowStock(!showLowStock);
                   setShowShortage(false);
                   setShowExpiringSoon(false);
                 }}
-                className={`h-10 text-xs font-bold px-4 rounded-xl border ${
+                className={`h-10 text-xs font-bold px-4 rounded-xl border transition-all duration-200 ${
                   showLowStock 
-                    ? "bg-amber-500/10 text-amber-500 border-amber-500/30 hover:bg-amber-500/20" 
-                    : "border-border/80 hover:bg-muted"
+                    ? "bg-amber-500 text-white border-amber-500 hover:bg-amber-600 shadow-md shadow-amber-500/20" 
+                    : "bg-card border-border/80 text-foreground hover:bg-muted"
                 }`}
                 data-testid="low-stock-filter-btn"
               >
-                <AlertTriangle className="w-3.5 h-3.5 mr-2" />
+                <AlertTriangle className={`w-3.5 h-3.5 mr-2 ${showLowStock ? "text-white" : "text-amber-500"}`} />
                 Low Stock
               </Button>
 
               <Button
-                variant={showShortage ? "default" : "outline"}
                 onClick={() => {
                   setShowShortage(!showShortage);
                   setShowLowStock(false);
                   setShowExpiringSoon(false);
                 }}
-                className={`h-10 text-xs font-bold px-4 rounded-xl border ${
+                className={`h-10 text-xs font-bold px-4 rounded-xl border transition-all duration-200 ${
                   showShortage 
-                    ? "bg-orange-500/10 text-orange-500 border-orange-500/30 hover:bg-orange-500/20" 
-                    : "border-border/80 hover:bg-muted"
+                    ? "bg-orange-500 text-white border-orange-500 hover:bg-orange-600 shadow-md shadow-orange-500/20" 
+                    : "bg-card border-border/80 text-foreground hover:bg-muted"
                 }`}
                 data-testid="shortage-filter-btn"
               >
-                <AlertTriangle className="w-3.5 h-3.5 mr-2" />
-                Shortage List {shortageCount > 0 && <Badge className="ml-1.5 bg-orange-500 text-white border-0 text-[10px] px-1.5 py-0.5 font-bold rounded-full">{shortageCount}</Badge>}
+                <AlertTriangle className={`w-3.5 h-3.5 mr-2 ${showShortage ? "text-white" : "text-orange-500"}`} />
+                Shortage List {shortageCount > 0 && <Badge className={`ml-1.5 border-0 text-[10px] px-1.5 py-0.5 font-black rounded-full ${showShortage ? "bg-white text-orange-600" : "bg-orange-500 text-white"}`}>{shortageCount}</Badge>}
               </Button>
 
               <Button
-                variant={showExpiringSoon ? "default" : "outline"}
                 onClick={() => {
                   setShowExpiringSoon(!showExpiringSoon);
                   setShowLowStock(false);
                   setShowShortage(false);
                 }}
-                className={`h-10 text-xs font-bold px-4 rounded-xl border ${
+                className={`h-10 text-xs font-bold px-4 rounded-xl border transition-all duration-200 ${
                   showExpiringSoon 
-                    ? "bg-destructive/10 text-destructive border-destructive/30 hover:bg-destructive/20" 
-                    : "border-border/80 hover:bg-muted"
+                    ? "bg-destructive text-destructive-foreground border-destructive hover:bg-destructive/90 shadow-md shadow-destructive/20" 
+                    : "bg-card border-border/80 text-foreground hover:bg-muted"
                 }`}
                 data-testid="expiring-filter-btn"
               >
-                <AlertTriangle className="w-3.5 h-3.5 mr-2" />
+                <AlertTriangle className={`w-3.5 h-3.5 mr-2 ${showExpiringSoon ? "text-white" : "text-destructive"}`} />
                 Expiring Soon
               </Button>
               
@@ -1118,10 +1106,7 @@ export default function InventoryPage() {
           </DialogHeader>
 
           {loadingDetails ? (
-            <div className="flex flex-col items-center justify-center py-10 gap-3">
-              <Loader2 className="w-8 h-8 animate-spin text-primary" />
-              <p className="text-xs font-semibold text-muted-foreground">Loading associated inventory details...</p>
-            </div>
+            <Loader size="md" text="Loading Product Batches..." />
           ) : (
             <div className="space-y-6 pt-4 overflow-y-auto max-h-[70vh] pr-1">
               

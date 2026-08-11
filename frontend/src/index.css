@@ -16,60 +16,60 @@ div[style*="Made with Emergent"] {
 }
 
 @layer base {
-  /* Dark Mode (default) */
+  /* Dark Mode - Pitch Black & Electric Orange */
   :root {
-    --background: 222 47% 11%;
-    --foreground: 210 40% 98%;
-    --card: 217 33% 17%;
-    --card-foreground: 210 40% 98%;
-    --popover: 217 33% 17%;
-    --popover-foreground: 210 40% 98%;
-    --primary: 160 84% 39%;
-    --primary-foreground: 160 84% 10%;
-    --secondary: 215 25% 27%;
-    --secondary-foreground: 210 40% 98%;
-    --muted: 215 25% 27%;
-    --muted-foreground: 215 20% 65%;
-    --accent: 258 90% 66%;
+    --background: 0 0% 4%;
+    --foreground: 0 0% 98%;
+    --card: 0 0% 8%;
+    --card-foreground: 0 0% 98%;
+    --popover: 0 0% 8%;
+    --popover-foreground: 0 0% 98%;
+    --primary: 24 100% 50%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 0 0% 13%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 0 0% 13%;
+    --muted-foreground: 240 5% 65%;
+    --accent: 32 100% 50%;
     --accent-foreground: 0 0% 100%;
     --destructive: 0 84% 60%;
     --destructive-foreground: 0 0% 100%;
-    --border: 215 25% 27%;
-    --input: 215 25% 27%;
-    --ring: 160 84% 39%;
-    --chart-1: 160 84% 39%;
-    --chart-2: 258 90% 66%;
-    --chart-3: 217 91% 60%;
-    --chart-4: 38 92% 50%;
+    --border: 0 0% 16%;
+    --input: 0 0% 16%;
+    --ring: 24 100% 50%;
+    --chart-1: 24 100% 50%;
+    --chart-2: 36 100% 50%;
+    --chart-3: 16 100% 55%;
+    --chart-4: 45 100% 50%;
     --chart-5: 0 84% 60%;
     --radius: 0.75rem;
   }
 
-  /* Light Mode - Purple Theme */
+  /* Light Mode - White & Orange Theme */
   .light {
-    --background: 270 30% 98%;
-    --foreground: 270 50% 10%;
+    --background: 0 0% 100%;
+    --foreground: 240 10% 8%;
     --card: 0 0% 100%;
-    --card-foreground: 270 50% 10%;
+    --card-foreground: 240 10% 8%;
     --popover: 0 0% 100%;
-    --popover-foreground: 270 50% 10%;
-    --primary: 270 70% 50%;
+    --popover-foreground: 240 10% 8%;
+    --primary: 24 95% 53%;
     --primary-foreground: 0 0% 100%;
-    --secondary: 270 20% 94%;
-    --secondary-foreground: 270 50% 10%;
-    --muted: 270 15% 92%;
-    --muted-foreground: 270 20% 45%;
-    --accent: 270 80% 60%;
+    --secondary: 30 20% 96%;
+    --secondary-foreground: 240 10% 8%;
+    --muted: 30 15% 95%;
+    --muted-foreground: 240 5% 45%;
+    --accent: 32 95% 54%;
     --accent-foreground: 0 0% 100%;
     --destructive: 0 84% 60%;
     --destructive-foreground: 0 0% 100%;
-    --border: 270 15% 82%;
-    --input: 270 15% 82%;
-    --ring: 270 70% 50%;
-    --chart-1: 270 70% 50%;
-    --chart-2: 280 80% 55%;
-    --chart-3: 260 70% 60%;
-    --chart-4: 290 60% 50%;
+    --border: 240 6% 90%;
+    --input: 240 6% 90%;
+    --ring: 24 95% 53%;
+    --chart-1: 24 95% 53%;
+    --chart-2: 32 95% 54%;
+    --chart-3: 16 90% 55%;
+    --chart-4: 42 96% 53%;
     --chart-5: 0 84% 60%;
   }
 }
@@ -297,15 +297,73 @@ select {
 @keyframes pulse-glow {
   0%,
   100% {
-    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4);
+    box-shadow: 0 0 0 0 rgba(249, 115, 22, 0.4);
   }
   50% {
-    box-shadow: 0 0 20px 5px rgba(16, 185, 129, 0.2);
+    box-shadow: 0 0 20px 5px rgba(249, 115, 22, 0.2);
   }
 }
 
 .pulse-glow {
   animation: pulse-glow 2s ease-in-out infinite;
+}
+
+/* 3D Cube Spinner Loader */
+.cube-spinner {
+  width: 44px;
+  height: 44px;
+  animation: cube-spinner-rotate 2s infinite ease;
+  transform-style: preserve-3d;
+}
+
+.cube-spinner > div {
+  background-color: hsl(var(--primary) / 0.15);
+  height: 100%;
+  position: absolute;
+  width: 100%;
+  border: 2px solid hsl(var(--primary));
+  border-radius: 4px;
+  backdrop-filter: blur(2px);
+}
+
+.cube-spinner div:nth-of-type(1) {
+  transform: translateZ(-22px) rotateY(180deg);
+}
+
+.cube-spinner div:nth-of-type(2) {
+  transform: rotateY(-270deg) translateX(50%);
+  transform-origin: top right;
+}
+
+.cube-spinner div:nth-of-type(3) {
+  transform: rotateY(270deg) translateX(-50%);
+  transform-origin: center left;
+}
+
+.cube-spinner div:nth-of-type(4) {
+  transform: rotateX(90deg) translateY(-50%);
+  transform-origin: top center;
+}
+
+.cube-spinner div:nth-of-type(5) {
+  transform: rotateX(-90deg) translateY(50%);
+  transform-origin: bottom center;
+}
+
+.cube-spinner div:nth-of-type(6) {
+  transform: translateZ(22px);
+}
+
+@keyframes cube-spinner-rotate {
+  0% {
+    transform: rotate(45deg) rotateX(-25deg) rotateY(25deg);
+  }
+  50% {
+    transform: rotate(45deg) rotateX(-385deg) rotateY(25deg);
+  }
+  100% {
+    transform: rotate(45deg) rotateX(-385deg) rotateY(385deg);
+  }
 }
 
 /* Price Alert Animations */
@@ -429,4 +487,15 @@ aside.fixed,
 
 .animate-bounce-custom {
   animation: bounce-custom 0.6s ease-in-out infinite;
+}
+
+/* 4. Chrome/Safari Autofill Background & Color Overrides */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+input:-webkit-autofill:active {
+  -webkit-text-fill-color: hsl(var(--foreground)) !important;
+  -webkit-box-shadow: 0 0 0px 1000px hsl(var(--card) / 0.85) inset !important;
+  transition: background-color 5000s ease-in-out 0s;
+  border-color: hsl(var(--primary) / 0.5) !important;
 }

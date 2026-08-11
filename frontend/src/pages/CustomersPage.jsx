@@ -46,6 +46,7 @@ import {
   ExternalLink
 } from "lucide-react";
 import { toast } from "sonner";
+import Loader from "../components/Loader";
 
 export default function CustomersPage() {
   const navigate = useNavigate();
@@ -257,11 +258,7 @@ export default function CustomersPage() {
   };
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center h-96">
-        <Loader2 className="w-10 h-10 animate-spin text-primary" />
-      </div>
-    );
+    return <Loader size="lg" text="Loading Customers Directory..." />;
   }
 
   // Stats calculation for the current page

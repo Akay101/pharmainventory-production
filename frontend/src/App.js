@@ -28,6 +28,7 @@ import ScannerPage from "./pages/ScannerPage";
 import DashboardLayout from "./components/DashboardLayout";
 import UpgradePage from "./pages/UpgradePage";
 import PaymentSuccessPage from "./pages/PaymentSuccessPage";
+import Loader from "./components/Loader";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 export const API = `${BACKEND_URL}/api`;
@@ -197,14 +198,7 @@ const ProtectedRoute = ({ children, adminOnly = false }) => {
   const location = useLocation();
 
   if (loading) {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-          <p className="text-muted-foreground">Loading...</p>
-        </div>
-      </div>
-    );
+    return <Loader fullScreen text="Loading Workspace..." />;
   }
 
   if (!user) {

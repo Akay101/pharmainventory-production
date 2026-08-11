@@ -42,6 +42,7 @@ import {
 } from "../components/ui/table";
 import { Plus, UserCog, Trash2, Loader2, Shield, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
+import Loader from "../components/Loader";
 
 export default function UsersPage() {
   const { isAdmin } = useAuth();
@@ -169,11 +170,7 @@ export default function UsersPage() {
   }
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
-      </div>
-    );
+    return <Loader size="lg" text="Loading User Directory..." />;
   }
 
   return (
