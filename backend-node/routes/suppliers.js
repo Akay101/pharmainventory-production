@@ -479,4 +479,108 @@ router.post("/merge", auth, requireSubscription(), async (req, res, next) => {
   }
 });
 
+// GET /api/suppliers/:supplier_id/csv-template - Fetch saved CSV template for supplier
+router.get(
+  "/:supplier_id/csv-template",
+  auth,
+  requireSubscription(),
+  async (req, res, next) => {
+    try {
+      const db = mongoose.connection.db;
+      const supplier = await db.collection("suppliers").findOne(
+        { id: req.params.supplier_id, pharmacy_id: req.user.pharmacy_id },
+        { projection: { _id: 0, id: 1, name: 1, csv_template: 1 } }
+      );
+
+      if (!supplier) {
+        return res.status(404).json({ detail: "Supplier not found" });
+      }
+
+      res.json({
+        supplier_id: supplier.id,
+        supplier_name: supplier.name,
+        csv_template: supplier.csv_template || null,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+// POST /api/suppliers/:supplier_id/csv-template - Save or update CSV template for supplier
+router.post(
+  "/:supplier_id/csv-template",
+  auth,
+  requireSubscription(),
+  async (req, res, next) => {
+    try {
+      const { mapped_fields } = req.body;
+      const db = mongoose.connection.db;
+
+      if (!mapped_fields || typeof mapped_fields !== "object") {
+        return res.status(400).json({ detail: "mapped_fields object is required" });
+      }
+
+      const timestamp = new Date().toISOString();
+      const csvTemplateData = {
+        mapped_fields,
+        updated_at: timestamp,
+        updated_by: req.user.id,
+      };
+
+      const result = await db.collection("suppliers").updateOne(
+        { id: req.params.supplier_id, pharmacy_id: req.user.pharmacy_id },
+        { $set: { csv_template: csvTemplateData, updated_at: timestamp } }
+      );
+
+      if (result.matchedCount === 0) {
+        return res.status(404).json({ detail: "Supplier not found" });
+      }
+
+      await logActivity(
+        db,
+        req.user.pharmacy_id,
+        req.user.id,
+        req.user.name,
+        "UPDATE",
+        "SUPPLIERS",
+        req.params.supplier_id,
+        `Updated CSV mapping template for Supplier`,
+        `/suppliers`
+      );
+
+      res.json({
+        message: "CSV mapping template saved successfully",
+        csv_template: csvTemplateData,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+// DELETE /api/suppliers/:supplier_id/csv-template - Reset CSV template for supplier
+router.delete(
+  "/:supplier_id/csv-template",
+  auth,
+  requireSubscription(),
+  async (req, res, next) => {
+    try {
+      const db = mongoose.connection.db;
+      const result = await db.collection("suppliers").updateOne(
+        { id: req.params.supplier_id, pharmacy_id: req.user.pharmacy_id },
+        { $unset: { csv_template: "" } }
+      );
+
+      if (result.matchedCount === 0) {
+        return res.status(404).json({ detail: "Supplier not found" });
+      }
+
+      res.json({ message: "CSV mapping template removed successfully" });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
 module.exports = router;

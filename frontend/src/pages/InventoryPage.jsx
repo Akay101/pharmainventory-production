@@ -92,6 +92,9 @@ export default function InventoryPage() {
 
   // Pagination State
   const [pagination, setPagination] = useState({ page: 1, limit: 30, total: 0, total_pages: 1 });
+  const [catalogPagination, setCatalogPagination] = useState({ page: 1, limit: 12, total: 0, total_pages: 1 });
+  const [catalogLoading, setCatalogLoading] = useState(false);
+  const [allProductsForMerge, setAllProductsForMerge] = useState([]);
   const [sortBy, setSortBy] = useState("created_at");
   const [sortOrder, setSortOrder] = useState("desc");
 
@@ -152,7 +155,7 @@ export default function InventoryPage() {
   };
 
   const handleSelectProductToMerge = (productId) => {
-    const matched = products.find(p => p.id === productId);
+    const matched = allProductsForMerge.find(p => p.id === productId) || products.find(p => p.id === productId);
     if (!matched) return;
     if (productsToMerge.some(p => p.id === productId)) {
       toast.error("Product already selected");
@@ -213,6 +216,26 @@ export default function InventoryPage() {
     }
   };
 
+  const fetchProducts = useCallback(async (page = 1) => {
+    setCatalogLoading(true);
+    try {
+      const params = new URLSearchParams();
+      params.append("page", page);
+      params.append("limit", catalogPagination.limit);
+      if (search) params.append("search", search);
+
+      const res = await axios.get(`${API}/products?${params.toString()}`);
+      setProducts(res.data.products || []);
+      if (res.data.pagination) {
+        setCatalogPagination(res.data.pagination);
+      }
+    } catch (err) {
+      console.error("Failed to load products catalog", err);
+    } finally {
+      setCatalogLoading(false);
+    }
+  }, [search, catalogPagination.limit]);
+
   const fetchInventory = useCallback(async (page = 1, highlightId = undefined) => {
     try {
       const params = new URLSearchParams();
@@ -266,14 +289,18 @@ export default function InventoryPage() {
     }
     const debounce = setTimeout(() => {
       fetchInventory(1);
+      fetchProducts(1);
     }, 300);
     return () => clearTimeout(debounce);
   }, [search, showLowStock, showShortage, showExpiringSoon, sortBy, sortOrder]);
 
   const fetchData = async () => {
     try {
-      const prodRes = await axios.get(`${API}/products`);
-      setProducts(prodRes.data.products);
+      axios.get(`${API}/products?limit=all`).then(res => {
+        setAllProductsForMerge(res.data.products || []);
+      }).catch(err => console.error(err));
+
+      await fetchProducts(1);
       
       const hlId = location.state?.highlightId;
       if (hlId) {
@@ -834,21 +861,22 @@ export default function InventoryPage() {
         )}
       </Card>
 
-      {/* Products List */}
+      {/* Products Catalog List */}
       <Card className="bg-card/45 border border-border/40 backdrop-blur-sm shadow-sm rounded-xl overflow-hidden">
-        <CardHeader className="border-b border-border/40 py-4">
+        <CardHeader className="border-b border-border/40 py-4 flex flex-row items-center justify-between">
           <CardTitle className="text-sm font-extrabold text-foreground flex items-center gap-2">
             <Package className="w-4 h-4 text-primary" />
-            Products Catalog ({products.length})
+            Products Catalog ({catalogPagination.total})
           </CardTitle>
+          {catalogLoading && <Loader2 className="w-4 h-4 animate-spin text-primary" />}
         </CardHeader>
         <CardContent className="p-6">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-             {products.slice(0, 12).map((product) => (
+             {products.map((product) => (
               <div
                 key={product.id}
                 onClick={() => handleOpenProductDetails(product)}
-                className="p-4 rounded-xl bg-card/20 border border-border/40 hover:border-primary/30 dark:hover:border-primary/20 transition-all duration-300 group relative overflow-hidden cursor-pointer"
+                className="p-4 rounded-xl bg-card/20 border border-border/40 hover:border-primary/30 dark:hover:border-primary/20 transition-all duration-300 group relative overflow-hidden cursor-pointer flex flex-col justify-between"
               >
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform duration-300">
@@ -856,9 +884,15 @@ export default function InventoryPage() {
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="font-bold text-sm text-foreground truncate">{product.name}</p>
-                    <p className="text-[10px] font-bold text-muted-foreground/80 mt-0.5 uppercase tracking-wide">
-                      {product.category} • THRESHOLD: {product.low_stock_threshold} • SHORTAGE: {product.shortage_threshold !== undefined && product.shortage_threshold !== null ? product.shortage_threshold : (settings?.shortage_threshold || 10)}
-                    </p>
+                    <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                      <span className="text-[10px] font-extrabold text-muted-foreground/80 uppercase tracking-wide">
+                        {product.category || "MEDICINE"}
+                      </span>
+                      <span className="text-[10px] text-muted-foreground">•</span>
+                      <span className="text-[10px] font-bold text-primary">
+                        {product.total_batches || 0} Batches ({product.total_stock || 0} u)
+                      </span>
+                    </div>
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
                     <Button
@@ -892,6 +926,61 @@ export default function InventoryPage() {
             ))}
           </div>
         </CardContent>
+
+        {/* Catalog Pagination Controls */}
+        {catalogPagination.total_pages > 1 && (
+          <div className="flex items-center justify-between px-6 py-4 border-t border-border/40 bg-muted/5">
+            <div className="text-xs font-bold text-muted-foreground/80">
+              Showing {((catalogPagination.page - 1) * catalogPagination.limit) + 1} to {Math.min(catalogPagination.page * catalogPagination.limit, catalogPagination.total)} of {catalogPagination.total} catalog products
+            </div>
+            
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => fetchProducts(catalogPagination.page - 1)}
+                disabled={catalogPagination.page <= 1 || catalogLoading}
+                className="h-8 text-xs font-bold border-border/80 hover:bg-muted rounded-lg"
+              >
+                <ChevronLeft className="h-3.5 w-3.5 mr-1 text-primary" />
+                Previous
+              </Button>
+              
+              <div className="flex items-center gap-1">
+                {Array.from({ length: Math.min(5, catalogPagination.total_pages) }, (_, i) => {
+                  const pageNum = Math.max(1, Math.min(catalogPagination.total_pages - 4, catalogPagination.page - 2)) + i;
+                  if (pageNum > catalogPagination.total_pages) return null;
+                  return (
+                    <Button
+                      key={pageNum}
+                      variant={pageNum === catalogPagination.page ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => fetchProducts(pageNum)}
+                      className={`w-8 h-8 p-0 text-xs font-bold rounded-lg border ${
+                        pageNum === catalogPagination.page
+                          ? "bg-primary text-primary-foreground shadow-md shadow-primary/10 border-primary"
+                          : "border-border/80 hover:bg-muted"
+                      }`}
+                    >
+                      {pageNum}
+                    </Button>
+                  );
+                })}
+              </div>
+              
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => fetchProducts(catalogPagination.page + 1)}
+                disabled={catalogPagination.page >= catalogPagination.total_pages || catalogLoading}
+                className="h-8 text-xs font-bold border-border/80 hover:bg-muted rounded-lg"
+              >
+                Next
+                <ChevronRight className="h-3.5 w-3.5 ml-1 text-primary" />
+              </Button>
+            </div>
+          </div>
+        )}
       </Card>
 
       {/* Delete Confirmation Dialog */}

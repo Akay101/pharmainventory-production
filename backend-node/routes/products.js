@@ -11,30 +11,79 @@ const { requireSubscription } = require("../middleware/subscription");
 router.get("/", auth, requireSubscription(), async (req, res, next) => {
   try {
     const db = mongoose.connection.db;
-    const { search, page = 1, limit = 50 } = req.query;
+    const { search, page = 1, limit = 12, all } = req.query;
 
     const query = { pharmacy_id: req.user.pharmacy_id };
     if (search) {
       query.name = { $regex: search, $options: "i" };
     }
 
-    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const pageNum = parseInt(page) || 1;
+    const isAll = all === "true" || limit === "all";
+    const limitNum = isAll ? 0 : parseInt(limit) || 12;
+    const skip = isAll ? 0 : (pageNum - 1) * limitNum;
+
+    const pipeline = [
+      { $match: query },
+      {
+        $lookup: {
+          from: "inventory",
+          let: { pId: "$id", pName: "$name" },
+          pipeline: [
+            {
+              $match: {
+                $expr: {
+                  $and: [
+                    { $eq: ["$pharmacy_id", req.user.pharmacy_id] },
+                    {
+                      $or: [
+                        { $eq: ["$product_id", "$$pId"] },
+                        { $eq: ["$product_name", "$$pName"] }
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          ],
+          as: "batches"
+        }
+      },
+      {
+        $addFields: {
+          total_batches: { $size: "$batches" },
+          total_stock: { $sum: "$batches.available_quantity" }
+        }
+      },
+      {
+        $project: {
+          batches: 0,
+          _id: 0
+        }
+      },
+      { $sort: { name: 1 } }
+    ];
+
+    if (!isAll) {
+      pipeline.push({ $skip: skip });
+      pipeline.push({ $limit: limitNum });
+    }
+
     const products = await db
       .collection("products")
-      .find(query, { projection: { _id: 0 } })
-      .skip(skip)
-      .limit(parseInt(limit))
+      .aggregate(pipeline)
       .toArray();
 
     const total = await db.collection("products").countDocuments(query);
+    const effectiveLimit = isAll ? (total || 1) : limitNum;
 
     res.json({
       products,
       pagination: {
-        page: parseInt(page),
-        limit: parseInt(limit),
+        page: pageNum,
+        limit: effectiveLimit,
         total,
-        total_pages: Math.ceil(total / parseInt(limit)) || 1,
+        total_pages: isAll ? 1 : (Math.ceil(total / limitNum) || 1),
       },
     });
   } catch (error) {

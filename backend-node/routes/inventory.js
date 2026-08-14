@@ -164,6 +164,74 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
   }
 });
 
+// GET /api/inventory/product-batches - Fetch all inventory batches for a specific product
+router.get(
+  "/product-batches",
+  auth,
+  requireSubscription(),
+  async (req, res, next) => {
+    try {
+      const db = mongoose.connection.db;
+      const { product_name } = req.query;
+
+      if (!product_name) {
+        return res.status(400).json({ detail: "product_name is required" });
+      }
+
+      const normalizedInput = (product_name || "").trim().toLowerCase();
+
+      const batches = await db
+        .collection("inventory")
+        .aggregate([
+          {
+            $match: {
+              pharmacy_id: req.user.pharmacy_id,
+              $or: [
+                { product_name: { $regex: new RegExp("^" + normalizedInput.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&') + "$", "i") } },
+                { product_name: { $regex: normalizedInput.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&'), $options: "i" } }
+              ]
+            }
+          },
+          {
+            $lookup: {
+              from: "suppliers",
+              localField: "supplier_id",
+              foreignField: "id",
+              as: "supplier_info"
+            }
+          },
+          {
+            $unwind: {
+              path: "$supplier_info",
+              preserveNullAndEmptyArrays: true
+            }
+          },
+          {
+            $addFields: {
+              supplier_name: "$supplier_info.name"
+            }
+          },
+          {
+            $project: {
+              supplier_info: 0,
+              _id: 0
+            }
+          },
+          { $sort: { expiry_date: 1, created_at: -1 } }
+        ])
+        .toArray();
+
+      res.json({
+        product_name,
+        count: batches.length,
+        batches
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
 // GET /api/inventory/search
 router.get("/search", auth, requireSubscription(), async (req, res, next) => {
   try {

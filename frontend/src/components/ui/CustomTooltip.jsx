@@ -120,7 +120,7 @@ const CustomTooltip = ({
             className={`fixed z-[9999] px-3 py-1 rounded-lg text-xs shadow-xl
             transition-opacity duration-150 ease-in-out
             ${bgColor} ${textColor}
-            ${breakWords ? "break-words max-w-xs" : "whitespace-nowrap"}
+            ${breakWords ? "whitespace-normal break-normal max-w-sm" : "whitespace-nowrap"}
             ${className}
           `}
             style={coords}
@@ -163,13 +163,39 @@ function getArrowStyle(position, bgColorClass) {
         borderColor: `${color} transparent transparent transparent`,
       };
     case "bottom":
+    case "bottom-right":
       return {
         ...common,
         top: -6,
-        left: "50%",
-        transform: "translateX(-50%)",
+        right: position === "bottom-right" ? 14 : "auto",
+        left: position === "bottom" ? "50%" : "auto",
+        transform: position === "bottom" ? "translateX(-50%)" : "none",
         borderWidth: "0 6px 6px 6px",
         borderColor: `transparent transparent ${color} transparent`,
+      };
+    case "bottom-left":
+      return {
+        ...common,
+        top: -6,
+        left: 14,
+        borderWidth: "0 6px 6px 6px",
+        borderColor: `transparent transparent ${color} transparent`,
+      };
+    case "top-right":
+      return {
+        ...common,
+        bottom: -6,
+        right: 14,
+        borderWidth: "6px 6px 0 6px",
+        borderColor: `${color} transparent transparent transparent`,
+      };
+    case "top-left":
+      return {
+        ...common,
+        bottom: -6,
+        left: 14,
+        borderWidth: "6px 6px 0 6px",
+        borderColor: `${color} transparent transparent transparent`,
       };
     case "left":
       return {

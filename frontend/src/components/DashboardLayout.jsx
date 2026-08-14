@@ -181,7 +181,6 @@ export default function DashboardLayout() {
         {/* Seamless Glassy Top Header Navigation Bar */}
         <header className="sticky top-0 z-40 w-full border-b border-border/80 dark:border-border/50 bg-background/85 dark:bg-zinc-950/85 backdrop-blur-xl transition-colors duration-200">
           <div className="w-full h-16 px-4 sm:px-6 flex items-center justify-between gap-4">
-            
             {/* Left Brand Identifier */}
             <div className="flex items-center gap-3 shrink-0">
               {/* Mobile Drawer Sheet Trigger */}
@@ -220,7 +219,9 @@ export default function DashboardLayout() {
                         </h2>
                         <span className="text-[10px] text-orange-600 dark:text-orange-400 font-extrabold flex items-center gap-1 mt-0.5">
                           <Sparkles className="w-2.5 h-2.5 text-orange-500" />
-                          {user?.subscription_plan ? `${user.subscription_plan} Plan` : "Agentic Plan"}
+                          {user?.subscription_plan
+                            ? `${user.subscription_plan} Plan`
+                            : "Agentic Plan"}
                         </span>
                       </div>
                     </div>
@@ -287,7 +288,9 @@ export default function DashboardLayout() {
                   </span>
                   <span className="text-[10px] text-orange-600 dark:text-orange-400 font-extrabold flex items-center gap-1">
                     <Sparkles className="w-2.5 h-2.5 text-orange-500" />
-                    {user?.subscription_plan ? `${user.subscription_plan} Plan` : "Agentic Plan"}
+                    {user?.subscription_plan
+                      ? `${user.subscription_plan} Plan`
+                      : "Agentic Plan"}
                   </span>
                 </div>
               </div>
@@ -314,7 +317,10 @@ export default function DashboardLayout() {
                       </NavLink>
                     </TooltipTrigger>
                     {item.shortcut && (
-                      <TooltipContent side="bottom" className="font-mono text-[10px] font-bold">
+                      <TooltipContent
+                        side="bottom"
+                        className="font-mono text-[10px] font-bold"
+                      >
                         Shortcut: {formatShortcut(item.shortcut)}
                       </TooltipContent>
                     )}
@@ -416,8 +422,11 @@ export default function DashboardLayout() {
 
         {/* Full-Width Seamless Page Content Area */}
         <div className="flex-1 relative flex overflow-hidden w-full">
-          <main className="flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto w-full flex flex-col">
-            <div key={location.pathname} className="flex-1 w-full flex flex-col animate-in fade-in duration-300 ease-out">
+          <main className="flex-1 p-2 sm:p-3 lg:p-3 overflow-y-auto w-full flex flex-col">
+            <div
+              key={location.pathname}
+              className="flex-1 w-full flex flex-col animate-in fade-in duration-300 ease-out"
+            >
               <Outlet />
             </div>
           </main>

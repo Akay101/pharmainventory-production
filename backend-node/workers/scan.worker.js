@@ -21,7 +21,11 @@ mongoose
   .then(() => console.log("[Worker] Connected to MongoDB"))
   .catch((err) => console.error("[Worker] MongoDB connection error:", err));
 
-const pythonPath = process.env.PYTHON_PATH || "python3";
+const pythonPath =
+  process.env.PYTHON_PATH ||
+  (fs.existsSync("/usr/local/bin/python3")
+    ? "/usr/local/bin/python3"
+    : "python3");
 
 const worker = new Worker(
   "scan-queue",

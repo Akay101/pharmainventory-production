@@ -1,3 +1,3 @@
-import Loader from "./ui/loader";
+import Loader, { AiLoader } from "./ui/loader";
 export default Loader;
-export { Loader };
+export { Loader, AiLoader };
