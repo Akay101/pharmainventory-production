@@ -141,6 +141,17 @@ export default function DashboardLayout() {
     }
   }, [location.state?.highlightId]);
 
+  const checkIsActive = (itemPath) => {
+    const currentPath = location.pathname.toLowerCase().replace(/\/$/, "") || "/";
+    const targetPath = itemPath.toLowerCase().replace(/\/$/, "") || "/";
+
+    if (targetPath === "/dashboard") {
+      return currentPath === "/dashboard" || currentPath === "/";
+    }
+
+    return currentPath === targetPath || currentPath.startsWith(`${targetPath}/`);
+  };
+
   const toggleTheme = () => {
     const nextDark = !isDark;
     setIsDark(nextDark);
@@ -175,17 +186,17 @@ export default function DashboardLayout() {
   return (
     <TooltipProvider delayDuration={0}>
       <div
-        className="min-h-screen bg-background flex flex-col select-none overflow-x-hidden"
+        className="h-screen w-screen max-h-screen bg-background flex flex-col select-none overflow-hidden"
         data-testid="dashboard-layout"
       >
-        {/* Seamless Glassy Top Header Navigation Bar */}
-        <header className="sticky top-0 z-40 w-full border-b border-border/80 dark:border-border/50 bg-background/85 dark:bg-zinc-950/85 backdrop-blur-xl transition-colors duration-200">
-          <div className="w-full h-16 px-4 sm:px-6 flex items-center justify-between gap-4">
+        {/* Fixed Glassy Top Header Navigation Bar */}
+        <header className="h-16 shrink-0 w-full z-50 border-b border-border/80 dark:border-border/50 bg-background/90 dark:bg-zinc-950/90 backdrop-blur-xl transition-colors duration-200">
+          <div className="w-full h-full px-4 sm:px-6 flex items-center justify-between gap-4">
             {/* Left Brand Identifier */}
             <div className="flex items-center gap-3 shrink-0">
               {/* Mobile Drawer Sheet Trigger */}
               <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
-                <SheetTrigger asChild className="xl:hidden">
+                <SheetTrigger asChild className="lg:hidden">
                   <Button
                     variant="ghost"
                     size="icon"
@@ -229,7 +240,7 @@ export default function DashboardLayout() {
                     {/* Sheet Navigation Items */}
                     <nav className="space-y-1.5">
                       {filteredItems.map((item) => {
-                        const isItemActive = location.pathname === item.path;
+                        const isItemActive = checkIsActive(item.path);
                         return (
                           <NavLink
                             key={item.path}
@@ -296,16 +307,16 @@ export default function DashboardLayout() {
               </div>
             </div>
 
-            {/* Center Top Horizontal Navigation Bar (Desktop / XL) */}
-            <nav className="hidden xl:flex items-center gap-1 bg-muted/40 dark:bg-muted/20 p-1.5 rounded-2xl border border-border/60 dark:border-border/40 shadow-xs">
+            {/* Center Top Horizontal Navigation Bar (Desktop / Large Screens) */}
+            <nav className="hidden lg:flex items-center gap-1 bg-muted/40 dark:bg-muted/20 p-1.5 rounded-2xl border border-border/60 dark:border-border/40 shadow-xs max-w-full overflow-x-auto scrollbar-none">
               {filteredItems.map((item) => {
-                const isItemActive = location.pathname === item.path;
+                const isItemActive = checkIsActive(item.path);
                 return (
                   <Tooltip key={item.path}>
                     <TooltipTrigger asChild>
                       <NavLink
                         to={item.path}
-                        className={`relative flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all duration-300 ease-out active:scale-95 ${
+                        className={`relative flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all duration-300 ease-out active:scale-95 whitespace-nowrap ${
                           isItemActive
                             ? "bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-md shadow-orange-500/25 scale-[1.02]"
                             : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
@@ -421,8 +432,8 @@ export default function DashboardLayout() {
         </header>
 
         {/* Full-Width Seamless Page Content Area */}
-        <div className="flex-1 relative flex overflow-hidden w-full">
-          <main className="flex-1 p-2 sm:p-3 lg:p-3 overflow-y-auto w-full flex flex-col">
+        <div className="flex-1 min-h-0 relative flex overflow-hidden w-full">
+          <main className="flex-1 h-full overflow-y-auto p-2 sm:p-3 lg:p-3 w-full flex flex-col">
             <div
               key={location.pathname}
               className="flex-1 w-full flex flex-col animate-in fade-in duration-300 ease-out"

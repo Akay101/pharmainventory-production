@@ -358,7 +358,7 @@ router.get(
   }
 );
 
-// GET /api/purchases/price-history - Check historical prices for a product
+// GET /api/purchases/price-history - Check historical prices and MRP trend for a product
 router.get(
   "/price-history",
   auth,
@@ -366,13 +366,14 @@ router.get(
   async (req, res, next) => {
     try {
       const db = mongoose.connection.db;
-      const { product_name, current_price } = req.query;
+      const { product_name, current_price, current_rate, current_mrp } = req.query;
 
       if (!product_name) {
         return res.status(400).json({ detail: "product_name is required" });
       }
 
-      const currentPriceNum = parseFloat(current_price) || 0;
+      const currentRateNum = parseFloat(req.query.current_price || req.query.current_rate || req.query.rate_pack) || 0;
+      const currentMrpNum = parseFloat(req.query.current_mrp || req.query.current_mrp_pack || req.query.mrp_pack) || 0;
 
       // Find all purchases containing this product (case-insensitive match, with normalized name)
       const normalizedInput = normalizeName(product_name);
@@ -387,14 +388,11 @@ router.get(
         )
         .toArray();
 
-      // Extract unique supplier prices for this product
-      const supplierPrices = [];
-      const seenSuppliers = new Set();
+      const historicalRecords = [];
       let matchedProductName = null;
 
       for (const purchase of purchases) {
         for (const item of purchase.items || []) {
-          // Match product name (case-insensitive)
           const normalizedStored = normalizeName(item.product_name);
 
           if (
@@ -402,59 +400,98 @@ router.get(
             normalizedStored.includes(normalizedInput) ||
             normalizedInput.includes(normalizedStored)
           ) {
-            // Save first matched actual product name
             if (!matchedProductName) {
               matchedProductName = item.product_name;
             }
 
-            const packPrice = item.pack_price || item.rate_pack || 0;
-            const key = `${purchase.supplier_id || purchase.supplier_name}-${packPrice}`;
+            const packPrice = parseFloat(item.rate_pack || item.pack_price || 0);
+            const unitsPerPack = parseInt(item.units_per_pack || item.units) || 1;
+            const mrpPack = parseFloat(
+              item.mrp_pack ||
+                (item.mrp_per_unit ? item.mrp_per_unit * unitsPerPack : item.mrp || 0)
+            );
 
-            if (!seenSuppliers.has(key) && packPrice > 0) {
-              seenSuppliers.add(key);
-              supplierPrices.push({
+            if (packPrice > 0) {
+              historicalRecords.push({
+                purchase_id: purchase.id || purchase._id,
                 supplier_id: purchase.supplier_id,
-                supplier_name: purchase.supplier_name,
-                pack_price: packPrice,
-                units_per_pack: item.units_per_pack || 1,
-                price_per_unit: packPrice / (item.units_per_pack || 1),
-                purchase_date: purchase.created_at,
-                invoice_no: purchase.invoice_no,
-                batch_no: item.batch_no,
+                supplier_name: purchase.supplier_name || "Unknown Supplier",
+                rate_pack: packPrice,
+                mrp_pack: mrpPack,
+                units_per_pack: unitsPerPack,
+                price_per_unit: packPrice / unitsPerPack,
+                purchase_date: purchase.created_at || purchase.purchase_date,
+                invoice_no: purchase.invoice_no || "N/A",
+                batch_no: item.batch_no || "N/A",
+                expiry_date: item.expiry_date || "N/A",
               });
             }
           }
         }
       }
 
-      // Sort by pack price (cheapest first)
-      supplierPrices.sort((a, b) => a.pack_price - b.pack_price);
+      // Sort chronologically (ascending) for trend chart
+      const sortedByDate = [...historicalRecords].sort(
+        (a, b) => new Date(a.purchase_date) - new Date(b.purchase_date)
+      );
 
-      // Find cheaper options (only those with price < current price)
-      const cheaperOptions =
-        currentPriceNum > 0
-          ? supplierPrices.filter((sp) => sp.pack_price < currentPriceNum)
-          : [];
+      // Sort by rate (cheapest first)
+      const sortedByRate = [...historicalRecords].sort(
+        (a, b) => a.rate_pack - b.rate_pack
+      );
 
-      // Get the cheapest historical price
-      const cheapestPrice =
-        supplierPrices.length > 0 ? supplierPrices[0].pack_price : null;
-      const isHigherThanHistory =
-        currentPriceNum > 0 &&
-        cheapestPrice !== null &&
-        currentPriceNum > cheapestPrice;
+      const latestRecord = sortedByDate.length > 0 ? sortedByDate[sortedByDate.length - 1] : null;
+      const cheapestRecord = sortedByRate.length > 0 ? sortedByRate[0] : null;
+
+      const latestRate = latestRecord ? latestRecord.rate_pack : 0;
+      const latestMrp = latestRecord ? latestRecord.mrp_pack : 0;
+
+      const rate_increased = currentRateNum > 0 && latestRate > 0 && (currentRateNum - latestRate) >= 0.5;
+      const rate_difference = rate_increased ? Number((currentRateNum - latestRate).toFixed(2)) : 0;
+
+      const mrp_increased = currentMrpNum > 0 && latestMrp > 0 && (currentMrpNum - latestMrp) >= 0.5;
+      const mrp_difference = mrp_increased ? Number((currentMrpNum - latestMrp).toFixed(2)) : 0;
+
+      const mrp_lowered = currentMrpNum > 0 && latestMrp > 0 && (latestMrp - currentMrpNum) >= 0.5;
+      const mrp_drop_difference = mrp_lowered ? Number((latestMrp - currentMrpNum).toFixed(2)) : 0;
+
+      // ALERT CONDITION: Rate increased while MRP remained SAME (neither increased nor lowered)
+      const is_higher_price_alert = rate_increased && !mrp_increased && !mrp_lowered;
+      const is_mrp_lowered_alert = mrp_lowered;
+
+      const alert_type = mrp_lowered
+        ? (rate_increased ? "MRP_LOWERED_HIGHER_RATE" : "MRP_LOWERED")
+        : is_higher_price_alert
+        ? "SAME_MRP_HIGHER_RATE"
+        : mrp_increased
+        ? "MRP_HIKE"
+        : "NORMAL";
+
+      // Filter cheaper supplier options
+      const cheaperOptions = currentRateNum > 0
+        ? sortedByRate.filter((r) => r.rate_pack < currentRateNum)
+        : [];
 
       res.json({
         searched_product_name: product_name,
-        matched_product_name: matchedProductName,
-        current_price: currentPriceNum,
-        cheapest_historical_price: cheapestPrice,
-        is_higher_than_history: isHigherThanHistory,
-        price_difference: isHigherThanHistory
-          ? currentPriceNum - cheapestPrice
-          : 0,
+        matched_product_name: matchedProductName || product_name,
+        current_rate: currentRateNum,
+        current_mrp: currentMrpNum,
+        latest_rate: latestRate,
+        latest_mrp: latestMrp,
+        cheapest_rate: cheapestRecord ? cheapestRecord.rate_pack : null,
+        rate_increased,
+        rate_difference,
+        mrp_increased,
+        mrp_difference,
+        mrp_lowered,
+        mrp_drop_difference,
+        is_higher_price_alert,
+        is_mrp_lowered_alert,
+        alert_type,
         cheaper_options: cheaperOptions,
-        all_historical_prices: supplierPrices,
+        price_history_trend: sortedByDate,
+        all_historical_prices: sortedByRate,
       });
     } catch (error) {
       next(error);
