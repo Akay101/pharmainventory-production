@@ -25,6 +25,10 @@ const auth = async (req, res, next) => {
     } else if (req.headers.cookie) {
       const cookies = parseCookies(req.headers.cookie);
       token = cookies['pharmalogy_token'];
+    } else if (req.query && req.query.token) {
+      token = req.query.token;
+    } else if (req.body && req.body.token) {
+      token = req.body.token;
     }
 
     if (!token || token === 'undefined' || token === 'null') {

@@ -394,9 +394,10 @@ const getPaymentModeIcon = (mode, sizeClass = "w-3.5 h-3.5") => {
   return null;
 };
 
-// Super Clear, Simple Price History Bar Chart (Rate vs MRP) with Horizontal Scroll & Non-Clipped Details
+// Super Clear, Simple Price History Bar Chart (Rate vs MRP) with Auto-Scroll & Dual Highlights
 const PriceTrendChart = ({ trendData = [], currentRate = 0, currentMrp = 0 }) => {
   const [hoveredItem, setHoveredItem] = useState(null);
+  const scrollContainerRef = useRef(null);
 
   if (!trendData || trendData.length === 0) return null;
 
@@ -419,6 +420,26 @@ const PriceTrendChart = ({ trendData = [], currentRate = 0, currentMrp = 0 }) =>
     return { ...d, mrp: cleanMrp };
   });
 
+  // Identify lowest historical rate
+  const historicalItems = validItems.filter((d) => !d.isCurrent);
+  const minHistoricalRate =
+    historicalItems.length > 0
+      ? Math.min(...historicalItems.map((d) => d.rate))
+      : null;
+
+  let lowestMarked = false;
+  validItems = validItems.map((d) => {
+    if (
+      minHistoricalRate !== null &&
+      d.rate === minHistoricalRate &&
+      !lowestMarked
+    ) {
+      lowestMarked = true;
+      return { ...d, isLowest: true };
+    }
+    return d;
+  });
+
   // Include current entry if available
   if (currentRate > 0) {
     validItems.push({
@@ -433,7 +454,16 @@ const PriceTrendChart = ({ trendData = [], currentRate = 0, currentMrp = 0 }) =>
   if (validItems.length === 0) return null;
 
   // 2. Find max scale value across all items
-  const maxVal = Math.max(...validItems.map((d) => Math.max(d.rate, d.mrp))) * 1.2 || 100;
+  const maxVal =
+    Math.max(...validItems.map((d) => Math.max(d.rate, d.mrp))) * 1.2 || 100;
+
+  // 3. Auto-scroll to far right (Current Entry) whenever validItems loads
+  useEffect(() => {
+    if (scrollContainerRef.current) {
+      scrollContainerRef.current.scrollLeft =
+        scrollContainerRef.current.scrollWidth;
+    }
+  }, [validItems.length, currentRate, currentMrp]);
 
   return (
     <div className="bg-card border border-border/80 rounded-2xl p-4 space-y-2.5 shadow-xs">
@@ -461,12 +491,31 @@ const PriceTrendChart = ({ trendData = [], currentRate = 0, currentMrp = 0 }) =>
             <span className="truncate max-w-[55%]">
               <strong className="text-foreground">{hoveredItem.supplier}</strong>{" "}
               <span className="text-muted-foreground font-sans">
-                ({hoveredItem.isCurrent ? "Current" : hoveredItem.date ? new Date(hoveredItem.date).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : ""})
+                (
+                {hoveredItem.isCurrent
+                  ? "Current"
+                  : hoveredItem.date
+                  ? new Date(hoveredItem.date).toLocaleDateString("en-US", {
+                      month: "short",
+                      day: "numeric",
+                    })
+                  : ""}
+                )
               </span>
             </span>
             <span className="flex items-center gap-2 shrink-0">
-              <span>Rate: <strong className="text-orange-500 font-extrabold">₹{hoveredItem.rate.toFixed(2)}</strong></span>
-              <span>MRP: <strong className="text-sky-400 font-extrabold">₹{hoveredItem.mrp.toFixed(2)}</strong></span>
+              <span>
+                Rate:{" "}
+                <strong className="text-orange-500 font-extrabold">
+                  ₹{hoveredItem.rate.toFixed(2)}
+                </strong>
+              </span>
+              <span>
+                MRP:{" "}
+                <strong className="text-sky-400 font-extrabold">
+                  ₹{hoveredItem.mrp.toFixed(2)}
+                </strong>
+              </span>
             </span>
           </>
         ) : (
@@ -476,12 +525,21 @@ const PriceTrendChart = ({ trendData = [], currentRate = 0, currentMrp = 0 }) =>
         )}
       </div>
 
-      {/* Horizontal Scrollable Bar Chart Container */}
-      <div className="w-full overflow-x-auto pb-2 pt-2 px-1 scrollbar-thin">
+      {/* Horizontal Scrollable Bar Chart Container with Auto-Scroll Ref */}
+      <div
+        ref={scrollContainerRef}
+        className="w-full overflow-x-auto pb-2 pt-2 px-1 scrollbar-thin scroll-smooth"
+      >
         <div className="flex items-end gap-3 min-w-max min-h-[145px] border-b border-border/50 pb-2">
           {validItems.map((item, idx) => {
-            const rateHeight = Math.max(12, Math.round((item.rate / maxVal) * 100));
-            const mrpHeight = Math.max(12, Math.round((item.mrp / maxVal) * 100));
+            const rateHeight = Math.max(
+              12,
+              Math.round((item.rate / maxVal) * 100)
+            );
+            const mrpHeight = Math.max(
+              12,
+              Math.round((item.mrp / maxVal) * 100)
+            );
             const formattedDate = item.date
               ? new Date(item.date).toLocaleDateString("en-US", {
                   month: "short",
@@ -497,14 +555,20 @@ const PriceTrendChart = ({ trendData = [], currentRate = 0, currentMrp = 0 }) =>
                 title={`${item.supplier}\nRate: ₹${item.rate.toFixed(2)}\nMRP: ₹${item.mrp.toFixed(2)}`}
                 className={`flex flex-col items-center gap-1.5 group cursor-pointer px-2.5 py-2 rounded-2xl min-w-[85px] shrink-0 transition-all ${
                   item.isCurrent
-                    ? "ring-2 ring-orange-500/80 bg-orange-500/10 shadow-md shadow-orange-500/20 animate-pulse"
+                    ? "ring-2 ring-orange-500 bg-orange-500/10 shadow-md shadow-orange-500/20"
+                    : item.isLowest
+                    ? "ring-2 ring-sky-400 bg-sky-400/10 shadow-md shadow-sky-400/20"
                     : "hover:bg-muted/40 border border-transparent hover:border-border/60"
                 }`}
               >
                 {/* Direct Price Labels (Non-overlapping Stacked Header) */}
                 <div className="flex flex-col items-center text-[9px] font-black font-mono leading-tight mb-1">
-                  <span className="text-sky-400" title="MRP">₹{Math.round(item.mrp)}</span>
-                  <span className="text-orange-500" title="Rate">₹{Math.round(item.rate)}</span>
+                  <span className="text-sky-400" title="MRP">
+                    ₹{Math.round(item.mrp)}
+                  </span>
+                  <span className="text-orange-500" title="Rate">
+                    ₹{Math.round(item.rate)}
+                  </span>
                 </div>
 
                 {/* Side-by-side Bars */}
@@ -516,6 +580,8 @@ const PriceTrendChart = ({ trendData = [], currentRate = 0, currentMrp = 0 }) =>
                       className={`w-full rounded-t-md transition-all duration-300 ${
                         item.isCurrent
                           ? "bg-gradient-to-t from-orange-600 to-amber-400"
+                          : item.isLowest
+                          ? "bg-sky-400"
                           : "bg-orange-500/80 group-hover:bg-orange-500"
                       }`}
                     />
@@ -535,10 +601,16 @@ const PriceTrendChart = ({ trendData = [], currentRate = 0, currentMrp = 0 }) =>
                   className={`text-[10px] font-extrabold tracking-tight px-2 py-0.5 rounded-full mt-1 ${
                     item.isCurrent
                       ? "bg-orange-500 text-white shadow-xs"
+                      : item.isLowest
+                      ? "bg-sky-400 text-slate-950 font-black shadow-xs"
                       : "text-muted-foreground bg-muted/60"
                   }`}
                 >
-                  {item.isCurrent ? "Current" : formattedDate}
+                  {item.isCurrent
+                    ? "Current"
+                    : item.isLowest
+                    ? `Lowest (${formattedDate})`
+                    : formattedDate}
                 </span>
               </div>
             );
@@ -3528,7 +3600,7 @@ export default function PurchasesPage() {
                         processingRowId === item.id ? "ai-loading-row" : ""
                       } ${sparkleRowId === item.id ? "ai-sparkle-row" : ""} ${
                         (priceAlerts[item.id]?.is_higher_price_alert ||
-                          (priceAlerts[item.id]?.is_mrp_lowered_alert && priceAlerts[item.id]?.rate_increased))
+                          priceAlerts[item.id]?.rate_increased)
                           ? "price-alert-row-blink"
                           : ""
                       } ${
@@ -3759,11 +3831,20 @@ export default function PurchasesPage() {
                                   mrpPack
                                 )
                               }
-                              className="flex items-center gap-1 bg-blue-500/15 text-blue-400 hover:bg-blue-500/25 border border-blue-500/40 px-2 py-0.5 rounded-lg text-[10px] font-extrabold transition-all cursor-pointer shadow-2xs shrink-0 self-start mt-1"
-                              title="MRP increased from past purchases. Click to view price history."
+                              className={`flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-extrabold transition-all cursor-pointer shadow-2xs shrink-0 self-start mt-1 ${
+                                priceAlerts[item.id]?.rate_increased
+                                  ? "bg-amber-500/15 text-amber-400 hover:bg-amber-500/25 border border-amber-500/40"
+                                  : "bg-blue-500/15 text-blue-400 hover:bg-blue-500/25 border border-blue-500/40"
+                              }`}
+                              title="MRP and Rate trends from past purchases. Click to view price history."
                             >
-                              <TrendingUp className="w-3 h-3 text-blue-400 shrink-0" />
-                              <span>MRP Hike (+₹{priceAlerts[item.id].mrp_difference?.toFixed(2)})</span>
+                              <TrendingUp className={`w-3 h-3 shrink-0 ${priceAlerts[item.id]?.rate_increased ? "text-amber-400" : "text-blue-400"}`} />
+                              <span>
+                                MRP Hike (+₹{priceAlerts[item.id].mrp_difference?.toFixed(2)})
+                                {priceAlerts[item.id]?.rate_increased && (
+                                  <> & Rate +₹{priceAlerts[item.id].rate_difference?.toFixed(2)}</>
+                                )}
+                              </span>
                             </button>
                           )}
                           {(priceAlerts[item.id]?.mrp_lowered || priceAlerts[item.id]?.is_mrp_lowered_alert) && (
@@ -6145,19 +6226,24 @@ export default function PurchasesPage() {
                           className="p-3.5 rounded-xl border border-border bg-card hover:border-orange-500/40 transition-all space-y-2.5 shadow-2xs"
                         >
                           <div className="flex items-center justify-between gap-2">
-                            <div className="flex items-center gap-2">
-                              <span className="font-mono font-bold text-xs bg-muted px-2 py-0.5 rounded-md text-foreground border border-border">
-                                Batch: {batch.batch_no || "N/A"}
+                            <div className="space-y-1 truncate">
+                              <span className="font-extrabold text-xs text-foreground block truncate" title={batch.product_name || productSidebar.productName}>
+                                {batch.product_name || productSidebar.productName}
                               </span>
-                              <span
-                                className={`text-[10px] font-extrabold px-2 py-0.5 rounded-md ${
-                                  (batch.available_quantity || 0) > 0
-                                    ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
-                                    : "bg-rose-500/10 text-rose-400 border border-rose-500/20"
-                                }`}
-                              >
-                                Stock: {batch.available_quantity || 0} u
-                              </span>
+                              <div className="flex items-center gap-2">
+                                <span className="font-mono font-bold text-xs bg-muted px-2 py-0.5 rounded-md text-foreground border border-border">
+                                  Batch: {batch.batch_no || "N/A"}
+                                </span>
+                                <span
+                                  className={`text-[10px] font-extrabold px-2 py-0.5 rounded-md ${
+                                    (batch.available_quantity || 0) > 0
+                                      ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                                      : "bg-rose-500/10 text-rose-400 border border-rose-500/20"
+                                  }`}
+                                >
+                                  Stock: {batch.available_quantity || 0} u
+                                </span>
+                              </div>
                             </div>
                             <Button
                               size="sm"
@@ -6243,9 +6329,16 @@ export default function PurchasesPage() {
                               <span>Higher Rate (Same MRP)</span>
                             </span>
                           ) : productSidebar.priceHistoryDetail.mrp_increased ? (
-                            <span className="text-[10px] font-black px-2.5 py-0.5 rounded-full bg-blue-500/15 text-blue-400 border border-blue-500/30 flex items-center gap-1">
+                            <span className={`text-[10px] font-black px-2.5 py-0.5 rounded-full flex items-center gap-1 ${
+                              productSidebar.priceHistoryDetail.rate_increased
+                                ? "bg-amber-500/15 text-amber-400 border border-amber-500/30"
+                                : "bg-blue-500/15 text-blue-400 border border-blue-500/30"
+                            }`}>
                               <TrendingUp className="w-3 h-3" />
-                              <span>MRP Hike</span>
+                              <span>
+                                MRP Hike
+                                {productSidebar.priceHistoryDetail.rate_increased && " & Rate Hike"}
+                              </span>
                             </span>
                           ) : (
                             <span className="text-[10px] font-black px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-500 border border-emerald-500/30 flex items-center gap-1">
@@ -6349,7 +6442,10 @@ export default function PurchasesPage() {
                             }`}
                           >
                             <div className="flex items-center justify-between gap-2">
-                              <div>
+                              <div className="space-y-0.5 truncate">
+                                <span className="font-extrabold text-xs text-orange-400 block truncate" title={record.product_name || productSidebar.productName}>
+                                  {record.product_name || productSidebar.productName}
+                                </span>
                                 <div className="flex items-center gap-2">
                                   <span className="font-bold text-xs text-foreground block">
                                     {record.supplier_name || "Unknown Supplier"}
@@ -6360,7 +6456,7 @@ export default function PurchasesPage() {
                                     </span>
                                   )}
                                 </div>
-                                <span className="text-[10px] font-mono text-muted-foreground">
+                                <span className="text-[10px] font-mono text-muted-foreground block">
                                   {record.purchase_date?.slice(0, 10)} • Inv:{" "}
                                   {record.invoice_no || "N/A"}
                                 </span>

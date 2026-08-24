@@ -42,8 +42,17 @@ export const getCookie = (name) => {
   return null;
 };
 
+export const getToken = () => {
+  const cookieTok = getCookie("pharmalogy_token");
+  if (cookieTok && cookieTok !== "null" && cookieTok !== "undefined") return cookieTok;
+  const localTok = localStorage.getItem("pharmalogy_token");
+  if (localTok && localTok !== "null" && localTok !== "undefined") return localTok;
+  return null;
+};
+
 export const deleteCookie = (name) => {
   document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;`;
+  localStorage.removeItem(name);
 };
 
 let navigateGlobal = null;
@@ -67,7 +76,7 @@ const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [pharmacy, setPharmacy] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [token, setToken] = useState(getCookie("pharmalogy_token"));
+  const [token, setToken] = useState(getToken());
   const [settings, setSettings] = useState({});
   const [settingsDefinitions, setSettingsDefinitions] = useState([]);
 
@@ -160,6 +169,8 @@ const AuthProvider = ({ children }) => {
       if (status === 401) {
         deleteCookie("pharmalogy_token");
         deleteCookie("pharmalogy_refresh_token");
+        localStorage.removeItem("pharmalogy_token");
+        localStorage.removeItem("pharmalogy_refresh_token");
         setToken(null);
         setUser(null);
         setPharmacy(null);
@@ -173,7 +184,13 @@ const AuthProvider = ({ children }) => {
 
   const login = async (email, password) => {
     const response = await axios.post(`${API}/auth/login`, { email, password });
-    const newToken = getCookie("pharmalogy_token") || "present";
+    if (response.data.token) {
+      localStorage.setItem("pharmalogy_token", response.data.token);
+    }
+    if (response.data.refreshToken) {
+      localStorage.setItem("pharmalogy_refresh_token", response.data.refreshToken);
+    }
+    const newToken = getToken() || "present";
     const userData = response.data.user;
     setToken(newToken);
     setUser(userData);
@@ -189,6 +206,8 @@ const AuthProvider = ({ children }) => {
     } finally {
       deleteCookie("pharmalogy_token");
       deleteCookie("pharmalogy_refresh_token");
+      localStorage.removeItem("pharmalogy_token");
+      localStorage.removeItem("pharmalogy_refresh_token");
       setToken(null);
       setUser(null);
       setPharmacy(null);
@@ -240,8 +259,8 @@ let isRedirecting = false;
 
 axios.interceptors.request.use(
   (config) => {
-    const token = getCookie("pharmalogy_token");
-    if (token && token !== "null" && token !== "undefined") {
+    const token = getToken();
+    if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
     return config;
@@ -284,6 +303,8 @@ axios.interceptors.response.use(
     if (originalRequest.url?.includes("/auth/refresh")) {
       deleteCookie("pharmalogy_token");
       deleteCookie("pharmalogy_refresh_token");
+      localStorage.removeItem("pharmalogy_token");
+      localStorage.removeItem("pharmalogy_refresh_token");
       window.dispatchEvent(new Event("auth-logout"));
       return Promise.reject(error);
     }
@@ -307,8 +328,18 @@ axios.interceptors.response.use(
       isRefreshing = true;
 
       try {
-        await axios.post(`${API}/auth/refresh`);
-        const newToken = getCookie("pharmalogy_token");
+        const refreshRes = await axios.post(`${API}/auth/refresh`, {
+          refreshToken: localStorage.getItem("pharmalogy_refresh_token"),
+        });
+
+        if (refreshRes.data?.token) {
+          localStorage.setItem("pharmalogy_token", refreshRes.data.token);
+        }
+        if (refreshRes.data?.refreshToken) {
+          localStorage.setItem("pharmalogy_refresh_token", refreshRes.data.refreshToken);
+        }
+
+        const newToken = getToken();
 
         window.dispatchEvent(
           new CustomEvent("auth-token-refreshed", {
@@ -325,6 +356,8 @@ axios.interceptors.response.use(
         processQueue(refreshErr, null);
         deleteCookie("pharmalogy_token");
         deleteCookie("pharmalogy_refresh_token");
+        localStorage.removeItem("pharmalogy_token");
+        localStorage.removeItem("pharmalogy_refresh_token");
         window.dispatchEvent(new Event("auth-logout"));
         return Promise.reject(refreshErr);
       } finally {
