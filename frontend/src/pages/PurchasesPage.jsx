@@ -395,7 +395,11 @@ const getPaymentModeIcon = (mode, sizeClass = "w-3.5 h-3.5") => {
 };
 
 // Super Clear, Simple Price History Bar Chart (Rate vs MRP) with Auto-Scroll & Dual Highlights
-const PriceTrendChart = ({ trendData = [], currentRate = 0, currentMrp = 0 }) => {
+const PriceTrendChart = ({
+  trendData = [],
+  currentRate = 0,
+  currentMrp = 0,
+}) => {
   const [hoveredItem, setHoveredItem] = useState(null);
   const scrollContainerRef = useRef(null);
 
@@ -489,17 +493,19 @@ const PriceTrendChart = ({ trendData = [], currentRate = 0, currentMrp = 0 }) =>
         {hoveredItem ? (
           <>
             <span className="truncate max-w-[55%]">
-              <strong className="text-foreground">{hoveredItem.supplier}</strong>{" "}
+              <strong className="text-foreground">
+                {hoveredItem.supplier}
+              </strong>{" "}
               <span className="text-muted-foreground font-sans">
                 (
                 {hoveredItem.isCurrent
                   ? "Current"
                   : hoveredItem.date
-                  ? new Date(hoveredItem.date).toLocaleDateString("en-US", {
-                      month: "short",
-                      day: "numeric",
-                    })
-                  : ""}
+                    ? new Date(hoveredItem.date).toLocaleDateString("en-US", {
+                        month: "short",
+                        day: "numeric",
+                      })
+                    : ""}
                 )
               </span>
             </span>
@@ -557,8 +563,8 @@ const PriceTrendChart = ({ trendData = [], currentRate = 0, currentMrp = 0 }) =>
                   item.isCurrent
                     ? "ring-2 ring-orange-500 bg-orange-500/10 shadow-md shadow-orange-500/20"
                     : item.isLowest
-                    ? "ring-2 ring-sky-400 bg-sky-400/10 shadow-md shadow-sky-400/20"
-                    : "hover:bg-muted/40 border border-transparent hover:border-border/60"
+                      ? "ring-2 ring-sky-400 bg-sky-400/10 shadow-md shadow-sky-400/20"
+                      : "hover:bg-muted/40 border border-transparent hover:border-border/60"
                 }`}
               >
                 {/* Direct Price Labels (Non-overlapping Stacked Header) */}
@@ -581,8 +587,8 @@ const PriceTrendChart = ({ trendData = [], currentRate = 0, currentMrp = 0 }) =>
                         item.isCurrent
                           ? "bg-gradient-to-t from-orange-600 to-amber-400"
                           : item.isLowest
-                          ? "bg-sky-400"
-                          : "bg-orange-500/80 group-hover:bg-orange-500"
+                            ? "bg-sky-400"
+                            : "bg-orange-500/80 group-hover:bg-orange-500"
                       }`}
                     />
                   </div>
@@ -602,15 +608,15 @@ const PriceTrendChart = ({ trendData = [], currentRate = 0, currentMrp = 0 }) =>
                     item.isCurrent
                       ? "bg-orange-500 text-white shadow-xs"
                       : item.isLowest
-                      ? "bg-sky-400 text-slate-950 font-black shadow-xs"
-                      : "text-muted-foreground bg-muted/60"
+                        ? "bg-sky-400 text-slate-950 font-black shadow-xs"
+                        : "text-muted-foreground bg-muted/60"
                   }`}
                 >
                   {item.isCurrent
                     ? "Current"
                     : item.isLowest
-                    ? `Lowest (${formattedDate})`
-                    : formattedDate}
+                      ? `Lowest (${formattedDate})`
+                      : formattedDate}
                 </span>
               </div>
             );
@@ -2044,7 +2050,11 @@ export default function PurchasesPage() {
             item.mrp_pack ||
               (item.mrp_unit && item.units ? item.mrp_unit * item.units : 0)
           ) || 0;
-        if (item.product_name && item.product_name.trim().length > 0 && rate > 0) {
+        if (
+          item.product_name &&
+          item.product_name.trim().length > 0 &&
+          rate > 0
+        ) {
           checkPriceHistorySilent(item.id, item.product_name, rate, mrp);
         }
       });
@@ -2054,12 +2064,23 @@ export default function PurchasesPage() {
   }, [purchaseItems, showNewPurchase]);
 
   // Check historical prices & open right sidebar on history tab
-  const checkPriceHistory = async (itemId, productName, currentRate, currentMrp) => {
+  const checkPriceHistory = async (
+    itemId,
+    productName,
+    currentRate,
+    currentMrp
+  ) => {
     if (!productName) {
       toast.error("Enter product name first");
       return;
     }
-    handleOpenProductSidebar(productName, itemId, "history", currentRate, currentMrp);
+    handleOpenProductSidebar(
+      productName,
+      itemId,
+      "history",
+      currentRate,
+      currentMrp
+    );
   };
 
   const buildSaltComposition = (medicine) => {
@@ -3599,8 +3620,8 @@ export default function PurchasesPage() {
                       className={`relative transition-all duration-200 border-b border-border ${
                         processingRowId === item.id ? "ai-loading-row" : ""
                       } ${sparkleRowId === item.id ? "ai-sparkle-row" : ""} ${
-                        (priceAlerts[item.id]?.is_higher_price_alert ||
-                          priceAlerts[item.id]?.rate_increased)
+                        priceAlerts[item.id]?.is_higher_price_alert ||
+                        priceAlerts[item.id]?.rate_increased
                           ? "price-alert-row-blink"
                           : ""
                       } ${
@@ -3798,7 +3819,7 @@ export default function PurchasesPage() {
                               </span>
                             </Button>
                           </div>
-                          
+
                           {/* Rate & MRP Alert Inline Badges */}
                           {priceAlerts[item.id]?.is_higher_price_alert && (
                             <button
@@ -3816,38 +3837,58 @@ export default function PurchasesPage() {
                               title="Higher rate than past purchases for the same MRP. Click to view history graph."
                             >
                               <AlertTriangle className="w-3 h-3 text-amber-500 shrink-0" />
-                              <span>Paying +₹{priceAlerts[item.id].rate_difference?.toFixed(2)} Extra (Same MRP)</span>
-                            </button>
-                          )}
-                          {priceAlerts[item.id]?.mrp_increased && !priceAlerts[item.id]?.is_higher_price_alert && (
-                            <button
-                              type="button"
-                              onClick={() =>
-                                handleOpenProductSidebar(
-                                  item.product_name,
-                                  item.id,
-                                  "history",
-                                  ratePack,
-                                  mrpPack
-                                )
-                              }
-                              className={`flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-extrabold transition-all cursor-pointer shadow-2xs shrink-0 self-start mt-1 ${
-                                priceAlerts[item.id]?.rate_increased
-                                  ? "bg-amber-500/15 text-amber-400 hover:bg-amber-500/25 border border-amber-500/40"
-                                  : "bg-blue-500/15 text-blue-400 hover:bg-blue-500/25 border border-blue-500/40"
-                              }`}
-                              title="MRP and Rate trends from past purchases. Click to view price history."
-                            >
-                              <TrendingUp className={`w-3 h-3 shrink-0 ${priceAlerts[item.id]?.rate_increased ? "text-amber-400" : "text-blue-400"}`} />
                               <span>
-                                MRP Hike (+₹{priceAlerts[item.id].mrp_difference?.toFixed(2)})
-                                {priceAlerts[item.id]?.rate_increased && (
-                                  <> & Rate +₹{priceAlerts[item.id].rate_difference?.toFixed(2)}</>
-                                )}
+                                Paying +₹
+                                {priceAlerts[item.id].rate_difference?.toFixed(
+                                  2
+                                )}{" "}
+                                Extra (Same MRP)
                               </span>
                             </button>
                           )}
-                          {(priceAlerts[item.id]?.mrp_lowered || priceAlerts[item.id]?.is_mrp_lowered_alert) && (
+                          {priceAlerts[item.id]?.mrp_increased &&
+                            !priceAlerts[item.id]?.is_higher_price_alert && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  handleOpenProductSidebar(
+                                    item.product_name,
+                                    item.id,
+                                    "history",
+                                    ratePack,
+                                    mrpPack
+                                  )
+                                }
+                                className={`flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-extrabold transition-all cursor-pointer shadow-2xs shrink-0 self-start mt-1 ${
+                                  priceAlerts[item.id]?.rate_increased
+                                    ? "bg-amber-500/15 text-amber-400 hover:bg-amber-500/25 border border-amber-500/40"
+                                    : "bg-blue-500/15 text-blue-400 hover:bg-blue-500/25 border border-blue-500/40"
+                                }`}
+                                title="MRP and Rate trends from past purchases. Click to view price history."
+                              >
+                                <TrendingUp
+                                  className={`w-3 h-3 shrink-0 ${priceAlerts[item.id]?.rate_increased ? "text-amber-400" : "text-blue-400"}`}
+                                />
+                                <span>
+                                  MRP Hike (+₹
+                                  {priceAlerts[item.id].mrp_difference?.toFixed(
+                                    2
+                                  )}
+                                  )
+                                  {priceAlerts[item.id]?.rate_increased && (
+                                    <>
+                                      {" "}
+                                      & Rate +₹
+                                      {priceAlerts[
+                                        item.id
+                                      ].rate_difference?.toFixed(2)}
+                                    </>
+                                  )}
+                                </span>
+                              </button>
+                            )}
+                          {(priceAlerts[item.id]?.mrp_lowered ||
+                            priceAlerts[item.id]?.is_mrp_lowered_alert) && (
                             <button
                               type="button"
                               onClick={() =>
@@ -3872,7 +3913,11 @@ export default function PurchasesPage() {
                                 <TrendingDown className="w-3 h-3 text-purple-400 shrink-0" />
                               )}
                               <span>
-                                MRP Drop (-₹{priceAlerts[item.id].mrp_drop_difference?.toFixed(2)})
+                                MRP Drop (-₹
+                                {priceAlerts[
+                                  item.id
+                                ].mrp_drop_difference?.toFixed(2)}
+                                )
                                 {priceAlerts[item.id].rate_increased
                                   ? ` & Rate +₹${priceAlerts[item.id].rate_difference?.toFixed(2)}`
                                   : ""}
@@ -4466,7 +4511,10 @@ export default function PurchasesPage() {
                                     item.id,
                                     item.product_name,
                                     item.rate_pack || item.pack_price,
-                                    item.mrp_pack || (item.mrp_unit && item.units ? item.mrp_unit * item.units : 0)
+                                    item.mrp_pack ||
+                                      (item.mrp_unit && item.units
+                                        ? item.mrp_unit * item.units
+                                        : 0)
                                   )
                                 }
                                 onKeyDown={(e) => {
@@ -4497,7 +4545,8 @@ export default function PurchasesPage() {
                                     const currentMrp =
                                       parseFloat(item.mrp_pack) ||
                                       (item.mrp_unit && item.units
-                                        ? parseFloat(item.mrp_unit) * parseInt(item.units)
+                                        ? parseFloat(item.mrp_unit) *
+                                          parseInt(item.units)
                                         : 0);
 
                                     if (!item.product_name) {
@@ -4547,7 +4596,10 @@ export default function PurchasesPage() {
                                   item.id,
                                   item.product_name,
                                   item.rate_pack || item.pack_price,
-                                  item.mrp_pack || (item.mrp_unit && item.units ? item.mrp_unit * item.units : 0)
+                                  item.mrp_pack ||
+                                    (item.mrp_unit && item.units
+                                      ? item.mrp_unit * item.units
+                                      : 0)
                                 )
                               }
                               onKeyDown={(e) => {
@@ -6227,8 +6279,15 @@ export default function PurchasesPage() {
                         >
                           <div className="flex items-center justify-between gap-2">
                             <div className="space-y-1 truncate">
-                              <span className="font-extrabold text-xs text-foreground block truncate" title={batch.product_name || productSidebar.productName}>
-                                {batch.product_name || productSidebar.productName}
+                              <span
+                                className="font-extrabold text-xs text-foreground block truncate"
+                                title={
+                                  batch.product_name ||
+                                  productSidebar.productName
+                                }
+                              >
+                                {batch.product_name ||
+                                  productSidebar.productName}
                               </span>
                               <div className="flex items-center gap-2">
                                 <span className="font-mono font-bold text-xs bg-muted px-2 py-0.5 rounded-md text-foreground border border-border">
@@ -6293,14 +6352,21 @@ export default function PurchasesPage() {
                       );
                     })
                   )
-                ) : /* TAB 2: PAST PURCHASES & PRICE HISTORY */ (
-                  <div className="space-y-4">
+                ) : (
+                  /* TAB 2: PAST PURCHASES & PRICE HISTORY */ <div className="space-y-4">
                     {/* Price Trend Trajectory Chart */}
-                    {productSidebar.priceHistoryDetail?.price_history_trend?.length > 0 && (
+                    {productSidebar.priceHistoryDetail?.price_history_trend
+                      ?.length > 0 && (
                       <PriceTrendChart
-                        trendData={productSidebar.priceHistoryDetail.price_history_trend}
-                        currentRate={productSidebar.priceHistoryDetail.current_rate}
-                        currentMrp={productSidebar.priceHistoryDetail.current_mrp}
+                        trendData={
+                          productSidebar.priceHistoryDetail.price_history_trend
+                        }
+                        currentRate={
+                          productSidebar.priceHistoryDetail.current_rate
+                        }
+                        currentMrp={
+                          productSidebar.priceHistoryDetail.current_mrp
+                        }
                       />
                     )}
 
@@ -6311,7 +6377,9 @@ export default function PurchasesPage() {
                           <span className="text-xs font-black uppercase text-foreground tracking-tight">
                             Rate & MRP Comparison
                           </span>
-                          {productSidebar.priceHistoryDetail.is_mrp_lowered_alert || productSidebar.priceHistoryDetail.mrp_lowered ? (
+                          {productSidebar.priceHistoryDetail
+                            .is_mrp_lowered_alert ||
+                          productSidebar.priceHistoryDetail.mrp_lowered ? (
                             productSidebar.priceHistoryDetail.rate_increased ? (
                               <span className="text-[10px] font-black px-2.5 py-0.5 rounded-full bg-rose-500/15 text-rose-400 border border-rose-500/30 flex items-center gap-1 animate-pulse">
                                 <AlertTriangle className="w-3 h-3" />
@@ -6323,21 +6391,26 @@ export default function PurchasesPage() {
                                 <span>MRP Drop</span>
                               </span>
                             )
-                          ) : productSidebar.priceHistoryDetail.is_higher_price_alert ? (
+                          ) : productSidebar.priceHistoryDetail
+                              .is_higher_price_alert ? (
                             <span className="text-[10px] font-black px-2.5 py-0.5 rounded-full bg-amber-500/15 text-amber-500 border border-amber-500/30 flex items-center gap-1">
                               <AlertTriangle className="w-3 h-3" />
                               <span>Higher Rate (Same MRP)</span>
                             </span>
-                          ) : productSidebar.priceHistoryDetail.mrp_increased ? (
-                            <span className={`text-[10px] font-black px-2.5 py-0.5 rounded-full flex items-center gap-1 ${
-                              productSidebar.priceHistoryDetail.rate_increased
-                                ? "bg-amber-500/15 text-amber-400 border border-amber-500/30"
-                                : "bg-blue-500/15 text-blue-400 border border-blue-500/30"
-                            }`}>
+                          ) : productSidebar.priceHistoryDetail
+                              .mrp_increased ? (
+                            <span
+                              className={`text-[10px] font-black px-2.5 py-0.5 rounded-full flex items-center gap-1 ${
+                                productSidebar.priceHistoryDetail.rate_increased
+                                  ? "bg-amber-500/15 text-amber-400 border border-amber-500/30"
+                                  : "bg-blue-500/15 text-blue-400 border border-blue-500/30"
+                              }`}
+                            >
                               <TrendingUp className="w-3 h-3" />
                               <span>
                                 MRP Hike
-                                {productSidebar.priceHistoryDetail.rate_increased && " & Rate Hike"}
+                                {productSidebar.priceHistoryDetail
+                                  .rate_increased && " & Rate Hike"}
                               </span>
                             </span>
                           ) : (
@@ -6354,7 +6427,11 @@ export default function PurchasesPage() {
                               Entered Rate
                             </span>
                             <span className="font-extrabold text-orange-500">
-                              ₹{(productSidebar.priceHistoryDetail.current_rate || 0).toFixed(2)}
+                              ₹
+                              {(
+                                productSidebar.priceHistoryDetail
+                                  .current_rate || 0
+                              ).toFixed(2)}
                             </span>
                           </div>
 
@@ -6363,7 +6440,11 @@ export default function PurchasesPage() {
                               Latest Rate
                             </span>
                             <span className="font-extrabold text-foreground">
-                              ₹{(productSidebar.priceHistoryDetail.latest_rate || 0).toFixed(2)}
+                              ₹
+                              {(
+                                productSidebar.priceHistoryDetail.latest_rate ||
+                                0
+                              ).toFixed(2)}
                             </span>
                           </div>
 
@@ -6372,16 +6453,30 @@ export default function PurchasesPage() {
                               Best Rate
                             </span>
                             <span className="font-extrabold text-emerald-400">
-                              ₹{(productSidebar.priceHistoryDetail.cheapest_rate || 0).toFixed(2)}
+                              ₹
+                              {(
+                                productSidebar.priceHistoryDetail
+                                  .cheapest_rate || 0
+                              ).toFixed(2)}
                             </span>
                           </div>
                         </div>
 
-                        {productSidebar.priceHistoryDetail.is_higher_price_alert && (
+                        {productSidebar.priceHistoryDetail
+                          .is_higher_price_alert && (
                           <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-[11px] font-semibold text-amber-500 leading-relaxed flex items-start gap-2">
                             <AlertTriangle className="w-4 h-4 shrink-0 text-amber-500 mt-0.5" />
                             <div>
-                              <strong>Higher Rate Warning:</strong> Purchasing at +₹{productSidebar.priceHistoryDetail.rate_difference?.toFixed(2)} higher than previous purchases for the same MRP (₹{productSidebar.priceHistoryDetail.latest_mrp?.toFixed(2)}).
+                              <strong>Higher Rate Warning:</strong> Purchasing
+                              at +₹
+                              {productSidebar.priceHistoryDetail.rate_difference?.toFixed(
+                                2
+                              )}{" "}
+                              higher than previous purchases for the same MRP (₹
+                              {productSidebar.priceHistoryDetail.latest_mrp?.toFixed(
+                                2
+                              )}
+                              ).
                             </div>
                           </div>
                         )}
@@ -6390,28 +6485,84 @@ export default function PurchasesPage() {
                           <div className="p-2.5 rounded-xl bg-blue-500/10 border border-blue-500/20 text-[11px] font-semibold text-blue-400 leading-relaxed flex items-start gap-2">
                             <Info className="w-4 h-4 shrink-0 text-blue-400 mt-0.5" />
                             <div>
-                              <strong>MRP Hike Detected:</strong> Product MRP increased by +₹{productSidebar.priceHistoryDetail.mrp_difference?.toFixed(2)} (from ₹{productSidebar.priceHistoryDetail.latest_mrp?.toFixed(2)} to ₹{productSidebar.priceHistoryDetail.current_mrp?.toFixed(2)}). Rate increased proportionally (+₹{productSidebar.priceHistoryDetail.rate_difference?.toFixed(2)}).
+                              <strong>MRP Hike Detected:</strong> Product MRP
+                              increased by +₹
+                              {productSidebar.priceHistoryDetail.mrp_difference?.toFixed(
+                                2
+                              )}{" "}
+                              (from ₹
+                              {productSidebar.priceHistoryDetail.latest_mrp?.toFixed(
+                                2
+                              )}{" "}
+                              to ₹
+                              {productSidebar.priceHistoryDetail.current_mrp?.toFixed(
+                                2
+                              )}
+                              ). Rate increased proportionally (+₹
+                              {productSidebar.priceHistoryDetail.rate_difference?.toFixed(
+                                2
+                              )}
+                              ).
                             </div>
                           </div>
                         )}
 
-                        {(productSidebar.priceHistoryDetail.is_mrp_lowered_alert || productSidebar.priceHistoryDetail.mrp_lowered) && (
-                          productSidebar.priceHistoryDetail.rate_increased ? (
+                        {(productSidebar.priceHistoryDetail
+                          .is_mrp_lowered_alert ||
+                          productSidebar.priceHistoryDetail.mrp_lowered) &&
+                          (productSidebar.priceHistoryDetail.rate_increased ? (
                             <div className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-[11px] font-semibold text-rose-400 leading-relaxed flex items-start gap-2">
                               <AlertTriangle className="w-4 h-4 shrink-0 text-rose-400 mt-0.5" />
                               <div>
-                                <strong>Higher Rate Warning:</strong> Product MRP dropped by -₹{productSidebar.priceHistoryDetail.mrp_drop_difference?.toFixed(2)} (from ₹{productSidebar.priceHistoryDetail.latest_mrp?.toFixed(2)} to ₹{productSidebar.priceHistoryDetail.current_mrp?.toFixed(2)}), BUT Rate increased by +₹{productSidebar.priceHistoryDetail.rate_difference?.toFixed(2)} (from ₹{productSidebar.priceHistoryDetail.latest_rate?.toFixed(2)} to ₹{productSidebar.priceHistoryDetail.current_rate?.toFixed(2)}).
+                                <strong>Higher Rate Warning:</strong> Product
+                                MRP dropped by -₹
+                                {productSidebar.priceHistoryDetail.mrp_drop_difference?.toFixed(
+                                  2
+                                )}{" "}
+                                (from ₹
+                                {productSidebar.priceHistoryDetail.latest_mrp?.toFixed(
+                                  2
+                                )}{" "}
+                                to ₹
+                                {productSidebar.priceHistoryDetail.current_mrp?.toFixed(
+                                  2
+                                )}
+                                ), BUT Rate increased by +₹
+                                {productSidebar.priceHistoryDetail.rate_difference?.toFixed(
+                                  2
+                                )}{" "}
+                                (from ₹
+                                {productSidebar.priceHistoryDetail.latest_rate?.toFixed(
+                                  2
+                                )}{" "}
+                                to ₹
+                                {productSidebar.priceHistoryDetail.current_rate?.toFixed(
+                                  2
+                                )}
+                                ).
                               </div>
                             </div>
                           ) : (
                             <div className="p-2.5 rounded-xl bg-purple-500/10 border border-purple-500/20 text-[11px] font-semibold text-purple-400 leading-relaxed flex items-start gap-2">
                               <TrendingDown className="w-4 h-4 shrink-0 text-purple-400 mt-0.5" />
                               <div>
-                                <strong>MRP Drop Detected:</strong> Product MRP dropped by -₹{productSidebar.priceHistoryDetail.mrp_drop_difference?.toFixed(2)} (from ₹{productSidebar.priceHistoryDetail.latest_mrp?.toFixed(2)} to ₹{productSidebar.priceHistoryDetail.current_mrp?.toFixed(2)}).
+                                <strong>MRP Drop Detected:</strong> Product MRP
+                                dropped by -₹
+                                {productSidebar.priceHistoryDetail.mrp_drop_difference?.toFixed(
+                                  2
+                                )}{" "}
+                                (from ₹
+                                {productSidebar.priceHistoryDetail.latest_mrp?.toFixed(
+                                  2
+                                )}{" "}
+                                to ₹
+                                {productSidebar.priceHistoryDetail.current_mrp?.toFixed(
+                                  2
+                                )}
+                                ).
                               </div>
                             </div>
-                          )
-                        )}
+                          ))}
                       </div>
                     )}
 
@@ -6428,9 +6579,13 @@ export default function PurchasesPage() {
                       </div>
                     ) : (
                       productSidebar.history.map((record, idx) => {
-                        const packPrice = Number(record.pack_price || record.rate_pack || 0);
+                        const packPrice = Number(
+                          record.pack_price || record.rate_pack || 0
+                        );
                         const mrpPrice = Number(record.mrp_pack || 0);
-                        const isCheapest = productSidebar.priceHistoryDetail?.cheapest_rate === packPrice;
+                        const isCheapest =
+                          productSidebar.priceHistoryDetail?.cheapest_rate ===
+                          packPrice;
 
                         return (
                           <div
@@ -6443,8 +6598,15 @@ export default function PurchasesPage() {
                           >
                             <div className="flex items-center justify-between gap-2">
                               <div className="space-y-0.5 truncate">
-                                <span className="font-extrabold text-xs text-orange-400 block truncate" title={record.product_name || productSidebar.productName}>
-                                  {record.product_name || productSidebar.productName}
+                                <span
+                                  className="font-extrabold text-xs text-orange-400 block truncate"
+                                  title={
+                                    record.product_name ||
+                                    productSidebar.productName
+                                  }
+                                >
+                                  {record.product_name ||
+                                    productSidebar.productName}
                                 </span>
                                 <div className="flex items-center gap-2">
                                   <span className="font-bold text-xs text-foreground block">

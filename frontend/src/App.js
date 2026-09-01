@@ -23,6 +23,7 @@ import UsersPage from "./pages/UsersPage";
 import SettingsPage from "./pages/SettingsPage";
 import ReportsPage from "./pages/ReportsPage";
 import ScannerPage from "./pages/ScannerPage";
+import BillingScannerPage from "./pages/BillingScannerPage";
 
 // Layout
 import DashboardLayout from "./components/DashboardLayout";
@@ -431,6 +432,14 @@ function App() {
             element={
               <ProtectedRoute>
                 <ScannerPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/scan-bill"
+            element={
+              <ProtectedRoute>
+                <BillingScannerPage />
               </ProtectedRoute>
             }
           />

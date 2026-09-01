@@ -173,9 +173,17 @@ router.post(
 
           if (foundInv) {
             batchMatch = {
-              product_id: foundInv.product_id || foundInv.id,
+              product_id: foundInv.product_id || foundInv.id || (foundInv._id ? foundInv._id.toString() : ""),
+              inventory_id: foundInv.id || (foundInv._id ? foundInv._id.toString() : ""),
               product_name: foundInv.product_name,
+              salt_composition: foundInv.salt_composition || "",
               batch_no: foundInv.batch_no,
+              expiry_date: foundInv.expiry_date || "",
+              available_quantity: foundInv.available_quantity || 0,
+              mrp: foundInv.mrp_per_unit || foundInv.mrp || 0,
+              cost_price: foundInv.cost_per_unit || foundInv.purchase_price || 0,
+              cgst: foundInv.cgst || 0,
+              sgst: foundInv.sgst || 0,
               type: "batch_exact",
             };
           }
@@ -239,11 +247,19 @@ router.post(
         if (batchMatch) {
           rawSuggestions.unshift({
             product_id: batchMatch.product_id,
+            inventory_id: batchMatch.inventory_id,
             product_name: batchMatch.product_name,
+            salt_composition: batchMatch.salt_composition,
             score: 10000,
             is_batch_match: true,
             is_high_confidence: true,
             batch_no: batchMatch.batch_no,
+            expiry_date: batchMatch.expiry_date,
+            available_quantity: batchMatch.available_quantity,
+            mrp: batchMatch.mrp,
+            cost_price: batchMatch.cost_price,
+            cgst: batchMatch.cgst,
+            sgst: batchMatch.sgst,
           });
         }
 

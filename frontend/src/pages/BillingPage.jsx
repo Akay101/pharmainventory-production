@@ -47,6 +47,11 @@ import {
   AlertDialogTitle,
 } from "../components/ui/alert-dialog";
 import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "../components/ui/popover";
+import {
   Search,
   Plus,
   Eye,
@@ -73,17 +78,80 @@ import {
   BarChart3,
   TrendingUp,
   AlertCircle,
+  Clock,
   Edit,
+  Camera,
+  SlidersHorizontal,
+  Filter,
+  Calendar,
 } from "lucide-react";
 import { toast } from "sonner";
 import PlanBadge from "../components/PlanBadge";
 import Loader from "../components/Loader";
+import BillingScannerModal from "../components/BillingScannerModal";
 import { formatDate } from "./utils";
 import { getOS } from "../hooks/useKeyboard";
 
 const LOCAL_STORAGE_KEY_BILL = "pharmalogy_bill_draft";
 
+// Equal-sized SVG Icons for Payment Modes (matching PurchasesPage.jsx)
+const RupeeCircleIcon = ({ className = "w-4 h-4" }) => (
+  <svg
+    className={className}
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+  >
+    <path
+      d="M8.5 9.99984H15.5M8.5 6.5H15.5M14 18.0002L8.5 13.5002L10 13.5C14.4447 13.5 14.4447 6.5 10 6.5M22 12C22 17.5228 17.5228 22 12 22C6.47715 22 2 17.5228 2 12C2 6.47715 6.47715 2 12 2C17.5228 2 22 6.47715 22 12Z"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+  </svg>
+);
+
+const UpiIcon = ({ className = "w-4 h-4" }) => (
+  <svg
+    className={className}
+    viewBox="0 0 120 60"
+    xmlns="http://www.w3.org/2000/svg"
+  >
+    <rect width="120" height="60" rx="8" fill="#0F172A" />
+    <path d="M95.678 42.9L110 29.835l-6.784-13.516z" fill="#097939" />
+    <path d="M90.854 42.9l14.322-13.065-6.784-13.516z" fill="#ed752e" />
+    <path
+      d="M22.41 16.47l-6.03 21.475 21.407.15 5.88-21.625h5.427l-7.05 25.14c-.27.96-1.298 1.74-2.295 1.74H12.31c-1.664 0-2.65-1.3-2.2-2.9l6.724-23.98zm66.182-.15h5.427l-7.538 27.03h-5.58zM49.698 27.582l27.136-.15 1.81-5.707H51.054l1.658-5.256 29.4-.27c1.83-.017 2.92 1.4 2.438 3.167L81.78 29.49c-.483 1.766-2.36 3.197-4.19 3.197H53.316L50.454 43.8h-5.28z"
+      fill="#FFFFFF"
+    />
+  </svg>
+);
+
+const CreditCardIcon = ({ className = "w-4 h-4" }) => (
+  <svg
+    className={className}
+    viewBox="0 0 1024 1024"
+    xmlns="http://www.w3.org/2000/svg"
+  >
+    <path
+      d="M512 512m-480 0a480 480 0 1 0 960 0 480 480 0 1 0-960 0Z"
+      fill="#F97316"
+    />
+  </svg>
+);
+
+const getPaymentModeIcon = (mode, sizeClass = "w-3.5 h-3.5") => {
+  const m = String(mode || "").toLowerCase();
+  if (m === "cash")
+    return <RupeeCircleIcon className={`${sizeClass} text-emerald-500`} />;
+  if (m === "upi") return <UpiIcon className={sizeClass} />;
+  if (m === "card") return <CreditCardIcon className={sizeClass} />;
+  return null;
+};
+
 export default function BillingPage() {
+  const location = useLocation();
   // Data state
   const [bills, setBills] = useState([]);
   const [totalBills, setTotalBills] = useState(0);
@@ -192,6 +260,207 @@ export default function BillingPage() {
   });
   const [showMrpWarning, setShowMrpWarning] = useState(false);
   const [isEditModeWarning, setIsEditModeWarning] = useState(false);
+  const [scannerModalOpen, setScannerModalOpen] = useState(false);
+
+  // Draft bills state & handlers
+  const [drafts, setDrafts] = useState([]);
+  const [draftsLoading, setDraftsLoading] = useState(false);
+  const [activeViewTab, setActiveViewTab] = useState("all");
+  const [pendingDraftId, setPendingDraftId] = useState(null);
+
+  const fetchDrafts = async () => {
+    try {
+      setDraftsLoading(true);
+      const res = await axios.get(`${API}/bills/drafts`);
+      setDrafts(res.data.drafts || []);
+    } catch (e) {
+      console.error("Failed to fetch drafts:", e);
+    } finally {
+      setDraftsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchDrafts();
+  }, []);
+
+  const handleDeleteDraft = async (draftId) => {
+    try {
+      await axios.delete(`${API}/bills/drafts/${draftId}`);
+      toast.success("Draft bill deleted successfully");
+      fetchDrafts();
+    } catch (e) {
+      toast.error("Failed to delete draft bill");
+    }
+  };
+
+  const handleLoadDraftToBill = (draft) => {
+    setPendingDraftId(draft.id);
+    setShowNewBill(true);
+
+    if (draft.customer_name) {
+      setCustomerInfo({
+        customer_id: draft.customer_id || "",
+        customer_name: draft.customer_name || "Walk-in Customer",
+        customer_mobile: draft.customer_mobile || "",
+        customer_email: draft.customer_email || "",
+      });
+    }
+
+    if (draft.doctor) setDoctorName(draft.doctor);
+    if (draft.billing_date) setBillingDate(draft.billing_date);
+    if (draft.is_paid !== undefined) setIsPaid(draft.is_paid);
+    if (draft.payment_mode) setPaymentMode(draft.payment_mode);
+
+    if (draft.items && draft.items.length > 0) {
+      handleTransferScannedItemsToBill(draft.items);
+    }
+
+    toast.success(`Loaded Draft ${draft.draft_no} into New Bill layout!`);
+  };
+
+  const handleTransferScannedItemsToBill = async (scannedItems) => {
+    if (!scannedItems || scannedItems.length === 0) return;
+
+    let allInv = [];
+    try {
+      const res = await axios.get(`${API}/inventory?limit=500`);
+      allInv = res.data.inventory || res.data || [];
+    } catch (e) {
+      console.error("Failed to fetch inventory for auto-linking:", e);
+    }
+
+    const cleanAlphanumeric = (str) =>
+      (str || "").replace(/[^a-zA-Z0-9]/g, "").toLowerCase().replace(/^0+/, "");
+
+    setBillItems((prev) => {
+      const isFirstRowEmpty =
+        prev.length === 1 &&
+        !prev[0].product_name &&
+        !prev[0].inventory_id &&
+        !prev[0].batch_no;
+
+      const newRows = scannedItems.map((item) => {
+        const qty = parseInt(item.quantity) || 1;
+        const mrp = parseFloat(item.mrp) || parseFloat(item.unit_price) || 0;
+        const purchasePrice = parseFloat(item.purchase_price) || 0;
+        const profit = (mrp - purchasePrice) * qty;
+
+        const scannedNameNorm = (item.product_name || "").toLowerCase().trim();
+        const cleanScannedBatch = cleanAlphanumeric(item.batch_no);
+
+        // Match inventory item
+        let invProduct = allInv.find((inv) => {
+          if (!inv.product_name) return false;
+          const normName = inv.product_name.toLowerCase().trim();
+          return (
+            normName === scannedNameNorm ||
+            normName.includes(scannedNameNorm) ||
+            scannedNameNorm.includes(normName)
+          );
+        });
+
+        let availableBatches = item.available_batches || [];
+        let matchedBatch = null;
+
+        if (invProduct) {
+          availableBatches = (invProduct.batches || []).filter(
+            (b) => (b.available_quantity || 0) > 0 || b.batch_no === item.batch_no
+          );
+          if (availableBatches.length === 0) {
+            availableBatches = invProduct.batches || [];
+          }
+
+          if (cleanScannedBatch) {
+            matchedBatch = availableBatches.find((b) => {
+              const cleanB = cleanAlphanumeric(b.batch_no);
+              return (
+                cleanB === cleanScannedBatch ||
+                cleanScannedBatch.includes(cleanB) ||
+                cleanB.includes(cleanScannedBatch)
+              );
+            });
+          }
+
+          if (!matchedBatch && availableBatches.length > 0) {
+            matchedBatch = availableBatches[0];
+          }
+        }
+
+        const invId = matchedBatch?.id || item.inventory_id || (invProduct?.batches?.[0]?.id) || null;
+        const finalBatchNo = matchedBatch?.batch_no || item.batch_no || "";
+        const finalExpDate = matchedBatch?.expiry_date || item.expiry_date || "";
+        const finalAvail = matchedBatch
+          ? (matchedBatch.available_quantity !== undefined ? matchedBatch.available_quantity : matchedBatch.available_units)
+          : (item.available !== undefined ? item.available : (item.available_quantity || 0));
+
+        const isManual = !invId;
+
+        return {
+          id: uuidv4(),
+          inventory_id: invId,
+          product_name: invProduct?.product_name || item.product_name || "",
+          salt_composition: invProduct?.salt_composition || item.salt_composition || "",
+          batch_no: finalBatchNo,
+          available_batches: availableBatches,
+          quantity: qty,
+          available: finalAvail,
+          available_quantity: finalAvail,
+          unit_price: mrp,
+          mrp: mrp,
+          purchase_price: purchasePrice,
+          discount: 0,
+          cgst: item.cgst || 0,
+          sgst: item.sgst || 0,
+          profit: profit,
+          is_manual: isManual,
+          is_pack: false,
+          pack_units: 1,
+          expiry_date: finalExpDate,
+        };
+      });
+
+      if (isFirstRowEmpty) {
+        return newRows;
+      }
+      return [...prev, ...newRows];
+    });
+  };
+
+  // Automatically open New Bill form and populate scanned items & customer details when returning from /scan-bill
+  useEffect(() => {
+    if (location.state?.scannedItems) {
+      const { scannedItems, customerDetails } = location.state;
+      setShowNewBill(true);
+      if (scannedItems && scannedItems.length > 0) {
+        handleTransferScannedItemsToBill(scannedItems);
+      }
+      if (customerDetails) {
+        if (customerDetails.customer_name) {
+          setCustomerInfo((prev) => ({
+            ...prev,
+            customer_id: customerDetails.customer_id || null,
+            customer_name: customerDetails.customer_name,
+            customer_mobile: customerDetails.customer_mobile || "0000000000",
+            customer_email: customerDetails.customer_email || "",
+          }));
+        }
+        if (customerDetails.doctor) {
+          setDoctorName(customerDetails.doctor);
+        }
+        if (customerDetails.billing_date) {
+          setBillingDate(customerDetails.billing_date);
+        }
+        if (customerDetails.is_paid !== undefined) {
+          setIsPaid(customerDetails.is_paid);
+        }
+        if (customerDetails.payment_mode) {
+          setPaymentMode(customerDetails.payment_mode);
+        }
+      }
+      window.history.replaceState({}, document.title);
+    }
+  }, [location.state]);
 
   // Refs for keyboard navigation
   const productInputRef = useRef(null);
@@ -222,10 +491,12 @@ export default function BillingPage() {
     }
   };
 
+  const [nearExpiryBatchFilter, setNearExpiryBatchFilter] = useState(false);
+
   const [dropdownPosition, setDropdownPosition] = useState({
     top: 0,
     left: 0,
-    width: 400,
+    width: 540,
     transform: "none",
   });
 
@@ -235,11 +506,11 @@ export default function BillingPage() {
       : editingInputRefs.current[activeEditingItemId];
     if (el) {
       const rect = el.getBoundingClientRect();
-      const dropdownWidth = Math.max(rect.width, 400);
+      const dropdownWidth = Math.max(rect.width, 540);
 
       const spaceBelow = window.innerHeight - rect.bottom;
       const spaceAbove = rect.top;
-      const dropdownMaxHeight = 260; // Max height in styling is 260px
+      const dropdownMaxHeight = 320;
       const positionAbove = spaceBelow < dropdownMaxHeight && spaceAbove > spaceBelow;
 
       setDropdownPosition({
@@ -319,7 +590,6 @@ export default function BillingPage() {
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [searchParams, setSearchParams] = useSearchParams();
-  const location = useLocation();
   const isInitialMount = useRef(true);
   const [filterCustomer, setFilterCustomer] = useState(
     searchParams.get("customer_id") || "all"
@@ -755,10 +1025,14 @@ export default function BillingPage() {
     toast.success("Insights Report Downloaded");
   };
 
+  const [loadingInventorySuggestions, setLoadingInventorySuggestions] = useState(false);
+  const [loadingEditingInventorySuggestions, setLoadingEditingInventorySuggestions] = useState(false);
+
   // Server-side inventory search for new bills
   useEffect(() => {
     const searchInventory = async () => {
       if (inventorySearch.length >= 2) {
+        setLoadingInventorySuggestions(true);
         try {
           const response = await axios.get(
             `${API}/inventory/search?q=${encodeURIComponent(inventorySearch)}&limit=15`
@@ -777,10 +1051,13 @@ export default function BillingPage() {
           } catch (e) {
             console.error("Fallback search error:", e);
           }
+        } finally {
+          setLoadingInventorySuggestions(false);
         }
       } else {
         setInventorySuggestions([]);
         setShowInventorySuggestions(false);
+        setLoadingInventorySuggestions(false);
       }
     };
 
@@ -792,6 +1069,7 @@ export default function BillingPage() {
   useEffect(() => {
     const searchInventory = async () => {
       if (editingInventorySearch.length >= 2) {
+        setLoadingEditingInventorySuggestions(true);
         try {
           const response = await axios.get(
             `${API}/inventory/search?q=${encodeURIComponent(editingInventorySearch)}&limit=15`
@@ -809,10 +1087,13 @@ export default function BillingPage() {
           } catch (e) {
             console.error("Fallback search error:", e);
           }
+        } finally {
+          setLoadingEditingInventorySuggestions(false);
         }
       } else {
         setEditingInventorySuggestions([]);
         setShowEditingInventorySuggestions(false);
+        setLoadingEditingInventorySuggestions(false);
       }
     };
 
@@ -1115,11 +1396,13 @@ export default function BillingPage() {
       availableBatches = inventoryItem.batches || [];
     }
 
-    availableBatches.sort((a, b) => {
-      if (!a.expiry_date) return 1;
-      if (!b.expiry_date) return -1;
-      return a.expiry_date.localeCompare(b.expiry_date);
-    });
+    if (nearExpiryBatchFilter) {
+      availableBatches.sort((a, b) => {
+        if (!a.expiry_date) return 1;
+        if (!b.expiry_date) return -1;
+        return a.expiry_date.localeCompare(b.expiry_date);
+      });
+    }
 
     const defaultBatch = availableBatches[0] || inventoryItem;
 
@@ -1528,11 +1811,14 @@ export default function BillingPage() {
         payment_mode: (paymentMode && paymentMode !== "none") ? paymentMode : null,
         is_advance_paid: isAdvancePaid,
         advance_amount: isAdvancePaid ? (parseFloat(advanceAmount) || 0) : 0,
+        draft_id: pendingDraftId || null,
       });
 
-      toast.success(`Bill ${response.data.bill.bill_no} created successfully`);
+      toast.success(`Bill ${response.data.bill?.bill_no || response.data.bill_no} created successfully`);
+      setPendingDraftId(null);
+      fetchDrafts();
 
-      setPdfConfirmDialog({ open: true, billId: response.data.bill.id });
+      setPdfConfirmDialog({ open: true, billId: response.data.bill?.id || response.data.id });
     } catch (error) {
       toast.error(error.response?.data?.detail || "Failed to create bill");
     } finally {
@@ -1689,11 +1975,13 @@ export default function BillingPage() {
       availableBatches = inventoryItem.batches || [];
     }
 
-    availableBatches.sort((a, b) => {
-      if (!a.expiry_date) return 1;
-      if (!b.expiry_date) return -1;
-      return a.expiry_date.localeCompare(b.expiry_date);
-    });
+    if (nearExpiryBatchFilter) {
+      availableBatches.sort((a, b) => {
+        if (!a.expiry_date) return 1;
+        if (!b.expiry_date) return -1;
+        return a.expiry_date.localeCompare(b.expiry_date);
+      });
+    }
 
     const defaultBatch = availableBatches[0] || inventoryItem;
 
@@ -2099,39 +2387,45 @@ export default function BillingPage() {
   }
 
   return (
-    <div className={`space-y-6 animate-fade-in ${(showNewBill || editingBillId) ? "pb-56" : "pb-12"}`} data-testid="billing-page">
-      {/* Restore Draft Dialog */}
+    <div className={`space-y-4 animate-fade-in ${(showNewBill || editingBillId) ? "pb-24" : "pb-12"}`} data-testid="billing-page">
       {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 bg-gradient-to-r from-card/30 via-transparent to-transparent p-4 rounded-2xl border border-border/20 backdrop-blur-sm">
-        <div>
-          <h1 className="text-3xl font-extrabold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-foreground to-foreground/75">Billing</h1>
-          <p className="text-sm text-muted-foreground mt-1 flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-primary animate-pulse" />
-            {`${totalBills} bill${totalBills !== 1 ? "s" : ""} generated`}
-          </p>
-        </div>
+      {!showNewBill && editingBillId === null && (
+        <div className="space-y-3 px-0.5 py-0.5">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <h1 className="text-2xl font-black tracking-tight text-foreground">
+                Billing
+              </h1>
+              <span className="px-2.5 py-0.5 rounded-full bg-orange-500/10 border border-orange-500/30 text-orange-600 dark:text-orange-400 font-mono font-bold text-xs">
+                {`${totalBills} bill${totalBills !== 1 ? "s" : ""} generated`}
+              </span>
+            </div>
 
-        <div className="flex items-center gap-3">
-          <Button
-            variant="outline"
-            onClick={() => setShowShortcuts(true)}
-            data-testid="shortcuts-btn"
-            className="h-10 px-4 border-border/80 hover:bg-muted/60 rounded-xl transition-all duration-200"
-          >
-            <Keyboard className="w-4 h-4 mr-2 text-primary" />
-            Shortcuts
-          </Button>
-          <Button
-            className="h-10 px-4 bg-gradient-to-r from-primary to-primary/90 hover:from-primary/95 hover:to-primary text-primary-foreground shadow-md shadow-primary/20 rounded-xl font-medium transition-all duration-300 hover:scale-[1.02] active:scale-[0.98]"
-            onClick={handleStartNewBill}
-            data-testid="new-bill-btn"
-            disabled={showNewBill || editingBillId}
-          >
-            <Plus className="w-4 h-4 mr-2" />
-            {getOS() === "mac" ? "New Bill (⌥N)" : "New Bill (Alt+N)"}
-          </Button>
+            <div className="flex items-center gap-2 flex-wrap">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowShortcuts(true)}
+                data-testid="shortcuts-btn"
+                className="h-8 text-xs font-bold rounded-xl border-border/70"
+              >
+                <Keyboard className="w-3.5 h-3.5 mr-1.5 text-muted-foreground" />
+                Shortcuts
+              </Button>
+              <Button
+                size="sm"
+                className="h-8 px-3.5 text-xs font-extrabold bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white rounded-xl shadow-xs border-none"
+                onClick={handleStartNewBill}
+                data-testid="new-bill-btn"
+                disabled={showNewBill || editingBillId}
+              >
+                <Plus className="w-3.5 h-3.5 mr-1 stroke-[3]" />
+                {getOS() === "mac" ? "New Bill (⌥N)" : "New Bill (Alt+N)"}
+              </Button>
+            </div>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Keyboard Shortcuts Dialog */}
       <Dialog open={showShortcuts} onOpenChange={setShowShortcuts}>
@@ -2475,38 +2769,30 @@ export default function BillingPage() {
 
       {/* New Bill - Inline Table Entry */}
       {showNewBill && (
-        <Card
-          className="glass bg-card/45 backdrop-blur-xl border border-border/70 shadow-lg rounded-2xl p-6"
+        <div
+          className="!mt-0 space-y-3 px-0.5 animate-in fade-in duration-300 relative"
           data-testid="new-bill-form"
         >
-          <CardHeader className="pb-4 px-0 pt-0">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-xl font-bold flex items-center gap-2">
-                <ShoppingCart className="w-5 h-5 text-primary" />
-                New Bill
-              </CardTitle>
-              <Button variant="ghost" size="icon" className="rounded-xl hover:bg-muted/80" onClick={handleCancelNewBill}>
-                <X className="h-4 w-4" />
-              </Button>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-6 px-0 pb-0">
-            {/* Customer Info */}
-            <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
-              <div className="space-y-2">
-                <Label className="text-xs font-bold text-muted-foreground/80 uppercase tracking-wider">Billing Date *</Label>
+          {/* Unified Single Control Toolbar for New Bill Entry */}
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 bg-card border-2 border-border p-3 rounded-2xl backdrop-blur-xl shadow-md">
+            {/* Left Fields Grid (Billing Date, Customer Name, Mobile, Email, Doctor) */}
+            <div className="flex flex-wrap items-end gap-3 flex-1">
+              <div className="space-y-1 w-[145px]">
+                <Label className="text-[11px] font-extrabold text-foreground/80">
+                  Billing Date *
+                </Label>
                 <Input
                   type="date"
                   value={billingDate}
                   onChange={(e) => setBillingDate(e.target.value)}
-                  className="h-10 border-border/80 rounded-xl focus-visible:ring-1 focus-visible:ring-primary focus-visible:border-primary transition-all duration-200"
+                  className="h-9 text-xs font-semibold rounded-xl border-border bg-background text-foreground shadow-2xs focus-visible:ring-2 focus-visible:ring-primary/30 focus-visible:border-primary"
                 />
               </div>
 
-              <div className="space-y-2 relative md:col-span-2">
-                <Label className="flex items-center justify-between text-xs font-bold text-muted-foreground/80 uppercase tracking-wider">
+              <div className="space-y-1 w-full sm:w-[230px] relative">
+                <Label className="flex items-center justify-between text-[11px] font-extrabold text-foreground/80">
                   <span className="flex items-center gap-1">
-                    <User className="w-3.5 h-3.5 text-primary" /> Customer Name *
+                    Customer Name *
                   </span>
                   {customerInfo.customer_id && (
                     <Button
@@ -2514,14 +2800,14 @@ export default function BillingPage() {
                       variant="link"
                       size="sm"
                       onClick={() => fetchCustomerProfileData(customerInfo.customer_id)}
-                      className="h-auto p-0 text-primary font-bold text-xs flex items-center gap-1 animate-in fade-in"
+                      className="h-auto p-0 text-primary font-bold text-[10px] flex items-center gap-1 animate-in fade-in"
                     >
-                      <Eye className="w-3.5 h-3.5" /> See Profile
+                      <Eye className="w-3 h-3" /> Profile
                     </Button>
                   )}
                 </Label>
                 <Input
-                  placeholder="Search existing customer or enter name..."
+                  placeholder="Search existing customer..."
                   value={customerSearch}
                   onChange={(e) => {
                     const val = e.target.value;
@@ -2580,7 +2866,7 @@ export default function BillingPage() {
                       setShowCustomerSuggestions(false);
                     }
                   }}
-                  className="h-10 border-border/80 rounded-xl focus-visible:ring-1 focus-visible:ring-primary focus-visible:border-primary transition-all duration-200"
+                  className="h-9 text-xs font-semibold rounded-xl border-border bg-background text-foreground shadow-2xs focus-visible:ring-2 focus-visible:ring-primary/30 focus-visible:border-primary"
                   data-testid="customer-search"
                 />
                 {showCustomerSuggestions && customerSearch && (
@@ -2633,34 +2919,14 @@ export default function BillingPage() {
                     </div>
                   </div>
                 )}
-                {selectedCustomerStats && (
-                  <div className="flex gap-4 mt-2 px-3 py-1.5 rounded-lg bg-primary/5 border border-primary/10 text-[11px] font-semibold text-muted-foreground w-full animate-in fade-in slide-in-from-top-1">
-                    <div className="flex items-center gap-1">
-                      <span className="text-muted-foreground/60">Total Debt:</span>
-                      <span className="text-red-500 font-bold">₹{selectedCustomerStats.totalDebt.toFixed(2)}</span>
-                    </div>
-                    <div className="h-3 w-[1px] bg-border/60 self-center" />
-                    <div className="flex items-center gap-1">
-                      <span className="text-muted-foreground/60">Total Advance:</span>
-                      <span className="text-emerald-500 font-bold">₹{(selectedCustomerStats.totalAdvance || 0).toFixed(2)}</span>
-                    </div>
-                    <div className="h-3 w-[1px] bg-border/60 self-center" />
-                    <div className="flex items-center gap-1">
-                      <span className="text-muted-foreground/60">Past Bills:</span>
-                      <span className="text-foreground font-bold">{selectedCustomerStats.totalBills}</span>
-                    </div>
-                    <div className="h-3 w-[1px] bg-border/60 self-center" />
-                    <div className="flex items-center gap-1">
-                      <span className="text-muted-foreground/60">Total Items Bought:</span>
-                      <span className="text-foreground font-bold">{selectedCustomerStats.totalItems}</span>
-                    </div>
-                  </div>
-                )}
               </div>
-              <div className="space-y-2">
-                <Label className="text-xs font-bold text-muted-foreground/80 uppercase tracking-wider">Mobile *</Label>
+
+              <div className="space-y-1 w-[130px]">
+                <Label className="text-[11px] font-extrabold text-foreground/80">
+                  Mobile *
+                </Label>
                 <Input
-                  placeholder="9876543210 (Tab for default)"
+                  placeholder="9876543210"
                   value={customerInfo.customer_mobile}
                   onChange={(e) =>
                     setCustomerInfo({
@@ -2669,12 +2935,15 @@ export default function BillingPage() {
                     })
                   }
                   onKeyDown={(e) => handleTabDefault(e, "customer_mobile")}
-                  className="h-10 border-border/80 rounded-xl focus-visible:ring-1 focus-visible:ring-primary focus-visible:border-primary transition-all duration-200"
+                  className="h-9 text-xs font-semibold rounded-xl border-border bg-background text-foreground shadow-2xs focus-visible:ring-2 focus-visible:ring-primary/30 focus-visible:border-primary"
                   data-testid="customer-mobile"
                 />
               </div>
-              <div className="space-y-2">
-                <Label className="text-xs font-bold text-muted-foreground/80 uppercase tracking-wider">Email</Label>
+
+              <div className="space-y-1 w-[150px]">
+                <Label className="text-[11px] font-extrabold text-foreground/80">
+                  Email
+                </Label>
                 <Input
                   type="email"
                   placeholder="customer@email.com"
@@ -2685,11 +2954,14 @@ export default function BillingPage() {
                       customer_email: e.target.value,
                     })
                   }
-                  className="h-10 border-border/80 rounded-xl focus-visible:ring-1 focus-visible:ring-primary focus-visible:border-primary transition-all duration-200"
+                  className="h-9 text-xs font-semibold rounded-xl border-border bg-background text-foreground shadow-2xs focus-visible:ring-2 focus-visible:ring-primary/30 focus-visible:border-primary"
                 />
               </div>
-              <div className="space-y-2 relative">
-                <Label className="text-xs font-bold text-muted-foreground/80 uppercase tracking-wider">Doctor</Label>
+
+              <div className="space-y-1 w-[140px] relative">
+                <Label className="text-[11px] font-extrabold text-foreground/80">
+                  Doctor
+                </Label>
                 <Input
                   placeholder="Doctor's name..."
                   value={doctorName}
@@ -2702,7 +2974,7 @@ export default function BillingPage() {
                   onBlur={() =>
                     setTimeout(() => setShowDoctorSuggestions(false), 200)
                   }
-                  className="h-10 border-border/80 rounded-xl focus-visible:ring-1 focus-visible:ring-primary focus-visible:border-primary transition-all duration-200"
+                  className="h-9 text-xs font-semibold rounded-xl border-border bg-background text-foreground shadow-2xs focus-visible:ring-2 focus-visible:ring-primary/30 focus-visible:border-primary"
                   data-testid="doctor-search"
                 />
                 {showDoctorSuggestions &&
@@ -2725,6 +2997,58 @@ export default function BillingPage() {
                   )}
               </div>
             </div>
+
+            {/* Right: Customer Stats + Units / Total Summary Pill + Close */}
+            <div className="flex items-center gap-2 shrink-0 self-end lg:self-center">
+              {selectedCustomerStats && (
+                <div className="flex items-center gap-2 bg-primary/5 px-3 py-1 rounded-xl border border-primary/15 h-9 text-xs font-semibold animate-in fade-in">
+                  <div className="flex items-center gap-1">
+                    <span className="text-[10px] text-muted-foreground uppercase font-extrabold">Debt:</span>
+                    <span className="text-xs font-black font-mono text-red-500">₹{selectedCustomerStats.totalDebt.toFixed(2)}</span>
+                  </div>
+                  <div className="h-3.5 w-[1px] bg-border/60" />
+                  <div className="flex items-center gap-1">
+                    <span className="text-[10px] text-muted-foreground uppercase font-extrabold">Adv:</span>
+                    <span className="text-xs font-black font-mono text-emerald-500">₹{(selectedCustomerStats.totalAdvance || 0).toFixed(2)}</span>
+                  </div>
+                  <div className="h-3.5 w-[1px] bg-border/60" />
+                  <div className="flex items-center gap-1">
+                    <span className="text-[10px] text-muted-foreground uppercase font-extrabold">Bills:</span>
+                    <span className="text-xs font-black font-mono text-foreground">{selectedCustomerStats.totalBills}</span>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex items-center gap-2 bg-muted px-3 py-1 rounded-xl border border-border shadow-2xs h-9">
+                <div className="flex items-center gap-1 border-r border-border pr-2.5">
+                  <span className="text-[10px] uppercase font-extrabold text-muted-foreground">
+                    Units:
+                  </span>
+                  <span className="text-xs font-black font-mono text-foreground">
+                    {billItems.length}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <span className="text-[10px] uppercase font-extrabold text-orange-500">
+                    Total:
+                  </span>
+                  <span className="text-xs font-black font-mono text-orange-500">
+                    ₹{grandTotal.toFixed(2)}
+                  </span>
+                </div>
+              </div>
+
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-9 w-9 rounded-xl hover:bg-muted/80 text-muted-foreground hover:text-foreground"
+                onClick={handleCancelNewBill}
+                title="Close"
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
 
             {/* Items Table - Inline Editable */}
             <div className="border border-border/70 rounded-xl overflow-hidden shadow-sm bg-background/50 backdrop-blur-md mt-4">
@@ -2854,7 +3178,7 @@ export default function BillingPage() {
                             createPortal(
                               <div
                                 data-suggestions-dropdown="true"
-                                className="bg-card/95 backdrop-blur-xl border border-border/80 rounded-xl shadow-2xl overflow-y-auto z-[99999] animate-in fade-in slide-in-from-top-2 duration-150"
+                                className="bg-card/95 backdrop-blur-xl border border-border/80 rounded-xl shadow-2xl overflow-y-auto z-[99999] animate-in fade-in slide-in-from-top-2 duration-150 scroller-hide"
                                 onMouseEnter={() => setIsMouseOverSuggestions(true)}
                                 onMouseLeave={() => {
                                   setIsMouseOverSuggestions(false);
@@ -2867,12 +3191,42 @@ export default function BillingPage() {
                                 style={{
                                   position: "fixed",
                                   top: dropdownPosition.top,
-                                  left: dropdownPosition.left,
-                                  width: dropdownPosition.width || 400,
-                                  maxHeight: "260px",
+                                  left: Math.max(16, Math.min(dropdownPosition.left, (window.innerWidth || 1200) - 560)),
+                                  width: Math.max(540, dropdownPosition.width || 540),
+                                  minWidth: "540px",
+                                  maxWidth: "calc(100vw - 32px)",
+                                  maxHeight: "320px",
                                   transform: dropdownPosition.transform || "none",
+                                  overscrollBehavior: "contain",
+                                  WebkitOverflowScrolling: "touch",
                                 }}
                               >
+                                {/* Header bar showing search term & matches count */}
+                                {inventorySearch && (
+                                  <div className="px-3.5 py-1.5 bg-muted/90 backdrop-blur-md border-b border-border text-xs font-semibold text-muted-foreground flex items-center justify-between sticky top-0 z-10">
+                                    <div className="flex items-center gap-2">
+                                      <span>Suggestions for "{inventorySearch}"</span>
+                                      {inventorySuggestions.length > 0 && (
+                                        <span className="text-[10px] bg-blue-500/10 text-blue-500 dark:text-blue-400 px-2 py-0.5 rounded-full font-bold border border-blue-500/20">
+                                          {inventorySuggestions.length} matches
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+                                )}
+
+                                {/* Loader State using Our Custom Loader Component */}
+                                {loadingInventorySuggestions ? (
+                                  <div className="h-[130px] w-full flex flex-col items-center justify-center bg-card/95 backdrop-blur-md p-4">
+                                    <Loader
+                                      size="sm"
+                                      text="Searching inventory..."
+                                      variant="inline"
+                                    />
+                                  </div>
+                                ) : (
+                                  <>
+
                                 {/* Manual Entry Option */}
                                 {inventorySearch &&
                                   inventorySearch.length >= 2 && (
@@ -2910,7 +3264,7 @@ export default function BillingPage() {
                                     <div
                                       key={invItem.id}
                                       id={`suggestion-new-${suggIdx + 1}`}
-                                      className={`p-3 cursor-pointer border-b border-border/60 last:border-0 transition-colors duration-150 ${highlightedSuggestion === suggIdx + 1 ? "bg-primary/20" : "hover:bg-primary/10"}`}
+                                      className={`p-3 cursor-pointer border-b border-border/50 last:border-0 transition-colors duration-150 ${highlightedSuggestion === suggIdx + 1 ? "bg-orange-500/15" : "hover:bg-muted/50"}`}
                                       onMouseDown={(e) => {
                                         e.preventDefault();
                                         handleSelectInventoryForRow(
@@ -2922,72 +3276,65 @@ export default function BillingPage() {
                                         setHighlightedSuggestion(suggIdx + 1)
                                       }
                                     >
-                                      <div className="flex justify-between items-start gap-4">
-                                        <div className="space-y-0.5">
-                                          <p className="font-semibold text-sm text-foreground">
-                                            {invItem.product_name}
-                                          </p>
-                                          {invItem.supplier_name && (
-                                            <p className="text-xs text-primary font-bold flex items-center gap-1">
-                                              <span className="w-1 h-1 rounded-full bg-primary" />
-                                              Supplier:{" "}
-                                              {invItem.supplier_name.length > 18
-                                                ? invItem.supplier_name
-                                                    .split(" ")
-                                                    .map((word) => word[0])
-                                                    .join("")
-                                                    .toUpperCase()
-                                                : invItem.supplier_name}
-                                            </p>
+                                      {/* Row 1: Name + Stock Badge + Price */}
+                                      <div className="flex items-center justify-between gap-2 mb-1">
+                                        <div className="font-bold text-sm text-foreground flex items-center gap-2 flex-wrap">
+                                          <span>{invItem.product_name}</span>
+                                          {(invItem.available_quantity || invItem.available_units || 0) > 0 ? (
+                                            <span className="text-[10px] px-2 py-0.5 bg-emerald-500/10 text-emerald-500 dark:text-emerald-400 border border-emerald-500/20 rounded-full font-bold">
+                                              In Stock: {invItem.available_quantity || invItem.available_units} units
+                                            </span>
+                                          ) : (
+                                            <span className="text-[10px] px-2 py-0.5 bg-rose-500/10 text-rose-500 border border-rose-500/20 rounded-full font-bold">
+                                              Out of Stock
+                                            </span>
                                           )}
-                                          {invItem.salt_composition && (
-                                            <p className="text-xs text-muted-foreground font-medium italic">
-                                              {invItem.salt_composition.slice(
-                                                0,
-                                                40
-                                              )}
-                                              {invItem.salt_composition.length > 40 ? "..." : ""}
-                                            </p>
-                                          )}
-                                          <p className="text-xs text-muted-foreground/80">
-                                            Batch: <span className="font-mono">{invItem.batch_no}</span> | Exp:{" "}
-                                            <span className="font-mono">{invItem.expiry_date}</span>
-                                          </p>
                                         </div>
-                                        <div className="text-right shrink-0">
-                                          <p className="font-mono text-primary font-bold text-sm">
-                                            ₹
-                                            {Number(
-                                              invItem.mrp_per_unit ||
-                                                invItem.mrp || 0
-                                            )
-                                              .toFixed(2)
-                                              .replace(/\.00$/, "")}
-                                            /unit
-                                          </p>
-                                          <p className="text-xs font-bold mt-0.5">
-                                            {(invItem.available_quantity ||
-                                              invItem.available_units ||
-                                              0) > 0 ? (
-                                              <span className="text-emerald-500">
-                                                {invItem.available_quantity || invItem.available_units} units
-                                              </span>
-                                            ) : (
-                                              <span className="text-destructive">
-                                                Out of Stock
-                                              </span>
-                                            )}
-                                          </p>
-                                          <p className="text-xs text-blue-500 font-bold mt-0.5">
-                                            Rate: ₹
-                                            {Number(
-                                              invItem.purchase_price || 0
-                                            ).toFixed(2)}
-                                          </p>
+                                        <div className="flex items-center gap-2 shrink-0 font-mono">
+                                          <span className="font-mono text-xs font-black text-orange-500">
+                                            ₹{Number(invItem.mrp_per_unit || invItem.mrp || 0).toFixed(2)}/unit
+                                          </span>
+                                        </div>
+                                      </div>
+
+                                      {/* Row 2: Supplier / MFG & Salt */}
+                                      <div className="flex items-center gap-2 text-xs text-muted-foreground flex-wrap">
+                                        {invItem.supplier_name ? (
+                                          <span className="font-semibold text-foreground/80">
+                                            Supplier: {invItem.supplier_name}
+                                          </span>
+                                        ) : invItem.manufacturer || invItem.manufacturer_name ? (
+                                          <span className="font-semibold text-foreground/80">
+                                            MFG: {invItem.manufacturer || invItem.manufacturer_name}
+                                          </span>
+                                        ) : null}
+                                        {invItem.salt_composition && (
+                                          <span className="text-orange-400 font-medium">
+                                            • Salt: {invItem.salt_composition}
+                                          </span>
+                                        )}
+                                      </div>
+
+                                      {/* Row 3: Footer details - Rate, MRP, Batch & Expiry */}
+                                      <div className="mt-1.5 flex items-center justify-between text-xs text-muted-foreground/90 flex-wrap pt-1 border-t border-border/40 font-mono">
+                                        <div className="flex items-center gap-3">
+                                          {invItem.purchase_price !== undefined && (
+                                            <span className="text-blue-500 font-bold">
+                                              Rate: ₹{Number(invItem.purchase_price || 0).toFixed(2)}
+                                            </span>
+                                          )}
+                                          <span>
+                                            MRP: ₹{Number(invItem.mrp_per_unit || invItem.mrp || 0).toFixed(2)}
+                                          </span>
+                                        </div>
+                                        <div>
+                                          Batch: <span className="font-bold text-foreground">{invItem.batch_no || "-"}</span> | Exp: <span className="font-bold text-foreground">{invItem.expiry_date || "-"}</span>
                                         </div>
                                       </div>
                                     </div>
                                   )
+                                )}
+                                  </>
                                 )}
                               </div>,
                               document.body
@@ -3067,16 +3414,80 @@ export default function BillingPage() {
                                 }
                               }}
                             >
-                              <SelectTrigger className="h-8 text-xs font-mono border-border/80 rounded-lg w-28">
-                                <SelectValue placeholder="Select Batch" />
+                              <SelectTrigger className="h-8 text-xs font-mono font-bold border-border/80 bg-background text-foreground rounded-lg w-28 focus:ring-1 focus:ring-primary shadow-2xs">
+                                <SelectValue>
+                                  {item.available_batches?.find(b => b.id === item.inventory_id)?.batch_no || item.batch_no || "Select Batch"}
+                                </SelectValue>
                               </SelectTrigger>
-                              <SelectContent className="border border-border/40 shadow-xl rounded-xl z-[99999]">
-                                {item.available_batches.slice(0, visibleBatchesLimit[item.id] || 10).map((b) => (
-                                  <SelectItem key={b.id} value={b.id} className="text-xs font-mono">
-                                    {b.batch_no} ({b.available_quantity || 0} units, exp: {b.expiry_date || "N/A"}{b.supplier_name ? `, Supp: ${b.supplier_name}` : ""})
-                                  </SelectItem>
-                                ))}
-                                {item.available_batches.length > (visibleBatchesLimit[item.id] || 10) && (
+                              <SelectContent className="border-2 border-border shadow-2xl rounded-2xl z-[99999] w-[460px] min-w-[460px] p-2 bg-background dark:bg-zinc-950 text-foreground opacity-100 font-sans">
+                                <div className="px-3 py-1.5 mb-1.5 border-b border-border/70 text-[11px] font-black uppercase text-muted-foreground flex items-center justify-between bg-muted/60 rounded-t-xl">
+                                  <span>Available Batches</span>
+                                  <button
+                                    type="button"
+                                    onMouseDown={(e) => {
+                                      e.preventDefault();
+                                      e.stopPropagation();
+                                      setNearExpiryBatchFilter((prev) => !prev);
+                                    }}
+                                    className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold border transition-all duration-150 flex items-center gap-1 cursor-pointer ${
+                                      nearExpiryBatchFilter
+                                        ? "bg-amber-500 text-white border-amber-600 shadow-xs"
+                                        : "bg-background hover:bg-muted text-muted-foreground border-border"
+                                    }`}
+                                    title="Click to sort batches by earliest expiry date first"
+                                  >
+                                    <Clock className="w-3 h-3" />
+                                    <span>Near Expiry {nearExpiryBatchFilter ? "ON" : ""}</span>
+                                  </button>
+                                </div>
+                                {(() => {
+                                  const rawBatches = item.available_batches || [];
+                                  const displayBatches = nearExpiryBatchFilter
+                                    ? [...rawBatches].sort((a, b) => {
+                                        const tA = a.expiry_date ? new Date(a.expiry_date).getTime() : Infinity;
+                                        const tB = b.expiry_date ? new Date(b.expiry_date).getTime() : Infinity;
+                                        return (isNaN(tA) ? Infinity : tA) - (isNaN(tB) ? Infinity : tB);
+                                      })
+                                    : rawBatches;
+
+                                  return displayBatches.slice(0, visibleBatchesLimit[item.id] || 15).map((b, idx) => (
+                                    <SelectItem
+                                      key={b.id}
+                                      value={b.id}
+                                      textValue={b.batch_no}
+                                      className="text-xs py-2.5 px-3 my-1 rounded-xl border border-border/40 hover:border-border cursor-pointer focus:bg-primary/10 transition-colors"
+                                    >
+                                      <div className="flex flex-col gap-1 w-full pr-4">
+                                        <div className="flex items-center justify-between gap-3">
+                                          <div className="flex items-center gap-2">
+                                            <span className="font-mono font-black text-foreground text-sm">
+                                              {b.batch_no}
+                                            </span>
+                                            {nearExpiryBatchFilter && idx === 0 && (
+                                              <span className="text-[10px] bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/40 px-2 py-0.5 rounded-md font-black shadow-2xs">
+                                                Near Expiry
+                                              </span>
+                                            )}
+                                          </div>
+                                          <span className="text-[11px] font-extrabold text-emerald-600 dark:text-emerald-400 bg-emerald-500/15 border border-emerald-500/30 px-2.5 py-0.5 rounded-full">
+                                            {b.available_quantity || 0} units available
+                                          </span>
+                                        </div>
+                                        <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground font-mono pt-0.5">
+                                          <span>Exp: <strong className="text-foreground font-bold">{b.expiry_date || "N/A"}</strong></span>
+                                          {b.supplier_name ? (
+                                            <span className="text-muted-foreground font-semibold truncate max-w-[210px]" title={b.supplier_name}>
+                                              Supp: <strong className="text-foreground/90">{b.supplier_name}</strong>
+                                            </span>
+                                          ) : (
+                                            <span className="text-muted-foreground/60 font-medium">Supp: -</span>
+                                          )}
+                                        </div>
+                                      </div>
+                                    </SelectItem>
+                                  ));
+                                })()}
+                                {item.available_batches.length > (visibleBatchesLimit[item.id] || 15) && (
                                   <div className="p-1 border-t border-border/20">
                                     <Button
                                       variant="ghost"
@@ -3087,7 +3498,7 @@ export default function BillingPage() {
                                         e.stopPropagation();
                                         setVisibleBatchesLimit(prev => ({
                                           ...prev,
-                                          [item.id]: (visibleBatchesLimit[item.id] || 10) + 10
+                                          [item.id]: (visibleBatchesLimit[item.id] || 15) + 15
                                         }));
                                       }}
                                     >
@@ -3364,6 +3775,15 @@ export default function BillingPage() {
                   >
                     <Plus className="h-4 w-4 mr-1.5 text-primary" /> Add Item (Alt+A)
                   </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => window.open("/scan-bill", "_blank")}
+                    data-testid="scan-for-bill-btn"
+                    className="h-9 px-4 border-amber-500/40 text-amber-600 dark:text-amber-400 bg-amber-500/10 hover:bg-amber-500/20 rounded-xl transition-all duration-200 shadow-2xs font-extrabold cursor-pointer"
+                  >
+                    <Camera className="h-4 w-4 mr-1.5" /> Scan for Bill
+                  </Button>
                   <div className="flex items-center gap-2 bg-muted/20 px-3 h-9 rounded-xl border border-border/50">
                     <Checkbox
                       id="isPaid"
@@ -3423,15 +3843,37 @@ export default function BillingPage() {
                       disabled={!isPaid && !isAdvancePaid}
                     >
                       <SelectTrigger className="h-9 w-36 bg-muted/20 border border-border/50 rounded-xl text-xs font-semibold" disabled={!isPaid && !isAdvancePaid}>
-                        <SelectValue placeholder="Payment Mode" />
+                        <SelectValue placeholder="Payment Mode">
+                          {paymentMode && paymentMode !== "none" ? (
+                            <div className="flex items-center gap-1.5">
+                              {getPaymentModeIcon(paymentMode, "w-3.5 h-3.5")}
+                              <span>{paymentMode}</span>
+                            </div>
+                          ) : null}
+                        </SelectValue>
                       </SelectTrigger>
                       <SelectContent>
                         {(!settings?.billing_payment_mode_mandatory && !isAdvancePaid) && (
                           <SelectItem value="none">None</SelectItem>
                         )}
-                        <SelectItem value="Cash">Cash</SelectItem>
-                        <SelectItem value="UPI">UPI</SelectItem>
-                        <SelectItem value="Card">Card</SelectItem>
+                        <SelectItem value="Cash">
+                          <div className="flex items-center gap-2">
+                            {getPaymentModeIcon("Cash", "w-3.5 h-3.5")}
+                            <span>Cash</span>
+                          </div>
+                        </SelectItem>
+                        <SelectItem value="UPI">
+                          <div className="flex items-center gap-2">
+                            {getPaymentModeIcon("UPI", "w-3.5 h-3.5")}
+                            <span>UPI</span>
+                          </div>
+                        </SelectItem>
+                        <SelectItem value="Card">
+                          <div className="flex items-center gap-2">
+                            {getPaymentModeIcon("Card", "w-3.5 h-3.5")}
+                            <span>Card</span>
+                          </div>
+                        </SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -3520,40 +3962,23 @@ export default function BillingPage() {
                 </div>
               </div>
             </div>
-
-          </CardContent>
-        </Card>
+        </div>
       )}
 
       {/* EDIT BILL - Full Inline Table Editing (Like PurchasesPage) */}
       {editingBillId && editingBillData && (
-        <Card
-          className="glass bg-card/45 backdrop-blur-xl border border-amber-500/40 shadow-lg rounded-2xl p-6"
+        <div
+          className="!mt-0 space-y-3 px-0.5 animate-in fade-in duration-300 relative"
           data-testid="edit-bill-form"
         >
-          <CardHeader className="pb-4 px-0 pt-0">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-xl font-bold flex items-center gap-2 text-amber-600 dark:text-amber-500">
-                <Edit2 className="w-5 h-5" />
-                Edit Bill - <span className="font-mono">{editingBillData.bill_no}</span>
-              </CardTitle>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="rounded-xl hover:bg-muted/80 text-muted-foreground hover:text-foreground"
-                onClick={handleCancelEditBill}
-              >
-                <X className="h-4 w-4" />
-              </Button>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-6 px-0 pb-0">
-            {/* Customer Info */}
-            <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
-              <div className="space-y-2 relative md:col-span-2">
-                <Label className="flex items-center justify-between text-xs font-bold text-muted-foreground/80 uppercase tracking-wider">
+          {/* Unified Single Control Toolbar for Edit Bill Entry */}
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 bg-card border-2 border-amber-500/40 p-3 rounded-2xl backdrop-blur-xl shadow-md">
+            {/* Left Fields Grid (Customer Name, Mobile, Email, Discount, Doctor) */}
+            <div className="flex flex-wrap items-end gap-3 flex-1">
+              <div className="space-y-1 w-full sm:w-[230px] relative">
+                <Label className="flex items-center justify-between text-[11px] font-extrabold text-foreground/80">
                   <span className="flex items-center gap-1">
-                    <User className="w-3.5 h-3.5 text-amber-500" /> Customer Name *
+                    Customer Name *
                   </span>
                   {editingBillData.customer_id && (
                     <Button
@@ -3561,14 +3986,14 @@ export default function BillingPage() {
                       variant="link"
                       size="sm"
                       onClick={() => fetchCustomerProfileData(editingBillData.customer_id)}
-                      className="h-auto p-0 text-amber-500 font-bold text-xs flex items-center gap-1 animate-in fade-in"
+                      className="h-auto p-0 text-amber-500 font-bold text-[10px] flex items-center gap-1 animate-in fade-in"
                     >
-                      <Eye className="w-3.5 h-3.5" /> See Profile
+                      <Eye className="w-3 h-3" /> Profile
                     </Button>
                   )}
                 </Label>
                 <Input
-                  placeholder="Search existing customer or enter name..."
+                  placeholder="Search existing customer..."
                   value={editingBillData.customer_name || ""}
                   onChange={(e) => {
                     const val = e.target.value;
@@ -3602,7 +4027,7 @@ export default function BillingPage() {
                       }
                     }
                     if (!showCustomerSuggestions) return;
-                    const maxIndex = customerSuggestions.length; // customerSuggestions (0 to length-1) + New Customer (index length)
+                    const maxIndex = customerSuggestions.length;
                     if (e.key === "ArrowDown") {
                       e.preventDefault();
                       setActiveCustomerSuggestionIndex((prev) => (prev < maxIndex ? prev + 1 : 0));
@@ -3627,7 +4052,7 @@ export default function BillingPage() {
                       setShowCustomerSuggestions(false);
                     }
                   }}
-                  className="h-10 border-border/80 rounded-xl focus-visible:ring-1 focus-visible:ring-amber-500 focus-visible:border-amber-500 transition-all duration-200"
+                  className="h-9 text-xs font-semibold rounded-xl border-border bg-background text-foreground shadow-2xs focus-visible:ring-2 focus-visible:ring-amber-500/30 focus-visible:border-amber-500"
                 />
                 {showCustomerSuggestions && customerSearch && (
                   <div
@@ -3679,32 +4104,12 @@ export default function BillingPage() {
                     </div>
                   </div>
                 )}
-                {selectedCustomerStats && (
-                  <div className="flex gap-4 mt-2 px-3 py-1.5 rounded-lg bg-amber-500/5 border border-amber-500/10 text-[11px] font-semibold text-muted-foreground w-full animate-in fade-in slide-in-from-top-1">
-                    <div className="flex items-center gap-1">
-                      <span className="text-muted-foreground/60">Total Debt:</span>
-                      <span className="text-red-500 font-bold">₹{selectedCustomerStats.totalDebt.toFixed(2)}</span>
-                    </div>
-                    <div className="h-3 w-[1px] bg-border/60 self-center" />
-                    <div className="flex items-center gap-1">
-                      <span className="text-muted-foreground/60">Total Advance:</span>
-                      <span className="text-emerald-500 font-bold">₹{(selectedCustomerStats.totalAdvance || 0).toFixed(2)}</span>
-                    </div>
-                    <div className="h-3 w-[1px] bg-border/60 self-center" />
-                    <div className="flex items-center gap-1">
-                      <span className="text-muted-foreground/60">Past Bills:</span>
-                      <span className="text-foreground font-bold">{selectedCustomerStats.totalBills}</span>
-                    </div>
-                    <div className="h-3 w-[1px] bg-border/60 self-center" />
-                    <div className="flex items-center gap-1">
-                      <span className="text-muted-foreground/60">Total Items Bought:</span>
-                      <span className="text-foreground font-bold">{selectedCustomerStats.totalItems}</span>
-                    </div>
-                  </div>
-                )}
               </div>
-              <div className="space-y-2">
-                <Label className="text-xs font-bold text-muted-foreground/80 uppercase tracking-wider">Mobile *</Label>
+
+              <div className="space-y-1 w-[130px]">
+                <Label className="text-[11px] font-extrabold text-foreground/80">
+                  Mobile *
+                </Label>
                 <Input
                   placeholder="Mobile number"
                   value={editingBillData.customer_mobile || ""}
@@ -3715,11 +4120,14 @@ export default function BillingPage() {
                     })
                   }
                   data-testid="edit-customer-mobile"
-                  className="h-10 border-border/80 rounded-xl focus-visible:ring-1 focus-visible:ring-amber-500 focus-visible:border-amber-500 transition-all duration-200"
+                  className="h-9 text-xs font-semibold rounded-xl border-border bg-background text-foreground shadow-2xs focus-visible:ring-2 focus-visible:ring-amber-500/30 focus-visible:border-amber-500"
                 />
               </div>
-              <div className="space-y-2">
-                <Label className="text-xs font-bold text-muted-foreground/80 uppercase tracking-wider">Email</Label>
+
+              <div className="space-y-1 w-[150px]">
+                <Label className="text-[11px] font-extrabold text-foreground/80">
+                  Email
+                </Label>
                 <Input
                   type="email"
                   placeholder="Email"
@@ -3730,11 +4138,14 @@ export default function BillingPage() {
                       customer_email: e.target.value,
                     })
                   }
-                  className="h-10 border-border/80 rounded-xl focus-visible:ring-1 focus-visible:ring-amber-500 focus-visible:border-amber-500 transition-all duration-200"
+                  className="h-9 text-xs font-semibold rounded-xl border-border bg-background text-foreground shadow-2xs focus-visible:ring-2 focus-visible:ring-amber-500/30 focus-visible:border-amber-500"
                 />
               </div>
-              <div className="space-y-2">
-                <Label className="text-xs font-bold text-muted-foreground/80 uppercase tracking-wider">Discount %</Label>
+
+              <div className="space-y-1 w-[100px]">
+                <Label className="text-[11px] font-extrabold text-foreground/80">
+                  Disc %
+                </Label>
                 <Input
                   type="number"
                   placeholder="0"
@@ -3747,11 +4158,14 @@ export default function BillingPage() {
                   }
                   min="0"
                   max="100"
-                  className="h-10 border-border/80 rounded-xl focus-visible:ring-1 focus-visible:ring-amber-500 focus-visible:border-amber-500 transition-all duration-200"
+                  className="h-9 text-xs font-semibold rounded-xl border-border bg-background text-foreground shadow-2xs focus-visible:ring-2 focus-visible:ring-amber-500/30 focus-visible:border-amber-500"
                 />
               </div>
-              <div className="space-y-2 relative">
-                <Label className="text-xs font-bold text-muted-foreground/80 uppercase tracking-wider">Doctor</Label>
+
+              <div className="space-y-1 w-[140px] relative">
+                <Label className="text-[11px] font-extrabold text-foreground/80">
+                  Doctor
+                </Label>
                 <Input
                   placeholder="Doctor's name..."
                   value={editingBillData.doctor || ""}
@@ -3767,7 +4181,7 @@ export default function BillingPage() {
                   onBlur={() =>
                     setTimeout(() => setShowDoctorSuggestions(false), 200)
                   }
-                  className="h-10 border-border/80 rounded-xl focus-visible:ring-1 focus-visible:ring-amber-500 focus-visible:border-amber-500 transition-all duration-200"
+                  className="h-9 text-xs font-semibold rounded-xl border-border bg-background text-foreground shadow-2xs focus-visible:ring-2 focus-visible:ring-amber-500/30 focus-visible:border-amber-500"
                 />
                 {showDoctorSuggestions &&
                   doctorSuggestions.length > 0 && (
@@ -3792,6 +4206,51 @@ export default function BillingPage() {
                   )}
               </div>
             </div>
+
+            {/* Right: Customer Financial Summary Pill + Units / Total Stats Summary Pill + Close */}
+            <div className="flex items-center gap-2 shrink-0 self-end lg:self-center">
+              {selectedCustomerStats && (
+                <div className="hidden sm:flex items-center gap-2 bg-amber-500/10 border border-amber-500/20 px-3 py-1 rounded-xl shadow-2xs h-9 text-[10px] font-bold font-mono">
+                  <span className="text-muted-foreground uppercase text-[9px]">Debt:</span>
+                  <span className="text-red-500 font-extrabold">₹{selectedCustomerStats.totalDebt.toFixed(2)}</span>
+                  <span className="text-muted-foreground/40">|</span>
+                  <span className="text-muted-foreground uppercase text-[9px]">Adv:</span>
+                  <span className="text-emerald-500 font-extrabold">₹{(selectedCustomerStats.totalAdvance || 0).toFixed(2)}</span>
+                  <span className="text-muted-foreground/40">|</span>
+                  <span className="text-muted-foreground uppercase text-[9px]">Bills:</span>
+                  <span className="text-foreground font-extrabold">{selectedCustomerStats.totalBills}</span>
+                </div>
+              )}
+              <div className="flex items-center gap-2 bg-muted px-3 py-1 rounded-xl border border-border shadow-2xs h-9">
+                <div className="flex items-center gap-1 border-r border-border pr-2.5">
+                  <span className="text-[10px] uppercase font-extrabold text-muted-foreground">
+                    Units:
+                  </span>
+                  <span className="text-xs font-black font-mono text-foreground">
+                    {editingBillItems.length}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <span className="text-[10px] uppercase font-extrabold text-amber-500">
+                    Total:
+                  </span>
+                  <span className="text-xs font-black font-mono text-amber-500">
+                    ₹{editGrandTotal.toFixed(2)}
+                  </span>
+                </div>
+              </div>
+
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-9 w-9 rounded-xl hover:bg-muted/80 text-muted-foreground hover:text-foreground"
+                onClick={handleCancelEditBill}
+                title="Close"
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
 
             {/* Items Table - Inline Editable */}
             <div className="border border-border/70 rounded-xl overflow-hidden shadow-sm bg-background/50 backdrop-blur-md mt-4">
@@ -3919,7 +4378,8 @@ export default function BillingPage() {
                             activeEditingItemId === item.id &&
                             createPortal(
                               <div
-                                className="bg-card/95 backdrop-blur-xl border border-border/80 rounded-xl shadow-2xl overflow-y-auto z-[99999] animate-in fade-in slide-in-from-top-2 duration-150"
+                                data-suggestions-dropdown="true"
+                                className="bg-card/95 backdrop-blur-xl border border-border/80 rounded-xl shadow-2xl overflow-y-auto z-[99999] animate-in fade-in slide-in-from-top-2 duration-150 scroller-hide"
                                 onMouseEnter={() => setIsMouseOverEditingSuggestions(true)}
                                 onMouseLeave={() => {
                                   setIsMouseOverEditingSuggestions(false);
@@ -3932,129 +4392,151 @@ export default function BillingPage() {
                                 style={{
                                   position: "fixed",
                                   top: dropdownPosition.top,
-                                  left: dropdownPosition.left,
-                                  width: dropdownPosition.width || 400,
-                                  maxHeight: "260px",
+                                  left: Math.max(16, Math.min(dropdownPosition.left, (window.innerWidth || 1200) - 560)),
+                                  width: Math.max(540, dropdownPosition.width || 540),
+                                  minWidth: "540px",
+                                  maxWidth: "calc(100vw - 32px)",
+                                  maxHeight: "320px",
                                   transform: dropdownPosition.transform || "none",
+                                  overscrollBehavior: "contain",
+                                  WebkitOverflowScrolling: "touch",
                                 }}
                               >
-                                {/* Manual Entry Option */}
-                                {editingInventorySearch &&
-                                  editingInventorySearch.length >= 2 && (
-                                    <div
-                                      id="suggestion-edit-0"
-                                      className={`p-3 cursor-pointer border-b border-border transition-colors duration-150 ${highlightedEditingSuggestion === 0 ? "bg-amber-500/20 text-amber-600 font-semibold" : "hover:bg-amber-500/10 bg-amber-500/5 text-amber-600"}`}
-                                      onMouseDown={(e) => {
-                                        e.preventDefault();
-                                        handleManualEntryForEdit(
-                                          item.id,
-                                          editingInventorySearch
-                                        );
-                                      }}
-                                      onMouseEnter={() =>
-                                        setHighlightedEditingSuggestion(0)
-                                      }
-                                    >
-                                      <div className="flex items-center gap-2">
-                                        <Plus className="w-4 h-4 text-amber-500" />
-                                        <div>
-                                          <p className="font-semibold text-sm">
-                                            Manual Entry: "{editingInventorySearch}"
-                                          </p>
-                                          <p className="text-xs text-muted-foreground font-normal">
-                                            Add item not in inventory
-                                          </p>
-                                        </div>
-                                      </div>
+                                {/* Header bar showing search term & matches count */}
+                                {editingInventorySearch && (
+                                  <div className="px-3.5 py-1.5 bg-muted/90 backdrop-blur-md border-b border-border text-xs font-semibold text-muted-foreground flex items-center justify-between sticky top-0 z-10">
+                                    <div className="flex items-center gap-2">
+                                      <span>Suggestions for "{editingInventorySearch}"</span>
+                                      {editingInventorySuggestions.length > 0 && (
+                                        <span className="text-[10px] bg-amber-500/10 text-amber-500 px-2 py-0.5 rounded-full font-bold border border-amber-500/20">
+                                          {editingInventorySuggestions.length} matches
+                                        </span>
+                                      )}
                                     </div>
-                                  )}
+                                  </div>
+                                )}
 
-                                {/* Inventory Items */}
-                                {editingInventorySuggestions.map(
-                                  (invItem, suggIdx) => (
-                                    <div
-                                      key={invItem.id}
-                                      id={`suggestion-edit-${suggIdx + 1}`}
-                                      className={`p-3 cursor-pointer border-b border-border/60 last:border-0 transition-colors duration-150 ${highlightedEditingSuggestion === suggIdx + 1 ? "bg-amber-500/20" : "hover:bg-amber-500/10"}`}
-                                      onMouseDown={(e) => {
-                                        e.preventDefault();
-                                        handleSelectInventoryForEditRow(
-                                          item.id,
-                                          invItem
-                                        );
-                                      }}
-                                      onMouseEnter={() =>
-                                        setHighlightedEditingSuggestion(
-                                          suggIdx + 1
-                                        )
-                                      }
-                                    >
-                                      <div className="flex justify-between items-start gap-4">
-                                        <div className="space-y-0.5">
-                                          <p className="font-semibold text-sm text-foreground">
-                                            {invItem.product_name}
-                                          </p>
-                                          {invItem.supplier_name && (
-                                            <p className="text-xs text-amber-600 font-bold flex items-center gap-1">
-                                              <span className="w-1 h-1 rounded-full bg-amber-500" />
-                                              Supplier:{" "}
-                                              {invItem.supplier_name.length > 18
-                                                ? invItem.supplier_name
-                                                    .split(" ")
-                                                    .map((word) => word[0])
-                                                    .join("")
-                                                    .toUpperCase()
-                                                : invItem.supplier_name}
-                                            </p>
-                                          )}
-                                          {invItem.salt_composition && (
-                                            <p className="text-xs text-muted-foreground font-medium italic">
-                                              {invItem.salt_composition.slice(
-                                                0,
-                                                40
-                                              )}
-                                              {invItem.salt_composition.length > 40 ? "..." : ""}
-                                            </p>
-                                          )}
-                                          <p className="text-xs text-muted-foreground/80">
-                                            Batch: <span className="font-mono">{invItem.batch_no}</span> | Exp:{" "}
-                                            <span className="font-mono">{invItem.expiry_date}</span>
-                                          </p>
+                                {/* Loader State using Our Custom Loader Component */}
+                                {loadingEditingInventorySuggestions ? (
+                                  <div className="h-[130px] w-full flex flex-col items-center justify-center bg-card/95 backdrop-blur-md p-4">
+                                    <Loader
+                                      size="sm"
+                                      text="Searching inventory..."
+                                      variant="inline"
+                                    />
+                                  </div>
+                                ) : (
+                                  <>
+                                    {/* Manual Entry Option */}
+                                    {editingInventorySearch &&
+                                      editingInventorySearch.length >= 2 && (
+                                        <div
+                                          id="suggestion-edit-0"
+                                          className={`p-3 cursor-pointer border-b border-border transition-colors duration-150 ${highlightedEditingSuggestion === 0 ? "bg-amber-500/20 text-amber-600 font-semibold" : "hover:bg-amber-500/10 bg-amber-500/5 text-amber-600"}`}
+                                          onMouseDown={(e) => {
+                                            e.preventDefault();
+                                            handleManualEntryForEdit(
+                                              item.id,
+                                              editingInventorySearch
+                                            );
+                                          }}
+                                          onMouseEnter={() =>
+                                            setHighlightedEditingSuggestion(0)
+                                          }
+                                        >
+                                          <div className="flex items-center gap-2">
+                                            <Plus className="w-4 h-4 text-amber-500" />
+                                            <div>
+                                              <p className="font-semibold text-sm">
+                                                Manual Entry: "{editingInventorySearch}"
+                                              </p>
+                                              <p className="text-xs text-muted-foreground font-normal">
+                                                Add item not in inventory
+                                              </p>
+                                            </div>
+                                          </div>
                                         </div>
-                                        <div className="text-right shrink-0">
-                                          <p className="font-mono text-amber-600 font-bold text-sm">
-                                            ₹
-                                            {Number(
-                                              invItem.mrp_per_unit ||
-                                                invItem.mrp || 0
+                                      )}
+
+                                    {/* Inventory Items */}
+                                    {editingInventorySuggestions.map(
+                                      (invItem, suggIdx) => (
+                                        <div
+                                          key={invItem.id}
+                                          id={`suggestion-edit-${suggIdx + 1}`}
+                                          className={`p-3 cursor-pointer border-b border-border/50 last:border-0 transition-colors duration-150 ${highlightedEditingSuggestion === suggIdx + 1 ? "bg-amber-500/20" : "hover:bg-muted/50"}`}
+                                          onMouseDown={(e) => {
+                                            e.preventDefault();
+                                            handleSelectInventoryForEditRow(
+                                              item.id,
+                                              invItem
+                                            );
+                                          }}
+                                          onMouseEnter={() =>
+                                            setHighlightedEditingSuggestion(
+                                              suggIdx + 1
                                             )
-                                              .toFixed(2)
-                                              .replace(/\.00$/, "")}
-                                            /unit
-                                          </p>
-                                          <p className="text-xs font-bold mt-0.5">
-                                            {(invItem.available_quantity ||
-                                              invItem.available_units ||
-                                              0) > 0 ? (
-                                              <span className="text-emerald-500">
-                                                {invItem.available_quantity || invItem.available_units} units
+                                          }
+                                        >
+                                          {/* Row 1: Name + Stock Badge + Price */}
+                                          <div className="flex items-center justify-between gap-2 mb-1">
+                                            <div className="font-bold text-sm text-foreground flex items-center gap-2 flex-wrap">
+                                              <span>{invItem.product_name}</span>
+                                              {(invItem.available_quantity || invItem.available_units || 0) > 0 ? (
+                                                <span className="text-[10px] px-2 py-0.5 bg-emerald-500/10 text-emerald-500 dark:text-emerald-400 border border-emerald-500/20 rounded-full font-bold">
+                                                  In Stock: {invItem.available_quantity || invItem.available_units} units
+                                                </span>
+                                              ) : (
+                                                <span className="text-[10px] px-2 py-0.5 bg-rose-500/10 text-rose-500 border border-rose-500/20 rounded-full font-bold">
+                                                  Out of Stock
+                                                </span>
+                                              )}
+                                            </div>
+                                            <div className="flex items-center gap-2 shrink-0 font-mono">
+                                              <span className="font-mono text-xs font-black text-amber-500">
+                                                ₹{Number(invItem.mrp_per_unit || invItem.mrp || 0).toFixed(2)}/unit
                                               </span>
-                                            ) : (
-                                              <span className="text-destructive font-bold">
-                                                Out of Stock
+                                            </div>
+                                          </div>
+
+                                          {/* Row 2: Supplier / MFG & Salt */}
+                                          <div className="flex items-center gap-2 text-xs text-muted-foreground flex-wrap">
+                                            {invItem.supplier_name ? (
+                                              <span className="font-semibold text-foreground/80">
+                                                Supplier: {invItem.supplier_name}
+                                              </span>
+                                            ) : invItem.manufacturer || invItem.manufacturer_name ? (
+                                              <span className="font-semibold text-foreground/80">
+                                                MFG: {invItem.manufacturer || invItem.manufacturer_name}
+                                              </span>
+                                            ) : null}
+                                            {invItem.salt_composition && (
+                                              <span className="text-amber-500 font-medium">
+                                                • Salt: {invItem.salt_composition}
                                               </span>
                                             )}
-                                          </p>
-                                          <p className="text-xs text-blue-500 font-bold mt-0.5">
-                                            Rate: ₹
-                                            {Number(
-                                              invItem.purchase_price || 0
-                                            ).toFixed(2)}
-                                          </p>
+                                          </div>
+
+                                          {/* Row 3: Footer details - Rate, MRP, Batch & Expiry */}
+                                          <div className="mt-1.5 flex items-center justify-between text-xs text-muted-foreground/90 flex-wrap pt-1 border-t border-border/40 font-mono">
+                                            <div className="flex items-center gap-3">
+                                              {invItem.purchase_price !== undefined && (
+                                                <span className="text-blue-500 font-bold">
+                                                  Rate: ₹{Number(invItem.purchase_price || 0).toFixed(2)}
+                                                </span>
+                                              )}
+                                              <span>
+                                                MRP: ₹{Number(invItem.mrp_per_unit || invItem.mrp || 0).toFixed(2)}
+                                              </span>
+                                            </div>
+                                            <div>
+                                              Batch: <span className="font-bold text-foreground">{invItem.batch_no || "-"}</span> | Exp: <span className="font-bold text-foreground">{invItem.expiry_date || "-"}</span>
+                                            </div>
+                                          </div>
                                         </div>
-                                      </div>
-                                    </div>
-                                  )
+                                      )
+                                    )}
+                                  </>
                                 )}
                               </div>,
                               document.body
@@ -4115,16 +4597,80 @@ export default function BillingPage() {
                                 }
                               }}
                             >
-                              <SelectTrigger className="h-8 text-xs font-mono border-border/80 rounded-lg w-28">
-                                <SelectValue placeholder="Select Batch" />
+                              <SelectTrigger className="h-8 text-xs font-mono font-bold border-border/80 bg-background text-foreground rounded-lg w-28 focus:ring-1 focus:ring-amber-500 shadow-2xs">
+                                <SelectValue>
+                                  {item.available_batches?.find(b => b.id === item.inventory_id)?.batch_no || item.batch_no || "Select Batch"}
+                                </SelectValue>
                               </SelectTrigger>
-                              <SelectContent className="border border-border/40 shadow-xl rounded-xl z-[99999]">
-                                {item.available_batches.slice(0, visibleBatchesLimit[item.id] || 10).map((b) => (
-                                  <SelectItem key={b.id} value={b.id} className="text-xs font-mono">
-                                    {b.batch_no} ({b.available_quantity || 0} units, exp: {b.expiry_date || "N/A"}{b.supplier_name ? `, Supp: ${b.supplier_name}` : ""})
-                                  </SelectItem>
-                                ))}
-                                {item.available_batches.length > (visibleBatchesLimit[item.id] || 10) && (
+                              <SelectContent className="border-2 border-border shadow-2xl rounded-2xl z-[99999] w-[460px] min-w-[460px] p-2 bg-background dark:bg-zinc-950 text-foreground opacity-100 font-sans">
+                                <div className="px-3 py-1.5 mb-1.5 border-b border-border/70 text-[11px] font-black uppercase text-muted-foreground flex items-center justify-between bg-muted/60 rounded-t-xl">
+                                  <span>Available Batches</span>
+                                  <button
+                                    type="button"
+                                    onMouseDown={(e) => {
+                                      e.preventDefault();
+                                      e.stopPropagation();
+                                      setNearExpiryBatchFilter((prev) => !prev);
+                                    }}
+                                    className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold border transition-all duration-150 flex items-center gap-1 cursor-pointer ${
+                                      nearExpiryBatchFilter
+                                        ? "bg-amber-500 text-white border-amber-600 shadow-xs"
+                                        : "bg-background hover:bg-muted text-muted-foreground border-border"
+                                    }`}
+                                    title="Click to sort batches by earliest expiry date first"
+                                  >
+                                    <Clock className="w-3 h-3" />
+                                    <span>Near Expiry {nearExpiryBatchFilter ? "ON" : ""}</span>
+                                  </button>
+                                </div>
+                                {(() => {
+                                  const rawBatches = item.available_batches || [];
+                                  const displayBatches = nearExpiryBatchFilter
+                                    ? [...rawBatches].sort((a, b) => {
+                                        const tA = a.expiry_date ? new Date(a.expiry_date).getTime() : Infinity;
+                                        const tB = b.expiry_date ? new Date(b.expiry_date).getTime() : Infinity;
+                                        return (isNaN(tA) ? Infinity : tA) - (isNaN(tB) ? Infinity : tB);
+                                      })
+                                    : rawBatches;
+
+                                  return displayBatches.slice(0, visibleBatchesLimit[item.id] || 15).map((b, idx) => (
+                                    <SelectItem
+                                      key={b.id}
+                                      value={b.id}
+                                      textValue={b.batch_no}
+                                      className="text-xs py-2.5 px-3 my-1 rounded-xl border border-border/40 hover:border-border cursor-pointer focus:bg-amber-500/10 transition-colors"
+                                    >
+                                      <div className="flex flex-col gap-1 w-full pr-4">
+                                        <div className="flex items-center justify-between gap-3">
+                                          <div className="flex items-center gap-2">
+                                            <span className="font-mono font-black text-foreground text-sm">
+                                              {b.batch_no}
+                                            </span>
+                                            {nearExpiryBatchFilter && idx === 0 && (
+                                              <span className="text-[10px] bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/40 px-2 py-0.5 rounded-md font-black shadow-2xs">
+                                                Near Expiry
+                                              </span>
+                                            )}
+                                          </div>
+                                          <span className="text-[11px] font-extrabold text-emerald-600 dark:text-emerald-400 bg-emerald-500/15 border border-emerald-500/30 px-2.5 py-0.5 rounded-full">
+                                            {b.available_quantity || 0} units available
+                                          </span>
+                                        </div>
+                                        <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground font-mono pt-0.5">
+                                          <span>Exp: <strong className="text-foreground font-bold">{b.expiry_date || "N/A"}</strong></span>
+                                          {b.supplier_name ? (
+                                            <span className="text-muted-foreground font-semibold truncate max-w-[210px]" title={b.supplier_name}>
+                                              Supp: <strong className="text-foreground/90">{b.supplier_name}</strong>
+                                            </span>
+                                          ) : (
+                                            <span className="text-muted-foreground/60 font-medium">Supp: -</span>
+                                          )}
+                                        </div>
+                                      </div>
+                                    </SelectItem>
+                                  ));
+                                })()}
+                                {item.available_batches.length > (visibleBatchesLimit[item.id] || 15) && (
                                   <div className="p-1 border-t border-border/20">
                                     <Button
                                       variant="ghost"
@@ -4135,7 +4681,7 @@ export default function BillingPage() {
                                         e.stopPropagation();
                                         setVisibleBatchesLimit(prev => ({
                                           ...prev,
-                                          [item.id]: (visibleBatchesLimit[item.id] || 10) + 10
+                                          [item.id]: (visibleBatchesLimit[item.id] || 15) + 15
                                         }));
                                       }}
                                     >
@@ -4384,15 +4930,37 @@ export default function BillingPage() {
                       disabled={!editingBillData.is_paid}
                     >
                       <SelectTrigger className="h-9 w-36 bg-muted/20 border border-border/50 rounded-xl text-xs font-semibold" disabled={!editingBillData.is_paid}>
-                        <SelectValue placeholder="Payment Mode" />
+                        <SelectValue placeholder="Payment Mode">
+                          {editingBillData.payment_mode && editingBillData.payment_mode !== "none" ? (
+                            <div className="flex items-center gap-1.5">
+                              {getPaymentModeIcon(editingBillData.payment_mode, "w-3.5 h-3.5")}
+                              <span>{editingBillData.payment_mode}</span>
+                            </div>
+                          ) : null}
+                        </SelectValue>
                       </SelectTrigger>
                       <SelectContent>
                         {!settings?.billing_payment_mode_mandatory && (
                           <SelectItem value="none">None</SelectItem>
                         )}
-                        <SelectItem value="Cash">Cash</SelectItem>
-                        <SelectItem value="UPI">UPI</SelectItem>
-                        <SelectItem value="Card">Card</SelectItem>
+                        <SelectItem value="Cash">
+                          <div className="flex items-center gap-2">
+                            {getPaymentModeIcon("Cash", "w-3.5 h-3.5")}
+                            <span>Cash</span>
+                          </div>
+                        </SelectItem>
+                        <SelectItem value="UPI">
+                          <div className="flex items-center gap-2">
+                            {getPaymentModeIcon("UPI", "w-3.5 h-3.5")}
+                            <span>UPI</span>
+                          </div>
+                        </SelectItem>
+                        <SelectItem value="Card">
+                          <div className="flex items-center gap-2">
+                            {getPaymentModeIcon("Card", "w-3.5 h-3.5")}
+                            <span>Card</span>
+                          </div>
+                        </SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -4502,144 +5070,224 @@ export default function BillingPage() {
                 </div>
               </div>
             </div>
-
-            {/* Submit moved to fixed footer */}
-          </CardContent>
-        </Card>
+        </div>
       )}
 
       {!showNewBill && !editingBillId && (
-        <Card className="glass bg-card/45 backdrop-blur-xl border border-border/70 shadow-lg rounded-2xl p-6 mb-6">
-          <div className="flex flex-col gap-5">
-            <div className="flex flex-col md:flex-row gap-4">
-              <div className="flex-1">
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                  <Input
-                    placeholder="Search bills by bill number, customer, doctor, batch, product, notes..."
-                    className="pl-10 h-10 border-border/80 rounded-xl focus-visible:ring-1 focus-visible:ring-primary focus-visible:border-primary transition-all duration-200 bg-background/50"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                  />
-                </div>
-              </div>
-            </div>
-            <div className="flex flex-wrap items-end gap-5">
-              <div className="space-y-2">
-                <Label className="text-xs font-bold text-muted-foreground/80 uppercase tracking-wider">Filter Customer</Label>
-                <div className="mt-1">
-                  <Select
-                    value={filterCustomer}
-                    onValueChange={handleCustomerFilterChange}
-                  >
-                    <SelectTrigger className="w-52 h-10 border-border/80 rounded-xl focus:ring-1 focus:ring-primary focus:border-primary transition-all duration-200 bg-background/50">
-                      <SelectValue placeholder="All Customers" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All Customers</SelectItem>
-                      {customers?.map((c) => (
-                        <SelectItem key={c.id} value={c.id}>
-                          {c.name || c.mobile || "Unknown"}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <Label className="text-xs font-bold text-muted-foreground/80 uppercase tracking-wider">From Date</Label>
+        <div className="space-y-3">
+          <div className="flex flex-col md:flex-row items-center gap-3 pt-1">
+            <div className="flex-1 w-full">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                 <Input
-                  type="date"
-                  value={startDate}
-                  onChange={(e) => {
-                    setPage(1);
-                    setStartDate(e.target.value);
-                  }}
-                  className="h-10 border-border/80 rounded-xl focus-visible:ring-1 focus-visible:ring-primary focus-visible:border-primary transition-all duration-200 bg-background/50 w-44"
+                  placeholder="Search bills by bill number, customer, doctor, batch, product, notes..."
+                  className="pl-9 h-9 text-xs font-medium rounded-xl border-border/70 bg-card/60 backdrop-blur-md"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
                 />
               </div>
-
-              <div className="space-y-2">
-                <Label className="text-xs font-bold text-muted-foreground/80 uppercase tracking-wider">To Date</Label>
-                <Input
-                  type="date"
-                  value={endDate}
-                  onChange={(e) => {
-                    setPage(1);
-                    setEndDate(e.target.value);
-                  }}
-                  className="h-10 border-border/80 rounded-xl focus-visible:ring-1 focus-visible:ring-primary focus-visible:border-primary transition-all duration-200 bg-background/50 w-44"
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label className="text-xs font-bold text-muted-foreground/80 uppercase tracking-wider">Bill Type</Label>
-                <div className="mt-1">
-                  <Select
-                    value={filterBillType}
-                    onValueChange={(val) => {
-                      setPage(1);
-                      setFilterBillType(val);
-                    }}
-                  >
-                    <SelectTrigger className="w-40 h-10 border-border/80 rounded-xl focus:ring-1 focus:ring-primary focus:border-primary transition-all duration-200 bg-background/50 text-xs font-semibold">
-                      <SelectValue placeholder="All Bills" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All Bills</SelectItem>
-                      <SelectItem value="regular">Regular Bills</SelectItem>
-                      <SelectItem value="advance">Advance Bills</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-
-              <div className="flex gap-2 h-10 items-center">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    const today = new Date().toISOString().slice(0, 10);
-                    setStartDate(today);
-                    setEndDate(today);
-                    setPage(1);
-                  }}
-                  className="h-10 text-xs font-bold border-border/80 hover:bg-muted rounded-xl transition-all"
-                >
-                  Today
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    const yesterday = new Date();
-                    yesterday.setDate(yesterday.getDate() - 1);
-                    const iso = yesterday.toISOString().slice(0, 10);
-                    setStartDate(iso);
-                    setEndDate(iso);
-                    setPage(1);
-                  }}
-                  className="h-10 text-xs font-bold border-border/80 hover:bg-muted rounded-xl transition-all"
-                >
-                  Yesterday
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    setSearchQuery("");
-                    setStartDate("");
-                    setEndDate("");
-                    handleCustomerFilterChange("all");
-                    setPage(1);
-                  }}
-                  className="h-10 text-xs font-bold text-muted-foreground hover:text-foreground hover:bg-muted/50 rounded-xl transition-all"
-                >
-                  Reset Filter
-                </Button>
-              </div>
             </div>
+            <div className="flex items-center gap-2 w-full md:w-auto flex-wrap">
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-9 text-xs font-bold rounded-xl bg-gradient-to-r from-amber-500/10 to-orange-500/10 border-amber-500/30 text-amber-600 dark:text-amber-400 hover:border-amber-500/50 cursor-pointer shadow-2xs"
+                onClick={() => window.open("/scan-bill", "_blank")}
+                data-testid="scan-bill-list-btn"
+              >
+                <Camera className="w-4 h-4 mr-1.5 text-amber-500" />
+                <span>Scan for Bill</span>
+              </Button>
+              <Select
+                value={filterCustomer}
+                onValueChange={handleCustomerFilterChange}
+              >
+                <SelectTrigger className="w-44 h-9 text-xs font-semibold border-border/70 rounded-xl bg-card/60 backdrop-blur-md">
+                  <SelectValue placeholder="All Customers" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Customers</SelectItem>
+                  {customers?.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.name || c.mobile || "Unknown"}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              <Select
+                value={filterBillType}
+                onValueChange={(val) => {
+                  setPage(1);
+                  setFilterBillType(val);
+                }}
+              >
+                <SelectTrigger className="w-32 h-9 text-xs font-semibold border-border/70 rounded-xl bg-card/60 backdrop-blur-md">
+                  <SelectValue placeholder="All Bills" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Bills</SelectItem>
+                  <SelectItem value="regular">Regular Bills</SelectItem>
+                  <SelectItem value="advance">Advance Bills</SelectItem>
+                </SelectContent>
+              </Select>
+
+              <Button
+                variant={activeViewTab === "drafts" ? "default" : "outline"}
+                size="sm"
+                onClick={() => {
+                  setActiveViewTab((prev) => (prev === "drafts" ? "all" : "drafts"));
+                  if (activeViewTab !== "drafts") fetchDrafts();
+                }}
+                className={`h-9 text-xs font-bold rounded-xl transition-all cursor-pointer ${
+                  activeViewTab === "drafts"
+                    ? "bg-orange-600 hover:bg-orange-700 text-white shadow-md"
+                    : "border-orange-500/30 text-orange-600 dark:text-orange-400 bg-orange-500/10 hover:bg-orange-500/20"
+                }`}
+              >
+                <FileText className="w-3.5 h-3.5 mr-1.5" />
+                <span>Draft Bills</span>
+                {drafts.length > 0 && (
+                  <Badge className="ml-1.5 px-1.5 py-0 text-[9px] bg-white text-orange-600 font-extrabold rounded-full">
+                    {drafts.length}
+                  </Badge>
+                )}
+              </Button>
+
+              {/* More Filters Popover Menu */}
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant={startDate || endDate ? "default" : "outline"}
+                    size="sm"
+                    className={`h-9 text-xs font-bold rounded-xl transition-all cursor-pointer ${
+                      startDate || endDate
+                        ? "bg-orange-600 hover:bg-orange-700 text-white shadow-md"
+                        : "border-border/70 hover:bg-muted"
+                    }`}
+                  >
+                    <SlidersHorizontal className="w-3.5 h-3.5 mr-1.5" />
+                    <span>More Filters</span>
+                    {(startDate || endDate) && (
+                      <Badge className="ml-1.5 px-1.5 py-0 text-[9px] bg-white text-orange-600 font-extrabold rounded-full">
+                        {(startDate ? 1 : 0) + (endDate ? 1 : 0)}
+                      </Badge>
+                    )}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent align="end" className="w-80 p-4 space-y-4 rounded-2xl shadow-xl border-border bg-card/95 backdrop-blur-md">
+                  <div className="flex items-center justify-between pb-2 border-b border-border/50">
+                    <div className="flex items-center gap-2">
+                      <Filter className="w-4 h-4 text-orange-500" />
+                      <h4 className="text-xs font-extrabold uppercase tracking-wider text-foreground">
+                        Date & Filter Options
+                      </h4>
+                    </div>
+                    {(startDate || endDate || searchQuery || filterCustomer !== "all" || filterBillType !== "all") && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setSearchQuery("");
+                          setStartDate("");
+                          setEndDate("");
+                          handleCustomerFilterChange("all");
+                          setFilterBillType("all");
+                          setPage(1);
+                        }}
+                        className="h-7 px-2 text-[11px] font-bold text-muted-foreground hover:text-foreground"
+                      >
+                        Reset All
+                      </Button>
+                    )}
+                  </div>
+
+                  {/* Date Pickers */}
+                  <div className="space-y-2">
+                    <Label className="text-[11px] font-extrabold text-muted-foreground uppercase flex items-center gap-1">
+                      <Calendar className="w-3 h-3 text-orange-500" /> Date Range
+                    </Label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <span className="text-[10px] text-muted-foreground font-semibold block mb-1">From Date</span>
+                        <Input
+                          type="date"
+                          value={startDate}
+                          onChange={(e) => {
+                            setPage(1);
+                            setStartDate(e.target.value);
+                          }}
+                          className="h-8 text-xs font-semibold rounded-xl border-border/70 bg-background"
+                        />
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-muted-foreground font-semibold block mb-1">To Date</span>
+                        <Input
+                          type="date"
+                          value={endDate}
+                          onChange={(e) => {
+                            setPage(1);
+                            setEndDate(e.target.value);
+                          }}
+                          className="h-8 text-xs font-semibold rounded-xl border-border/70 bg-background"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Quick Presets */}
+                  <div className="space-y-2 pt-1 border-t border-border/40">
+                    <Label className="text-[10px] font-extrabold text-muted-foreground uppercase">Quick Presets</Label>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          const today = new Date().toISOString().slice(0, 10);
+                          setStartDate(today);
+                          setEndDate(today);
+                          setPage(1);
+                        }}
+                        className="h-7 text-[11px] font-bold rounded-xl flex-1"
+                      >
+                        Today
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          const yesterday = new Date();
+                          yesterday.setDate(yesterday.getDate() - 1);
+                          const iso = yesterday.toISOString().slice(0, 10);
+                          setStartDate(iso);
+                          setEndDate(iso);
+                          setPage(1);
+                        }}
+                        className="h-7 text-[11px] font-bold rounded-xl flex-1"
+                      >
+                        Yesterday
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          const now = new Date();
+                          const firstDay = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
+                          const today = now.toISOString().slice(0, 10);
+                          setStartDate(firstDay);
+                          setEndDate(today);
+                          setPage(1);
+                        }}
+                        className="h-7 text-[11px] font-bold rounded-xl flex-1"
+                      >
+                        This Month
+                      </Button>
+                    </div>
+                  </div>
+                </PopoverContent>
+              </Popover>
+            </div>
+          </div>
 
             {/* Premium Insights Dashboard */}
             {(startDate || endDate) && (
@@ -4825,12 +5473,96 @@ export default function BillingPage() {
                 ) : null}
               </div>
             )}
-          </div>
+        </div>
+      )}
+
+      {!showNewBill && !editingBillId && activeViewTab === "drafts" && (
+        <Card className="data-table glass bg-card/45 backdrop-blur-xl border border-border/70 shadow-lg rounded-2xl overflow-hidden mt-3">
+          <CardHeader className="p-4 bg-muted/30 border-b border-border/50 flex flex-row items-center justify-between space-y-0">
+            <div className="flex items-center gap-2">
+              <FileText className="w-4 h-4 text-orange-500" />
+              <CardTitle className="text-sm font-extrabold">Draft Bills Queue ({drafts.length})</CardTitle>
+            </div>
+            <p className="text-xs text-muted-foreground font-medium hidden sm:block">
+              Click "Complete Bill" to open in Manual Bill Creation layout and finalize checkout
+            </p>
+          </CardHeader>
+          <CardContent className="p-0">
+            {draftsLoading ? (
+              <div className="p-12 text-center flex items-center justify-center">
+                <Loader2 className="w-6 h-6 animate-spin text-primary" />
+              </div>
+            ) : drafts.length === 0 ? (
+              <div className="p-12 text-center text-muted-foreground space-y-2">
+                <FileText className="w-10 h-10 mx-auto text-muted-foreground/30" />
+                <p className="text-sm font-bold text-foreground">No pending draft bills found</p>
+                <p className="text-xs text-muted-foreground">Scan products from "Scan for Bill" page to create draft bills.</p>
+              </div>
+            ) : (
+              <Table>
+                <TableHeader className="bg-muted/40">
+                  <TableRow className="border-b border-border/60">
+                    <TableHead className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Draft No / Timestamp</TableHead>
+                    <TableHead className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Customer Name</TableHead>
+                    <TableHead className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Items</TableHead>
+                    <TableHead className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Est. Amount</TableHead>
+                    <TableHead className="text-right text-xs font-bold text-muted-foreground uppercase tracking-wider">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {drafts.map((d) => {
+                    const itemCount = d.items?.length || 0;
+                    const totalEst = (d.items || []).reduce((sum, i) => sum + (parseFloat(i.unit_price || i.mrp || 0) * (parseInt(i.quantity) || 1)), 0);
+                    return (
+                      <TableRow key={d.id} className="hover:bg-muted/30 border-b border-border/40">
+                        <TableCell>
+                          <div className="font-black text-xs text-orange-600 dark:text-orange-400">{d.draft_no}</div>
+                          <div className="text-[10px] text-muted-foreground font-mono">{formatDate(d.created_at || d.billing_date)}</div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="font-extrabold text-xs text-foreground">{d.customer_name || "Walk-in Customer"}</div>
+                          {d.customer_mobile && <div className="text-[10px] text-muted-foreground font-mono">{d.customer_mobile}</div>}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className="text-[10px] font-extrabold border-orange-500/30 text-orange-600 bg-orange-500/10">
+                            {itemCount} item(s)
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="font-mono font-black text-xs">
+                          ₹{totalEst.toFixed(2)}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex items-center justify-end gap-2">
+                            <Button
+                              size="sm"
+                              onClick={() => handleLoadDraftToBill(d)}
+                              className="h-8 px-3 text-xs font-black bg-orange-600 hover:bg-orange-700 text-white rounded-xl shadow-xs cursor-pointer"
+                            >
+                              <ChevronRight className="w-3.5 h-3.5 mr-1" /> Complete Bill
+                            </Button>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              onClick={() => handleDeleteDraft(d.id)}
+                              className="h-8 w-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-xl"
+                              title="Delete Draft"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
         </Card>
       )}
 
-      {!showNewBill && !editingBillId && (
-        <Card className="data-table glass bg-card/45 backdrop-blur-xl border border-border/70 shadow-lg rounded-2xl overflow-hidden mt-6">
+      {!showNewBill && !editingBillId && activeViewTab !== "drafts" && (
+        <Card className="data-table glass bg-card/45 backdrop-blur-xl border border-border/70 shadow-lg rounded-2xl overflow-hidden mt-3">
           <div className="overflow-x-auto">
             <Table>
               <TableHeader className="bg-muted/40">
@@ -4942,8 +5674,9 @@ export default function BillingPage() {
                               )}
                             </div>
                             {bill.payment_mode && bill.payment_mode !== "none" && (
-                              <div className="text-[10px] text-muted-foreground/80 mt-1 font-bold uppercase tracking-wider">
-                                {bill.payment_mode}
+                              <div className="text-[10px] text-muted-foreground/80 mt-1 font-bold uppercase tracking-wider flex items-center justify-center gap-1.5">
+                                {getPaymentModeIcon(bill.payment_mode, "w-3.5 h-3.5")}
+                                <span>{bill.payment_mode}</span>
                               </div>
                             )}
                           </TableCell>
@@ -5598,12 +6331,34 @@ export default function BillingPage() {
                 onValueChange={(val) => setRecordPaymentDialog((prev) => ({ ...prev, paymentMode: val }))}
               >
                 <SelectTrigger className="h-10 border-border/80 rounded-xl focus:ring-1 focus:ring-primary focus:border-primary bg-background/50 text-xs font-semibold">
-                  <SelectValue placeholder="Select Payment Mode" />
+                  <SelectValue placeholder="Select Payment Mode">
+                    {recordPaymentDialog.paymentMode ? (
+                      <div className="flex items-center gap-1.5">
+                        {getPaymentModeIcon(recordPaymentDialog.paymentMode, "w-3.5 h-3.5")}
+                        <span>{recordPaymentDialog.paymentMode}</span>
+                      </div>
+                    ) : null}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="Cash">Cash</SelectItem>
-                  <SelectItem value="UPI">UPI</SelectItem>
-                  <SelectItem value="Card">Card</SelectItem>
+                  <SelectItem value="Cash">
+                    <div className="flex items-center gap-2">
+                      {getPaymentModeIcon("Cash", "w-3.5 h-3.5")}
+                      <span>Cash</span>
+                    </div>
+                  </SelectItem>
+                  <SelectItem value="UPI">
+                    <div className="flex items-center gap-2">
+                      {getPaymentModeIcon("UPI", "w-3.5 h-3.5")}
+                      <span>UPI</span>
+                    </div>
+                  </SelectItem>
+                  <SelectItem value="Card">
+                    <div className="flex items-center gap-2">
+                      {getPaymentModeIcon("Card", "w-3.5 h-3.5")}
+                      <span>Card</span>
+                    </div>
+                  </SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -5624,7 +6379,7 @@ export default function BillingPage() {
 
       {/* TABS & ACTION NAVBAR */}
       {(showNewBill || editingBillId) && createPortal(
-        <div className="fixed bottom-0 left-0 md:left-[250px] right-0 z-[100] flex items-center justify-between bg-card/95 backdrop-blur-md border-t border-border shadow-[0_-8px_30px_rgba(0,0,0,0.12)] px-6 py-4 gap-4 overflow-x-auto scroller-hide overflow-y-hidden mb-0 transition-all duration-300">
+        <div className="fixed bottom-0 left-0 right-0 z-[100] flex items-center justify-between bg-card/95 backdrop-blur-xl border-t-2 border-border shadow-2xl px-6 py-3.5 gap-4 overflow-x-auto scroller-hide overflow-y-hidden mb-0 transition-all duration-300">
           <div className="flex items-center gap-2 overflow-x-auto scroller-hide">
             {showNewBill &&
               tabs.map((tab, idx) => {
@@ -5646,7 +6401,7 @@ export default function BillingPage() {
                         e.preventDefault();
                         switchTab(tab.id);
                       }}
-                      className={`pr-8 h-9 ${isActive ? "shadow-md ring-1 ring-primary/50" : "opacity-80 hover:opacity-100"}`}
+                      className={`pr-8 h-9 rounded-full transition-all duration-200 ${isActive ? "bg-orange-500 text-white shadow-md shadow-orange-500/20 font-bold" : "bg-slate-100 hover:bg-slate-200 dark:bg-muted/65 dark:hover:bg-muted/90 text-slate-700 dark:text-muted-foreground border border-slate-200/80 dark:border-border/50 font-semibold"}`}
                     >
                       <FileText className="w-3.5 h-3.5 mr-1.5 opacity-70" />
                       <span className="max-w-[120px] truncate">{tabName}</span>
@@ -5671,7 +6426,7 @@ export default function BillingPage() {
                 variant="outline"
                 size="sm"
                 onClick={createNewTab}
-                className="bg-primary/5 hover:bg-primary/10 border-primary/20 text-primary shrink-0 transition-colors shadow-sm h-9"
+                className="bg-primary/5 hover:bg-primary/10 border-primary/20 text-primary shrink-0 transition-colors shadow-sm h-9 rounded-full"
               >
                 <Plus className="w-4 h-4 mr-1" /> New Tab
               </Button>
@@ -5740,6 +6495,11 @@ export default function BillingPage() {
         </div>,
         document.body
       )}
+      <BillingScannerModal
+        open={scannerModalOpen}
+        onOpenChange={setScannerModalOpen}
+        onTransferToBill={handleTransferScannedItemsToBill}
+      />
     </div>
   );
 }
