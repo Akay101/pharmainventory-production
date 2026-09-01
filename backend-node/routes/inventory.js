@@ -15,6 +15,8 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
       low_stock,
       shortage,
       expiring_soon,
+      expired,
+      grouped,
       page = 1,
       limit = 50,
       sort_by = "created_at",
@@ -22,6 +24,8 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
       highlight_id,
       product_id,
     } = req.query;
+
+    const todayStr = new Date().toISOString().split("T")[0];
 
     const query = {
       pharmacy_id: req.user.pharmacy_id,
@@ -38,14 +42,26 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
     }
 
     // Fetch user settings for global shortage threshold
-    const userSettings = await db.collection("user_settings").findOne({ user_id: req.user.id });
-    const globalThreshold = userSettings?.preferences?.shortage_threshold !== undefined ? Number(userSettings.preferences.shortage_threshold) : 10;
+    const userSettings = await db
+      .collection("user_settings")
+      .findOne({ user_id: req.user.id });
+    const globalThreshold =
+      userSettings?.preferences?.shortage_threshold !== undefined
+        ? Number(userSettings.preferences.shortage_threshold)
+        : 10;
 
     // Fetch all active inventory to calculate shortage per item
-    const allInventoryForShortage = await db.collection("inventory").find({ pharmacy_id: req.user.pharmacy_id }).toArray();
+    const allInventoryForShortage = await db
+      .collection("inventory")
+      .find({ pharmacy_id: req.user.pharmacy_id })
+      .toArray();
     const shortageInventoryIds = [];
-    allInventoryForShortage.forEach(item => {
-      const thresh = item.shortage_threshold !== undefined && item.shortage_threshold !== null ? Number(item.shortage_threshold) : globalThreshold;
+    allInventoryForShortage.forEach((item) => {
+      const thresh =
+        item.shortage_threshold !== undefined &&
+        item.shortage_threshold !== null
+          ? Number(item.shortage_threshold)
+          : globalThreshold;
       if (item.available_quantity <= thresh) {
         shortageInventoryIds.push(item.id);
       }
@@ -55,15 +71,18 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
 
     // Filter low stock (database query filter based on threshold comparison)
     if (low_stock === "true") {
-      const stockSummary = await db.collection("inventory").aggregate([
-        { $match: { pharmacy_id: req.user.pharmacy_id } },
-        {
-          $group: {
-            _id: "$product_id",
-            total_stock: { $sum: "$available_quantity" }
-          }
-        }
-      ]).toArray();
+      const stockSummary = await db
+        .collection("inventory")
+        .aggregate([
+          { $match: { pharmacy_id: req.user.pharmacy_id } },
+          {
+            $group: {
+              _id: "$product_id",
+              total_stock: { $sum: "$available_quantity" },
+            },
+          },
+        ])
+        .toArray();
 
       const products = await db
         .collection("products")
@@ -93,14 +112,110 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
       query.expiry_date = { $lte: cutoff };
     }
 
+    // Filter expired
+    if (expired === "true") {
+      query.expiry_date = { $lt: todayStr };
+    }
+
     const sortDir = sort_order === "asc" ? 1 : -1;
     const parsedLimit = parseInt(limit);
     let pageNum = parseInt(page);
     let total = 0;
 
+    if (grouped === "true") {
+      // Aggregate by product_name to produce product-grouped rows
+      const pipeline = [
+        { $match: query },
+        {
+          $lookup: {
+            from: "suppliers",
+            localField: "supplier_id",
+            foreignField: "id",
+            as: "supplier_info",
+          },
+        },
+        {
+          $unwind: {
+            path: "$supplier_info",
+            preserveNullAndEmptyArrays: true,
+          },
+        },
+        {
+          $addFields: {
+            supplier_name: "$supplier_info.name",
+          },
+        },
+        {
+          $group: {
+            _id: "$product_name",
+            product_name: { $first: "$product_name" },
+            product_id: { $first: "$product_id" },
+            manufacturer: { $first: "$manufacturer" },
+            salt_composition: { $first: "$salt_composition" },
+            hsn_no: { $first: "$hsn_no" },
+            pack_type: { $first: "$pack_type" },
+            units_per_pack: { $first: "$units_per_pack" },
+            purchase_price: { $first: "$purchase_price" },
+            mrp: { $first: "$mrp" },
+            total_available_stock: { $sum: "$available_quantity" },
+            total_stock_value: {
+              $sum: { $multiply: ["$available_quantity", "$purchase_price"] },
+            },
+            earliest_expiry: { $min: "$expiry_date" },
+            latest_created: { $max: "$created_at" },
+            shortage_threshold: { $first: "$shortage_threshold" },
+            batch_count: { $sum: 1 },
+            batches: {
+              $push: {
+                id: "$id",
+                batch_no: "$batch_no",
+                expiry_date: "$expiry_date",
+                available_quantity: "$available_quantity",
+                pack_type: "$pack_type",
+                units_per_pack: "$units_per_pack",
+                purchase_price: "$purchase_price",
+                mrp: "$mrp",
+                shortage_threshold: "$shortage_threshold",
+                supplier_name: "$supplier_name",
+                created_at: "$created_at",
+              },
+            },
+          },
+        },
+        {
+          $sort: {
+            [sort_by === "created_at" ? "latest_created" : sort_by]: sortDir,
+          },
+        },
+      ];
+
+      const allGrouped = await db
+        .collection("inventory")
+        .aggregate(pipeline)
+        .toArray();
+      total = allGrouped.length;
+      const skip = (pageNum - 1) * parsedLimit;
+      const paginatedGrouped =
+        parsedLimit > 0
+          ? allGrouped.slice(skip, skip + parsedLimit)
+          : allGrouped;
+
+      return res.json({
+        inventory: paginatedGrouped,
+        shortage_count: shortageCount,
+        pagination: {
+          page: pageNum,
+          limit: parsedLimit,
+          total,
+          total_pages: Math.ceil(total / parsedLimit) || 1,
+        },
+      });
+    }
+
     if (highlight_id) {
       // Find all IDs in sort order to calculate index for highlighting
-      const allMatching = await db.collection("inventory")
+      const allMatching = await db
+        .collection("inventory")
         .find(query, { projection: { id: 1 } })
         .sort({ [sort_by]: sortDir })
         .toArray();
@@ -115,7 +230,8 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
     }
 
     const skip = (pageNum - 1) * parsedLimit;
-    const inventory = await db.collection("inventory")
+    const inventory = await db
+      .collection("inventory")
       .aggregate([
         { $match: query },
         {
@@ -123,29 +239,29 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
             from: "suppliers",
             localField: "supplier_id",
             foreignField: "id",
-            as: "supplier_info"
-          }
+            as: "supplier_info",
+          },
         },
         {
           $unwind: {
             path: "$supplier_info",
-            preserveNullAndEmptyArrays: true
-          }
+            preserveNullAndEmptyArrays: true,
+          },
         },
         {
           $addFields: {
-            supplier_name: "$supplier_info.name"
-          }
+            supplier_name: "$supplier_info.name",
+          },
         },
         {
           $project: {
             supplier_info: 0,
-            _id: 0
-          }
+            _id: 0,
+          },
         },
         { $sort: { [sort_by]: sortDir } },
         { $skip: skip },
-        { $limit: parsedLimit }
+        { $limit: parsedLimit },
       ])
       .toArray();
 
@@ -163,6 +279,94 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
     next(error);
   }
 });
+
+// GET /api/inventory/product-batches - Fetch all inventory batches for a specific product
+router.get(
+  "/product-batches",
+  auth,
+  requireSubscription(),
+  async (req, res, next) => {
+    try {
+      const db = mongoose.connection.db;
+      const { product_name } = req.query;
+
+      if (!product_name) {
+        return res.status(400).json({ detail: "product_name is required" });
+      }
+
+      const normalizedInput = (product_name || "").trim().toLowerCase();
+
+      const batches = await db
+        .collection("inventory")
+        .aggregate([
+          {
+            $match: {
+              pharmacy_id: req.user.pharmacy_id,
+              $or: [
+                {
+                  product_name: {
+                    $regex: new RegExp(
+                      "^" +
+                        normalizedInput.replace(
+                          /[-\/\\^$*+?.()|[\]{}]/g,
+                          "\\$&"
+                        ) +
+                        "$",
+                      "i"
+                    ),
+                  },
+                },
+                {
+                  product_name: {
+                    $regex: normalizedInput.replace(
+                      /[-\/\\^$*+?.()|[\]{}]/g,
+                      "\\$&"
+                    ),
+                    $options: "i",
+                  },
+                },
+              ],
+            },
+          },
+          {
+            $lookup: {
+              from: "suppliers",
+              localField: "supplier_id",
+              foreignField: "id",
+              as: "supplier_info",
+            },
+          },
+          {
+            $unwind: {
+              path: "$supplier_info",
+              preserveNullAndEmptyArrays: true,
+            },
+          },
+          {
+            $addFields: {
+              supplier_name: "$supplier_info.name",
+            },
+          },
+          {
+            $project: {
+              supplier_info: 0,
+              _id: 0,
+            },
+          },
+          { $sort: { expiry_date: 1, created_at: -1 } },
+        ])
+        .toArray();
+
+      res.json({
+        product_name,
+        count: batches.length,
+        batches,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
 
 // GET /api/inventory/search
 router.get("/search", auth, requireSubscription(), async (req, res, next) => {
@@ -187,14 +391,17 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
     };
 
     // To get the total count for pagination, group by product name first
-    const allGrouped = await db.collection("inventory").aggregate([
-      { $match: query },
-      {
-        $group: {
-          _id: "$product_name"
-        }
-      }
-    ]).toArray();
+    const allGrouped = await db
+      .collection("inventory")
+      .aggregate([
+        { $match: query },
+        {
+          $group: {
+            _id: "$product_name",
+          },
+        },
+      ])
+      .toArray();
 
     const total = allGrouped.length;
 
@@ -208,14 +415,14 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
             from: "suppliers",
             localField: "supplier_id",
             foreignField: "id",
-            as: "batch_supplier"
-          }
+            as: "batch_supplier",
+          },
         },
         {
           $unwind: {
             path: "$batch_supplier",
-            preserveNullAndEmptyArrays: true
-          }
+            preserveNullAndEmptyArrays: true,
+          },
         },
         {
           $group: {
@@ -246,10 +453,10 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
                 mrp: "$mrp",
                 cgst: "$cgst",
                 sgst: "$sgst",
-                supplier_name: "$batch_supplier.name"
-              }
-            }
-          }
+                supplier_name: "$batch_supplier.name",
+              },
+            },
+          },
         },
         // ✅ Lookup product-level supplier for compatibility
         {
@@ -305,7 +512,10 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
       return 0;
     });
 
-    const paginatedInventory = inventory.slice((parsedPage - 1) * parsedLimit, parsedPage * parsedLimit);
+    const paginatedInventory = inventory.slice(
+      (parsedPage - 1) * parsedLimit,
+      parsedPage * parsedLimit
+    );
 
     res.json({
       inventory: paginatedInventory,
@@ -314,8 +524,8 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
         page: parsedPage,
         limit: parsedLimit,
         total: total,
-        total_pages: Math.ceil(total / parsedLimit) || 1
-      }
+        total_pages: Math.ceil(total / parsedLimit) || 1,
+      },
     });
   } catch (error) {
     next(error);
@@ -328,13 +538,25 @@ router.get("/shortage", auth, requireSubscription(), async (req, res, next) => {
     const db = mongoose.connection.db;
 
     // Fetch user settings for global shortage threshold
-    const userSettings = await db.collection("user_settings").findOne({ user_id: req.user.id });
-    const globalThreshold = userSettings?.preferences?.shortage_threshold !== undefined ? Number(userSettings.preferences.shortage_threshold) : 10;
+    const userSettings = await db
+      .collection("user_settings")
+      .findOne({ user_id: req.user.id });
+    const globalThreshold =
+      userSettings?.preferences?.shortage_threshold !== undefined
+        ? Number(userSettings.preferences.shortage_threshold)
+        : 10;
 
-    const allInventory = await db.collection("inventory").find({ pharmacy_id: req.user.pharmacy_id }).toArray();
+    const allInventory = await db
+      .collection("inventory")
+      .find({ pharmacy_id: req.user.pharmacy_id })
+      .toArray();
     const shortageItems = [];
-    allInventory.forEach(item => {
-      const thresh = item.shortage_threshold !== undefined && item.shortage_threshold !== null ? Number(item.shortage_threshold) : globalThreshold;
+    allInventory.forEach((item) => {
+      const thresh =
+        item.shortage_threshold !== undefined &&
+        item.shortage_threshold !== null
+          ? Number(item.shortage_threshold)
+          : globalThreshold;
       if (item.available_quantity <= thresh) {
         shortageItems.push(item);
       }
@@ -342,7 +564,7 @@ router.get("/shortage", auth, requireSubscription(), async (req, res, next) => {
 
     res.json({
       inventory: shortageItems,
-      count: shortageItems.length
+      count: shortageItems.length,
     });
   } catch (error) {
     next(error);
@@ -356,10 +578,7 @@ router.get("/alerts", auth, requireSubscription(), async (req, res, next) => {
 
     const inventory = await db
       .collection("inventory")
-      .find(
-        { pharmacy_id: req.user.pharmacy_id },
-        { projection: { _id: 0 } }
-      )
+      .find({ pharmacy_id: req.user.pharmacy_id }, { projection: { _id: 0 } })
       .toArray();
 
     const products = await db
@@ -425,37 +644,56 @@ router.get("/alerts", auth, requireSubscription(), async (req, res, next) => {
 });
 
 // PATCH /api/inventory/:id/add-quantity
-router.patch("/:id/add-quantity", auth, requireSubscription(), async (req, res, next) => {
-  try {
-    const db = mongoose.connection.db;
-    const { add_quantity } = req.body;
-    
-    if (!add_quantity || isNaN(add_quantity) || Number(add_quantity) <= 0) {
-      return res.status(400).json({ detail: "Please provide a valid quantity to add (> 0)" });
-    }
+router.patch(
+  "/:id/add-quantity",
+  auth,
+  requireSubscription(),
+  async (req, res, next) => {
+    try {
+      const db = mongoose.connection.db;
+      const { add_quantity } = req.body;
 
-    const { id } = req.params;
-    const item = await db.collection("inventory").findOne({ id, pharmacy_id: req.user.pharmacy_id });
-    
-    if (!item) {
-      return res.status(404).json({ detail: "Inventory item not found" });
-    }
-
-    await db.collection("inventory").updateOne(
-      { id, pharmacy_id: req.user.pharmacy_id },
-      { 
-        $inc: { available_quantity: Number(add_quantity) },
-        $set: { updated_at: new Date().toISOString() }
+      if (!add_quantity || isNaN(add_quantity) || Number(add_quantity) <= 0) {
+        return res
+          .status(400)
+          .json({ detail: "Please provide a valid quantity to add (> 0)" });
       }
-    );
 
-    await logActivity(db, req.user.pharmacy_id, req.user.id, req.user.name, "UPDATE", "INVENTORY", id, `Increased stock of ${item.product_name} by ${add_quantity} units`, `/inventory`);
+      const { id } = req.params;
+      const item = await db
+        .collection("inventory")
+        .findOne({ id, pharmacy_id: req.user.pharmacy_id });
 
-    res.json({ message: "Stock updated successfully" });
-  } catch (error) {
-    next(error);
+      if (!item) {
+        return res.status(404).json({ detail: "Inventory item not found" });
+      }
+
+      await db.collection("inventory").updateOne(
+        { id, pharmacy_id: req.user.pharmacy_id },
+        {
+          $inc: { available_quantity: Number(add_quantity) },
+          $set: { updated_at: new Date().toISOString() },
+        }
+      );
+
+      await logActivity(
+        db,
+        req.user.pharmacy_id,
+        req.user.id,
+        req.user.name,
+        "UPDATE",
+        "INVENTORY",
+        id,
+        `Increased stock of ${item.product_name} by ${add_quantity} units`,
+        `/inventory`
+      );
+
+      res.json({ message: "Stock updated successfully" });
+    } catch (error) {
+      next(error);
+    }
   }
-});
+);
 
 // DELETE /api/inventory/:id
 router.delete("/:id", auth, requireSubscription(), async (req, res, next) => {
@@ -463,7 +701,9 @@ router.delete("/:id", auth, requireSubscription(), async (req, res, next) => {
     const db = mongoose.connection.db;
     const { id } = req.params;
 
-    const item = await db.collection("inventory").findOne({ id, pharmacy_id: req.user.pharmacy_id });
+    const item = await db
+      .collection("inventory")
+      .findOne({ id, pharmacy_id: req.user.pharmacy_id });
     if (!item) {
       return res.status(404).json({ detail: "Inventory item not found" });
     }
@@ -507,62 +747,99 @@ router.post("/merge", auth, requireSubscription(), async (req, res, next) => {
       merged_name,
       merged_manufacturer,
       merged_salt,
-      merged_hsn
+      merged_hsn,
     } = req.body;
 
-    if (!inventory_ids || !Array.isArray(inventory_ids) || inventory_ids.length < 2) {
+    if (
+      !inventory_ids ||
+      !Array.isArray(inventory_ids) ||
+      inventory_ids.length < 2
+    ) {
       await session.abortTransaction();
       session.endSession();
-      return res.status(400).json({ detail: "At least two inventory items must be selected to merge" });
+      return res
+        .status(400)
+        .json({
+          detail: "At least two inventory items must be selected to merge",
+        });
     }
 
     if (!merged_name || !merged_name.trim()) {
       await session.abortTransaction();
       session.endSession();
-      return res.status(400).json({ detail: "Merged product name is required" });
+      return res
+        .status(400)
+        .json({ detail: "Merged product name is required" });
     }
 
     const cleanMergedName = merged_name.trim();
 
     // 1. Fetch the target inventory documents
-    const items = await db.collection("inventory").find({
-      pharmacy_id: req.user.pharmacy_id,
-      id: { $in: inventory_ids }
-    }, { session }).toArray();
+    const items = await db
+      .collection("inventory")
+      .find(
+        {
+          pharmacy_id: req.user.pharmacy_id,
+          id: { $in: inventory_ids },
+        },
+        { session }
+      )
+      .toArray();
 
     if (items.length !== inventory_ids.length) {
       await session.abortTransaction();
       session.endSession();
-      return res.status(404).json({ detail: "One or more selected inventory items were not found" });
+      return res
+        .status(404)
+        .json({
+          detail: "One or more selected inventory items were not found",
+        });
     }
 
     // Capture the list of old product names and product IDs to update history
-    const oldProductNames = [...new Set(items.map(item => item.product_name))];
-    const oldProductIds = [...new Set(items.map(item => item.product_id).filter(id => id))];
+    const oldProductNames = [
+      ...new Set(items.map((item) => item.product_name)),
+    ];
+    const oldProductIds = [
+      ...new Set(items.map((item) => item.product_id).filter((id) => id)),
+    ];
 
     // 2. Find or create the unified product in the products catalog
-    let matchedProduct = await db.collection("products").findOne({
-      pharmacy_id: req.user.pharmacy_id,
-      name: { $regex: new RegExp("^" + cleanMergedName.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&') + "$", "i") }
-    }, { session });
+    let matchedProduct = await db.collection("products").findOne(
+      {
+        pharmacy_id: req.user.pharmacy_id,
+        name: {
+          $regex: new RegExp(
+            "^" +
+              cleanMergedName.replace(/[-\/\\^$*+?.()|[\]{}]/g, "\\$&") +
+              "$",
+            "i"
+          ),
+        },
+      },
+      { session }
+    );
 
     let unifiedProductId;
     if (matchedProduct) {
       unifiedProductId = matchedProduct.id;
     } else {
       unifiedProductId = uuidv4();
-      await db.collection("products").insertOne({
-        id: unifiedProductId,
-        pharmacy_id: req.user.pharmacy_id,
-        name: cleanMergedName,
-        low_stock_threshold: 10,
-        created_at: new Date().toISOString()
-      }, { session });
+      await db.collection("products").insertOne(
+        {
+          id: unifiedProductId,
+          pharmacy_id: req.user.pharmacy_id,
+          name: cleanMergedName,
+          low_stock_threshold: 10,
+          created_at: new Date().toISOString(),
+        },
+        { session }
+      );
     }
 
     // 3. Check for batch conflicts (multiple inventory records with the same batch number)
     const batchesMap = {};
-    items.forEach(item => {
+    items.forEach((item) => {
       if (!batchesMap[item.batch_no]) {
         batchesMap[item.batch_no] = [];
       }
@@ -584,12 +861,14 @@ router.post("/merge", auth, requireSubscription(), async (req, res, next) => {
 
         for (let i = 1; i < batchItems.length; i++) {
           const duplicate = batchItems[i];
-          totalQty += (duplicate.quantity || 0);
-          totalAvailable += (duplicate.available_quantity || 0);
+          totalQty += duplicate.quantity || 0;
+          totalAvailable += duplicate.available_quantity || 0;
           deletedToPrimary[duplicate.id] = primary.id;
 
           // Delete duplicate inventory item
-          await db.collection("inventory").deleteOne({ id: duplicate.id }, { session });
+          await db
+            .collection("inventory")
+            .deleteOne({ id: duplicate.id }, { session });
         }
 
         // Update primary batch quantities
@@ -598,8 +877,8 @@ router.post("/merge", auth, requireSubscription(), async (req, res, next) => {
           {
             $set: {
               quantity: totalQty,
-              available_quantity: totalAvailable
-            }
+              available_quantity: totalAvailable,
+            },
           },
           { session }
         );
@@ -612,7 +891,7 @@ router.post("/merge", auth, requireSubscription(), async (req, res, next) => {
     await db.collection("inventory").updateMany(
       {
         pharmacy_id: req.user.pharmacy_id,
-        id: { $in: inventoryIdsToKeep }
+        id: { $in: inventoryIdsToKeep },
       },
       {
         $set: {
@@ -620,8 +899,8 @@ router.post("/merge", auth, requireSubscription(), async (req, res, next) => {
           product_name: cleanMergedName,
           manufacturer: merged_manufacturer || null,
           salt_composition: merged_salt || null,
-          hsn_no: merged_hsn || null
-        }
+          hsn_no: merged_hsn || null,
+        },
       },
       { session }
     );
@@ -630,21 +909,27 @@ router.post("/merge", auth, requireSubscription(), async (req, res, next) => {
     if (oldProductNames.length > 0 || oldProductIds.length > 0) {
       const purchaseQuery = {
         pharmacy_id: req.user.pharmacy_id,
-        $or: []
+        $or: [],
       };
       if (oldProductNames.length > 0) {
-        purchaseQuery.$or.push({ "items.product_name": { $in: oldProductNames } });
+        purchaseQuery.$or.push({
+          "items.product_name": { $in: oldProductNames },
+        });
       }
       if (oldProductIds.length > 0) {
         purchaseQuery.$or.push({ "items.product_id": { $in: oldProductIds } });
       }
 
-      const matchingPurchases = await db.collection("purchases").find(purchaseQuery, { session }).toArray();
+      const matchingPurchases = await db
+        .collection("purchases")
+        .find(purchaseQuery, { session })
+        .toArray();
 
       for (const purchase of matchingPurchases) {
-        const updatedItems = purchase.items.map(item => {
+        const updatedItems = purchase.items.map((item) => {
           const nameMatches = oldProductNames.includes(item.product_name);
-          const idMatches = item.product_id && oldProductIds.includes(item.product_id);
+          const idMatches =
+            item.product_id && oldProductIds.includes(item.product_id);
 
           if (nameMatches || idMatches) {
             return {
@@ -653,17 +938,19 @@ router.post("/merge", auth, requireSubscription(), async (req, res, next) => {
               product_name: cleanMergedName,
               manufacturer: merged_manufacturer || item.manufacturer,
               salt_composition: merged_salt || item.salt_composition,
-              hsn_no: merged_hsn || item.hsn_no
+              hsn_no: merged_hsn || item.hsn_no,
             };
           }
           return item;
         });
 
-        await db.collection("purchases").updateOne(
-          { id: purchase.id },
-          { $set: { items: updatedItems } },
-          { session }
-        );
+        await db
+          .collection("purchases")
+          .updateOne(
+            { id: purchase.id },
+            { $set: { items: updatedItems } },
+            { session }
+          );
       }
     }
 
@@ -672,16 +959,20 @@ router.post("/merge", auth, requireSubscription(), async (req, res, next) => {
       pharmacy_id: req.user.pharmacy_id,
       $or: [
         { "items.product_name": { $in: oldProductNames } },
-        { "items.inventory_id": { $in: inventory_ids } }
-      ]
+        { "items.inventory_id": { $in: inventory_ids } },
+      ],
     };
 
-    const matchingBills = await db.collection("bills").find(billQuery, { session }).toArray();
+    const matchingBills = await db
+      .collection("bills")
+      .find(billQuery, { session })
+      .toArray();
 
     for (const bill of matchingBills) {
-      const updatedItems = bill.items.map(item => {
+      const updatedItems = bill.items.map((item) => {
         const nameMatches = oldProductNames.includes(item.product_name);
-        const invIdMatches = item.inventory_id && inventory_ids.includes(item.inventory_id);
+        const invIdMatches =
+          item.inventory_id && inventory_ids.includes(item.inventory_id);
 
         if (nameMatches || invIdMatches) {
           let targetInvId = item.inventory_id;
@@ -693,26 +984,33 @@ router.post("/merge", auth, requireSubscription(), async (req, res, next) => {
             ...item,
             inventory_id: targetInvId,
             product_name: cleanMergedName,
-            salt_composition: merged_salt || item.salt_composition
+            salt_composition: merged_salt || item.salt_composition,
           };
         }
         return item;
       });
 
-      await db.collection("bills").updateOne(
-        { id: bill.id },
-        { $set: { items: updatedItems } },
-        { session }
-      );
+      await db
+        .collection("bills")
+        .updateOne(
+          { id: bill.id },
+          { $set: { items: updatedItems } },
+          { session }
+        );
     }
 
     // 7. Clean up old catalog products
-    const productsToDelete = oldProductIds.filter(id => id !== unifiedProductId);
+    const productsToDelete = oldProductIds.filter(
+      (id) => id !== unifiedProductId
+    );
     if (productsToDelete.length > 0) {
-      await db.collection("products").deleteMany({
-        pharmacy_id: req.user.pharmacy_id,
-        id: { $in: productsToDelete }
-      }, { session });
+      await db.collection("products").deleteMany(
+        {
+          pharmacy_id: req.user.pharmacy_id,
+          id: { $in: productsToDelete },
+        },
+        { session }
+      );
     }
 
     await logActivity(
@@ -735,7 +1033,7 @@ router.post("/merge", auth, requireSubscription(), async (req, res, next) => {
       message: "Inventory items merged successfully",
       unified_product_id: unifiedProductId,
       merged_batches_count: inventoryIdsToKeep.length,
-      consolidated_batches: Object.keys(deletedToPrimary).length
+      consolidated_batches: Object.keys(deletedToPrimary).length,
     });
   } catch (error) {
     await session.abortTransaction();
@@ -752,13 +1050,18 @@ router.put("/:id", auth, requireSubscription(), async (req, res, next) => {
 
     const updateDoc = {};
     if (shortage_threshold !== undefined) {
-      updateDoc.shortage_threshold = shortage_threshold === null || shortage_threshold === "" ? null : Number(shortage_threshold);
+      updateDoc.shortage_threshold =
+        shortage_threshold === null || shortage_threshold === ""
+          ? null
+          : Number(shortage_threshold);
     }
 
-    const result = await db.collection("inventory").updateOne(
-      { id: req.params.id, pharmacy_id: req.user.pharmacy_id },
-      { $set: updateDoc }
-    );
+    const result = await db
+      .collection("inventory")
+      .updateOne(
+        { id: req.params.id, pharmacy_id: req.user.pharmacy_id },
+        { $set: updateDoc }
+      );
 
     if (result.matchedCount === 0) {
       return res.status(404).json({ detail: "Inventory item not found" });

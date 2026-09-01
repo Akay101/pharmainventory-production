@@ -13,10 +13,23 @@ export const getOS = () => {
   return navigator.userAgent.toUpperCase().indexOf('MAC') >= 0 ? 'mac' : 'win';
 };
 
-export const useKeyboardShortcut = (key, callback, modifiers = {}) => {
+export const useKeyboardShortcut = (keyOrCombo, callback, modifiers = {}) => {
   const memoizedCallback = useCallback(callback, [callback]);
 
   useEffect(() => {
+    let targetKey = "";
+    let targetModifiers = { ...modifiers };
+
+    if (Array.isArray(keyOrCombo)) {
+      const keys = keyOrCombo.map((k) => String(k).toLowerCase());
+      targetKey = keys[keys.length - 1] || "";
+      if (keys.includes("alt") || keys.includes("option")) targetModifiers.alt = true;
+      if (keys.includes("ctrl") || keys.includes("cmd") || keys.includes("meta")) targetModifiers.ctrl = true;
+      if (keys.includes("shift")) targetModifiers.shift = true;
+    } else if (typeof keyOrCombo === "string") {
+      targetKey = keyOrCombo;
+    }
+
     const handleKeyDown = (event) => {
       // Don't trigger standard keypresses if user is typing in basic inputs, EXCEPT for Enter/Escape/modifier combos
       if (['INPUT', 'TEXTAREA', 'SELECT'].includes(event.target.tagName)) {
@@ -24,6 +37,9 @@ export const useKeyboardShortcut = (key, callback, modifiers = {}) => {
           return;
         }
       }
+
+      if (!event.key || !targetKey) return;
+
       let parsedKey = event.key.toLowerCase();
       if (event.code && event.code.startsWith('Key')) {
         parsedKey = event.code.replace('Key', '').toLowerCase();
@@ -31,17 +47,16 @@ export const useKeyboardShortcut = (key, callback, modifiers = {}) => {
         parsedKey = event.code.replace('Digit', '').toLowerCase();
       }
 
-      const keyMatch = parsedKey === key.toLowerCase();
+      const keyMatch = parsedKey === String(targetKey).toLowerCase();
       
       const mac = getOS() === 'mac';
       const isCtrlOrCmdPressed = mac ? event.metaKey : event.ctrlKey;
       
-      const ctrlMatch = modifiers.ctrl ? isCtrlOrCmdPressed : !isCtrlOrCmdPressed;
-      const altMatch = modifiers.alt ? event.altKey : !event.altKey;
-      const shiftMatch = modifiers.shift ? event.shiftKey : !event.shiftKey;
+      const ctrlMatch = targetModifiers.ctrl ? isCtrlOrCmdPressed : !isCtrlOrCmdPressed;
+      const altMatch = targetModifiers.alt ? event.altKey : !event.altKey;
+      const shiftMatch = targetModifiers.shift ? event.shiftKey : !event.shiftKey;
 
       if (keyMatch && ctrlMatch && altMatch && shiftMatch) {
-        // Only preventDefault if the callback actually plans to do something, but typically global shortcuts should prevent default.
         event.preventDefault();
         event.stopPropagation();
         memoizedCallback(event);
@@ -51,15 +66,18 @@ export const useKeyboardShortcut = (key, callback, modifiers = {}) => {
     // Use capture phase to intercept before generic DOM handlers
     window.addEventListener('keydown', handleKeyDown, true);
     return () => window.removeEventListener('keydown', handleKeyDown, true);
-  }, [key, modifiers, memoizedCallback]);
+  }, [keyOrCombo, modifiers, memoizedCallback]);
 };
 
 export const formatShortcut = (keys) => {
+  if (!keys) return '';
   const mac = getOS() === 'mac';
-  return keys.map(k => {
-    if (k.toLowerCase() === 'ctrl' || k.toLowerCase() === 'cmd') return mac ? '⌘' : 'Ctrl';
-    if (k.toLowerCase() === 'alt' || k.toLowerCase() === 'option') return mac ? '⌥' : 'Alt';
-    if (k.toLowerCase() === 'shift') return mac ? '⇧' : 'Shift';
-    return mac ? k.toUpperCase() : k;
+  const keyList = Array.isArray(keys) ? keys : [keys];
+  return keyList.map(k => {
+    const str = String(k);
+    if (str.toLowerCase() === 'ctrl' || str.toLowerCase() === 'cmd') return mac ? '⌘' : 'Ctrl';
+    if (str.toLowerCase() === 'alt' || str.toLowerCase() === 'option') return mac ? '⌥' : 'Alt';
+    if (str.toLowerCase() === 'shift') return mac ? '⇧' : 'Shift';
+    return mac ? str.toUpperCase() : str;
   }).join(mac ? '' : '+');
 };

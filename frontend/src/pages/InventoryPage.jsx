@@ -39,8 +39,11 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "../components/ui/alert-dialog";
-import { Search, Plus, Package, AlertTriangle, ChevronLeft, ChevronRight, ArrowUpDown, Trash2, Loader2, BellOff } from "lucide-react";
+import { Search, Plus, Package, AlertTriangle, ChevronLeft, ChevronRight, ArrowUpDown, Trash2, Loader2, BellOff, Info, X } from "lucide-react";
 import { toast } from "sonner";
+import Loader from "../components/Loader";
+import RightSidebarDrawer from "../components/RightSidebarDrawer";
+import ProductSearchDropdown from "../components/ProductSearchDropdown";
 
 export default function InventoryPage() {
   const navigate = useNavigate();
@@ -54,6 +57,8 @@ export default function InventoryPage() {
   const [showLowStock, setShowLowStock] = useState(false);
   const [showShortage, setShowShortage] = useState(false);
   const [showExpiringSoon, setShowExpiringSoon] = useState(false);
+  const [showExpired, setShowExpired] = useState(false);
+  const [sidebarTab, setSidebarTab] = useState("batches");
   const [shortageCount, setShortageCount] = useState(0);
   const [deleteDialog, setDeleteDialog] = useState({ open: false, item: null, type: null });
   const [removeShortageDialog, setRemoveShortageDialog] = useState({ open: false, item: null, newThreshold: "" });
@@ -91,17 +96,20 @@ export default function InventoryPage() {
 
   // Pagination State
   const [pagination, setPagination] = useState({ page: 1, limit: 30, total: 0, total_pages: 1 });
+  const [catalogPagination, setCatalogPagination] = useState({ page: 1, limit: 12, total: 0, total_pages: 1 });
+  const [catalogLoading, setCatalogLoading] = useState(false);
+  const [allProductsForMerge, setAllProductsForMerge] = useState([]);
   const [sortBy, setSortBy] = useState("created_at");
   const [sortOrder, setSortOrder] = useState("desc");
 
   const handleOpenMergeDialog = () => {
-    const selectedItems = inventory.filter((item) => selectedItemIds.includes(item.id));
+    const selectedItems = inventory.filter((item) => selectedItemIds.includes(item.id || item.product_id));
     if (selectedItems.length < 2) return;
 
     // Prefill form using the first selected item
     const firstItem = selectedItems[0];
     setMergeFormData({
-      merged_name: firstItem.product_name || "",
+      merged_name: firstItem.product_name || firstItem.name || "",
       merged_manufacturer: firstItem.manufacturer || "",
       merged_salt: firstItem.salt_composition || "",
       merged_hsn: firstItem.hsn_no || "",
@@ -117,51 +125,65 @@ export default function InventoryPage() {
 
     setMerging(true);
     try {
+      // Gather all batch inventory IDs for the selected product groups
+      const selectedGroups = inventory.filter(item => selectedItemIds.includes(item.id || item.product_id));
+      const allBatchIds = [];
+      selectedGroups.forEach(grp => {
+        if (grp.batches && grp.batches.length > 0) {
+          grp.batches.forEach(b => allBatchIds.push(b.id));
+        } else if (grp.id) {
+          allBatchIds.push(grp.id);
+        }
+      });
+
       await axios.post(`${API}/inventory/merge`, {
-        inventory_ids: selectedItemIds,
+        inventory_ids: allBatchIds.length > 0 ? allBatchIds : selectedItemIds,
         ...mergeFormData,
       });
 
-      toast.success("Inventory items merged successfully");
+      toast.success("Products merged successfully");
       setMergeDialogOpen(false);
       setSelectedItemIds([]);
       await fetchData();
     } catch (error) {
-      toast.error(error.response?.data?.detail || "Failed to merge inventory items");
+      toast.error(error.response?.data?.detail || "Failed to merge products");
     } finally {
       setMerging(false);
     }
   };
 
-  const handleOpenProductDetails = async (product, autoOpenMerge = false) => {
-    setDetailProduct(product);
-    setLoadingDetails(true);
-    setDetailBatches([]);
+  const handleOpenProductDetails = async (productGroup, autoOpenMerge = false) => {
+    setDetailProduct({
+      id: productGroup.product_id || productGroup.id,
+      name: productGroup.product_name || productGroup.name,
+      manufacturer: productGroup.manufacturer,
+      salt_composition: productGroup.salt_composition,
+      hsn_no: productGroup.hsn_no,
+      category: productGroup.category || "medicine",
+      low_stock_threshold: productGroup.low_stock_threshold || 10,
+      shortage_threshold: productGroup.shortage_threshold,
+      total_available_stock: productGroup.total_available_stock !== undefined ? productGroup.total_available_stock : productGroup.available_quantity,
+      total_stock_value: productGroup.total_stock_value,
+      batch_count: productGroup.batch_count || (productGroup.batches ? productGroup.batches.length : 1)
+    });
+    setDetailBatches(productGroup.batches || [productGroup]);
     if (autoOpenMerge) {
       setShowAddMergeForm(true);
     }
-    try {
-      const res = await axios.get(`${API}/inventory?product_id=${product.id}&limit=100`);
-      setDetailBatches(res.data.inventory || []);
-    } catch (err) {
-      toast.error("Failed to load product details");
-    } finally {
-      setLoadingDetails(false);
-    }
   };
 
-  const handleSelectProductToMerge = (productId) => {
-    const matched = products.find(p => p.id === productId);
-    if (!matched) return;
-    if (productsToMerge.some(p => p.id === productId)) {
+  const handleSelectProductToMerge = (product) => {
+    if (!product) return;
+    const pName = (product.product_name || product.name || "").trim();
+    if (productsToMerge.some(p => (p.product_name || p.name || "").trim().toLowerCase() === pName.toLowerCase())) {
       toast.error("Product already selected");
       return;
     }
-    setProductsToMerge(prev => [...prev, matched]);
+    setProductsToMerge(prev => [...prev, product]);
   };
 
-  const handleRemoveProductFromMerge = (productId) => {
-    setProductsToMerge(prev => prev.filter(p => p.id !== productId));
+  const handleRemoveProductFromMerge = (productName) => {
+    setProductsToMerge(prev => prev.filter(p => (p.product_name || p.name) !== productName));
   };
 
   const handleExecuteOtherMerge = async () => {
@@ -172,14 +194,14 @@ export default function InventoryPage() {
     setMergingOther(true);
     try {
       const targetInvIds = detailBatches.map(b => b.id);
-      const batchResponses = await Promise.all(
-        productsToMerge.map(p => axios.get(`${API}/inventory?product_id=${p.id}&limit=100`))
-      );
-
       const otherInvIds = [];
-      batchResponses.forEach(res => {
-        const items = res.data.inventory || [];
-        items.forEach(item => otherInvIds.push(item.id));
+      
+      productsToMerge.forEach(p => {
+        if (p.batches && p.batches.length > 0) {
+          p.batches.forEach(b => otherInvIds.push(b.id));
+        } else if (p.id) {
+          otherInvIds.push(p.id);
+        }
       });
 
       const allInvIds = [...targetInvIds, ...otherInvIds];
@@ -203,8 +225,10 @@ export default function InventoryPage() {
       setShowAddMergeForm(false);
       await fetchData();
 
-      const updatedBatchesRes = await axios.get(`${API}/inventory?product_id=${detailProduct.id}&limit=100`);
-      setDetailBatches(updatedBatchesRes.data.inventory || []);
+      // Refresh batches for current product
+      const res = await axios.get(`${API}/inventory?grouped=true&search=${encodeURIComponent(detailProduct.name)}`);
+      const matched = (res.data.inventory || []).find(g => (g.product_name || g.name) === detailProduct.name);
+      setDetailBatches(matched?.batches || []);
     } catch (err) {
       toast.error(err.response?.data?.detail || "Failed to merge products");
     } finally {
@@ -221,15 +245,31 @@ export default function InventoryPage() {
       params.append("limit", pagination.limit);
       params.append("sort_by", sortBy);
       params.append("sort_order", sortOrder);
+      params.append("grouped", "true");
       if (search) params.append("search", search);
       if (showLowStock) params.append("low_stock", "true");
       if (showShortage) params.append("shortage", "true");
       if (showExpiringSoon) params.append("expiring_soon", "true");
+      if (showExpired) params.append("expired", "true");
       if (highlightId) params.append("highlight_id", highlightId);
 
       const response = await axios.get(`${API}/inventory?${params.toString()}`);
-      setInventory(response.data.inventory);
-      setPagination(response.data.pagination);
+      let fetched = response.data.inventory || [];
+      const todayStr = new Date().toISOString().split("T")[0];
+
+      // Default View Filter: If no filter pills are active, show only in-stock & non-expired items
+      const isNoFilterActive = !showLowStock && !showShortage && !showExpiringSoon && !showExpired && !search;
+      if (isNoFilterActive) {
+        fetched = fetched.filter((item) => {
+          const totalStock = item.total_available_stock !== undefined ? item.total_available_stock : (item.available_quantity || 0);
+          const earliestExp = item.earliest_expiry || item.expiry_date;
+          const isNotExpired = !earliestExp || earliestExp >= todayStr;
+          return totalStock > 0 && isNotExpired;
+        });
+      }
+
+      setInventory(fetched);
+      setPagination(response.data.pagination || { page: 1, limit: 30, total: fetched.length, total_pages: 1 });
       if (response.data.shortage_count !== undefined) {
         setShortageCount(response.data.shortage_count);
       }
@@ -250,7 +290,7 @@ export default function InventoryPage() {
     } catch (error) {
       toast.error("Failed to load inventory");
     }
-  }, [search, showLowStock, showShortage, showExpiringSoon, sortBy, sortOrder, pagination.limit]);
+  }, [search, showLowStock, showShortage, showExpiringSoon, showExpired, sortBy, sortOrder, pagination.limit]);
 
   useEffect(() => {
     fetchData();
@@ -271,9 +311,6 @@ export default function InventoryPage() {
 
   const fetchData = async () => {
     try {
-      const prodRes = await axios.get(`${API}/products`);
-      setProducts(prodRes.data.products);
-      
       const hlId = location.state?.highlightId;
       if (hlId) {
         await fetchInventory(1, hlId);
@@ -352,7 +389,8 @@ export default function InventoryPage() {
     }
   };
 
-  const isExpiringSoon = (expiryDate) => {
+  const isExpiringSoonCheck = (expiryDate) => {
+    if (!expiryDate || expiryDate === "-") return false;
     const expiry = new Date(expiryDate);
     const today = new Date();
     const diffDays = Math.ceil((expiry - today) / (1000 * 60 * 60 * 24));
@@ -370,35 +408,25 @@ export default function InventoryPage() {
   };
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <div className="text-center space-y-4">
-          <div className="relative w-12 h-12 mx-auto">
-            <div className="absolute inset-0 rounded-full border-4 border-primary/20"></div>
-            <div className="absolute inset-0 rounded-full border-4 border-primary border-t-transparent animate-spin"></div>
-          </div>
-          <p className="text-xs font-bold text-muted-foreground/80 uppercase tracking-widest animate-pulse">Loading Inventory...</p>
-        </div>
-      </div>
-    );
+    return <Loader size="lg" text="Loading Inventory..." />;
   }
 
   return (
     <div className="space-y-6 animate-fade-in" data-testid="inventory-page">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-border/40 pb-5">
-        <div className="space-y-1">
-          <h1 className="text-2xl font-extrabold tracking-tight text-foreground">Inventory</h1>
-          <p className="text-xs font-medium text-muted-foreground">
-            <span className="text-primary font-extrabold">{pagination.total}</span> items in stock
-          </p>
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-border/40 pb-3">
+        <div className="flex items-center gap-3">
+          <h1 className="text-xl font-black tracking-tight text-foreground">Inventory</h1>
+          <span className="text-[10px] font-black bg-orange-500/15 text-orange-500 border border-orange-500/30 px-2 py-0.5 rounded-md font-mono">
+            {pagination.total} items in stock
+          </span>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           {selectedItemIds.length >= 2 && (
             <Button
               onClick={handleOpenMergeDialog}
-              className="bg-amber-500 hover:bg-amber-600 text-white h-10 text-xs font-bold shadow-md rounded-xl px-4 flex items-center gap-2"
+              className="bg-amber-500 hover:bg-amber-600 text-white h-9 text-xs font-extrabold shadow-sm rounded-xl px-3 flex items-center gap-1.5 cursor-pointer"
               data-testid="merge-products-btn"
             >
               Merge Selected ({selectedItemIds.length})
@@ -407,8 +435,8 @@ export default function InventoryPage() {
 
           <Dialog open={productDialog} onOpenChange={setProductDialog}>
             <DialogTrigger asChild>
-              <Button className="bg-primary hover:bg-primary/95 text-primary-foreground h-10 text-xs font-bold shadow-md shadow-primary/10 rounded-xl px-4 flex items-center gap-2" data-testid="add-product-btn">
-                <Plus className="w-4 h-4" />
+              <Button className="h-9 px-3.5 text-xs font-extrabold bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white rounded-xl shadow-xs border-none flex items-center gap-1.5 cursor-pointer" data-testid="add-product-btn">
+                <Plus className="w-3.5 h-3.5 stroke-[3]" />
                 Add Product
               </Button>
             </DialogTrigger>
@@ -498,287 +526,292 @@ export default function InventoryPage() {
         </div>
       </div>
 
-      {/* Filters */}
-      <Card className="bg-card/45 backdrop-blur-sm border border-border/40 shadow-sm rounded-xl overflow-hidden">
-        <CardContent className="p-4">
-          <div className="flex flex-col md:flex-row gap-4 items-center">
-            <div className="flex-1 relative w-full">
-              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground/60" />
-              <Input
-                placeholder="Search by product name or batch..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="pl-10 h-10 text-sm border-border/80 focus:border-primary bg-card/25 rounded-xl"
-                data-testid="inventory-search"
-              />
-            </div>
+      {/* Filters Bar */}
+      <div className="flex flex-col md:flex-row items-center gap-3">
+        <div className="flex-1 w-full relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          <Input
+            placeholder="Search by product name or batch..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="pl-9 h-9 text-xs font-medium rounded-xl border-border/70 bg-card/60 backdrop-blur-md"
+            data-testid="inventory-search"
+          />
+        </div>
 
-            <div className="flex gap-2 w-full md:w-auto shrink-0 justify-end">
-              <Button
-                variant={showLowStock ? "default" : "outline"}
-                onClick={() => {
-                  setShowLowStock(!showLowStock);
-                  setShowShortage(false);
-                  setShowExpiringSoon(false);
-                }}
-                className={`h-10 text-xs font-bold px-4 rounded-xl border ${
-                  showLowStock 
-                    ? "bg-amber-500/10 text-amber-500 border-amber-500/30 hover:bg-amber-500/20" 
-                    : "border-border/80 hover:bg-muted"
-                }`}
-                data-testid="low-stock-filter-btn"
-              >
-                <AlertTriangle className="w-3.5 h-3.5 mr-2" />
-                Low Stock
-              </Button>
+        <div className="flex items-center gap-2 w-full md:w-auto shrink-0 justify-end flex-wrap">
+          <Button
+            onClick={() => {
+              setShowLowStock(!showLowStock);
+              setShowShortage(false);
+              setShowExpiringSoon(false);
+              setShowExpired(false);
+            }}
+            className={`h-9 text-xs font-extrabold px-3.5 rounded-xl border transition-all duration-200 cursor-pointer ${
+              showLowStock 
+                ? "bg-amber-500 text-white border-amber-500 hover:bg-amber-600 shadow-xs" 
+                : "bg-card/60 border-border/70 text-foreground hover:bg-muted"
+            }`}
+            data-testid="low-stock-filter-btn"
+          >
+            <AlertTriangle className={`w-3.5 h-3.5 mr-1.5 ${showLowStock ? "text-white" : "text-amber-500"}`} />
+            Low Stock
+          </Button>
 
-              <Button
-                variant={showShortage ? "default" : "outline"}
-                onClick={() => {
-                  setShowShortage(!showShortage);
-                  setShowLowStock(false);
-                  setShowExpiringSoon(false);
-                }}
-                className={`h-10 text-xs font-bold px-4 rounded-xl border ${
-                  showShortage 
-                    ? "bg-orange-500/10 text-orange-500 border-orange-500/30 hover:bg-orange-500/20" 
-                    : "border-border/80 hover:bg-muted"
-                }`}
-                data-testid="shortage-filter-btn"
-              >
-                <AlertTriangle className="w-3.5 h-3.5 mr-2" />
-                Shortage List {shortageCount > 0 && <Badge className="ml-1.5 bg-orange-500 text-white border-0 text-[10px] px-1.5 py-0.5 font-bold rounded-full">{shortageCount}</Badge>}
-              </Button>
+          <Button
+            onClick={() => {
+              setShowShortage(!showShortage);
+              setShowLowStock(false);
+              setShowExpiringSoon(false);
+              setShowExpired(false);
+            }}
+            className={`h-9 text-xs font-extrabold px-3.5 rounded-xl border transition-all duration-200 cursor-pointer ${
+              showShortage 
+                ? "bg-orange-500 text-white border-orange-500 hover:bg-orange-600 shadow-xs" 
+                : "bg-card/60 border-border/70 text-foreground hover:bg-muted"
+            }`}
+            data-testid="shortage-filter-btn"
+          >
+            <AlertTriangle className={`w-3.5 h-3.5 mr-1.5 ${showShortage ? "text-white" : "text-orange-500"}`} />
+            Shortage List {shortageCount > 0 && <Badge className={`ml-1.5 border-0 text-[10px] px-1.5 py-0.5 font-black rounded-full ${showShortage ? "bg-white text-orange-600" : "bg-orange-500 text-white"}`}>{shortageCount}</Badge>}
+          </Button>
 
-              <Button
-                variant={showExpiringSoon ? "default" : "outline"}
-                onClick={() => {
-                  setShowExpiringSoon(!showExpiringSoon);
-                  setShowLowStock(false);
-                  setShowShortage(false);
-                }}
-                className={`h-10 text-xs font-bold px-4 rounded-xl border ${
-                  showExpiringSoon 
-                    ? "bg-destructive/10 text-destructive border-destructive/30 hover:bg-destructive/20" 
-                    : "border-border/80 hover:bg-muted"
-                }`}
-                data-testid="expiring-filter-btn"
-              >
-                <AlertTriangle className="w-3.5 h-3.5 mr-2" />
-                Expiring Soon
-              </Button>
-              
-              {(search || showLowStock || showShortage || showExpiringSoon) && (
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    setSearch("");
-                    setShowLowStock(false);
-                    setShowShortage(false);
-                    setShowExpiringSoon(false);
-                  }}
-                  className="h-10 text-xs font-bold px-4 rounded-xl border border-border/80 hover:bg-muted"
-                >
-                  Clear
-                </Button>
-              )}
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+          <Button
+            onClick={() => {
+              setShowExpiringSoon(!showExpiringSoon);
+              setShowLowStock(false);
+              setShowShortage(false);
+              setShowExpired(false);
+            }}
+            className={`h-9 text-xs font-extrabold px-3.5 rounded-xl border transition-all duration-200 cursor-pointer ${
+              showExpiringSoon 
+                ? "bg-amber-500 text-white border-amber-500 hover:bg-amber-600 shadow-xs" 
+                : "bg-card/60 border-border/70 text-foreground hover:bg-muted"
+            }`}
+            data-testid="expiring-filter-btn"
+          >
+            <AlertTriangle className={`w-3.5 h-3.5 mr-1.5 ${showExpiringSoon ? "text-white" : "text-amber-500"}`} />
+            Expiring Soon
+          </Button>
 
-      {/* Inventory Table */}
-      <Card className="bg-card/45 border border-border/40 backdrop-blur-sm shadow-sm rounded-xl overflow-hidden">
+          <Button
+            onClick={() => {
+              setShowExpired(!showExpired);
+              setShowLowStock(false);
+              setShowShortage(false);
+              setShowExpiringSoon(false);
+            }}
+            className={`h-9 text-xs font-extrabold px-3.5 rounded-xl border transition-all duration-200 cursor-pointer ${
+              showExpired 
+                ? "bg-rose-600 text-white border-rose-600 hover:bg-rose-700 shadow-xs" 
+                : "bg-card/60 border-border/70 text-foreground hover:bg-muted"
+            }`}
+            data-testid="expired-filter-btn"
+          >
+            <AlertTriangle className={`w-3.5 h-3.5 mr-1.5 ${showExpired ? "text-white" : "text-rose-500"}`} />
+            Expired
+          </Button>
+          
+          {(search || showLowStock || showShortage || showExpiringSoon || showExpired) && (
+            <Button
+              variant="outline"
+              onClick={() => {
+                setSearch("");
+                setShowLowStock(false);
+                setShowShortage(false);
+                setShowExpiringSoon(false);
+                setShowExpired(false);
+              }}
+              className="h-9 text-xs font-extrabold px-3 rounded-xl border border-border/70 hover:bg-muted cursor-pointer"
+            >
+              Clear
+            </Button>
+          )}
+        </div>
+      </div>
+
+      {/* Inventory Table Container (Single Product per Row) */}
+      <div className="border border-border/60 rounded-2xl relative overflow-hidden bg-card/60 backdrop-blur-md shadow-xs">
         <div className="overflow-x-auto">
           <Table>
-            <TableHeader className="border-b border-border/40 bg-muted/20">
+            <TableHeader className="border-b border-border bg-muted/60">
               <TableRow className="hover:bg-transparent">
-                <TableHead className="w-12 h-11 text-center">
+                <TableHead className="w-10 h-9 text-center py-1.5">
                   <input
                     type="checkbox"
                     className="rounded border-border/80 focus:ring-primary w-4 h-4 cursor-pointer accent-primary"
                     checked={inventory.length > 0 && selectedItemIds.length === inventory.length}
                     onChange={(e) => {
                       if (e.target.checked) {
-                        setSelectedItemIds(inventory.map((item) => item.id));
+                        setSelectedItemIds(inventory.map((item) => item.product_id || item.id));
                       } else {
                         setSelectedItemIds([]);
                       }
                     }}
                   />
                 </TableHead>
-                <TableHead className="font-bold text-xs text-muted-foreground uppercase tracking-wider h-11">
+                <TableHead className="font-extrabold text-[11px] text-muted-foreground uppercase tracking-wider h-9 py-1.5">
                   <Button
                     variant="ghost"
                     onClick={() => handleSort("product_name")}
-                    className="h-auto p-0 font-bold text-xs uppercase tracking-wider hover:bg-transparent hover:text-foreground text-muted-foreground"
+                    className="h-auto p-0 font-extrabold text-[11px] uppercase tracking-wider hover:bg-transparent hover:text-foreground text-muted-foreground"
                   >
                     Product
-                    <ArrowUpDown className="ml-1.5 h-3.5 w-3.5 text-primary" />
+                    <ArrowUpDown className="ml-1 h-3 w-3 text-orange-500" />
                   </Button>
                 </TableHead>
-                <TableHead className="font-bold text-xs text-muted-foreground uppercase tracking-wider h-11">MFG.</TableHead>
-                <TableHead className="font-bold text-xs text-muted-foreground uppercase tracking-wider h-11">Batch</TableHead>
-                <TableHead className="font-bold text-xs text-muted-foreground uppercase tracking-wider h-11">Pack Type</TableHead>
-                <TableHead className="font-bold text-xs text-muted-foreground uppercase tracking-wider h-11">
+                <TableHead className="font-extrabold text-[11px] text-muted-foreground uppercase tracking-wider h-9 py-1.5">Batches</TableHead>
+                <TableHead className="font-extrabold text-[11px] text-muted-foreground uppercase tracking-wider h-9 py-1.5">Pack Type</TableHead>
+                <TableHead className="font-extrabold text-[11px] text-muted-foreground uppercase tracking-wider h-9 py-1.5">
                   <Button
                     variant="ghost"
                     onClick={() => handleSort("expiry_date")}
-                    className="h-auto p-0 font-bold text-xs uppercase tracking-wider hover:bg-transparent hover:text-foreground text-muted-foreground"
+                    className="h-auto p-0 font-extrabold text-[11px] uppercase tracking-wider hover:bg-transparent hover:text-foreground text-muted-foreground"
                   >
                     Expiry
-                    <ArrowUpDown className="ml-1.5 h-3.5 w-3.5 text-primary" />
+                    <ArrowUpDown className="ml-1 h-3 w-3 text-orange-500" />
                   </Button>
                 </TableHead>
-                <TableHead className="font-bold text-xs text-muted-foreground uppercase tracking-wider h-11 text-right">
+                <TableHead className="font-extrabold text-[11px] text-muted-foreground uppercase tracking-wider h-9 py-1.5 text-right">
                   <Button
                     variant="ghost"
                     onClick={() => handleSort("available_quantity")}
-                    className="h-auto p-0 font-bold text-xs uppercase tracking-wider hover:bg-transparent hover:text-foreground text-muted-foreground ml-auto"
+                    className="h-auto p-0 font-extrabold text-[11px] uppercase tracking-wider hover:bg-transparent hover:text-foreground text-muted-foreground ml-auto"
                   >
                     Available Stock
-                    <ArrowUpDown className="ml-1.5 h-3.5 w-3.5 text-primary" />
+                    <ArrowUpDown className="ml-1 h-3 w-3 text-orange-500" />
                   </Button>
                 </TableHead>
-                <TableHead className="font-bold text-xs text-muted-foreground uppercase tracking-wider h-11 text-right">Cost/Unit</TableHead>
-                <TableHead className="font-bold text-xs text-muted-foreground uppercase tracking-wider h-11 text-right">
+                <TableHead className="font-extrabold text-[11px] text-muted-foreground uppercase tracking-wider h-9 py-1.5 text-right">Cost/Unit</TableHead>
+                <TableHead className="font-extrabold text-[11px] text-muted-foreground uppercase tracking-wider h-9 py-1.5 text-right">
                   <Button
                     variant="ghost"
                     onClick={() => handleSort("mrp")}
-                    className="h-auto p-0 font-bold text-xs uppercase tracking-wider hover:bg-transparent hover:text-foreground text-muted-foreground ml-auto"
+                    className="h-auto p-0 font-extrabold text-[11px] uppercase tracking-wider hover:bg-transparent hover:text-foreground text-muted-foreground ml-auto"
                   >
                     MRP/Unit
-                    <ArrowUpDown className="ml-1.5 h-3.5 w-3.5 text-primary" />
+                    <ArrowUpDown className="ml-1 h-3 w-3 text-orange-500" />
                   </Button>
                 </TableHead>
-                <TableHead className="font-bold text-xs text-muted-foreground uppercase tracking-wider h-11 text-right">Stock Value</TableHead>
-                <TableHead className="font-bold text-xs text-muted-foreground uppercase tracking-wider h-11">Status</TableHead>
-                <TableHead className="w-12 h-11"></TableHead>
+                <TableHead className="font-extrabold text-[11px] text-muted-foreground uppercase tracking-wider h-9 py-1.5 text-right">Stock Value</TableHead>
+                <TableHead className="font-extrabold text-[11px] text-muted-foreground uppercase tracking-wider h-9 py-1.5">Status</TableHead>
+                <TableHead className="w-16 h-9 py-1.5"></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {inventory.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={12} className="text-center py-10 text-muted-foreground">
-                    <Package className="w-10 h-10 mx-auto mb-2 opacity-55 text-muted-foreground/60" />
-                    <p className="text-xs font-bold uppercase tracking-widest text-muted-foreground/60">No inventory items found</p>
+                  <TableCell colSpan={11} className="text-center py-10 text-muted-foreground">
+                    <Package className="w-9 h-9 mx-auto mb-2 opacity-40 text-muted-foreground" />
+                    <p className="text-xs font-bold uppercase tracking-widest text-muted-foreground">No matching products found</p>
                   </TableCell>
                 </TableRow>
               ) : (
                 inventory.map((item) => {
-                  const availableUnits = item.available_quantity || 0;
+                  const itemId = item.product_id || item.id;
+                  const availableUnits = item.total_available_stock !== undefined ? item.total_available_stock : (item.available_quantity || 0);
                   const unitsPerPack = item.units_per_pack || 1;
                   const packType = item.pack_type || "Strip";
-                  const costPerUnit = item.purchase_price || 0;
-                  const mrpPerUnit = item.mrp || 0;
-                  const stockValue = availableUnits * costPerUnit;
-                  const matchedProduct = products.find((p) => p.id === item.product_id);
+                  const costPerUnit = item.purchase_price || item.cost_unit || 0;
+                  const mrpPerUnit = item.mrp || item.mrp_unit || 0;
+                  const stockValue = item.total_stock_value !== undefined ? item.total_stock_value : availableUnits * costPerUnit;
+                  const batchCount = item.batch_count || (item.batches ? item.batches.length : 1);
+                  const earliestExpiry = item.earliest_expiry || item.expiry_date || "-";
                   
                   // Calculate packs + loose units display
                   const fullPacks = Math.floor(availableUnits / unitsPerPack);
                   const looseUnits = availableUnits % unitsPerPack;
                   
-                  // Format the display
                   let stockDisplay = "";
                   if (unitsPerPack > 1) {
                     if (fullPacks > 0 && looseUnits > 0) {
-                      stockDisplay = `${fullPacks} ${packType}${fullPacks > 1 ? 's' : ''} + ${looseUnits} units`;
+                      stockDisplay = `${fullPacks} ${packType}${fullPacks > 1 ? 's' : ''} + ${looseUnits} u`;
                     } else if (fullPacks > 0) {
                       stockDisplay = `${fullPacks} ${packType}${fullPacks > 1 ? 's' : ''}`;
                     } else {
-                      stockDisplay = `${looseUnits} units`;
+                      stockDisplay = `${looseUnits} u`;
                     }
                   } else {
-                    stockDisplay = `${availableUnits} units`;
+                    stockDisplay = `${availableUnits} u`;
                   }
+
+                  const todayStr = new Date().toISOString().split("T")[0];
+                  const isExpired = earliestExpiry !== "-" && earliestExpiry < todayStr;
+                  const isExpiringSoon = earliestExpiry !== "-" && !isExpired && isExpiringSoonCheck(earliestExpiry);
+                  const shortageThresh = item.shortage_threshold !== undefined && item.shortage_threshold !== null ? Number(item.shortage_threshold) : (settings?.shortage_threshold || 10);
+                  const isShortage = availableUnits <= shortageThresh;
+                  const isLowStock = availableUnits <= (item.low_stock_threshold || 10);
                   
                   return (
-                    <TableRow key={item.id} id={`record-${item.id}`} data-testid={`inventory-row-${item.id}`} className="hover:bg-muted/15 border-b border-border/40 transition-colors">
-                      <TableCell className="text-center">
+                    <TableRow 
+                      key={itemId} 
+                      id={`record-${itemId}`} 
+                      data-testid={`inventory-row-${itemId}`} 
+                      onClick={() => handleOpenProductDetails(item)}
+                      className="hover:bg-muted/20 border-b border-border/40 transition-colors cursor-pointer group"
+                    >
+                      <TableCell className="text-center py-2" onClick={(e) => e.stopPropagation()}>
                         <input
                           type="checkbox"
                           className="rounded border-border/80 focus:ring-primary w-4 h-4 cursor-pointer accent-primary"
-                          checked={selectedItemIds.includes(item.id)}
+                          checked={selectedItemIds.includes(itemId)}
                           onChange={(e) => {
                             if (e.target.checked) {
-                              setSelectedItemIds((prev) => [...prev, item.id]);
+                              setSelectedItemIds((prev) => [...prev, itemId]);
                             } else {
-                              setSelectedItemIds((prev) => prev.filter((id) => id !== item.id));
+                              setSelectedItemIds((prev) => prev.filter((id) => id !== itemId));
                             }
                           }}
                         />
                       </TableCell>
-                      <TableCell className="font-bold text-sm text-foreground">
-                        <div>{item.product_name}</div>
-                        <div className="text-[10px] text-muted-foreground/80 font-semibold mt-0.5">
-                          Shortage Thresh: {item.shortage_threshold !== undefined && item.shortage_threshold !== null ? item.shortage_threshold : (settings?.shortage_threshold || 10)} units
+                      <TableCell className="py-2 font-bold text-xs text-foreground">
+                        <div className="font-extrabold text-xs text-foreground group-hover:text-primary transition-colors flex items-center gap-1.5">
+                          {item.product_name || item.name}
+                        </div>
+                        <div className="text-[10px] text-muted-foreground font-semibold mt-0.5">
+                          {item.manufacturer || "General"} {item.salt_composition ? `• ${item.salt_composition}` : ""}
                         </div>
                       </TableCell>
-                      <TableCell className="text-xs font-semibold text-muted-foreground">{item.manufacturer || "-"}</TableCell>
-                      <TableCell className="font-mono text-xs font-semibold text-muted-foreground">{item.batch_no}</TableCell>
-                      <TableCell className="text-xs font-semibold text-muted-foreground">{packType}</TableCell>
-                      <TableCell className="font-mono text-xs font-semibold text-muted-foreground">{item.expiry_date}</TableCell>
-                      <TableCell className="text-right">
-                        <div className="font-mono text-xs font-bold text-primary">{stockDisplay}</div>
-                        <div className="text-[10px] font-semibold text-muted-foreground/60">({availableUnits} total units)</div>
+                      <TableCell className="py-2 text-xs font-semibold">
+                        <Badge variant="outline" className="text-[10px] font-bold border-orange-500/30 text-orange-500 bg-orange-500/5">
+                          {batchCount} Batch{batchCount > 1 ? "es" : ""}
+                        </Badge>
                       </TableCell>
-                      <TableCell className="text-right font-mono text-xs font-bold text-foreground">₹{costPerUnit.toFixed(2)}</TableCell>
-                      <TableCell className="text-right font-mono text-xs font-bold text-foreground">₹{mrpPerUnit.toFixed(2)}</TableCell>
-                      <TableCell className="text-right font-mono text-xs font-semibold text-muted-foreground">₹{stockValue.toFixed(2)}</TableCell>
-                      <TableCell>
+                      <TableCell className="py-2 text-xs font-semibold text-muted-foreground">{packType}</TableCell>
+                      <TableCell className="py-2 font-mono text-xs font-semibold text-muted-foreground">{earliestExpiry}</TableCell>
+                      <TableCell className="py-2 text-right">
+                        <div className="font-mono text-xs font-extrabold text-orange-500">{stockDisplay}</div>
+                        <div className="text-[10px] font-semibold text-muted-foreground font-mono">({availableUnits} total units)</div>
+                      </TableCell>
+                      <TableCell className="py-2 text-right font-mono text-xs font-bold text-foreground">₹{Number(costPerUnit).toFixed(2)}</TableCell>
+                      <TableCell className="py-2 text-right font-mono text-xs font-bold text-foreground">₹{Number(mrpPerUnit).toFixed(2)}</TableCell>
+                      <TableCell className="py-2 text-right font-mono text-xs font-semibold text-muted-foreground">₹{Number(stockValue).toFixed(2)}</TableCell>
+                      <TableCell className="py-2">
                         {availableUnits === 0 ? (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-destructive/10 text-destructive border border-destructive/20">Out of Stock</span>
-                        ) : isExpired(item.expiry_date) ? (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-destructive/10 text-destructive border border-destructive/20">Expired</span>
-                        ) : isExpiringSoon(item.expiry_date) ? (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/10 text-amber-500 border border-amber-500/20">
-                            Expiring Soon
-                          </span>
-                        ) : availableUnits <= (item.shortage_threshold !== undefined && item.shortage_threshold !== null ? Number(item.shortage_threshold) : (settings?.shortage_threshold || 10)) ? (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-orange-600/10 text-orange-600 border border-orange-600/20 dark:text-orange-400 dark:border-orange-500/20">
-                            Shortage
-                          </span>
-                        ) : availableUnits <= (matchedProduct?.low_stock_threshold || 10) ? (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/10 text-amber-500 border border-amber-500/20">
-                            Low Stock
-                          </span>
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-black bg-rose-500/15 text-rose-400 border border-rose-500/30">Out of Stock</span>
+                        ) : isExpired ? (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-black bg-rose-500/15 text-rose-400 border border-rose-500/30">Expired</span>
+                        ) : isExpiringSoon ? (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-black bg-amber-500/15 text-amber-400 border border-amber-500/30">Expiring Soon</span>
+                        ) : isShortage ? (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-black bg-orange-500/15 text-orange-400 border border-orange-500/30">Shortage</span>
+                        ) : isLowStock ? (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-black bg-amber-500/15 text-amber-400 border border-amber-500/30">Low Stock</span>
                         ) : (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-primary/10 text-primary border border-primary/20">In Stock</span>
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-black bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">In Stock</span>
                         )}
                       </TableCell>
-                      <TableCell>
-                        <div className="flex gap-1 justify-end">
-                          {showShortage && (
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="text-amber-500 hover:text-amber-600 hover:bg-amber-500/10 rounded-lg h-8 w-8 shrink-0"
-                              onClick={() => setRemoveShortageDialog({ open: true, item, newThreshold: "" })}
-                              title="Remove from shortage list"
-                              data-testid={`remove-shortage-${item.id}`}
-                            >
-                              <BellOff className="w-4 h-4" />
-                            </Button>
-                          )}
+                      <TableCell className="py-2" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex gap-1 justify-end items-center">
                           <Button
                             variant="ghost"
                             size="icon"
-                            className="text-primary hover:text-primary hover:bg-primary/10 rounded-lg h-8 w-8 shrink-0"
-                            onClick={() => setAddStockDialog({ open: true, item, quantityToAdd: "" })}
-                            title="Add Stock"
-                            data-testid={`add-stock-${item.id}`}
+                            className="text-orange-500 hover:text-orange-400 hover:bg-orange-500/15 rounded-lg h-7 w-7 shrink-0 cursor-pointer"
+                            onClick={() => handleOpenProductDetails(item)}
+                            title="View Product Batches & Details"
+                            data-testid={`view-details-${itemId}`}
                           >
-                            <Plus className="w-4 h-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="text-destructive hover:text-destructive hover:bg-destructive/10 rounded-lg h-8 w-8 shrink-0"
-                            onClick={() => setDeleteDialog({ open: true, item, type: "inventory" })}
-                            data-testid={`delete-inventory-${item.id}`}
-                            title="Delete Item"
-                          >
-                            <Trash2 className="w-4 h-4" />
+                            <Package className="w-3.5 h-3.5" />
                           </Button>
                         </div>
                       </TableCell>
@@ -844,67 +877,7 @@ export default function InventoryPage() {
             </div>
           </div>
         )}
-      </Card>
-
-      {/* Products List */}
-      <Card className="bg-card/45 border border-border/40 backdrop-blur-sm shadow-sm rounded-xl overflow-hidden">
-        <CardHeader className="border-b border-border/40 py-4">
-          <CardTitle className="text-sm font-extrabold text-foreground flex items-center gap-2">
-            <Package className="w-4 h-4 text-primary" />
-            Products Catalog ({products.length})
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="p-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-             {products.slice(0, 12).map((product) => (
-              <div
-                key={product.id}
-                onClick={() => handleOpenProductDetails(product)}
-                className="p-4 rounded-xl bg-card/20 border border-border/40 hover:border-primary/30 dark:hover:border-primary/20 transition-all duration-300 group relative overflow-hidden cursor-pointer"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform duration-300">
-                    <Package className="w-5 h-5 text-primary" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="font-bold text-sm text-foreground truncate">{product.name}</p>
-                    <p className="text-[10px] font-bold text-muted-foreground/80 mt-0.5 uppercase tracking-wide">
-                      {product.category} • THRESHOLD: {product.low_stock_threshold} • SHORTAGE: {product.shortage_threshold !== undefined && product.shortage_threshold !== null ? product.shortage_threshold : (settings?.shortage_threshold || 10)}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-1 shrink-0">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="text-primary hover:text-primary hover:bg-primary/10 rounded-lg"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleOpenProductDetails(product, true);
-                      }}
-                      title="Merge Products"
-                      data-testid={`merge-product-${product.id}`}
-                    >
-                      <Plus className="w-4 h-4" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="text-destructive hover:text-destructive hover:bg-destructive/10 rounded-lg"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setDeleteDialog({ open: true, item: product, type: "product" });
-                      }}
-                      data-testid={`delete-product-${product.id}`}
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
+      </div>
 
       {/* Delete Confirmation Dialog */}
       <AlertDialog open={deleteDialog.open} onOpenChange={(open) => setDeleteDialog({ ...deleteDialog, open })}>
@@ -1084,127 +1057,127 @@ export default function InventoryPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Product Details Dialog */}
-      <Dialog 
-        open={!!detailProduct} 
-        onOpenChange={(open) => {
-          if (!open) {
-            setDetailProduct(null);
-            setShowAddMergeForm(false);
-            setProductsToMerge([]);
-          }
+      {/* Product Details Right Sidebar Drawer */}
+      <RightSidebarDrawer
+        open={!!detailProduct}
+        onClose={() => {
+          setDetailProduct(null);
+          setShowAddMergeForm(false);
+          setProductsToMerge([]);
         }}
+        title={detailProduct?.name || "Product Details"}
+        subtitle="Inventory Batches & Product Details"
+        icon={Package}
+        tabs={[
+          { id: "batches", label: "All Batches", icon: Package, badge: detailBatches.length },
+          { id: "info", label: "Product Info", icon: Info },
+          { id: "merge", label: "Merge Products", icon: Plus }
+        ]}
+        activeTab={sidebarTab}
+        onTabChange={(tabId) => setSidebarTab(tabId)}
+        widthClass="sm:w-[540px]"
       >
-        <DialogContent className="rounded-2xl border border-border/40 shadow-2xl max-w-2xl p-6 overflow-hidden bg-background">
-          <DialogHeader className="border-b border-border/40 pb-4">
-            <DialogTitle className="font-extrabold text-base tracking-tight text-foreground flex items-center justify-between w-full">
-              <span className="flex items-center gap-2">
-                <Package className="w-5 h-5 text-primary" />
-                Product Catalog Details
-              </span>
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-8 text-xs font-bold border-amber-500/30 text-amber-500 hover:text-amber-600 hover:bg-amber-500/5 rounded-lg flex items-center gap-1.5"
-                onClick={() => {
-                  setShowAddMergeForm(!showAddMergeForm);
-                  setProductsToMerge([]);
-                }}
-              >
-                <Plus className="w-3.5 h-3.5" />
-                {showAddMergeForm ? "Cancel Merge" : "Merge Another Product"}
-              </Button>
-            </DialogTitle>
-          </DialogHeader>
+        {loadingDetails ? (
+          <Loader size="md" text="Loading Product Details..." />
+        ) : (
+          <>
+            {sidebarTab === "batches" && (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-extrabold text-foreground flex items-center gap-1.5">
+                    <Package className="w-4 h-4 text-orange-500" />
+                    Batches List ({detailBatches.length})
+                  </p>
+                </div>
 
-          {loadingDetails ? (
-            <div className="flex flex-col items-center justify-center py-10 gap-3">
-              <Loader2 className="w-8 h-8 animate-spin text-primary" />
-              <p className="text-xs font-semibold text-muted-foreground">Loading associated inventory details...</p>
-            </div>
-          ) : (
-            <div className="space-y-6 pt-4 overflow-y-auto max-h-[70vh] pr-1">
-              
-              {/* Merge Other Catalog Product Form */}
-              {showAddMergeForm && (
-                <div className="border border-amber-500/20 bg-amber-500/5 rounded-xl p-4 space-y-4">
-                  <div className="flex items-center justify-between">
-                    <p className="text-xs font-extrabold text-amber-600 flex items-center gap-1.5">
-                      <Package className="w-4 h-4" />
-                      Merge Another Catalog Product
-                    </p>
-                    <span className="text-[10px] text-muted-foreground font-semibold">
-                      This will move all stock and history of selected products into <strong>{detailProduct?.name}</strong>
-                    </span>
-                  </div>
-
-                  <div className="flex gap-3 items-end">
-                    <div className="flex-1 space-y-1.5">
-                      <Label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Select Product to Merge</Label>
-                      <Select 
-                        onValueChange={(val) => {
-                          handleSelectProductToMerge(val);
-                        }}
-                      >
-                        <SelectTrigger className="h-9 text-xs border-border/80 focus:border-amber-500 bg-background rounded-lg">
-                          <SelectValue placeholder="Choose product..." />
-                        </SelectTrigger>
-                        <SelectContent className="border border-border/40 shadow-xl rounded-xl z-[99999]">
-                          {products
-                            .filter(p => p.id !== detailProduct?.id)
-                            .map(p => (
-                              <SelectItem key={p.id} value={p.id} className="text-xs">
-                                {p.name}
-                              </SelectItem>
-                            ))
-                          }
-                        </SelectContent>
-                      </Select>
+                <div className="space-y-2.5">
+                  {detailBatches.length === 0 ? (
+                    <div className="p-8 text-center border border-border/40 rounded-xl bg-card/25 text-muted-foreground text-xs font-semibold">
+                      No active batches found in inventory for this product.
                     </div>
+                  ) : (
+                    detailBatches.map((batch) => {
+                      const isExpired = batch.expiry_date && new Date(batch.expiry_date) < new Date();
+                      const shortageThresh = detailProduct?.shortage_threshold !== undefined && detailProduct?.shortage_threshold !== null ? Number(detailProduct.shortage_threshold) : (settings?.shortage_threshold || 10);
+                      const isShortage = batch.available_quantity <= shortageThresh;
+                      const isLowStock = batch.available_quantity <= (detailProduct?.low_stock_threshold || 10);
+                      let statusLabel = "In Stock";
+                      
+                      if (isExpired) statusLabel = "Expired";
+                      else if (batch.available_quantity <= 0) statusLabel = "Out of Stock";
+                      else if (isShortage) statusLabel = "Shortage";
+                      else if (isLowStock) statusLabel = "Low Stock";
 
-                    <Button
-                      onClick={handleExecuteOtherMerge}
-                      disabled={mergingOther || productsToMerge.length === 0}
-                      className="bg-amber-500 hover:bg-amber-600 text-white h-9 text-xs font-bold px-4 rounded-lg shadow-sm flex items-center gap-2"
-                    >
-                      {mergingOther ? (
-                        <>
-                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                          Merging...
-                        </>
-                      ) : (
-                        "Merge Group"
-                      )}
-                    </Button>
-                  </div>
+                      return (
+                        <div key={batch.id} className="p-3.5 rounded-xl bg-card/40 border border-border/40 space-y-2 hover:border-border/70 transition-colors">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono text-xs font-black text-foreground">Batch: {batch.batch_no}</span>
+                              <span className="text-[10px] font-semibold text-muted-foreground">({batch.pack_type || "Strip"})</span>
+                            </div>
+                            <span className={`text-[9px] font-black px-2 py-0.5 rounded-md border ${
+                              statusLabel === "Expired" || statusLabel === "Out of Stock"
+                                ? "bg-rose-500/15 text-rose-400 border-rose-500/30"
+                                : statusLabel === "Shortage"
+                                ? "bg-orange-500/15 text-orange-400 border-orange-500/30"
+                                : statusLabel === "Low Stock"
+                                ? "bg-amber-500/15 text-amber-400 border-amber-500/30"
+                                : "bg-emerald-500/15 text-emerald-400 border-emerald-500/30"
+                            }`}>
+                              {statusLabel}
+                            </span>
+                          </div>
 
-                  {productsToMerge.length > 0 && (
-                    <div className="space-y-1.5 pt-2">
-                      <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Selected products to merge:</p>
-                      <div className="flex flex-wrap gap-2">
-                        {productsToMerge.map(p => (
-                          <Badge 
-                            key={p.id} 
-                            variant="secondary"
-                            className="bg-amber-500/10 text-amber-600 hover:bg-amber-500/20 text-xs font-semibold px-2 py-0.5 rounded-lg flex items-center gap-1 border border-amber-500/20"
-                          >
-                            {p.name}
-                            <button
-                              onClick={() => handleRemoveProductFromMerge(p.id)}
-                              className="text-amber-500 hover:text-amber-700 font-bold ml-1 text-sm leading-none focus:outline-none"
-                            >
-                              ×
-                            </button>
-                          </Badge>
-                        ))}
-                      </div>
-                    </div>
+                          <div className="grid grid-cols-3 gap-2 text-xs pt-2 border-t border-border/20">
+                            <div>
+                              <p className="text-[10px] font-bold text-muted-foreground uppercase">Expiry</p>
+                              <p className="font-mono font-bold text-foreground text-xs mt-0.5">{batch.expiry_date || "-"}</p>
+                            </div>
+                            <div>
+                              <p className="text-[10px] font-bold text-muted-foreground uppercase">Stock</p>
+                              <p className="font-mono font-extrabold text-orange-500 text-xs mt-0.5">{batch.available_quantity || 0} units</p>
+                            </div>
+                            <div>
+                              <p className="text-[10px] font-bold text-muted-foreground uppercase">Cost / MRP</p>
+                              <p className="font-mono font-bold text-foreground text-xs mt-0.5">₹{batch.purchase_price} / ₹{batch.mrp}</p>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center justify-between pt-2 border-t border-border/20">
+                            <span className="text-[10px] text-muted-foreground font-semibold truncate max-w-[200px]">
+                              Supplier: {batch.supplier_name || "-"}
+                            </span>
+                            <div className="flex items-center gap-1">
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="text-orange-500 hover:text-orange-400 hover:bg-orange-500/15 rounded-lg h-7 w-7 cursor-pointer"
+                                onClick={() => setAddStockDialog({ open: true, item: batch, quantityToAdd: "" })}
+                                title="Add Stock"
+                              >
+                                <Plus className="w-3.5 h-3.5" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="text-rose-400 hover:text-rose-300 hover:bg-rose-500/15 rounded-lg h-7 w-7 cursor-pointer"
+                                onClick={() => setDeleteDialog({ open: true, item: batch, type: "inventory" })}
+                                title="Delete Batch"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </Button>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })
                   )}
                 </div>
-              )}
+              </div>
+            )}
 
-              {/* Product Info Fields */}
-              <div className="bg-muted/10 border border-border/30 rounded-xl p-4 grid grid-cols-2 md:grid-cols-3 gap-4">
+            {sidebarTab === "info" && (
+              <div className="bg-muted/10 border border-border/30 rounded-xl p-4 grid grid-cols-2 gap-4">
                 <div>
                   <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Product Name</p>
                   <p className="text-sm font-extrabold text-foreground mt-0.5">{detailProduct?.name}</p>
@@ -1221,107 +1194,91 @@ export default function InventoryPage() {
                   <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Shortage Threshold</p>
                   <p className="text-sm font-semibold text-foreground mt-0.5">{detailProduct?.shortage_threshold !== undefined && detailProduct?.shortage_threshold !== null ? detailProduct.shortage_threshold : (settings?.shortage_threshold || 10)} units</p>
                 </div>
-                {detailBatches.length > 0 && (
-                  <>
-                    <div className="md:col-span-2">
-                      <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Salt Composition</p>
-                      <p className="text-xs font-semibold text-foreground mt-0.5">{detailBatches[0]?.salt_composition || "-"}</p>
-                    </div>
-                    <div>
-                      <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Manufacturer</p>
-                      <p className="text-xs font-semibold text-foreground mt-0.5">{detailBatches[0]?.manufacturer || "-"}</p>
-                    </div>
-                    <div>
-                      <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">HSN Number</p>
-                      <p className="text-xs font-mono font-semibold text-foreground mt-0.5">{detailBatches[0]?.hsn_no || "-"}</p>
-                    </div>
-                  </>
-                )}
-              </div>
-
-              {/* Batches Table */}
-              <div className="space-y-3">
-                <p className="text-xs font-extrabold text-foreground flex items-center gap-1.5">
-                  <Package className="w-4 h-4 text-muted-foreground" />
-                  Associated Inventory Batches ({detailBatches.length})
-                </p>
-                
-                <div className="border border-border/40 rounded-xl overflow-hidden bg-card/25">
-                  <Table>
-                    <TableHeader className="bg-muted/10 border-b border-border/40">
-                      <TableRow className="hover:bg-transparent">
-                        <TableHead className="font-bold text-xs text-muted-foreground h-10">Batch No</TableHead>
-                        <TableHead className="font-bold text-xs text-muted-foreground h-10">Expiry</TableHead>
-                        <TableHead className="font-bold text-xs text-muted-foreground h-10">Available Stock</TableHead>
-                        <TableHead className="font-bold text-xs text-muted-foreground h-10">Cost / MRP</TableHead>
-                        <TableHead className="font-bold text-xs text-muted-foreground h-10">Supplier</TableHead>
-                        <TableHead className="font-bold text-xs text-muted-foreground h-10 text-center">Status</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {detailBatches.length === 0 ? (
-                        <TableRow>
-                          <TableCell colSpan={6} className="text-center py-6 text-xs text-muted-foreground font-semibold">
-                            No active batches found in inventory for this product.
-                          </TableCell>
-                        </TableRow>
-                      ) : (
-                        detailBatches.map((batch) => {
-                          const isExpired = batch.expiry_date && new Date(batch.expiry_date) < new Date();
-                          const isShortage = batch.available_quantity <= (detailProduct?.shortage_threshold !== undefined && detailProduct?.shortage_threshold !== null ? Number(detailProduct.shortage_threshold) : (settings?.shortage_threshold || 10));
-                          const isLowStock = batch.available_quantity <= (detailProduct?.low_stock_threshold || 10);
-                          let statusLabel = "In Stock";
-                          
-                          if (isExpired) {
-                            statusLabel = "Expired";
-                          } else if (batch.available_quantity <= 0) {
-                            statusLabel = "Out of Stock";
-                          } else if (isShortage) {
-                            statusLabel = "Shortage";
-                          } else if (isLowStock) {
-                            statusLabel = "Low Stock";
-                          }
-
-                          return (
-                            <TableRow key={batch.id} className="hover:bg-muted/10 border-b border-border/30 last:border-0">
-                              <TableCell className="font-mono text-xs font-bold text-foreground">{batch.batch_no}</TableCell>
-                              <TableCell className="text-xs font-semibold text-muted-foreground">{batch.expiry_date || "N/A"}</TableCell>
-                              <TableCell className="text-xs font-semibold text-foreground">
-                                {batch.available_quantity || 0} units <span className="text-[10px] text-muted-foreground font-normal">(of {batch.quantity || 0})</span>
-                              </TableCell>
-                              <TableCell className="text-xs font-semibold text-foreground">
-                                ₹{batch.purchase_price} / ₹{batch.mrp}
-                              </TableCell>
-                              <TableCell className="text-xs font-semibold text-muted-foreground truncate max-w-[120px]">
-                                {batch.supplier_name || "-"}
-                              </TableCell>
-                              <TableCell className="text-center">
-                                <Badge 
-                                  className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${
-                                    statusLabel === "Expired" || statusLabel === "Out of Stock"
-                                      ? "bg-red-500/10 text-red-500 hover:bg-red-500/15"
-                                      : statusLabel === "Shortage"
-                                      ? "bg-orange-500/10 text-orange-500 hover:bg-orange-500/15"
-                                      : statusLabel === "Low Stock"
-                                      ? "bg-amber-500/10 text-amber-500 hover:bg-amber-500/15"
-                                      : "bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/15"
-                                  }`}
-                                >
-                                  {statusLabel}
-                                </Badge>
-                              </TableCell>
-                            </TableRow>
-                          );
-                        })
-                      )}
-                    </TableBody>
-                  </Table>
+                <div className="col-span-2">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Salt Composition</p>
+                  <p className="text-xs font-semibold text-foreground mt-0.5">{detailProduct?.salt_composition || detailBatches[0]?.salt_composition || "-"}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Manufacturer</p>
+                  <p className="text-xs font-semibold text-foreground mt-0.5">{detailProduct?.manufacturer || detailBatches[0]?.manufacturer || "-"}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">HSN Number</p>
+                  <p className="text-xs font-mono font-semibold text-foreground mt-0.5">{detailProduct?.hsn_no || detailBatches[0]?.hsn_no || "-"}</p>
                 </div>
               </div>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
+            )}
+
+            {sidebarTab === "merge" && (
+              <div className="border border-amber-500/20 bg-amber-500/5 rounded-xl p-4 space-y-4">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-extrabold text-amber-600 flex items-center gap-1.5">
+                    <Package className="w-4 h-4" />
+                    Merge Another Catalog Product
+                  </p>
+                </div>
+                <p className="text-[11px] text-muted-foreground font-medium">
+                  This will merge all stock and batches of selected catalog products into <strong>{detailProduct?.name}</strong>.
+                </p>
+
+                <div className="flex gap-3 items-end">
+                  <div className="flex-1 space-y-1.5">
+                    <Label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Select Product to Merge</Label>
+                    <ProductSearchDropdown
+                      excludeProductName={detailProduct?.name}
+                      placeholder="Choose product..."
+                      onSelect={(product) => {
+                        handleSelectProductToMerge(product);
+                      }}
+                    />
+                  </div>
+
+                  <Button
+                    onClick={handleExecuteOtherMerge}
+                    disabled={mergingOther || productsToMerge.length === 0}
+                    className="bg-amber-500 hover:bg-amber-600 text-white h-9 text-xs font-bold px-4 rounded-lg shadow-sm flex items-center gap-2 cursor-pointer"
+                  >
+                    {mergingOther ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        Merging...
+                      </>
+                    ) : (
+                      "Merge Group"
+                    )}
+                  </Button>
+                </div>
+
+                {productsToMerge.length > 0 && (
+                  <div className="space-y-1.5 pt-2">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Selected products to merge:</p>
+                    <div className="flex flex-wrap gap-2">
+                      {productsToMerge.map(p => {
+                        const pName = p.product_name || p.name;
+                        return (
+                          <Badge 
+                            key={p.id || pName} 
+                            variant="secondary"
+                            className="bg-amber-500/10 text-amber-600 hover:bg-amber-500/20 text-xs font-semibold px-2 py-0.5 rounded-lg flex items-center gap-1 border border-amber-500/20"
+                          >
+                            {pName}
+                            <button
+                              onClick={() => handleRemoveProductFromMerge(pName)}
+                              className="text-amber-500 hover:text-amber-700 font-bold ml-1 text-sm leading-none focus:outline-none cursor-pointer"
+                            >
+                              ×
+                            </button>
+                          </Badge>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </>
+        )}
+      </RightSidebarDrawer>
 
       {/* Remove from Shortage Dialog */}
       <Dialog open={removeShortageDialog.open} onOpenChange={(o) => setRemoveShortageDialog(prev => ({ ...prev, open: o }))}>

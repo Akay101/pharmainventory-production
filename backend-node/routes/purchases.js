@@ -47,16 +47,334 @@ const upload = multer({
   storage: storage,
   limits: { fileSize: 20 * 1024 * 1024 }, // 20MB limit
   fileFilter: (req, file, cb) => {
-    const allowedTypes = ["image/jpeg", "image/png", "image/webp"];
-    if (allowedTypes.includes(file.mimetype)) {
+    const ext = path.extname(file.originalname).toLowerCase();
+    const allowedTypes = [
+      "image/jpeg",
+      "image/png",
+      "image/webp",
+      "text/csv",
+      "text/plain",
+      "application/vnd.ms-excel",
+      "application/csv",
+      "text/x-csv",
+      "application/x-csv",
+      "text/comma-separated-values",
+    ];
+    if (allowedTypes.includes(file.mimetype) || ext === ".csv" || ext === ".txt") {
       cb(null, true);
     } else {
-      cb(new Error("Invalid file type. Only PNG, JPEG, and WebP are allowed."));
+      cb(new Error("Invalid file type. Only PNG, JPEG, WebP, and CSV files are allowed."));
     }
   },
 });
 
-// GET /api/purchases/price-history - Check historical prices for a product
+// POST /api/purchases/match-suggestions - Smart matching against inventory & products
+router.post(
+  "/match-suggestions",
+  auth,
+  requireSubscription(),
+  async (req, res, next) => {
+    try {
+      const db = mongoose.connection.db;
+      const { items } = req.body;
+
+      if (!items || !Array.isArray(items)) {
+        return res.json({ success: true, matches: [] });
+      }
+
+      // Query both inventory AND products collections for maximum recall
+      const allInventoryItems = await db
+        .collection("inventory")
+        .find({ pharmacy_id: req.user.pharmacy_id })
+        .toArray();
+
+      const allProductItems = await db
+        .collection("products")
+        .find({ pharmacy_id: req.user.pharmacy_id })
+        .toArray();
+
+      // Build unified catalog map indexed by product_id and product_name
+      const catalogMap = new Map();
+
+      for (const p of allProductItems) {
+        if (p.name) {
+          const pName = p.name.trim();
+          const pId = p.id || p._id.toString();
+          catalogMap.set(pId, {
+            product_id: pId,
+            product_name: pName,
+            manufacturer: p.manufacturer || "",
+            batches: [],
+          });
+        }
+      }
+
+      for (const inv of allInventoryItems) {
+        if (inv.product_name) {
+          const invName = inv.product_name.trim();
+          const invId = inv.product_id || inv.id || inv._id.toString();
+          const existing = catalogMap.get(invId) || {
+            product_id: invId,
+            product_name: invName,
+            manufacturer: inv.manufacturer || "",
+            batches: [],
+          };
+          if (inv.batch_no) {
+            existing.batches.push(inv.batch_no.trim());
+          }
+          catalogMap.set(invId, existing);
+        }
+      }
+
+      const catalogList = Array.from(catalogMap.values());
+
+      const cleanAlphanumeric = (str) =>
+        (str || "").replace(/[^a-zA-Z0-9]/g, "").toLowerCase().replace(/^0+/, "");
+
+      const COMMON_DOSAGE_WORDS = new Set([
+        "ds", "cap", "capsule", "capsules", "tab", "tablet", "tablets",
+        "syp", "syrup", "dry", "inj", "injection", "gel", "cream",
+        "ointment", "suspension", "solution", "drops", "lotion", "mg", "ml", "gm", "g", "100mg", "200mg", "500mg", "650mg"
+      ]);
+
+      const getBrandCoreTokens = (name) => {
+        return (name || "")
+          .toLowerCase()
+          .replace(/[^a-z0-9\s]/g, " ")
+          .split(/\s+/)
+          .filter((t) => t.length > 0 && !COMMON_DOSAGE_WORDS.has(t));
+      };
+
+      const matches = items.map((item) => {
+        const scannedName = (item.product_name || "").trim();
+        const scannedBatch = (item.batch_no || "").trim();
+        const cleanScannedBatch = cleanAlphanumeric(scannedBatch);
+
+        let batchMatch = null;
+        let exactNameMatch = null;
+        const rawSuggestions = [];
+
+        // 1. Batch Match (Highest priority - strict exact batch matching)
+        if (cleanScannedBatch && cleanScannedBatch.length >= 2) {
+          const foundInv = allInventoryItems.find((inv) => {
+            const cleanInvBatch = cleanAlphanumeric(inv.batch_no);
+            if (!cleanInvBatch || cleanInvBatch.length < 2) return false;
+
+            // Exact match after normalization (e.g. "b525" === "b525" or "00.b525" === "b525")
+            if (cleanInvBatch === cleanScannedBatch) return true;
+
+            // Direct case-insensitive raw batch match
+            const rawInvBatch = (inv.batch_no || "").trim().toLowerCase();
+            const rawScannedBatch = scannedBatch.toLowerCase();
+            if (rawInvBatch && rawScannedBatch && rawInvBatch === rawScannedBatch) return true;
+
+            return false;
+          });
+
+          if (foundInv) {
+            batchMatch = {
+              product_id: foundInv.product_id || foundInv.id || (foundInv._id ? foundInv._id.toString() : ""),
+              inventory_id: foundInv.id || (foundInv._id ? foundInv._id.toString() : ""),
+              product_name: foundInv.product_name,
+              salt_composition: foundInv.salt_composition || "",
+              batch_no: foundInv.batch_no,
+              expiry_date: foundInv.expiry_date || "",
+              available_quantity: foundInv.available_quantity || 0,
+              mrp: foundInv.mrp_per_unit || foundInv.mrp || 0,
+              cost_price: foundInv.cost_per_unit || foundInv.purchase_price || 0,
+              cgst: foundInv.cgst || 0,
+              sgst: foundInv.sgst || 0,
+              type: "batch_exact",
+            };
+          }
+        }
+
+        // 2. Name Match & Brand Core Similarity Scoring
+        if (scannedName) {
+          const normScannedName = scannedName.toLowerCase();
+          const scannedBrandTokens = getBrandCoreTokens(scannedName);
+
+          catalogList.forEach((prod) => {
+            if (!prod.product_name) return;
+            const normProdName = prod.product_name.toLowerCase();
+            const prodBrandTokens = getBrandCoreTokens(prod.product_name);
+
+            let score = 0;
+            let isHighConfidence = false;
+
+            if (normProdName === normScannedName) {
+              score = 100;
+              isHighConfidence = true;
+              exactNameMatch = {
+                product_id: prod.product_id,
+                product_name: prod.product_name,
+                type: "name_exact",
+              };
+            } else if (normProdName.includes(normScannedName) || normScannedName.includes(normProdName)) {
+              score = 90;
+              isHighConfidence = true;
+            } else {
+              // Strict Brand Core Token Match (excluding generic words like DS, SYRUP, CAP)
+              if (scannedBrandTokens.length > 0 && prodBrandTokens.length > 0) {
+                let brandMatchCount = 0;
+                scannedBrandTokens.forEach((tok) => {
+                  if (prodBrandTokens.includes(tok)) brandMatchCount++;
+                });
+
+                const matchRatio = brandMatchCount / scannedBrandTokens.length;
+
+                if (brandMatchCount > 0 && matchRatio >= 0.5) {
+                  score = Math.round(50 + matchRatio * 40);
+                  if (matchRatio >= 0.75) {
+                    isHighConfidence = true;
+                  }
+                }
+              }
+            }
+
+            if (score >= 40) {
+              rawSuggestions.push({
+                product_id: prod.product_id,
+                product_name: prod.product_name,
+                score: Math.round(score),
+                is_high_confidence: isHighConfidence,
+              });
+            }
+          });
+        }
+
+        // 3. Ensure Batch Match is at position #1 in suggestions
+        if (batchMatch) {
+          rawSuggestions.unshift({
+            product_id: batchMatch.product_id,
+            inventory_id: batchMatch.inventory_id,
+            product_name: batchMatch.product_name,
+            salt_composition: batchMatch.salt_composition,
+            score: 10000,
+            is_batch_match: true,
+            is_high_confidence: true,
+            batch_no: batchMatch.batch_no,
+            expiry_date: batchMatch.expiry_date,
+            available_quantity: batchMatch.available_quantity,
+            mrp: batchMatch.mrp,
+            cost_price: batchMatch.cost_price,
+            cgst: batchMatch.cgst,
+            sgst: batchMatch.sgst,
+          });
+        }
+
+        rawSuggestions.sort((a, b) => b.score - a.score);
+
+        // Deduplicate suggestions by product_id (keeping highest score/batchMatch)
+        const uniqueSuggestions = [];
+        const seenIds = new Set();
+        for (const sug of rawSuggestions) {
+          if (!seenIds.has(sug.product_id)) {
+            seenIds.add(sug.product_id);
+            uniqueSuggestions.push(sug);
+          }
+        }
+
+        const topSuggestions = uniqueSuggestions.slice(0, 12);
+
+        return {
+          scanned_name: scannedName,
+          scanned_batch: scannedBatch,
+          batch_match: batchMatch,
+          exact_name_match: exactNameMatch,
+          suggestions: topSuggestions,
+        };
+      });
+
+      res.json({ success: true, matches });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+// GET /api/purchases/product-history - Fetch all historical purchases for a product
+router.get(
+  "/product-history",
+  auth,
+  requireSubscription(),
+  async (req, res, next) => {
+    try {
+      const db = mongoose.connection.db;
+      const { product_name } = req.query;
+
+      if (!product_name) {
+        return res.status(400).json({ detail: "product_name is required" });
+      }
+
+      const normalizedInput = (product_name || "").trim().toLowerCase();
+
+      const purchases = await db
+        .collection("purchases")
+        .find(
+          {
+            pharmacy_id: req.user.pharmacy_id,
+            "items.product_name": { $regex: normalizedInput.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&'), $options: "i" }
+          },
+          { projection: { _id: 0 } }
+        )
+        .sort({ purchase_date: -1, created_at: -1 })
+        .toArray();
+
+      const historyRecords = [];
+
+      for (const p of purchases) {
+        for (const item of p.items || []) {
+          const itemProdName = (item.product_name || "").toLowerCase();
+          if (
+            itemProdName === normalizedInput ||
+            itemProdName.includes(normalizedInput) ||
+            normalizedInput.includes(itemProdName)
+          ) {
+            historyRecords.push({
+              purchase_id: p.id,
+              purchase_date: p.purchase_date,
+              invoice_no: p.invoice_no,
+              supplier_id: p.supplier_id,
+              supplier_name: p.supplier_name,
+              payment_status: p.payment_status,
+              payment_mode: p.payment_mode,
+              product_name: item.product_name,
+              batch_no: item.batch_no,
+              expiry_date: item.expiry_date,
+              pack_quantity: item.pack_quantity || item.quantity || 0,
+              units_per_pack: item.units_per_pack || 1,
+              total_units: item.total_units || item.quantity || 0,
+              pack_price: item.pack_price || item.rate_pack || 0,
+              price_per_unit: item.price_per_unit || item.purchase_price || 0,
+              mrp_pack: item.mrp_pack || 0,
+              mrp_per_unit: item.mrp_per_unit || item.mrp || 0,
+              discount: item.discount || 0,
+              scheme: item.scheme || 0,
+              cgst: item.cgst || 0,
+              sgst: item.sgst || 0,
+              item_total: item.item_total || 0,
+              manufacturer: item.manufacturer,
+              salt_composition: item.salt_composition,
+              hsn_no: item.hsn_no,
+              pack_type: item.pack_type,
+            });
+          }
+        }
+      }
+
+      res.json({
+        product_name,
+        count: historyRecords.length,
+        purchases: historyRecords
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+// GET /api/purchases/price-history - Check historical prices and MRP trend for a product
 router.get(
   "/price-history",
   auth,
@@ -64,13 +382,14 @@ router.get(
   async (req, res, next) => {
     try {
       const db = mongoose.connection.db;
-      const { product_name, current_price } = req.query;
+      const { product_name, current_price, current_rate, current_mrp } = req.query;
 
       if (!product_name) {
         return res.status(400).json({ detail: "product_name is required" });
       }
 
-      const currentPriceNum = parseFloat(current_price) || 0;
+      const currentRateNum = parseFloat(req.query.current_price || req.query.current_rate || req.query.rate_pack) || 0;
+      const currentMrpNum = parseFloat(req.query.current_mrp || req.query.current_mrp_pack || req.query.mrp_pack) || 0;
 
       // Find all purchases containing this product (case-insensitive match, with normalized name)
       const normalizedInput = normalizeName(product_name);
@@ -85,14 +404,11 @@ router.get(
         )
         .toArray();
 
-      // Extract unique supplier prices for this product
-      const supplierPrices = [];
-      const seenSuppliers = new Set();
+      const historicalRecords = [];
       let matchedProductName = null;
 
       for (const purchase of purchases) {
         for (const item of purchase.items || []) {
-          // Match product name (case-insensitive)
           const normalizedStored = normalizeName(item.product_name);
 
           if (
@@ -100,59 +416,98 @@ router.get(
             normalizedStored.includes(normalizedInput) ||
             normalizedInput.includes(normalizedStored)
           ) {
-            // Save first matched actual product name
             if (!matchedProductName) {
               matchedProductName = item.product_name;
             }
 
-            const packPrice = item.pack_price || item.rate_pack || 0;
-            const key = `${purchase.supplier_id || purchase.supplier_name}-${packPrice}`;
+            const packPrice = parseFloat(item.rate_pack || item.pack_price || 0);
+            const unitsPerPack = parseInt(item.units_per_pack || item.units) || 1;
+            const mrpPack = parseFloat(
+              item.mrp_pack ||
+                (item.mrp_per_unit ? item.mrp_per_unit * unitsPerPack : item.mrp || 0)
+            );
 
-            if (!seenSuppliers.has(key) && packPrice > 0) {
-              seenSuppliers.add(key);
-              supplierPrices.push({
+            if (packPrice > 0) {
+              historicalRecords.push({
+                purchase_id: purchase.id || purchase._id,
                 supplier_id: purchase.supplier_id,
-                supplier_name: purchase.supplier_name,
-                pack_price: packPrice,
-                units_per_pack: item.units_per_pack || 1,
-                price_per_unit: packPrice / (item.units_per_pack || 1),
-                purchase_date: purchase.created_at,
-                invoice_no: purchase.invoice_no,
-                batch_no: item.batch_no,
+                supplier_name: purchase.supplier_name || "Unknown Supplier",
+                rate_pack: packPrice,
+                mrp_pack: mrpPack,
+                units_per_pack: unitsPerPack,
+                price_per_unit: packPrice / unitsPerPack,
+                purchase_date: purchase.created_at || purchase.purchase_date,
+                invoice_no: purchase.invoice_no || "N/A",
+                batch_no: item.batch_no || "N/A",
+                expiry_date: item.expiry_date || "N/A",
               });
             }
           }
         }
       }
 
-      // Sort by pack price (cheapest first)
-      supplierPrices.sort((a, b) => a.pack_price - b.pack_price);
+      // Sort chronologically (ascending) for trend chart
+      const sortedByDate = [...historicalRecords].sort(
+        (a, b) => new Date(a.purchase_date) - new Date(b.purchase_date)
+      );
 
-      // Find cheaper options (only those with price < current price)
-      const cheaperOptions =
-        currentPriceNum > 0
-          ? supplierPrices.filter((sp) => sp.pack_price < currentPriceNum)
-          : [];
+      // Sort by rate (cheapest first)
+      const sortedByRate = [...historicalRecords].sort(
+        (a, b) => a.rate_pack - b.rate_pack
+      );
 
-      // Get the cheapest historical price
-      const cheapestPrice =
-        supplierPrices.length > 0 ? supplierPrices[0].pack_price : null;
-      const isHigherThanHistory =
-        currentPriceNum > 0 &&
-        cheapestPrice !== null &&
-        currentPriceNum > cheapestPrice;
+      const latestRecord = sortedByDate.length > 0 ? sortedByDate[sortedByDate.length - 1] : null;
+      const cheapestRecord = sortedByRate.length > 0 ? sortedByRate[0] : null;
+
+      const latestRate = latestRecord ? latestRecord.rate_pack : 0;
+      const latestMrp = latestRecord ? latestRecord.mrp_pack : 0;
+
+      const rate_increased = currentRateNum > 0 && latestRate > 0 && (currentRateNum - latestRate) >= 0.5;
+      const rate_difference = rate_increased ? Number((currentRateNum - latestRate).toFixed(2)) : 0;
+
+      const mrp_increased = currentMrpNum > 0 && latestMrp > 0 && (currentMrpNum - latestMrp) >= 0.5;
+      const mrp_difference = mrp_increased ? Number((currentMrpNum - latestMrp).toFixed(2)) : 0;
+
+      const mrp_lowered = currentMrpNum > 0 && latestMrp > 0 && (latestMrp - currentMrpNum) >= 0.5;
+      const mrp_drop_difference = mrp_lowered ? Number((latestMrp - currentMrpNum).toFixed(2)) : 0;
+
+      // ALERT CONDITION: Rate increased while MRP remained SAME (neither increased nor lowered)
+      const is_higher_price_alert = rate_increased && !mrp_increased && !mrp_lowered;
+      const is_mrp_lowered_alert = mrp_lowered;
+
+      const alert_type = mrp_lowered
+        ? (rate_increased ? "MRP_LOWERED_HIGHER_RATE" : "MRP_LOWERED")
+        : is_higher_price_alert
+        ? "SAME_MRP_HIGHER_RATE"
+        : mrp_increased
+        ? "MRP_HIKE"
+        : "NORMAL";
+
+      // Filter cheaper supplier options
+      const cheaperOptions = currentRateNum > 0
+        ? sortedByRate.filter((r) => r.rate_pack < currentRateNum)
+        : [];
 
       res.json({
         searched_product_name: product_name,
-        matched_product_name: matchedProductName,
-        current_price: currentPriceNum,
-        cheapest_historical_price: cheapestPrice,
-        is_higher_than_history: isHigherThanHistory,
-        price_difference: isHigherThanHistory
-          ? currentPriceNum - cheapestPrice
-          : 0,
+        matched_product_name: matchedProductName || product_name,
+        current_rate: currentRateNum,
+        current_mrp: currentMrpNum,
+        latest_rate: latestRate,
+        latest_mrp: latestMrp,
+        cheapest_rate: cheapestRecord ? cheapestRecord.rate_pack : null,
+        rate_increased,
+        rate_difference,
+        mrp_increased,
+        mrp_difference,
+        mrp_lowered,
+        mrp_drop_difference,
+        is_higher_price_alert,
+        is_mrp_lowered_alert,
+        alert_type,
         cheaper_options: cheaperOptions,
-        all_historical_prices: supplierPrices,
+        price_history_trend: sortedByDate,
+        all_historical_prices: sortedByRate,
       });
     } catch (error) {
       next(error);
@@ -311,16 +666,28 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
     for (const item of items) {
       // Find or create product in products collection (unique product directory)
       const normalizedName = item.product_name.trim();
-      let matchedProduct = await db.collection("products").findOne({
-        pharmacy_id: req.user.pharmacy_id,
-        name: { $regex: new RegExp("^" + normalizedName.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&') + "$", "i") }
-      }, { session });
+      let matchedProduct = null;
+
+      const pId = item.selected_product_id || item.product_id;
+      if (pId && !pId.startsWith("scanned_")) {
+        matchedProduct = await db.collection("products").findOne({
+          pharmacy_id: req.user.pharmacy_id,
+          id: pId,
+        }, { session });
+      }
+
+      if (!matchedProduct) {
+        matchedProduct = await db.collection("products").findOne({
+          pharmacy_id: req.user.pharmacy_id,
+          name: { $regex: new RegExp("^" + normalizedName.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&') + "$", "i") },
+        }, { session });
+      }
 
       let resolvedProductId;
       if (matchedProduct) {
         resolvedProductId = matchedProduct.id;
       } else {
-        resolvedProductId = uuidv4();
+        resolvedProductId = (pId && !pId.startsWith("scanned_")) ? pId : uuidv4();
         await db.collection("products").insertOne({
           id: resolvedProductId,
           pharmacy_id: req.user.pharmacy_id,
@@ -1205,47 +1572,136 @@ router.post(
   }
 );
 
-// POST /api/purchases/csv
-router.post(
-  "/csv",
-  auth,
-  requireSubscription(),
-  upload.single("file"),
-  async (req, res, next) => {
-    try {
-      if (!req.file) {
-        return res.status(400).json({ detail: "No file provided" });
+// Helper for parsing CSV lines with quote support and delimiter detection
+function parseCSVRow(line, delimiter = ",") {
+  const result = [];
+  let cur = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (c === '"') {
+      if (inQuotes && line[i + 1] === '"') {
+        cur += '"';
+        i++;
+      } else {
+        inQuotes = !inQuotes;
       }
-
-      // [Issue #12] CSV Buffer fix (use diskStorage path)
-      const content = fs.readFileSync(req.file.path, "utf-8");
-      const lines = content.split("\n").filter((l) => l.trim());
-      
-      // Cleanup file after reading
-      try { fs.unlinkSync(req.file.path); } catch(e) {}
-
-      if (lines.length < 2) {
-        return res
-          .status(400)
-          .json({ detail: "CSV file must have header and data rows" });
-      }
-
-      const headers = lines[0]
-        .split(",")
-        .map((h) => h.trim().replace(/"/g, ""));
-      const sampleData = lines.slice(1, 4).map((line) => {
-        const values = line.split(",").map((v) => v.trim().replace(/"/g, ""));
-        const row = {};
-        headers.forEach((h, i) => (row[h] = values[i] || ""));
-        return row;
-      });
-
-      res.json({ columns: headers, sample_data: sampleData });
-    } catch (error) {
-      next(error);
+    } else if (c === delimiter && !inQuotes) {
+      result.push(cur.trim());
+      cur = "";
+    } else {
+      cur += c;
     }
   }
-);
+  result.push(cur.trim());
+  return result;
+}
+
+function detectCSVDelimiter(firstLine) {
+  if (firstLine.includes("\t")) return "\t";
+  if (firstLine.includes(";")) return ";";
+  return ",";
+}
+
+const handleParseCsvUpload = async (req, res, next) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ detail: "No CSV file provided" });
+    }
+
+    const db = mongoose.connection.db;
+    const fileBuffer = fs.readFileSync(req.file.path);
+    const content = fileBuffer.toString("utf-8");
+    const lines = content.split(/\r?\n/).filter((l) => l.trim());
+
+    if (lines.length < 2) {
+      try { fs.unlinkSync(req.file.path); } catch (e) {}
+      return res
+        .status(400)
+        .json({ detail: "CSV file must contain a header row and at least 1 data row" });
+    }
+
+    // Upload to Cloudflare R2
+    const r2Key = `csv-imports/${req.user.pharmacy_id}/${Date.now()}-${uuidv4()}-${req.file.originalname}`;
+    let r2Url = null;
+    try {
+      r2Url = await uploadToR2(r2Key, fileBuffer, req.file.mimetype || "text/csv");
+    } catch (r2Err) {
+      console.error("R2 Upload failed for CSV:", r2Err);
+    }
+
+    // Cleanup local temp file
+    try { fs.unlinkSync(req.file.path); } catch (e) {}
+
+    const delimiter = detectCSVDelimiter(lines[0]);
+    const headers = parseCSVRow(lines[0], delimiter).map((h) => h.replace(/^["']|["']$/g, "").trim());
+
+    const sampleRows = lines.slice(1, 11).map((line) => {
+      const values = parseCSVRow(line, delimiter).map((v) => v.replace(/^["']|["']$/g, "").trim());
+      const row = {};
+      headers.forEach((h, i) => {
+        if (h) row[h] = values[i] !== undefined ? values[i] : "";
+      });
+      return row;
+    });
+
+    const parsedAllRows = lines.slice(1).map((line) => {
+      const values = parseCSVRow(line, delimiter).map((v) => v.replace(/^["']|["']$/g, "").trim());
+      const row = {};
+      headers.forEach((h, i) => {
+        if (h) row[h] = values[i] !== undefined ? values[i] : "";
+      });
+      return row;
+    });
+
+    // Supplier Template Check if supplier_id is provided
+    let templateMatch = { matched: false, missing_fields: [], mapped_fields: null };
+    const supplierId = req.body.supplier_id || req.query.supplier_id;
+
+    if (supplierId) {
+      const supplier = await db.collection("suppliers").findOne({
+        id: supplierId,
+        pharmacy_id: req.user.pharmacy_id,
+      });
+
+      if (supplier && supplier.csv_template && supplier.csv_template.mapped_fields) {
+        const savedMap = supplier.csv_template.mapped_fields;
+        const missing = [];
+        const normalizedHeaders = new Set(headers.map((h) => h.toLowerCase()));
+
+        Object.entries(savedMap).forEach(([targetField, csvCol]) => {
+          if (csvCol && csvCol !== "none" && !normalizedHeaders.has(csvCol.toLowerCase())) {
+            missing.push({ field: targetField, csv_col: csvCol });
+          }
+        });
+
+        templateMatch = {
+          matched: missing.length === 0,
+          mapped_fields: savedMap,
+          missing_fields: missing,
+        };
+      }
+    }
+
+    res.json({
+      success: true,
+      r2_key: r2Key,
+      r2_url: r2Url,
+      columns: headers,
+      sample_data: sampleRows,
+      parsed_rows: parsedAllRows,
+      total_rows: parsedAllRows.length,
+      supplier_template: templateMatch,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Map all CSV parse endpoints for backward & forward compatibility
+router.post("/parse-csv", auth, requireSubscription(), upload.single("file"), handleParseCsvUpload);
+router.post("/csv-columns", auth, requireSubscription(), upload.single("file"), handleParseCsvUpload);
+router.post("/csv", auth, requireSubscription(), upload.single("file"), handleParseCsvUpload);
 
 // POST /api/purchases/bulk-import
 router.post(

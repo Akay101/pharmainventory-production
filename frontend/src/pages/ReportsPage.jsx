@@ -53,6 +53,7 @@ import {
   Area,
 } from "recharts";
 import { toast } from "sonner";
+import Loader from "../components/Loader";
 
 const COLORS = ["#10B981", "#8B5CF6", "#3B82F6", "#F59E0B", "#EF4444"];
 
@@ -263,14 +264,7 @@ export default function ReportsPage() {
   const totalSupplierLiabilities = dueSuppliers.reduce((sum, s) => sum + (s.total_amount_owed || 0), 0);
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center h-96">
-        <div className="flex flex-col items-center gap-4">
-          <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
-          <p className="text-muted-foreground text-sm font-medium animate-pulse">Loading analytics dashboard...</p>
-        </div>
-      </div>
-    );
+    return <Loader size="lg" text="Loading Analytics & Reports..." />;
   }
 
   return (
@@ -370,15 +364,15 @@ export default function ReportsPage() {
               </CardContent>
             </Card>
 
-            <Card className="stat-card bg-gradient-to-br from-purple-500/5 to-transparent hover:border-purple-500/30 transition-all duration-300">
+            <Card className="stat-card bg-gradient-to-br from-orange-500/5 to-transparent hover:border-orange-500/30 transition-all duration-300">
               <CardContent className="p-6">
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1">Total Orders</p>
-                    <p className="text-2xl font-bold font-mono text-purple-400">{totalOrders}</p>
+                    <p className="text-2xl font-bold font-mono text-orange-500">{totalOrders}</p>
                   </div>
-                  <div className="p-3 bg-purple-500/10 rounded-xl">
-                    <ShoppingBag className="w-6 h-6 text-purple-400" />
+                  <div className="p-3 bg-orange-500/10 rounded-xl">
+                    <ShoppingBag className="w-6 h-6 text-orange-500" />
                   </div>
                 </div>
               </CardContent>
@@ -1043,16 +1037,16 @@ export default function ReportsPage() {
                   </CardContent>
                 </Card>
 
-                <Card className="stat-card bg-gradient-to-br from-purple-500/5 to-transparent">
+                <Card className="stat-card bg-gradient-to-br from-orange-500/5 to-transparent">
                   <CardContent className="p-6 flex items-center justify-between">
                     <div>
                       <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1">Total Purchases Logs</p>
-                      <p className="text-2xl font-bold font-mono text-purple-400">
+                      <p className="text-2xl font-bold font-mono text-orange-500">
                         {(sourcingResults.all_historical_prices || []).length}
                       </p>
                     </div>
-                    <div className="p-3 bg-purple-500/10 rounded-xl">
-                      <History className="w-6 h-6 text-purple-400" />
+                    <div className="p-3 bg-orange-500/10 rounded-xl">
+                      <History className="w-6 h-6 text-orange-500" />
                     </div>
                   </CardContent>
                 </Card>
@@ -1212,11 +1206,8 @@ export default function ReportsPage() {
       {/* TAB 4: DEBT & CREDIT RISKS */}
       {activeTab === "dues" && (
         <div className="space-y-6">
-          {loadingDebtDues ? (
-            <div className="flex flex-col items-center justify-center py-20 gap-4">
-              <div className="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
-              <p className="text-muted-foreground text-sm">Calculating outstanding accounts receivables and payables...</p>
-            </div>
+          {loadingDues ? (
+            <Loader size="md" text="Calculating outstanding accounts receivables and payables..." />
           ) : (
             <div className="space-y-6 animate-fade-in">
               {/* Summary Dashboard Grid */}

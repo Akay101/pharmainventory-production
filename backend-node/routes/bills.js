@@ -2,13 +2,35 @@ const express = require("express");
 const router = express.Router();
 const mongoose = require("mongoose");
 const { v4: uuidv4 } = require("uuid");
+const path = require("path");
+const fs = require("fs");
+const { spawn } = require("child_process");
+const multer = require("multer");
+const sharp = require("sharp");
+const { GoogleGenerativeAI } = require("@google/generative-ai");
 const { auth } = require("../middleware/auth");
 const { generateBillPDF } = require("../services/pdf");
 const { uploadToR2 } = require("../services/r2");
 const { sendBillEmail } = require("../services/email");
 const { logActivity } = require("../utils/activityLogger");
-
 const { requireSubscription } = require("../middleware/subscription");
+
+const scanUploadDir = path.join(__dirname, "../tmp/uploads");
+if (!fs.existsSync(scanUploadDir)) {
+  fs.mkdirSync(scanUploadDir, { recursive: true });
+}
+
+const scanStorage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, scanUploadDir),
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname);
+    cb(null, `bill-scan-${Date.now()}-${uuidv4()}${ext}`);
+  },
+});
+const scanUpload = multer({
+  storage: scanStorage,
+  limits: { fileSize: 15 * 1024 * 1024 },
+});
 
 // Generate bill number
 const generateBillNo = () => {
@@ -221,6 +243,90 @@ router.get("/doctors", auth, requireSubscription(), async (req, res, next) => {
   }
 });
 
+// GET /api/bills/drafts - Fetch all draft bills for pharmacy
+router.get("/drafts", auth, requireSubscription(), async (req, res, next) => {
+  try {
+    const db = mongoose.connection.db;
+    const drafts = await db
+      .collection("bill_drafts")
+      .find({ pharmacy_id: req.user.pharmacy_id })
+      .sort({ created_at: -1 })
+      .toArray();
+
+    res.json({ drafts });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// POST /api/bills/drafts - Save a new draft bill
+router.post("/drafts", auth, requireSubscription(), async (req, res, next) => {
+  try {
+    const db = mongoose.connection.db;
+    const {
+      customer_id,
+      customer_name,
+      customer_mobile,
+      customer_email,
+      doctor,
+      billing_date,
+      is_paid,
+      payment_mode,
+      items,
+    } = req.body;
+
+    const draftId = uuidv4();
+    const draftNo = `DRAFT-${Date.now().toString().slice(-6)}`;
+
+    const draftData = {
+      id: draftId,
+      draft_no: draftNo,
+      pharmacy_id: req.user.pharmacy_id,
+      customer_id: customer_id || null,
+      customer_name: customer_name || "Walk-in Customer",
+      customer_mobile: customer_mobile || "",
+      customer_email: customer_email || "",
+      doctor: doctor || "",
+      billing_date: billing_date || new Date().toISOString().slice(0, 10),
+      is_paid: is_paid !== undefined ? is_paid : true,
+      payment_mode: payment_mode || "Cash",
+      items: items || [],
+      created_by: req.user.id,
+      created_at: new Date().toISOString(),
+    };
+
+    await db.collection("bill_drafts").insertOne(draftData);
+
+    const { _id, ...draft } = draftData;
+    res.status(201).json({ message: "Draft bill created successfully", draft });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// DELETE /api/bills/drafts/:draft_id - Delete a draft bill
+router.delete("/drafts/:draft_id", auth, requireSubscription(), async (req, res, next) => {
+  try {
+    const db = mongoose.connection.db;
+    const { draft_id } = req.params;
+
+    const query = {
+      pharmacy_id: req.user.pharmacy_id,
+      $or: [
+        { id: draft_id },
+        ...(mongoose.Types.ObjectId.isValid(draft_id)
+          ? [{ _id: new mongoose.Types.ObjectId(draft_id) }]
+          : []),
+      ],
+    };
+
+    await db.collection("bill_drafts").deleteOne(query);
+    res.json({ message: "Draft bill deleted successfully" });
+  } catch (error) {
+    next(error);
+  }
+});
+
 // POST /api/bills
 router.post("/", auth, requireSubscription(), async (req, res, next) => {
   try {
@@ -239,6 +345,7 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
       payment_mode,
       is_advance_paid = false,
       advance_amount = 0,
+      draft_id,
     } = req.body;
     const db = mongoose.connection.db;
 
@@ -296,12 +403,21 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
         delivery_status: is_advance_paid ? "Pending" : "Delivered",
       });
 
-      // Update inventory only for items from inventory (not manual entries)
+      // Update inventory stock for inventory items (supports both UUID id and Mongo ObjectId _id)
       if (item.inventory_id) {
+        const invQuery = {
+          pharmacy_id: req.user.pharmacy_id,
+          $or: [
+            { id: item.inventory_id },
+            ...(mongoose.Types.ObjectId.isValid(item.inventory_id)
+              ? [{ _id: new mongoose.Types.ObjectId(item.inventory_id) }]
+              : []),
+          ],
+        };
         await db
           .collection("inventory")
           .updateOne(
-            { id: item.inventory_id },
+            invQuery,
             [{ $set: { available_quantity: { $max: [0, { $subtract: ["$available_quantity", quantity] }] } } }]
           );
       }
@@ -439,10 +555,27 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
       );
     }
 
+    // If created from a draft bill, cleanup draft record
+    if (draft_id) {
+      try {
+        await db.collection("bill_drafts").deleteOne({
+          pharmacy_id: req.user.pharmacy_id,
+          $or: [
+            { id: draft_id },
+            ...(mongoose.Types.ObjectId.isValid(draft_id)
+              ? [{ _id: new mongoose.Types.ObjectId(draft_id) }]
+              : []),
+          ],
+        });
+      } catch (e) {
+        console.error("Failed to cleanup draft bill:", e);
+      }
+    }
+
     const { _id, ...bill } = billData;
     await logActivity(db, req.user.pharmacy_id, req.user.id, req.user.name, "CREATE", "BILLING", billId, `Created Bill ${billNo} for ₹${totalAmount}`, `/billing`);
 
-    res.status(201).json({ message: "Bill created", bill });
+    res.status(201).json({ message: "Bill created", id: billId, bill_no: billNo, bill });
   } catch (error) {
     next(error);
   }
@@ -1362,6 +1495,371 @@ router.post(
       res.json({ message: "Delivery status updated successfully", delivery_status: overallDeliveryStatus });
     } catch (error) {
       next(error);
+    }
+  }
+);
+
+// POST /api/bills/match-inventory - Smart batch-first inventory matching for billing
+router.post("/match-inventory", auth, requireSubscription(), async (req, res, next) => {
+  try {
+    const db = mongoose.connection.db;
+    const { items } = req.body;
+
+    if (!items || !Array.isArray(items)) {
+      return res.json({ success: true, matches: [] });
+    }
+
+    const allInventoryItems = await db
+      .collection("inventory")
+      .find({ pharmacy_id: req.user.pharmacy_id })
+      .toArray();
+
+    const cleanAlphanumeric = (str) =>
+      (str || "").replace(/[^a-zA-Z0-9]/g, "").toLowerCase().replace(/^0+/, "");
+
+    const COMMON_DOSAGE_WORDS = new Set([
+      "ds", "cap", "capsule", "capsules", "tab", "tablet", "tablets",
+      "syp", "syrup", "dry", "inj", "injection", "gel", "cream",
+      "ointment", "suspension", "solution", "drops", "lotion", "mg", "ml", "gm", "g"
+    ]);
+
+    const getBrandCoreTokens = (name) => {
+      return (name || "")
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, " ")
+        .split(/\s+/)
+        .filter((t) => t.length > 0 && !COMMON_DOSAGE_WORDS.has(t));
+    };
+
+    const matches = items.map((item) => {
+      const scannedName = (item.product_name || item.name || "").trim();
+      const scannedBatch = (item.batch_no || item.batch || "").trim();
+      const cleanScannedBatch = cleanAlphanumeric(scannedBatch);
+
+      let batchMatch = null;
+      let exactNameMatch = null;
+      const rawSuggestions = [];
+
+      // 1. Exact Batch Match Priority against inventory
+      if (cleanScannedBatch && cleanScannedBatch.length >= 2) {
+        const foundInv = allInventoryItems.find((inv) => {
+          const cleanInvBatch = cleanAlphanumeric(inv.batch_no);
+          if (!cleanInvBatch || cleanInvBatch.length < 2) return false;
+
+          if (cleanInvBatch === cleanScannedBatch) return true;
+          if (cleanScannedBatch.includes(cleanInvBatch) || cleanInvBatch.includes(cleanScannedBatch)) return true;
+
+          const rawInvBatch = (inv.batch_no || "").trim().toLowerCase();
+          const rawScannedBatch = scannedBatch.toLowerCase();
+          if (rawInvBatch && rawScannedBatch && (rawInvBatch === rawScannedBatch || rawScannedBatch.includes(rawInvBatch))) return true;
+
+          return false;
+        });
+
+        if (foundInv) {
+          batchMatch = {
+            product_id: foundInv.product_id || foundInv.id || (foundInv._id ? foundInv._id.toString() : ""),
+            inventory_id: foundInv.id || (foundInv._id ? foundInv._id.toString() : ""),
+            product_name: foundInv.product_name,
+            salt_composition: foundInv.salt_composition || "",
+            batch_no: foundInv.batch_no,
+            expiry_date: foundInv.expiry_date || "",
+            available_quantity: foundInv.available_quantity || 0,
+            mrp: foundInv.mrp_per_unit || foundInv.mrp || 0,
+            purchase_price: foundInv.cost_per_unit || foundInv.purchase_price || 0,
+            cgst: foundInv.cgst || 0,
+            sgst: foundInv.sgst || 0,
+            type: "batch_exact",
+          };
+        }
+      }
+
+      // 2. Product Name Matching & Brand Token Similarity
+      if (scannedName) {
+        const normScannedName = scannedName.toLowerCase();
+        const scannedBrandTokens = getBrandCoreTokens(scannedName);
+
+        allInventoryItems.forEach((inv) => {
+          if (!inv.product_name) return;
+          const normProdName = inv.product_name.toLowerCase();
+          const prodBrandTokens = getBrandCoreTokens(inv.product_name);
+
+          let score = 0;
+          let isHighConfidence = false;
+
+          if (normProdName === normScannedName) {
+            score = 100;
+            isHighConfidence = true;
+            exactNameMatch = {
+              product_id: inv.product_id || inv.id,
+              inventory_id: inv.id || (inv._id ? inv._id.toString() : ""),
+              product_name: inv.product_name,
+              type: "name_exact",
+            };
+          } else if (normProdName.includes(normScannedName) || normScannedName.includes(normProdName)) {
+            score = 90;
+            isHighConfidence = true;
+          } else if (scannedBrandTokens.length > 0 && prodBrandTokens.length > 0) {
+            let brandMatchCount = 0;
+            scannedBrandTokens.forEach((tok) => {
+              if (prodBrandTokens.includes(tok)) brandMatchCount++;
+            });
+
+            const matchRatio = brandMatchCount / scannedBrandTokens.length;
+            if (brandMatchCount > 0 && matchRatio >= 0.5) {
+              score = Math.round(50 + matchRatio * 40);
+              if (matchRatio >= 0.75) isHighConfidence = true;
+            }
+          }
+
+          if (score >= 40) {
+            rawSuggestions.push({
+              product_id: inv.product_id || inv.id,
+              inventory_id: inv.id || (inv._id ? inv._id.toString() : ""),
+              product_name: inv.product_name,
+              salt_composition: inv.salt_composition || "",
+              batch_no: inv.batch_no || "",
+              expiry_date: inv.expiry_date || "",
+              available_quantity: inv.available_quantity || 0,
+              mrp: inv.mrp_per_unit || inv.mrp || 0,
+              purchase_price: inv.cost_per_unit || inv.purchase_price || 0,
+              cgst: inv.cgst || 0,
+              sgst: inv.sgst || 0,
+              score: Math.round(score),
+              is_high_confidence: isHighConfidence,
+            });
+          }
+        });
+      }
+
+      if (batchMatch) {
+        rawSuggestions.unshift({
+          product_id: batchMatch.product_id,
+          inventory_id: batchMatch.inventory_id,
+          product_name: batchMatch.product_name,
+          salt_composition: batchMatch.salt_composition,
+          score: 10000,
+          is_batch_match: true,
+          is_high_confidence: true,
+          batch_no: batchMatch.batch_no,
+          expiry_date: batchMatch.expiry_date,
+          available_quantity: batchMatch.available_quantity,
+          mrp: batchMatch.mrp,
+          purchase_price: batchMatch.purchase_price,
+          cgst: batchMatch.cgst,
+          sgst: batchMatch.sgst,
+        });
+      }
+
+      rawSuggestions.sort((a, b) => b.score - a.score);
+
+      const uniqueSuggestions = [];
+      const seenIds = new Set();
+      for (const sug of rawSuggestions) {
+        const key = `${sug.inventory_id}_${sug.batch_no}`;
+        if (!seenIds.has(key)) {
+          seenIds.add(key);
+          uniqueSuggestions.push(sug);
+        }
+      }
+
+      return {
+        scanned_name: scannedName,
+        scanned_batch: scannedBatch,
+        batch_match: batchMatch,
+        exact_name_match: exactNameMatch,
+        suggestions: uniqueSuggestions.slice(0, 12),
+      };
+    });
+
+    res.json({ success: true, matches });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// POST /api/bills/scan-product - Ultra-fast synchronous AI product scanning for billing
+router.post(
+  "/scan-product",
+  auth,
+  requireSubscription(),
+  scanUpload.array("files", 10),
+  async (req, res, next) => {
+    const tempFiles = req.files || [];
+    try {
+      if (!tempFiles || tempFiles.length === 0) {
+        return res.status(400).json({ success: false, detail: "No image files provided for scanning." });
+      }
+
+      const apiKey = process.env.EMERGENT_LLM_KEY || process.env.GEMINI_API_KEY;
+      if (!apiKey) {
+        return res.status(500).json({ success: false, detail: "Gemini API key is not configured." });
+      }
+
+      // Fast, parallel image compression via Sharp (takes ~30ms)
+      const imageParts = await Promise.all(
+        tempFiles.map(async (file) => {
+          let compressedBuf;
+          try {
+            compressedBuf = await sharp(file.path)
+              .resize({ width: 1024, height: 1024, fit: "inside", withoutEnlargement: true })
+              .jpeg({ quality: 80 })
+              .toBuffer();
+          } catch (e) {
+            compressedBuf = fs.readFileSync(file.path);
+          }
+          return {
+            inlineData: {
+              data: compressedBuf.toString("base64"),
+              mimeType: "image/jpeg",
+            },
+          };
+        })
+      );
+
+      // Cleanup local temp upload files immediately
+      tempFiles.forEach((f) => {
+        try { fs.unlinkSync(f.path); } catch (e) {}
+      });
+
+      // Call Gemini 2.5 Flash directly in Node.js (completes in ~1.5 seconds)
+      const genAI = new GoogleGenerativeAI(apiKey);
+      const model = genAI.getGenerativeModel({
+        model: "gemini-2.5-flash",
+        generationConfig: {
+          temperature: 0.1,
+          responseMimeType: "application/json",
+        },
+      });
+
+      const prompt = `Extract Indian pharmacy medicine/product details from the provided product photo(s).
+Inspect trade name, manufacturer, salt/active formulation, batch/lot number, expiry date, and MRP.
+Return ONLY valid JSON matching this schema:
+{
+  "product_name": "Exact Brand / Product Name",
+  "manufacturer": "Company Name",
+  "salt_composition": "Salt / Formula Details",
+  "batch_no": "Batch / Lot No",
+  "expiry_date": "YYYY-MM-DD",
+  "mrp": 0.0
+}`;
+
+      const aiResponse = await model.generateContent([prompt, ...imageParts]);
+      const responseText = aiResponse.response.text();
+
+      let extracted = {};
+      try {
+        extracted = JSON.parse(responseText.trim());
+      } catch (e) {
+        console.error("Failed to parse Gemini AI JSON:", responseText);
+      }
+
+      const scannedName = (extracted.product_name || extracted.name || "").trim();
+      const scannedBatch = (extracted.batch_no || extracted.batch || "").trim();
+
+      // Perform instant batch-first inventory auto-mapping
+      const db = mongoose.connection.db;
+      const allInventoryItems = await db
+        .collection("inventory")
+        .find({ pharmacy_id: req.user.pharmacy_id })
+        .toArray();
+
+      const cleanAlphanumeric = (str) =>
+        (str || "").replace(/[^a-zA-Z0-9]/g, "").toLowerCase().replace(/^0+/, "");
+
+      const cleanScannedBatch = cleanAlphanumeric(scannedBatch);
+
+      let matchedItem = null;
+
+      if (cleanScannedBatch && cleanScannedBatch.length >= 2) {
+        const foundInv = allInventoryItems.find((inv) => {
+          const cleanInvBatch = cleanAlphanumeric(inv.batch_no);
+          if (!cleanInvBatch || cleanInvBatch.length < 2) return false;
+
+          if (cleanInvBatch === cleanScannedBatch) return true;
+          if (cleanScannedBatch.includes(cleanInvBatch) || cleanInvBatch.includes(cleanScannedBatch)) return true;
+
+          const rawInvBatch = (inv.batch_no || "").trim().toLowerCase();
+          const rawScannedBatch = scannedBatch.toLowerCase();
+          if (rawInvBatch && rawScannedBatch && (rawInvBatch === rawScannedBatch || rawScannedBatch.includes(rawInvBatch))) return true;
+
+          return false;
+        });
+
+        if (foundInv) {
+          matchedItem = {
+            inventory_id: foundInv.id || (foundInv._id ? foundInv._id.toString() : ""),
+            product_id: foundInv.product_id || foundInv.id,
+            product_name: foundInv.product_name,
+            salt_composition: foundInv.salt_composition || "",
+            batch_no: foundInv.batch_no,
+            expiry_date: foundInv.expiry_date || extracted.expiry_date || "",
+            available_quantity: foundInv.available_quantity || 0,
+            mrp: foundInv.mrp_per_unit || foundInv.mrp || parseFloat(extracted.mrp) || 0,
+            purchase_price: foundInv.cost_per_unit || foundInv.purchase_price || 0,
+            cgst: foundInv.cgst || 0,
+            sgst: foundInv.sgst || 0,
+            quantity: 1,
+            match_type: "batch_exact",
+          };
+        }
+      }
+
+      // Name fallback if batch not matched
+      if (!matchedItem && scannedName) {
+        const normScannedName = scannedName.toLowerCase();
+        const foundNameInv = allInventoryItems.find((inv) => {
+          if (!inv.product_name) return false;
+          const normInvName = inv.product_name.toLowerCase();
+          return normInvName === normScannedName || normInvName.includes(normScannedName) || normScannedName.includes(normInvName);
+        });
+
+        if (foundNameInv) {
+          matchedItem = {
+            inventory_id: foundNameInv.id || (foundNameInv._id ? foundNameInv._id.toString() : ""),
+            product_id: foundNameInv.product_id || foundNameInv.id,
+            product_name: foundNameInv.product_name,
+            salt_composition: foundNameInv.salt_composition || "",
+            batch_no: scannedBatch || foundNameInv.batch_no || "",
+            expiry_date: extracted.expiry_date || foundNameInv.expiry_date || "",
+            available_quantity: foundNameInv.available_quantity || 0,
+            mrp: foundNameInv.mrp_per_unit || foundNameInv.mrp || parseFloat(extracted.mrp) || 0,
+            purchase_price: foundNameInv.cost_per_unit || foundNameInv.purchase_price || 0,
+            cgst: foundNameInv.cgst || 0,
+            sgst: foundNameInv.sgst || 0,
+            quantity: 1,
+            match_type: "name_suggested",
+          };
+        }
+      }
+
+      // Default negative billing payload if no inventory match
+      if (!matchedItem) {
+        matchedItem = {
+          product_name: scannedName || "Scanned Medicine",
+          salt_composition: extracted.salt_composition || "",
+          batch_no: scannedBatch || "",
+          expiry_date: extracted.expiry_date || "",
+          available_quantity: 0,
+          mrp: parseFloat(extracted.mrp) || 0,
+          purchase_price: 0,
+          cgst: 0,
+          sgst: 0,
+          quantity: 1,
+          match_type: "negative_billing",
+        };
+      }
+
+      return res.json({
+        success: true,
+        extracted_data: extracted,
+        matched_item: matchedItem,
+      });
+    } catch (err) {
+      tempFiles.forEach((f) => {
+        try { fs.unlinkSync(f.path); } catch (e) {}
+      });
+      next(err);
     }
   }
 );

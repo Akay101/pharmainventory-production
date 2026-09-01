@@ -1,19 +1,75 @@
 #!/usr/bin/env python3
-"""Helper script to scan medicine images using Gemini API with Structured Output."""
+"""Helper script to scan medicine images using Gemini API with Structured Output & REST Fallback."""
 import sys
 import json
 import base64
 import os
 import time
-from google import genai
-from google.genai import types
-
 import urllib.request
+import urllib.parse
+
+def call_gemini_rest_api(prompt: str, image_paths: list, api_key: str):
+    """Zero-dependency direct REST API call to Gemini 2.5 Flash endpoint."""
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
+    
+    parts = [{"text": prompt}]
+    
+    for path_or_url in image_paths:
+        try:
+            if path_or_url.startswith('http://') or path_or_url.startswith('https://'):
+                req = urllib.request.Request(path_or_url, headers={'User-Agent': 'Mozilla/5.0'})
+                with urllib.request.urlopen(req) as resp:
+                    img_bytes = resp.read()
+            else:
+                with open(path_or_url, 'rb') as f:
+                    img_bytes = f.read()
+            
+            mime_type = "image/jpeg"
+            url_lower = path_or_url.lower()
+            if url_lower.endswith(".png"):
+                mime_type = "image/png"
+            elif url_lower.endswith(".webp"):
+                mime_type = "image/webp"
+                
+            parts.append({
+                "inline_data": {
+                    "mime_type": mime_type,
+                    "data": base64.b64encode(img_bytes).decode('utf-8')
+                }
+            })
+        except Exception as e:
+            print(f"Error loading image {path_or_url}: {e}", file=sys.stderr)
+
+    if len(parts) <= 1:
+        raise Exception(f"No valid images could be loaded from: {', '.join(image_paths)}")
+
+    payload = {
+        "contents": [{"parts": parts}],
+        "generationConfig": {
+            "response_mime_type": "application/json"
+        }
+    }
+    
+    req_data = json.dumps(payload).encode('utf-8')
+    request = urllib.request.Request(
+        url,
+        data=req_data,
+        headers={"Content-Type": "application/json"},
+        method="POST"
+    )
+    
+    with urllib.request.urlopen(request, timeout=60) as response:
+        res_body = response.read().decode('utf-8')
+        res_json = json.loads(res_body)
+        
+        candidates = res_json.get("candidates", [])
+        if not candidates:
+            raise Exception("No candidates returned from Gemini REST API")
+            
+        part_text = candidates[0]["content"]["parts"][0]["text"]
+        return json.loads(part_text)
 
 def scan_image_with_google(image_urls: list, api_key: str, max_retries=2):
-    client = genai.Client(api_key=api_key)
-
-   
     prompt = """Analyze the provided medicine/pharmaceutical product images. These are images of the SAME single product from different angles. Extract the product information by combining details visible across the multiple images.
 
 Return a JSON object with these fields (use null if not visible except manufacturer and salt_composition because most of the bills dont have that so autofill only these fields in each item you identify in the bill):
@@ -27,15 +83,23 @@ Return a JSON object with these fields (use null if not visible except manufactu
   "pack_size": "pack size description (e.g., '10 tablets', '100ml')",
   "pack_type": "Strip/Bottle/Tube/Box/Vial/Syrup/Cream/Injection",
   "units_per_pack": "number of units in pack as integer",
-  "hsn_no": "HSN code if visible"
+  "hsn_no": "HSN code if visible",
+  "confidence": 85
 }
 
 Important: Only return valid JSON, no other text.
 """
 
-    contents = [prompt]
-    for path_or_url in image_urls:
-        try:
+    scanned_data = None
+
+    # Try SDK imports, fallback to direct REST API
+    try:
+        from google import genai
+        from google.genai import types
+        
+        client = genai.Client(api_key=api_key)
+        contents = [prompt]
+        for path_or_url in image_urls:
             if path_or_url.startswith('http://') or path_or_url.startswith('https://'):
                 req = urllib.request.Request(path_or_url, headers={'User-Agent': 'Mozilla/5.0'})
                 with urllib.request.urlopen(req) as response:
@@ -44,97 +108,82 @@ Important: Only return valid JSON, no other text.
                 with open(path_or_url, 'rb') as f:
                     image_data = f.read()
 
-            mime_type = "image/webp"
+            mime_type = "image/jpeg"
             url_lower = path_or_url.lower()
-            if url_lower.endswith(".jpg") or url_lower.endswith(".jpeg"):
-                mime_type = "image/jpeg"
-            elif url_lower.endswith(".png"):
-                mime_type = "image/png"
-            
-            contents.append(
-                types.Part.from_bytes(
-                    data=image_data,
-                    mime_type=mime_type
-                )
-            )
-        except Exception as e:
-            print(f"Failed to retrieve image from {path_or_url}. Error: {str(e)}", file=sys.stderr)
+            if url_lower.endswith(".png"): mime_type = "image/png"
+            elif url_lower.endswith(".webp"): mime_type = "image/webp"
 
-    if len(contents) <= 1:
-         return {
-            'success': False,
-            'error': f'No images could be retrieved for processing. Tried: {", ".join(image_urls)}',
-            'error_category': 'image_error'
+            contents.append(types.Part.from_bytes(data=image_data, mime_type=mime_type))
+
+        schema = {
+            "type": "OBJECT",
+            "properties": {
+                "product_name": {"type": "STRING"},
+                "manufacturer": {"type": "STRING"},
+                "salt_composition": {"type": "STRING"},
+                "batch_no": {"type": "STRING"},
+                "expiry_date": {"type": "STRING"},
+                "mrp": {"type": "NUMBER"},
+                "pack_type": {"type": "STRING"},
+                "units_per_pack": {"type": "INTEGER"},
+                "hsn_no": {"type": "STRING"},
+                "pack_size": {"type": "STRING"},
+                "confidence": {"type": "INTEGER"}
+            },
+            "required": ["product_name", "manufacturer", "salt_composition", "mrp", "confidence"]
         }
 
-    for attempt in range(max_retries + 1):
-        try:
-            schema = {
-                "type": "OBJECT",
-                "properties": {
-                    "product_name": {"type": "STRING"},
-                    "manufacturer": {"type": "STRING"},
-                    "salt_composition": {"type": "STRING"},
-                    "batch_no": {"type": "STRING"},
-                    "expiry_date": {"type": "STRING"},
-                    "mrp": {"type": "NUMBER"},
-                    "pack_type": {"type": "STRING"},
-                    "units_per_pack": {"type": "INTEGER"},
-                    "hsn_no": {"type": "STRING"},
-                    "pack_size": {"type": "STRING"},
-                    "confidence": {"type": "INTEGER"}
-                },
-                "required": ["product_name", "manufacturer", "salt_composition", "mrp", "confidence"]
-            }
-
-            response = client.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=contents,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    response_schema=schema
-                )
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=contents,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=schema
             )
-            
-            scanned_data = json.loads(response.text)
-            
-            # If Gemini returns a list instead of an object (safety check)
-            if isinstance(scanned_data, list):
-                scanned_data = scanned_data[0] if len(scanned_data) > 0 else {}
-            
-            # Post-processing
-            mrp = float(scanned_data.get('mrp') or 0)
-            units_per_pack = int(scanned_data.get('units_per_pack') or 1)
-            mrp_per_unit = round(mrp / units_per_pack, 2) if units_per_pack > 1 else mrp
-            
-            scanned_product = {
-                'product_name': scanned_data.get('product_name') or '',
-                'manufacturer': scanned_data.get('manufacturer') or '',
-                'salt_composition': scanned_data.get('salt_composition') or scanned_data.get('composition') or '',
-                'batch_no': scanned_data.get('batch_no') or '',
-                'expiry_date': scanned_data.get('expiry_date') or '',
-                'mrp': mrp,
-                'mrp_pack': mrp,
-                'pack_type': scanned_data.get('pack_type') or 'Strip',
-                'units_per_pack': units_per_pack,
-                'hsn_no': scanned_data.get('hsn_no') or '',
-                'pack_size': scanned_data.get('pack_size') or '',
-                'confidence': scanned_data.get('confidence') or 75,
-                'quantity': 1,
-                'rate_pack': 0,
-                'purchase_price': 0,
-                'mrp_per_unit': mrp_per_unit
-            }
-            
-            return {
-                'success': True,
-                'scanned_product': scanned_product,
-                'scanned_data': scanned_data
-            }
-        except Exception as e:
-            if attempt == max_retries:
-                raise e
-            time.sleep(2 * (attempt + 1))
+        )
+        scanned_data = json.loads(response.text)
+    except ModuleNotFoundError:
+        # Fallback to direct REST API if google module is not installed in current Python runtime
+        scanned_data = call_gemini_rest_api(prompt, image_urls, api_key)
+    except Exception as e:
+        # Retry with REST API on any SDK execution error
+        try:
+            scanned_data = call_gemini_rest_api(prompt, image_urls, api_key)
+        except Exception as rest_err:
+            raise e
+
+    if isinstance(scanned_data, list):
+        scanned_data = scanned_data[0] if len(scanned_data) > 0 else {}
+
+    # Post-processing
+    mrp = float(scanned_data.get('mrp') or 0)
+    units_per_pack = int(scanned_data.get('units_per_pack') or 1)
+    mrp_per_unit = round(mrp / units_per_pack, 2) if units_per_pack > 1 else mrp
+    
+    scanned_product = {
+        'product_name': scanned_data.get('product_name') or '',
+        'manufacturer': scanned_data.get('manufacturer') or '',
+        'salt_composition': scanned_data.get('salt_composition') or scanned_data.get('composition') or '',
+        'batch_no': scanned_data.get('batch_no') or '',
+        'expiry_date': scanned_data.get('expiry_date') or '',
+        'mrp': mrp,
+        'mrp_pack': mrp,
+        'pack_type': scanned_data.get('pack_type') or 'Strip',
+        'units_per_pack': units_per_pack,
+        'hsn_no': scanned_data.get('hsn_no') or '',
+        'pack_size': scanned_data.get('pack_size') or '',
+        'confidence': scanned_data.get('confidence') or 85,
+        'quantity': 1,
+        'rate_pack': 0,
+        'purchase_price': 0,
+        'mrp_per_unit': mrp_per_unit
+    }
+    
+    return {
+        'success': True,
+        'scanned_product': scanned_product,
+        'scanned_data': scanned_data
+    }
 
 if __name__ == '__main__':
     if len(sys.argv) < 3:
@@ -153,3 +202,4 @@ if __name__ == '__main__':
         if "quota" in error_msg.lower(): category = "rate_limit"
         elif "timeout" in error_msg.lower(): category = "timeout"
         print(json.dumps({"success": False, "error": error_msg, "error_category": category}))
+

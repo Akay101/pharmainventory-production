@@ -229,6 +229,8 @@ router.post("/login", async (req, res, next) => {
       .findOne({ id: user.pharmacy_id }, { projection: { _id: 0 } });
 
     res.json({
+      token,
+      refreshToken,
       user: {
         id: user.id,
         name: user.name,
@@ -338,7 +340,11 @@ router.post("/refresh", async (req, res, next) => {
       res.cookie("pharmalogy_token", tokens.token, getCookieOptions(req, false));
       res.cookie("pharmalogy_refresh_token", tokens.refreshToken, getCookieOptions(req, true));
 
-      res.json({ message: "Token refreshed successfully" });
+      res.json({
+        message: "Token refreshed successfully",
+        token: tokens.token,
+        refreshToken: tokens.refreshToken,
+      });
     } catch (err) {
       return res.status(401).json({ detail: "Invalid or expired refresh token" });
     }

@@ -16,60 +16,60 @@ div[style*="Made with Emergent"] {
 }
 
 @layer base {
-  /* Dark Mode (default) */
+  /* Dark Mode - Pitch Black & Electric Orange */
   :root {
-    --background: 222 47% 11%;
-    --foreground: 210 40% 98%;
-    --card: 217 33% 17%;
-    --card-foreground: 210 40% 98%;
-    --popover: 217 33% 17%;
-    --popover-foreground: 210 40% 98%;
-    --primary: 160 84% 39%;
-    --primary-foreground: 160 84% 10%;
-    --secondary: 215 25% 27%;
-    --secondary-foreground: 210 40% 98%;
-    --muted: 215 25% 27%;
-    --muted-foreground: 215 20% 65%;
-    --accent: 258 90% 66%;
+    --background: 0 0% 4%;
+    --foreground: 0 0% 98%;
+    --card: 0 0% 8%;
+    --card-foreground: 0 0% 98%;
+    --popover: 0 0% 8%;
+    --popover-foreground: 0 0% 98%;
+    --primary: 24 100% 50%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 0 0% 13%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 0 0% 13%;
+    --muted-foreground: 240 5% 65%;
+    --accent: 32 100% 50%;
     --accent-foreground: 0 0% 100%;
     --destructive: 0 84% 60%;
     --destructive-foreground: 0 0% 100%;
-    --border: 215 25% 27%;
-    --input: 215 25% 27%;
-    --ring: 160 84% 39%;
-    --chart-1: 160 84% 39%;
-    --chart-2: 258 90% 66%;
-    --chart-3: 217 91% 60%;
-    --chart-4: 38 92% 50%;
+    --border: 0 0% 16%;
+    --input: 0 0% 16%;
+    --ring: 24 100% 50%;
+    --chart-1: 24 100% 50%;
+    --chart-2: 36 100% 50%;
+    --chart-3: 16 100% 55%;
+    --chart-4: 45 100% 50%;
     --chart-5: 0 84% 60%;
     --radius: 0.75rem;
   }
 
-  /* Light Mode - Purple Theme */
+  /* Light Mode - Crisp Vibrant Slate & Orange Theme */
   .light {
-    --background: 270 30% 98%;
-    --foreground: 270 50% 10%;
+    --background: 210 20% 98%;
+    --foreground: 222 47% 11%;
     --card: 0 0% 100%;
-    --card-foreground: 270 50% 10%;
+    --card-foreground: 222 47% 11%;
     --popover: 0 0% 100%;
-    --popover-foreground: 270 50% 10%;
-    --primary: 270 70% 50%;
+    --popover-foreground: 222 47% 11%;
+    --primary: 24 95% 50%;
     --primary-foreground: 0 0% 100%;
-    --secondary: 270 20% 94%;
-    --secondary-foreground: 270 50% 10%;
-    --muted: 270 15% 92%;
-    --muted-foreground: 270 20% 45%;
-    --accent: 270 80% 60%;
+    --secondary: 210 30% 95%;
+    --secondary-foreground: 222 47% 11%;
+    --muted: 210 25% 94%;
+    --muted-foreground: 215 16% 45%;
+    --accent: 32 95% 54%;
     --accent-foreground: 0 0% 100%;
     --destructive: 0 84% 60%;
     --destructive-foreground: 0 0% 100%;
-    --border: 270 15% 82%;
-    --input: 270 15% 82%;
-    --ring: 270 70% 50%;
-    --chart-1: 270 70% 50%;
-    --chart-2: 280 80% 55%;
-    --chart-3: 260 70% 60%;
-    --chart-4: 290 60% 50%;
+    --border: 214.3 31.8% 85%;
+    --input: 214.3 31.8% 85%;
+    --ring: 24 95% 50%;
+    --chart-1: 24 95% 50%;
+    --chart-2: 32 95% 54%;
+    --chart-3: 16 90% 55%;
+    --chart-4: 42 96% 53%;
     --chart-5: 0 84% 60%;
   }
 }
@@ -79,9 +79,29 @@ div[style*="Made with Emergent"] {
     @apply border-border;
   }
 
+  /* Prevent Radix UI / react-remove-scroll layout shift and scrollbar jitter */
+  :root,
+  html,
+  body {
+    --removed-body-scroll-bar-size: 0px !important;
+  }
+
+  html {
+    scrollbar-gutter: stable;
+    overflow-y: scroll !important;
+  }
+
   body {
     @apply bg-background text-foreground antialiased;
     font-family: "Inter", sans-serif;
+  }
+
+  html[data-scroll-locked],
+  body[data-scroll-locked],
+  body[style] {
+    overflow-y: scroll !important;
+    padding-right: 0px !important;
+    margin-right: 0px !important;
   }
 
   h1,
@@ -98,6 +118,23 @@ div[style*="Made with Emergent"] {
   .mono-text {
     font-family: "JetBrains Mono", monospace;
   }
+}
+
+/* Subtle, modern, non-annoying Price Alert pulse for Same MRP Higher Rate */
+@keyframes priceAlertPulse {
+  0%, 100% {
+    box-shadow: inset 0 0 0 1.5px rgba(245, 158, 11, 0.6);
+    background-color: rgba(245, 158, 11, 0.06);
+  }
+  50% {
+    box-shadow: inset 0 0 0 2px rgba(245, 158, 11, 0.25);
+    background-color: rgba(245, 158, 11, 0.01);
+  }
+}
+
+.price-alert-row-blink {
+  animation: priceAlertPulse 2.4s cubic-bezier(0.4, 0, 0.6, 1) infinite !important;
+  border-left: 4px solid rgb(245, 158, 11) !important;
 }
 
 /* Custom scrollbar */
@@ -297,15 +334,353 @@ select {
 @keyframes pulse-glow {
   0%,
   100% {
-    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4);
+    box-shadow: 0 0 0 0 rgba(249, 115, 22, 0.4);
   }
   50% {
-    box-shadow: 0 0 20px 5px rgba(16, 185, 129, 0.2);
+    box-shadow: 0 0 20px 5px rgba(249, 115, 22, 0.2);
   }
 }
 
 .pulse-glow {
   animation: pulse-glow 2s ease-in-out infinite;
+}
+
+/* 3D Cube Spinner Loader */
+.cube-spinner-wrapper {
+  perspective: 800px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 80px;
+  height: 80px;
+  overflow: visible;
+  position: relative;
+}
+
+.cube-spinner-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  transform-style: preserve-3d;
+  position: relative;
+}
+
+.cube-spinner {
+  width: 44px;
+  height: 44px;
+  position: relative;
+  transform-style: preserve-3d;
+  animation: cube-spinner-rotate 2.2s infinite ease-in-out;
+  box-sizing: border-box;
+}
+
+.cube-spinner > div {
+  background-color: hsl(var(--primary) / 0.12);
+  height: 44px;
+  width: 44px;
+  position: absolute;
+  top: 0;
+  left: 0;
+  border: 2px solid hsl(var(--primary));
+  border-radius: 6px;
+  box-sizing: border-box;
+  backface-visibility: visible;
+}
+
+.cube-spinner div:nth-of-type(1) {
+  transform: translateZ(22px);
+}
+
+.cube-spinner div:nth-of-type(2) {
+  transform: rotateY(180deg) translateZ(22px);
+}
+
+.cube-spinner div:nth-of-type(3) {
+  transform: rotateY(-90deg) translateZ(22px);
+}
+
+.cube-spinner div:nth-of-type(4) {
+  transform: rotateY(90deg) translateZ(22px);
+}
+
+.cube-spinner div:nth-of-type(5) {
+  transform: rotateX(90deg) translateZ(22px);
+}
+
+.cube-spinner div:nth-of-type(6) {
+  transform: rotateX(-90deg) translateZ(22px);
+}
+
+@keyframes cube-spinner-rotate {
+  0% {
+    transform: rotateX(-25deg) rotateY(25deg);
+  }
+  50% {
+    transform: rotateX(-385deg) rotateY(25deg);
+  }
+  100% {
+    transform: rotateX(-385deg) rotateY(385deg);
+  }
+}
+
+/* AI Wave Loader - Dedicated AI Task Loader */
+.ai-wave-container {
+  --uib-size: 110px;
+  --uib-speed: 1.2s;
+  --uib-dot-size: calc(var(--uib-size) * 0.1);
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  height: calc(var(--uib-size) * 0.64);
+  width: calc(var(--uib-size) * 0.64);
+}
+
+@keyframes ai-wave-jump {
+  0%,
+  100% {
+    transform: translateY(120%);
+  }
+
+  50% {
+    transform: translateY(-120%);
+  }
+}
+
+.ai-wave-container .dot {
+  --uib-d1: -0.48;
+  --uib-d2: -0.4;
+  --uib-d3: -0.32;
+  --uib-d4: -0.24;
+  --uib-d5: -0.16;
+  --uib-d6: -0.08;
+  --uib-d7: -0;
+  position: absolute;
+  bottom: calc(var(--uib-bottom) + var(--uib-dot-size) / 2);
+  right: calc(var(--uib-right) + var(--uib-dot-size) / 2);
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  height: var(--uib-dot-size);
+  width: var(--uib-dot-size);
+  animation: ai-wave-jump var(--uib-speed) ease-in-out infinite;
+  opacity: var(--uib-scale);
+  will-change: transform;
+  backface-visibility: hidden;
+}
+
+.ai-wave-container .dot::before {
+  content: "";
+  height: 100%;
+  width: 100%;
+  background-color: var(--uib-color);
+  border-radius: 50%;
+  transform: scale(var(--uib-scale));
+  transition: background-color 0.3s ease;
+}
+
+.ai-wave-container .dot:nth-child(1) {
+  --uib-bottom: 24%;
+  --uib-right: -35%;
+  animation-delay: calc(var(--uib-speed) * var(--uib-d1));
+}
+
+.ai-wave-container .dot:nth-child(2) {
+  --uib-bottom: 16%;
+  --uib-right: -6%;
+  animation-delay: calc(var(--uib-speed) * var(--uib-d2));
+}
+
+.ai-wave-container .dot:nth-child(3) {
+  --uib-bottom: 8%;
+  --uib-right: 23%;
+  animation-delay: calc(var(--uib-speed) * var(--uib-d3));
+}
+
+.ai-wave-container .dot:nth-child(4) {
+  --uib-bottom: -1%;
+  --uib-right: 51%;
+  animation-delay: calc(var(--uib-speed) * var(--uib-d4));
+}
+
+.ai-wave-container .dot:nth-child(5) {
+  --uib-bottom: 38%;
+  --uib-right: -17.5%;
+  animation-delay: calc(var(--uib-speed) * var(--uib-d2));
+}
+
+.ai-wave-container .dot:nth-child(6) {
+  --uib-bottom: 30%;
+  --uib-right: 10%;
+  animation-delay: calc(var(--uib-speed) * var(--uib-d3));
+}
+
+.ai-wave-container .dot:nth-child(7) {
+  --uib-bottom: 22%;
+  --uib-right: 39%;
+  animation-delay: calc(var(--uib-speed) * var(--uib-d4));
+}
+
+.ai-wave-container .dot:nth-child(8) {
+  --uib-bottom: 14%;
+  --uib-right: 67%;
+  animation-delay: calc(var(--uib-speed) * var(--uib-d5));
+}
+
+.ai-wave-container .dot:nth-child(9) {
+  --uib-bottom: 53%;
+  --uib-right: -0.8%;
+  animation-delay: calc(var(--uib-speed) * var(--uib-d3));
+}
+
+.ai-wave-container .dot:nth-child(10) {
+  --uib-bottom: 44.5%;
+  --uib-right: 27%;
+  animation-delay: calc(var(--uib-speed) * var(--uib-d4));
+}
+
+.ai-wave-container .dot:nth-child(11) {
+  --uib-bottom: 36%;
+  --uib-right: 55.7%;
+  animation-delay: calc(var(--uib-speed) * var(--uib-d5));
+}
+
+.ai-wave-container .dot:nth-child(12) {
+  --uib-bottom: 28.7%;
+  --uib-right: 84.3%;
+  animation-delay: calc(var(--uib-speed) * var(--uib-d6));
+}
+
+.ai-wave-container .dot:nth-child(13) {
+  --uib-bottom: 66.8%;
+  --uib-right: 15%;
+  animation-delay: calc(var(--uib-speed) * var(--uib-d4));
+}
+
+.ai-wave-container .dot:nth-child(14) {
+  --uib-bottom: 58.8%;
+  --uib-right: 43%;
+  animation-delay: calc(var(--uib-speed) * var(--uib-d5));
+}
+
+.ai-wave-container .dot:nth-child(15) {
+  --uib-bottom: 50%;
+  --uib-right: 72%;
+  animation-delay: calc(var(--uib-speed) * var(--uib-d6));
+}
+
+.ai-wave-container .dot:nth-child(16) {
+  --uib-bottom: 42%;
+  --uib-right: 100%;
+  animation-delay: calc(var(--uib-speed) * var(--uib-d7));
+}
+
+.ai-wave-container .dot:nth-child(3) {
+  --uib-scale: 0.98;
+}
+
+.ai-wave-container .dot:nth-child(2),
+.ai-wave-container .dot:nth-child(8) {
+  --uib-scale: 0.96;
+}
+
+.ai-wave-container .dot:nth-child(1),
+.ai-wave-container .dot:nth-child(7) {
+  --uib-scale: 0.94;
+}
+
+.ai-wave-container .dot:nth-child(6),
+.ai-wave-container .dot:nth-child(12) {
+  --uib-scale: 0.92;
+}
+
+.ai-wave-container .dot:nth-child(5),
+.ai-wave-container .dot:nth-child(11) {
+  --uib-scale: 0.9;
+}
+
+.ai-wave-container .dot:nth-child(10),
+.ai-wave-container .dot:nth-child(16) {
+  --uib-scale: 0.88;
+}
+
+.ai-wave-container .dot:nth-child(9),
+.ai-wave-container .dot:nth-child(15) {
+  --uib-scale: 0.86;
+}
+
+.ai-wave-container .dot:nth-child(14) {
+  --uib-scale: 0.84;
+}
+
+.ai-wave-container .dot:nth-child(13) {
+  --uib-scale: 0.82;
+}
+
+.ai-wave-container .dot:nth-child(1) {
+  --uib-color: #f97316;
+}
+
+.ai-wave-container .dot:nth-child(2) {
+  --uib-color: #fb923c;
+}
+
+.ai-wave-container .dot:nth-child(3) {
+  --uib-color: #fdba74;
+}
+
+.ai-wave-container .dot:nth-child(4) {
+  --uib-color: #f59e0b;
+}
+
+.ai-wave-container .dot:nth-child(5) {
+  --uib-color: #fbbf24;
+}
+
+.ai-wave-container .dot:nth-child(6) {
+  --uib-color: #fcd34d;
+}
+
+.ai-wave-container .dot:nth-child(7) {
+  --uib-color: #ea580c;
+}
+
+.ai-wave-container .dot:nth-child(8) {
+  --uib-color: #f97316;
+}
+
+.ai-wave-container .dot:nth-child(9) {
+  --uib-color: #fb923c;
+}
+
+.ai-wave-container .dot:nth-child(10) {
+  --uib-color: #f59e0b;
+}
+
+.ai-wave-container .dot:nth-child(11) {
+  --uib-color: #fbbf24;
+}
+
+.ai-wave-container .dot:nth-child(12) {
+  --uib-color: #eab308;
+}
+
+.ai-wave-container .dot:nth-child(13) {
+  --uib-color: #f97316;
+}
+
+.ai-wave-container .dot:nth-child(14) {
+  --uib-color: #ea580c;
+}
+
+.ai-wave-container .dot:nth-child(15) {
+  --uib-color: #c2410c;
+}
+
+.ai-wave-container .dot:nth-child(16) {
+  --uib-color: #9a3412;
 }
 
 /* Price Alert Animations */
@@ -429,4 +804,15 @@ aside.fixed,
 
 .animate-bounce-custom {
   animation: bounce-custom 0.6s ease-in-out infinite;
+}
+
+/* 4. Chrome/Safari Autofill Background & Color Overrides */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+input:-webkit-autofill:active {
+  -webkit-text-fill-color: hsl(var(--foreground)) !important;
+  -webkit-box-shadow: 0 0 0px 1000px hsl(var(--card) / 0.85) inset !important;
+  transition: background-color 5000s ease-in-out 0s;
+  border-color: hsl(var(--primary) / 0.5) !important;
 }

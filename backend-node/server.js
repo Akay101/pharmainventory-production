@@ -28,6 +28,7 @@ const { scanQueue } = require("./services/ai/queue");
 const basicAuth = require("express-basic-auth");
 
 const app = express();
+app.set("trust proxy", 1);
 const PORT = process.env.PORT || 8001;
 // Middleware
 app.use(

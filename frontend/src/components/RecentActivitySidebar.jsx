@@ -25,7 +25,7 @@ const MODULE_CONFIG = {
   PURCHASES: { icon: ShoppingCart, color: "text-violet-500", bg: "bg-violet-500/10", border: "border-violet-500/20" },
   CUSTOMERS: { icon: Users, color: "text-emerald-500", bg: "bg-emerald-500/10", border: "border-emerald-500/20" },
   SUPPLIERS: { icon: Truck, color: "text-amber-500", bg: "bg-amber-500/10", border: "border-amber-500/20" },
-  INVENTORY: { icon: Package, color: "text-indigo-500", bg: "bg-indigo-500/10", border: "border-indigo-500/20" },
+  INVENTORY: { icon: Package, color: "text-orange-500", bg: "bg-orange-500/10", border: "border-orange-500/20" },
   PRODUCTS: { icon: Package, color: "text-rose-500", bg: "bg-rose-500/10", border: "border-rose-500/20" },
   USERS: { icon: Users, color: "text-cyan-500", bg: "bg-cyan-500/10", border: "border-cyan-500/20" },
 };

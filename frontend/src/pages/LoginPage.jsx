@@ -13,7 +13,12 @@ import {
   CheckCircle2,
   Lock,
   Mail,
+  Sparkles,
+  Zap,
 } from "lucide-react";
+import FluidLinePattern from "../components/ui/FluidLinePattern";
+import ThemeToggle from "../components/ui/ThemeToggle";
+import CornerPattern from "../components/ui/CornerPattern";
 
 export default function LoginPage() {
   const navigate = useNavigate();
@@ -49,65 +54,75 @@ export default function LoginPage() {
 
   return (
     <div
-      className="min-h-screen w-full grid grid-cols-1 md:grid-cols-12 bg-background select-none overflow-hidden"
+      className="min-h-screen w-full grid grid-cols-1 md:grid-cols-12 bg-background select-none overflow-hidden relative"
       data-testid="login-page"
     >
-      {/* Left Panel: Aesthetic Brand Sidebar (Hidden on mobile) */}
-      <div className="hidden md:flex md:col-span-6 lg:col-span-7 bg-zinc-950/20 border-r border-border/50 p-12 flex-col justify-between relative overflow-hidden">
-        {/* Soft, lightweight ambient lights (GPU accelerated, no heavy blur-3xl lag) */}
-        <div className="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] rounded-full bg-gradient-to-br from-primary/10 to-transparent pointer-events-none transform translate-z-0"></div>
-        <div className="absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] rounded-full bg-gradient-to-tl from-accent/5 to-transparent pointer-events-none transform translate-z-0"></div>
+      {/* Left Panel: Aesthetic Brand Sidebar with Interactive Fluid Wave Mesh */}
+      <div className="hidden md:flex md:col-span-6 lg:col-span-7 bg-card/70 dark:bg-zinc-950/75 border-r border-border/80 dark:border-border/50 p-8 lg:p-12 flex-col justify-between relative overflow-hidden transition-colors duration-300">
+        {/* Interactive Fluid Line Pattern Canvas Background */}
+        <FluidLinePattern />
+
+        {/* Ambient Light Orbs */}
+        <div className="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] rounded-full bg-gradient-to-br from-orange-500/15 via-amber-500/8 to-transparent pointer-events-none blur-2xl"></div>
+        <div className="absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] rounded-full bg-gradient-to-tl from-orange-500/15 via-amber-500/8 to-transparent pointer-events-none blur-2xl"></div>
 
         {/* Header Logo */}
         <div className="flex items-center gap-3 relative z-10">
-          <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center shadow-lg shadow-primary/20">
-            <Activity className="w-5 h-5 text-primary-foreground" />
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-orange-500 to-amber-500 flex items-center justify-center shadow-lg shadow-orange-500/25 shrink-0">
+            <Activity className="w-5 h-5 text-white" />
           </div>
-          <span className="font-extrabold text-xl tracking-tight text-foreground bg-gradient-to-r from-foreground to-foreground/80 bg-clip-text">
+          <span className="font-extrabold text-lg lg:text-xl tracking-tight text-foreground">
             Test Instance - Pharmacy management software
           </span>
         </div>
 
         {/* Hero Section */}
-        <div className="my-auto space-y-8 relative z-10 max-w-lg">
+        <div className="my-auto space-y-8 relative z-10 max-w-lg py-6">
           <div className="space-y-4">
-            <h1 className="text-4xl lg:text-5xl font-black tracking-tight text-foreground leading-[1.1]">
+            <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-orange-500/10 border border-orange-500/30 text-orange-600 dark:text-orange-400 text-xs font-extrabold uppercase tracking-wider shadow-2xs">
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>Next-Gen Pharmacy OS</span>
+            </div>
+            <h1 className="text-4xl lg:text-5xl font-black tracking-tight text-foreground leading-[1.12]">
               Streamlining <br />
-              <span className="text-primary bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
+              <span className="bg-gradient-to-r from-orange-500 via-amber-500 to-orange-600 bg-clip-text text-transparent">
                 Pharmacy Intelligence.
               </span>
             </h1>
-            <p className="text-muted-foreground text-base lg:text-lg font-medium leading-relaxed">
-              Experience the next generation of smart pharmacy management. Scan,
-              log, track, and bill in real-time.
+            <p className="text-muted-foreground text-base lg:text-lg font-semibold leading-relaxed">
+              Experience intelligent pharmacy operations. Scan bills with AI OCR, track live batch inventory, and manage cashflows effortlessly.
             </p>
           </div>
 
-          {/* Simple Vector Mockup Box - Highly Performant CSS */}
-          <div className="rounded-xl border border-border/60 bg-card/40 backdrop-blur-md p-6 space-y-4 shadow-2xl relative">
-            <div className="flex items-center justify-between border-b border-border/40 pb-3">
+          {/* Interactive Feature Mockup Box with Crisp Borders */}
+          <div className="rounded-2xl border-2 border-border/90 dark:border-border/70 bg-card/85 dark:bg-card/70 backdrop-blur-xl p-6 space-y-4 shadow-xl relative overflow-hidden group hover:border-orange-500/50 transition-all duration-300">
+            <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-orange-500 via-amber-500 to-orange-400 opacity-90" />
+
+            <div className="flex items-center justify-between border-b border-border/70 dark:border-border/50 pb-3">
               <div className="flex items-center gap-2">
-                <span className="w-3 h-3 rounded-full bg-red-500/80"></span>
-                <span className="w-3 h-3 rounded-full bg-yellow-500/80"></span>
-                <span className="w-3 h-3 rounded-full bg-green-500/80"></span>
+                <span className="w-3 h-3 rounded-full bg-red-500/80 shadow-sm"></span>
+                <span className="w-3 h-3 rounded-full bg-amber-500/80 shadow-sm"></span>
+                <span className="w-3 h-3 rounded-full bg-emerald-500/80 shadow-sm"></span>
               </div>
-              <span className="text-[10px] font-mono text-muted-foreground/60 uppercase tracking-widest">
-                AI DETECTION
+              <span className="text-[10px] font-mono font-bold text-orange-600 dark:text-orange-400 uppercase tracking-widest flex items-center gap-1.5">
+                <Zap className="w-3 h-3" />
+                AI DETECTION ENGINE
               </span>
             </div>
 
             <div className="space-y-3">
-              <div className="h-2 w-3/4 rounded bg-primary/20 animate-pulse"></div>
-              <div className="h-2 w-1/2 rounded bg-muted"></div>
-              <div className="grid grid-cols-3 gap-2 pt-2">
-                <div className="h-8 rounded bg-card border border-border/40 flex items-center justify-center">
-                  <span className="w-1.5 h-1.5 rounded-full bg-green-500 mr-1.5"></span>
-                  <span className="text-[8px] font-mono opacity-60">
+              <div className="h-2.5 w-3/4 rounded-full bg-orange-500/25 animate-pulse"></div>
+              <div className="h-2 w-1/2 rounded-full bg-muted border border-border/40"></div>
+              <div className="grid grid-cols-3 gap-2.5 pt-2">
+                <div className="h-9 rounded-xl bg-background border border-border/80 flex items-center justify-center shadow-xs">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 mr-2 animate-ping"></span>
+                  <span className="text-[10px] font-bold text-foreground font-mono">
                     Stock OK
                   </span>
                 </div>
-                <div className="h-8 rounded bg-card border border-border/40 flex items-center justify-center col-span-2">
-                  <span className="text-[8px] font-mono text-primary font-bold">
+                <div className="h-9 rounded-xl bg-gradient-to-r from-orange-500/15 to-amber-500/15 border border-orange-500/40 flex items-center justify-center col-span-2 shadow-xs">
+                  <span className="text-[10px] font-mono text-orange-600 dark:text-orange-400 font-extrabold flex items-center gap-1">
+                    <Sparkles className="w-3 h-3" />
                     Autofill Using AI
                   </span>
                 </div>
@@ -116,7 +131,7 @@ export default function LoginPage() {
           </div>
 
           {/* Core Highlights */}
-          <div className="space-y-3 pt-2">
+          <div className="grid grid-cols-1 gap-3 pt-1">
             {[
               "AI-Powered Bill Scanner with OCR Extraction",
               "Real-time Inventory Tracking and Expiry Alerts",
@@ -125,9 +140,11 @@ export default function LoginPage() {
             ].map((text, i) => (
               <div
                 key={i}
-                className="flex items-center gap-3 text-sm text-foreground/80 font-medium"
+                className="flex items-center gap-3 text-sm text-foreground font-semibold"
               >
-                <CheckCircle2 className="w-4 h-4 text-primary shrink-0" />
+                <div className="p-1 rounded-full bg-orange-500/15 border border-orange-500/30 shrink-0">
+                  <CheckCircle2 className="w-4 h-4 text-orange-500" />
+                </div>
                 <span>{text}</span>
               </div>
             ))}
@@ -135,22 +152,29 @@ export default function LoginPage() {
         </div>
 
         {/* Footer */}
-        <div className="text-xs text-muted-foreground/60 font-medium relative z-10">
-          © {new Date().getFullYear()} Krishna Medicose Inc. All rights
-          reserved.
+        <div className="text-xs text-muted-foreground font-semibold relative z-10">
+          © {new Date().getFullYear()} Krishna Medicose Inc. All rights reserved.
         </div>
       </div>
 
-      {/* Right Panel: Clean, Modern Login Form */}
-      <div className="col-span-12 md:col-span-6 lg:col-span-5 flex items-center justify-center p-6 sm:p-12 bg-background relative">
-        {/* Decorative backdrop light on mobile only */}
-        <div className="md:hidden absolute top-[-20%] right-[-20%] w-[60%] h-[60%] rounded-full bg-primary/5 pointer-events-none blur-3xl"></div>
+      {/* Right Panel: Clean, Modern Login Form with Theme Toggle & Decorative Corner Pattern */}
+      <div className="col-span-12 md:col-span-6 lg:col-span-5 flex items-center justify-center p-6 sm:p-12 bg-background relative overflow-hidden">
+        {/* Top-Right Theme Toggle Switch */}
+        <div className="absolute top-6 right-6 z-20">
+          <ThemeToggle />
+        </div>
+
+        {/* Bottom-Right Decorative Corner Pattern */}
+        <CornerPattern />
+
+        {/* Decorative backdrop light on mobile */}
+        <div className="md:hidden absolute top-[-20%] right-[-20%] w-[60%] h-[60%] rounded-full bg-orange-500/5 pointer-events-none blur-3xl"></div>
 
         <div className="w-full max-w-md space-y-8 relative z-10">
           {/* Header Mobile Logo */}
           <div className="md:hidden flex flex-col items-center text-center space-y-3">
-            <div className="w-12 h-12 rounded-2xl bg-primary flex items-center justify-center shadow-lg shadow-primary/20">
-              <Activity className="w-6 h-6 text-primary-foreground" />
+            <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-orange-500 to-amber-500 flex items-center justify-center shadow-lg shadow-orange-500/25">
+              <Activity className="w-6 h-6 text-white" />
             </div>
             <div>
               <h2 className="text-2xl font-black tracking-tight text-foreground">
@@ -167,23 +191,23 @@ export default function LoginPage() {
             <h2 className="text-3xl font-extrabold tracking-tight text-foreground">
               Sign In
             </h2>
-            <p className="text-muted-foreground text-sm font-medium">
+            <p className="text-muted-foreground text-sm font-semibold">
               Enter your credentials to access your store dashboard.
             </p>
           </div>
 
-          {/* Form Container */}
-          <div className="bg-card/40 md:bg-transparent border border-border/50 md:border-0 rounded-2xl p-6 sm:p-8 md:p-0 shadow-xl md:shadow-none space-y-6">
+          {/* Form Container with Distinguished Light Mode Borders */}
+          <div className="bg-card/90 md:bg-transparent border border-border/80 md:border-0 rounded-2xl p-6 sm:p-8 md:p-0 shadow-xl md:shadow-none space-y-6">
             <form onSubmit={handleSubmit} className="space-y-5">
               <div className="space-y-2">
                 <Label
                   htmlFor="email"
-                  className="text-xs font-bold uppercase tracking-wider text-muted-foreground/80"
+                  className="text-xs font-bold uppercase tracking-wider text-foreground/90"
                 >
                   Email Address
                 </Label>
                 <div className="relative group">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground/50 group-focus-within:text-primary transition-colors">
+                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground group-focus-within:text-orange-500 transition-colors">
                     <Mail className="w-4 h-4" />
                   </span>
                   <Input
@@ -196,7 +220,7 @@ export default function LoginPage() {
                     }
                     required
                     data-testid="login-email-input"
-                    className="pl-10 h-11 border-border/80 focus-visible:ring-1 focus-visible:ring-primary focus-visible:border-primary transition-all bg-card/25"
+                    className="pl-10 h-11 border-border/90 dark:border-border/80 focus-visible:ring-1 focus-visible:ring-orange-500 focus-visible:border-orange-500 transition-all bg-background dark:bg-card/25 text-foreground font-semibold rounded-xl shadow-xs"
                   />
                 </div>
               </div>
@@ -205,13 +229,13 @@ export default function LoginPage() {
                 <div className="flex items-center justify-between">
                   <Label
                     htmlFor="password"
-                    className="text-xs font-bold uppercase tracking-wider text-muted-foreground/80"
+                    className="text-xs font-bold uppercase tracking-wider text-foreground/90"
                   >
                     Password
                   </Label>
                 </div>
                 <div className="relative group">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground/50 group-focus-within:text-primary transition-colors">
+                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground group-focus-within:text-orange-500 transition-colors">
                     <Lock className="w-4 h-4" />
                   </span>
                   <Input
@@ -224,13 +248,13 @@ export default function LoginPage() {
                     }
                     required
                     data-testid="login-password-input"
-                    className="pl-10 pr-10 h-11 border-border/80 focus-visible:ring-1 focus-visible:ring-primary focus-visible:border-primary transition-all bg-card/25"
+                    className="pl-10 pr-10 h-11 border-border/90 dark:border-border/80 focus-visible:ring-1 focus-visible:ring-orange-500 focus-visible:border-orange-500 transition-all bg-background dark:bg-card/25 text-foreground font-semibold rounded-xl shadow-xs"
                   />
                   <Button
                     type="button"
                     variant="ghost"
                     size="icon"
-                    className="absolute right-1 top-1/2 -translate-y-1/2 h-8 w-8 hover:bg-muted text-muted-foreground/50 hover:text-foreground"
+                    className="absolute right-1 top-1/2 -translate-y-1/2 h-9 w-9 hover:bg-muted text-muted-foreground hover:text-foreground rounded-lg"
                     onClick={() => setShowPassword(!showPassword)}
                     data-testid="toggle-password-btn"
                   >
@@ -245,13 +269,13 @@ export default function LoginPage() {
 
               <Button
                 type="submit"
-                className="w-full btn-primary h-11 font-bold text-sm bg-primary hover:bg-primary/95 text-primary-foreground shadow-lg shadow-primary/10 transition-all hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.98] mt-2"
+                className="w-full h-11 font-bold text-sm bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white shadow-lg shadow-orange-500/25 transition-all duration-200 hover:-translate-y-0.5 active:translate-y-0 rounded-xl border-none mt-2"
                 disabled={loading}
                 data-testid="login-submit-btn"
               >
                 {loading ? (
                   <div className="flex items-center justify-center gap-2">
-                    <Loader2 className="w-4 h-4 animate-spin text-primary-foreground" />
+                    <Loader2 className="w-4 h-4 animate-spin text-white" />
                     <span>Signing in...</span>
                   </div>
                 ) : (
@@ -260,11 +284,11 @@ export default function LoginPage() {
               </Button>
             </form>
 
-            <div className="text-center text-sm font-medium text-muted-foreground pt-2">
+            <div className="text-center text-sm font-semibold text-muted-foreground pt-2">
               Don't have an account?{" "}
               <Link
                 to="/register"
-                className="text-primary hover:underline font-bold transition-all hover:text-primary/90"
+                className="text-orange-500 hover:text-orange-600 font-extrabold transition-all underline-offset-4 hover:underline"
                 data-testid="register-link"
               >
                 Register your pharmacy

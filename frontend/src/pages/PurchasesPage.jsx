@@ -72,8 +72,16 @@ import {
   CreditCard,
   CheckCircle2,
   Sparkles,
+  SearchX,
+  Info,
+  Eye,
+  AlertTriangle,
+  TrendingUp,
+  TrendingDown,
 } from "lucide-react";
 import { toast } from "sonner";
+import PlanBadge from "../components/PlanBadge";
+import Loader, { AiLoader } from "../components/Loader";
 import { formatDate } from "./utils";
 import CustomTooltip from "@/components/ui/CustomTooltip";
 import { getOS } from "../hooks/useKeyboard";
@@ -329,6 +337,296 @@ const SupplierSelector = ({
   );
 };
 
+// Equal-sized SVG Icons for Payment Modes
+const RupeeCircleIcon = ({ className = "w-4 h-4" }) => (
+  <svg
+    className={className}
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+  >
+    <path
+      d="M8.5 9.99984H15.5M8.5 6.5H15.5M14 18.0002L8.5 13.5002L10 13.5C14.4447 13.5 14.4447 6.5 10 6.5M22 12C22 17.5228 17.5228 22 12 22C6.47715 22 2 17.5228 2 12C2 6.47715 6.47715 2 12 2C17.5228 2 22 6.47715 22 12Z"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+  </svg>
+);
+
+const UpiIcon = ({ className = "w-4 h-4" }) => (
+  <svg
+    className={className}
+    viewBox="0 0 120 60"
+    xmlns="http://www.w3.org/2000/svg"
+  >
+    <rect width="120" height="60" rx="8" fill="#0F172A" />
+    <path d="M95.678 42.9L110 29.835l-6.784-13.516z" fill="#097939" />
+    <path d="M90.854 42.9l14.322-13.065-6.784-13.516z" fill="#ed752e" />
+    <path
+      d="M22.41 16.47l-6.03 21.475 21.407.15 5.88-21.625h5.427l-7.05 25.14c-.27.96-1.298 1.74-2.295 1.74H12.31c-1.664 0-2.65-1.3-2.2-2.9l6.724-23.98zm66.182-.15h5.427l-7.538 27.03h-5.58zM49.698 27.582l27.136-.15 1.81-5.707H51.054l1.658-5.256 29.4-.27c1.83-.017 2.92 1.4 2.438 3.167L81.78 29.49c-.483 1.766-2.36 3.197-4.19 3.197H53.316L50.454 43.8h-5.28z"
+      fill="#FFFFFF"
+    />
+  </svg>
+);
+
+const CreditCardIcon = ({ className = "w-4 h-4" }) => (
+  <svg
+    className={className}
+    viewBox="0 0 1024 1024"
+    xmlns="http://www.w3.org/2000/svg"
+  >
+    <path
+      d="M512 512m-480 0a480 480 0 1 0 960 0 480 480 0 1 0-960 0Z"
+      fill="#F97316"
+      fill="#F97316"
+    />
+  </svg>
+);
+
+const getPaymentModeIcon = (mode, sizeClass = "w-3.5 h-3.5") => {
+  const m = String(mode || "").toLowerCase();
+  if (m === "cash")
+    return <RupeeCircleIcon className={`${sizeClass} text-emerald-500`} />;
+  if (m === "upi") return <UpiIcon className={sizeClass} />;
+  if (m === "card") return <CreditCardIcon className={sizeClass} />;
+  return null;
+};
+
+// Super Clear, Simple Price History Bar Chart (Rate vs MRP) with Auto-Scroll & Dual Highlights
+const PriceTrendChart = ({
+  trendData = [],
+  currentRate = 0,
+  currentMrp = 0,
+}) => {
+  const [hoveredItem, setHoveredItem] = useState(null);
+  const scrollContainerRef = useRef(null);
+
+  if (!trendData || trendData.length === 0) return null;
+
+  // 1. Sanitize & filter valid historical items
+  let validItems = trendData
+    .map((d) => ({
+      date: d.purchase_date,
+      supplier: d.supplier_name || "Unknown Supplier",
+      rate: Number(d.rate_pack || 0),
+      mrp: Number(d.mrp_pack || 0),
+    }))
+    .filter((d) => d.rate > 0);
+
+  // Fallback corrupt MRP (> 10x rate or 0)
+  validItems = validItems.map((d) => {
+    let cleanMrp = d.mrp;
+    if (cleanMrp <= 0 || cleanMrp > d.rate * 10) {
+      cleanMrp = d.rate * 1.25;
+    }
+    return { ...d, mrp: cleanMrp };
+  });
+
+  // Identify lowest historical rate
+  const historicalItems = validItems.filter((d) => !d.isCurrent);
+  const minHistoricalRate =
+    historicalItems.length > 0
+      ? Math.min(...historicalItems.map((d) => d.rate))
+      : null;
+
+  let lowestMarked = false;
+  validItems = validItems.map((d) => {
+    if (
+      minHistoricalRate !== null &&
+      d.rate === minHistoricalRate &&
+      !lowestMarked
+    ) {
+      lowestMarked = true;
+      return { ...d, isLowest: true };
+    }
+    return d;
+  });
+
+  // Include current entry if available
+  if (currentRate > 0) {
+    validItems.push({
+      date: new Date().toISOString(),
+      supplier: "Current Draft Entry",
+      rate: Number(currentRate),
+      mrp: Number(currentMrp || currentRate * 1.25),
+      isCurrent: true,
+    });
+  }
+
+  if (validItems.length === 0) return null;
+
+  // 2. Find max scale value across all items
+  const maxVal =
+    Math.max(...validItems.map((d) => Math.max(d.rate, d.mrp))) * 1.2 || 100;
+
+  // 3. Auto-scroll to far right (Current Entry) whenever validItems loads
+  useEffect(() => {
+    if (scrollContainerRef.current) {
+      scrollContainerRef.current.scrollLeft =
+        scrollContainerRef.current.scrollWidth;
+    }
+  }, [validItems.length, currentRate, currentMrp]);
+
+  return (
+    <div className="bg-card border border-border/80 rounded-2xl p-4 space-y-2.5 shadow-xs">
+      <div className="flex items-center justify-between">
+        <h4 className="text-xs font-black text-foreground flex items-center gap-1.5 uppercase tracking-wide">
+          <TrendingUp className="w-4 h-4 text-orange-500" />
+          <span>Price History (Rate vs MRP)</span>
+        </h4>
+        <div className="flex items-center gap-3 text-[11px] font-bold">
+          <div className="flex items-center gap-1.5 text-orange-500">
+            <span className="w-2.5 h-2.5 rounded-full bg-orange-500 inline-block shadow-xs"></span>
+            <span>Rate</span>
+          </div>
+          <div className="flex items-center gap-1.5 text-sky-400">
+            <span className="w-2.5 h-2.5 rounded-full bg-sky-400 inline-block shadow-xs"></span>
+            <span>MRP</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Non-clipped Hover Details Header Strip */}
+      <div className="h-6 px-2.5 py-1 rounded-xl bg-muted/50 border border-border/40 text-[10px] font-mono flex items-center justify-between transition-all">
+        {hoveredItem ? (
+          <>
+            <span className="truncate max-w-[55%]">
+              <strong className="text-foreground">
+                {hoveredItem.supplier}
+              </strong>{" "}
+              <span className="text-muted-foreground font-sans">
+                (
+                {hoveredItem.isCurrent
+                  ? "Current"
+                  : hoveredItem.date
+                    ? new Date(hoveredItem.date).toLocaleDateString("en-US", {
+                        month: "short",
+                        day: "numeric",
+                      })
+                    : ""}
+                )
+              </span>
+            </span>
+            <span className="flex items-center gap-2 shrink-0">
+              <span>
+                Rate:{" "}
+                <strong className="text-orange-500 font-extrabold">
+                  ₹{hoveredItem.rate.toFixed(2)}
+                </strong>
+              </span>
+              <span>
+                MRP:{" "}
+                <strong className="text-sky-400 font-extrabold">
+                  ₹{hoveredItem.mrp.toFixed(2)}
+                </strong>
+              </span>
+            </span>
+          </>
+        ) : (
+          <span className="text-muted-foreground italic text-[10px] font-sans">
+            Hover over any bar to inspect supplier details
+          </span>
+        )}
+      </div>
+
+      {/* Horizontal Scrollable Bar Chart Container with Auto-Scroll Ref */}
+      <div
+        ref={scrollContainerRef}
+        className="w-full overflow-x-auto pb-2 pt-2 px-1 scrollbar-thin scroll-smooth"
+      >
+        <div className="flex items-end gap-3 min-w-max min-h-[145px] border-b border-border/50 pb-2">
+          {validItems.map((item, idx) => {
+            const rateHeight = Math.max(
+              12,
+              Math.round((item.rate / maxVal) * 100)
+            );
+            const mrpHeight = Math.max(
+              12,
+              Math.round((item.mrp / maxVal) * 100)
+            );
+            const formattedDate = item.date
+              ? new Date(item.date).toLocaleDateString("en-US", {
+                  month: "short",
+                  day: "numeric",
+                })
+              : "N/A";
+
+            return (
+              <div
+                key={idx}
+                onMouseEnter={() => setHoveredItem(item)}
+                onMouseLeave={() => setHoveredItem(null)}
+                title={`${item.supplier}\nRate: ₹${item.rate.toFixed(2)}\nMRP: ₹${item.mrp.toFixed(2)}`}
+                className={`flex flex-col items-center gap-1.5 group cursor-pointer px-2.5 py-2 rounded-2xl min-w-[85px] shrink-0 transition-all ${
+                  item.isCurrent
+                    ? "ring-2 ring-orange-500 bg-orange-500/10 shadow-md shadow-orange-500/20"
+                    : item.isLowest
+                      ? "ring-2 ring-sky-400 bg-sky-400/10 shadow-md shadow-sky-400/20"
+                      : "hover:bg-muted/40 border border-transparent hover:border-border/60"
+                }`}
+              >
+                {/* Direct Price Labels (Non-overlapping Stacked Header) */}
+                <div className="flex flex-col items-center text-[9px] font-black font-mono leading-tight mb-1">
+                  <span className="text-sky-400" title="MRP">
+                    ₹{Math.round(item.mrp)}
+                  </span>
+                  <span className="text-orange-500" title="Rate">
+                    ₹{Math.round(item.rate)}
+                  </span>
+                </div>
+
+                {/* Side-by-side Bars */}
+                <div className="flex items-end gap-1.5 h-[80px] w-full justify-center">
+                  {/* Rate Bar */}
+                  <div className="flex flex-col items-center w-4 h-full justify-end">
+                    <div
+                      style={{ height: `${rateHeight}%` }}
+                      className={`w-full rounded-t-md transition-all duration-300 ${
+                        item.isCurrent
+                          ? "bg-gradient-to-t from-orange-600 to-amber-400"
+                          : item.isLowest
+                            ? "bg-sky-400"
+                            : "bg-orange-500/80 group-hover:bg-orange-500"
+                      }`}
+                    />
+                  </div>
+
+                  {/* MRP Bar */}
+                  <div className="flex flex-col items-center w-4 h-full justify-end">
+                    <div
+                      style={{ height: `${mrpHeight}%` }}
+                      className="w-full bg-sky-400/80 group-hover:bg-sky-400 rounded-t-md transition-all duration-300"
+                    />
+                  </div>
+                </div>
+
+                {/* Date / Status Tag */}
+                <span
+                  className={`text-[10px] font-extrabold tracking-tight px-2 py-0.5 rounded-full mt-1 ${
+                    item.isCurrent
+                      ? "bg-orange-500 text-white shadow-xs"
+                      : item.isLowest
+                        ? "bg-sky-400 text-slate-950 font-black shadow-xs"
+                        : "text-muted-foreground bg-muted/60"
+                  }`}
+                >
+                  {item.isCurrent
+                    ? "Current"
+                    : item.isLowest
+                      ? `Lowest (${formattedDate})`
+                      : formattedDate}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 export default function PurchasesPage() {
   // Data state
   const [purchases, setPurchases] = useState([]);
@@ -365,6 +663,209 @@ export default function PurchasesPage() {
   const [suggestionPage, setSuggestionPage] = useState(1);
   const [hasMoreSuggestions, setHasMoreSuggestions] = useState(false);
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
+
+  // Product Details Slideover Drawer State
+  const [productSidebar, setProductSidebar] = useState({
+    open: false,
+    productName: "",
+    itemId: null,
+    activeTab: "batches", // "batches" or "history"
+    loading: false,
+    batches: [],
+    history: [],
+    priceHistoryDetail: null,
+  });
+
+  const handleOpenProductSidebar = async (
+    productName,
+    itemId = null,
+    initialTab = "batches",
+    currentRate = 0,
+    currentMrp = 0
+  ) => {
+    if (!productName || !productName.trim()) return;
+    const cleanName = productName.trim();
+
+    setProductSidebar({
+      open: true,
+      productName: cleanName,
+      itemId,
+      activeTab: initialTab,
+      loading: true,
+      batches: [],
+      history: [],
+      priceHistoryDetail: null,
+    });
+
+    try {
+      const token = localStorage.getItem("token");
+      const headers = { Authorization: `Bearer ${token}` };
+      const [batchesRes, historyRes, priceHistRes] = await Promise.all([
+        axios
+          .get(
+            `${API}/inventory/product-batches?product_name=${encodeURIComponent(cleanName)}`,
+            { headers }
+          )
+          .then((r) => r.data)
+          .catch(() => ({ batches: [] })),
+        axios
+          .get(
+            `${API}/purchases/product-history?product_name=${encodeURIComponent(cleanName)}`,
+            { headers }
+          )
+          .then((r) => r.data)
+          .catch(() => ({ purchases: [] })),
+        axios
+          .get(
+            `${API}/purchases/price-history?product_name=${encodeURIComponent(cleanName)}&current_rate=${currentRate}&current_mrp=${currentMrp}`,
+            { headers }
+          )
+          .then((r) => r.data)
+          .catch(() => null),
+      ]);
+
+      setProductSidebar((prev) => ({
+        ...prev,
+        loading: false,
+        batches: batchesRes.batches || [],
+        history: historyRes.purchases || [],
+        priceHistoryDetail: priceHistRes,
+      }));
+    } catch (err) {
+      console.error("Error fetching product sidebar details:", err);
+      toast.error("Failed to load product details");
+      setProductSidebar((prev) => ({ ...prev, loading: false }));
+    }
+  };
+
+  const handleApplyBatchToRow = (batch) => {
+    let targetId = productSidebar.itemId;
+    if (!targetId) {
+      const match = purchaseItems.find(
+        (row) =>
+          row.product_name &&
+          row.product_name.trim().toLowerCase() ===
+            productSidebar.productName.toLowerCase()
+      );
+      if (match) {
+        targetId = match.id;
+      } else if (purchaseItems.length > 0) {
+        targetId = purchaseItems[0].id;
+      }
+    }
+
+    if (!targetId) {
+      toast.error("Please add a row in the invoice table first");
+      return;
+    }
+
+    setPurchaseItems((prev) =>
+      prev.map((row) => {
+        if (row.id === targetId) {
+          const qty =
+            parseInt(row.quantity) || parseInt(row.pack_quantity) || 1;
+          const ratePack =
+            parseFloat(batch.pack_price || batch.purchase_price) ||
+            parseFloat(row.rate_pack) ||
+            0;
+          return {
+            ...row,
+            product_name:
+              batch.product_name ||
+              row.product_name ||
+              productSidebar.productName,
+            batch_no: batch.batch_no || row.batch_no,
+            expiry_date: batch.expiry_date || row.expiry_date,
+            rate_pack: ratePack,
+            pack_price: ratePack,
+            mrp_pack:
+              batch.mrp_pack ||
+              (batch.mrp && batch.units_per_pack
+                ? batch.mrp * batch.units_per_pack
+                : row.mrp_pack),
+            units_per_pack: batch.units_per_pack || row.units_per_pack || 1,
+            units: batch.units_per_pack || row.units || 1,
+            hsn_no: batch.hsn_no || row.hsn_no,
+            manufacturer: batch.manufacturer || row.manufacturer,
+            salt_composition: batch.salt_composition || row.salt_composition,
+            pack_type: batch.pack_type || row.pack_type || "Strip",
+            cgst: batch.cgst !== undefined ? batch.cgst : row.cgst,
+            sgst: batch.sgst !== undefined ? batch.sgst : row.sgst,
+            total_amount: (qty * ratePack).toFixed(2),
+          };
+        }
+        return row;
+      })
+    );
+
+    toast.success(`Applied Batch ${batch.batch_no || "details"}`);
+    setProductSidebar((prev) => ({ ...prev, open: false }));
+  };
+
+  const handleApplyHistoryToRow = (record) => {
+    let targetId = productSidebar.itemId;
+    if (!targetId) {
+      const match = purchaseItems.find(
+        (row) =>
+          row.product_name &&
+          row.product_name.trim().toLowerCase() ===
+            productSidebar.productName.toLowerCase()
+      );
+      if (match) {
+        targetId = match.id;
+      } else if (purchaseItems.length > 0) {
+        targetId = purchaseItems[0].id;
+      }
+    }
+
+    if (!targetId) {
+      toast.error("Please add a row in the invoice table first");
+      return;
+    }
+
+    setPurchaseItems((prev) =>
+      prev.map((row) => {
+        if (row.id === targetId) {
+          const qty =
+            parseInt(row.quantity) || parseInt(row.pack_quantity) || 1;
+          const ratePack =
+            parseFloat(record.pack_price) || parseFloat(row.rate_pack) || 0;
+          return {
+            ...row,
+            product_name:
+              record.product_name ||
+              row.product_name ||
+              productSidebar.productName,
+            batch_no: record.batch_no || row.batch_no,
+            expiry_date: record.expiry_date || row.expiry_date,
+            rate_pack: ratePack,
+            pack_price: ratePack,
+            mrp_pack: record.mrp_pack || row.mrp_pack,
+            units_per_pack: record.units_per_pack || row.units_per_pack || 1,
+            units: record.units_per_pack || row.units || 1,
+            discount: record.discount || row.discount || 0,
+            scheme: record.scheme || row.scheme || 0,
+            manufacturer: record.manufacturer || row.manufacturer,
+            salt_composition: record.salt_composition || row.salt_composition,
+            hsn_no: record.hsn_no || row.hsn_no,
+            cgst: record.cgst !== undefined ? record.cgst : row.cgst,
+            sgst: record.sgst !== undefined ? record.sgst : row.sgst,
+            total_amount: (qty * ratePack).toFixed(2),
+          };
+        }
+        return row;
+      })
+    );
+
+    if (!selectedSupplier && record.supplier_id) {
+      setSelectedSupplier(record.supplier_id);
+    }
+
+    toast.success(
+      `Applied past purchase details from ${record.supplier_name || "Supplier"}`
+    );
+    setProductSidebar((prev) => ({ ...prev, open: false }));
+  };
 
   const [applyCgstToAll, setApplyCgstToAll] = useState(false);
   const [applySgstToAll, setApplySgstToAll] = useState(false);
@@ -472,17 +973,22 @@ export default function PurchasesPage() {
     if (!inputElement) return;
 
     const rect = inputElement.getBoundingClientRect();
-    const dropdownWidth = Math.max(rect.width, 480);
+    const dropdownWidth = Math.max(620, Math.min(window.innerWidth * 0.5, 780));
 
     const spaceBelow = window.innerHeight - rect.bottom;
     const spaceAbove = rect.top;
-    const dropdownMaxHeight = 300; // Purchases Page max height is 300px
+    const dropdownMaxHeight = 320;
     const positionAbove =
       spaceBelow < dropdownMaxHeight && spaceAbove > spaceBelow;
 
+    let leftPos = rect.left;
+    if (leftPos + dropdownWidth > window.innerWidth - 16) {
+      leftPos = Math.max(16, window.innerWidth - dropdownWidth - 16);
+    }
+
     setDropdownPosition({
       top: positionAbove ? rect.top - 4 : rect.bottom + 4,
-      left: rect.left,
+      left: leftPos,
       width: dropdownWidth,
       transform: positionAbove ? "translateY(-100%)" : "none",
     });
@@ -533,19 +1039,34 @@ export default function PurchasesPage() {
     data: null,
   });
 
-  // CSV Import State
+  // CSV Import & Supplier Template State
   const [csvDialog, setCsvDialog] = useState(false);
   const [csvFile, setCsvFile] = useState(null);
   const [csvColumns, setCsvColumns] = useState([]);
   const [csvSampleData, setCsvSampleData] = useState([]);
+  const [csvParsedRows, setCsvParsedRows] = useState([]);
+  const [csvR2Key, setCsvR2Key] = useState(null);
+  const [csvR2Url, setCsvR2Url] = useState(null);
+  const [csvReading, setCsvReading] = useState(false);
+  const [supplierTemplateInfo, setSupplierTemplateInfo] = useState(null);
+  const [saveTemplateChecked, setSaveTemplateChecked] = useState(true);
   const [csvMapping, setCsvMapping] = useState({
-    product_name_col: "",
-    batch_no_col: "",
-    expiry_date_col: "",
-    quantity_col: "",
-    purchase_price_col: "",
-    mrp_col: "",
-    hsn_col: "",
+    product_name: "",
+    batch_no: "",
+    expiry_date: "",
+    quantity: "",
+    units: "",
+    pack_type: "",
+    rate_pack: "",
+    mrp_pack: "",
+    cgst: "",
+    sgst: "",
+    gst_percent: "",
+    discount: "",
+    scheme: "",
+    hsn_no: "",
+    manufacturer: "",
+    salt_composition: "",
   });
 
   // Pagination and Filter State
@@ -678,11 +1199,7 @@ export default function PurchasesPage() {
       return;
     }
     const defaultMode = settings?.purchase_payment_mode_default;
-    if (
-      defaultMode &&
-      defaultMode !== "none" &&
-      paymentMode === ""
-    ) {
+    if (defaultMode && defaultMode !== "none" && paymentMode === "") {
       setPaymentMode(defaultMode);
     }
   }, [settings, paymentMode, paymentStatus]);
@@ -690,7 +1207,11 @@ export default function PurchasesPage() {
   useEffect(() => {
     const defaultPaymentStatus = settings?.purchase_payment_status;
     if (defaultPaymentStatus) {
-      const initialStatus = settings?.purchase_payment_mode_mandatory && defaultPaymentStatus === "Unpaid" ? "Paid" : defaultPaymentStatus;
+      const initialStatus =
+        settings?.purchase_payment_mode_mandatory &&
+        defaultPaymentStatus === "Unpaid"
+          ? "Paid"
+          : defaultPaymentStatus;
       setPaymentStatus(initialStatus);
     }
   }, [settings]);
@@ -715,7 +1236,10 @@ export default function PurchasesPage() {
     const initialMode =
       defaultMode && defaultMode !== "none" ? defaultMode : "";
     const defaultStatus = settings?.purchase_payment_status || "Unpaid";
-    const initialStatus = settings?.purchase_payment_mode_mandatory && defaultStatus === "Unpaid" ? "Paid" : defaultStatus;
+    const initialStatus =
+      settings?.purchase_payment_mode_mandatory && defaultStatus === "Unpaid"
+        ? "Paid"
+        : defaultStatus;
     const newTab = {
       id: newId,
       data: {
@@ -1471,28 +1995,38 @@ export default function PurchasesPage() {
       });
     });
   };
-  // Optimize: Check price history silently (used onBlur and immediately on auto-fill)
+  // Check price history silently (used onBlur and immediately on auto-fill)
   const checkPriceHistorySilent = async (
     itemId,
     productName,
-    currentPriceParam
+    currentRateParam,
+    currentMrpParam
   ) => {
-    const currentPrice = parseFloat(currentPriceParam);
-    if (!productName || !currentPrice || currentPrice <= 0) return;
+    const currentRate = parseFloat(currentRateParam);
+    const currentMrp = parseFloat(currentMrpParam);
+    if (!productName || !currentRate || currentRate <= 0) return;
 
     try {
       const response = await axios.get(`${API}/purchases/price-history`, {
-        params: { product_name: productName, current_price: currentPrice },
+        params: {
+          product_name: productName,
+          current_rate: currentRate,
+          current_mrp: currentMrp || 0,
+        },
       });
 
       const data = response.data;
-      if (data.is_higher_than_history && data.cheaper_options?.length > 0) {
+      if (
+        data.is_higher_price_alert ||
+        data.mrp_increased ||
+        data.is_mrp_lowered_alert ||
+        data.mrp_lowered
+      ) {
         setPriceAlerts((prev) => ({
           ...prev,
           [itemId]: data,
         }));
       } else {
-        // Clear alert if it's fine now
         setPriceAlerts((prev) => {
           const updated = { ...prev };
           delete updated[itemId];
@@ -1504,67 +2038,49 @@ export default function PurchasesPage() {
     }
   };
 
-  // Check historical prices for a product
-  const checkPriceHistory = async (itemId, productName, currentPrice) => {
-    if (!productName || currentPrice <= 0) {
-      toast.error("Invalid product or price");
+  // Real-time automatic evaluation of price history as soon as user types or lands on draft
+  useEffect(() => {
+    if (!showNewPurchase || purchaseItems.length === 0) return;
+
+    const timer = setTimeout(() => {
+      purchaseItems.forEach((item) => {
+        const rate = parseFloat(item.rate_pack || item.pack_price || 0);
+        const mrp =
+          parseFloat(
+            item.mrp_pack ||
+              (item.mrp_unit && item.units ? item.mrp_unit * item.units : 0)
+          ) || 0;
+        if (
+          item.product_name &&
+          item.product_name.trim().length > 0 &&
+          rate > 0
+        ) {
+          checkPriceHistorySilent(item.id, item.product_name, rate, mrp);
+        }
+      });
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [purchaseItems, showNewPurchase]);
+
+  // Check historical prices & open right sidebar on history tab
+  const checkPriceHistory = async (
+    itemId,
+    productName,
+    currentRate,
+    currentMrp
+  ) => {
+    if (!productName) {
+      toast.error("Enter product name first");
       return;
     }
-
-    try {
-      const response = await axios.get(`${API}/purchases/price-history`, {
-        params: { product_name: productName, current_price: currentPrice },
-      });
-
-      const data = response.data;
-
-      // CASE 1: Cheaper options exist
-      if (data.is_higher_than_history && data.cheaper_options?.length > 0) {
-        setPriceHistoryDialog({
-          open: true,
-          itemId,
-          data: {
-            type: "higher",
-            searched_product_name: data.product_name,
-            matched_product_name: data.matched_product_name, // if you added it
-            currentPrice: data.current_price || 0,
-            cheapestPrice: data.cheapest_historical_price || 0,
-            priceDifference: data.price_difference || 0,
-            cheaperOptions: data.cheaper_options || [],
-          },
-        });
-
-        return;
-      }
-
-      // CASE 2: Current is cheapest
-      if (
-        data.cheapest_historical_price !== null &&
-        currentPrice <= data.cheapest_historical_price
-      ) {
-        setPriceHistoryDialog({
-          open: true,
-          itemId,
-          data: {
-            type: "cheapest",
-            ...data,
-          },
-        });
-        return;
-      }
-
-      // CASE 3: No history
-      setPriceHistoryDialog({
-        open: true,
-        itemId,
-        data: {
-          type: "no-history",
-          ...data,
-        },
-      });
-    } catch (error) {
-      toast.error("Failed to compare prices");
-    }
+    handleOpenProductSidebar(
+      productName,
+      itemId,
+      "history",
+      currentRate,
+      currentMrp
+    );
   };
 
   const buildSaltComposition = (medicine) => {
@@ -1611,7 +2127,20 @@ export default function PurchasesPage() {
         .join(", ") ||
       "";
 
-    const ratePackFixed = ratePack.toFixed(2);
+    const ratePackFixed = ratePack > 0 ? ratePack.toFixed(2) : "";
+    const mrpPackFixed = mrpPack > 0 ? mrpPack.toFixed(2) : "";
+
+    const hasValue = (val) => {
+      if (val === null || val === undefined) return false;
+      const str = String(val).trim();
+      return (
+        str !== "" &&
+        str !== "0" &&
+        str !== "0.00" &&
+        str !== "null" &&
+        str !== "undefined"
+      );
+    };
 
     setPurchaseItems((prev) => {
       const isFirstRow = prev.length > 0 && prev[0].id === itemId;
@@ -1626,54 +2155,82 @@ export default function PurchasesPage() {
         if (item.id !== itemId && !shouldPropagateCgst && !shouldPropagateSgst)
           return item;
 
-        const qty =
-          parseInt(
-            item.id === itemId
-              ? item.quantity
-              : item.quantity || item.pack_quantity
-          ) || 1;
-        const currentRatePack =
-          item.id === itemId
-            ? ratePack
-            : parseFloat(item.rate_pack || item.pack_price) || 0;
-
-        let cgstStr = item.cgst;
         if (item.id === itemId) {
-          cgstStr = finalCgst;
-        } else if (shouldPropagateCgst) {
-          cgstStr = finalCgst;
-        }
+          const finalRatePack = hasValue(item.rate_pack)
+            ? String(item.rate_pack)
+            : hasValue(item.pack_price)
+              ? String(item.pack_price)
+              : ratePackFixed;
 
-        let sgstStr = item.sgst;
-        if (item.id === itemId) {
-          sgstStr = finalSgst;
-        } else if (shouldPropagateSgst) {
-          sgstStr = finalSgst;
-        }
+          const finalMrpPack = hasValue(item.mrp_pack)
+            ? String(item.mrp_pack)
+            : mrpPackFixed;
 
-        const currentCgstVal = parseFloat(cgstStr) || 0;
-        const currentSgstVal = parseFloat(sgstStr) || 0;
+          const finalUnits = hasValue(item.units)
+            ? String(item.units)
+            : hasValue(item.units_per_pack)
+              ? String(item.units_per_pack)
+              : String(unitsPerPack);
 
-        const base = qty * currentRatePack;
-        const total = (
-          base *
-          (1 + (currentCgstVal + currentSgstVal) / 100)
-        ).toFixed(2);
+          const finalManufacturer = hasValue(item.manufacturer)
+            ? item.manufacturer
+            : manufacturer;
 
-        if (item.id === itemId) {
+          const finalSaltComposition = hasValue(item.salt_composition)
+            ? item.salt_composition
+            : salt_composition;
+
+          const finalBatchNo = hasValue(item.batch_no)
+            ? item.batch_no
+            : isInventory && medicine.batch_no
+              ? medicine.batch_no
+              : "";
+
+          const finalExpiryDate = hasValue(item.expiry_date)
+            ? item.expiry_date
+            : isInventory && medicine.expiry_date
+              ? medicine.expiry_date
+              : "";
+
+          const finalHsn = hasValue(item.hsn_no)
+            ? item.hsn_no
+            : medicine.hsn_no || "";
+
+          let cgstStr = hasValue(item.cgst) ? String(item.cgst) : finalCgst;
+          let sgstStr = hasValue(item.sgst) ? String(item.sgst) : finalSgst;
+
+          const qtyVal = parseInt(item.quantity || item.pack_quantity) || 1;
+          const rateVal = parseFloat(finalRatePack) || 0;
+          const cgstVal = parseFloat(cgstStr) || 0;
+          const sgstVal = parseFloat(sgstStr) || 0;
+          const baseAmt = qtyVal * rateVal;
+          const calculatedTotal = (
+            baseAmt *
+            (1 + (cgstVal + sgstVal) / 100)
+          ).toFixed(2);
+
+          const finalTotalAmount =
+            hasValue(item.total_amount) && hasValue(item.rate_pack)
+              ? String(item.total_amount)
+              : calculatedTotal;
+
           return {
             ...item,
-            product_id: medicine.id || `med-${Date.now()}`,
+            product_id:
+              medicine.id || medicine.product_id || `med-${Date.now()}`,
             product_name: medicine.product_name || medicine.name,
-            manufacturer,
-            salt_composition,
-            units: String(unitsPerPack),
-            rate_pack: ratePackFixed,
-            mrp_pack: mrpPack.toFixed(2),
-            total_amount: total,
+            manufacturer: finalManufacturer,
+            salt_composition: finalSaltComposition,
+            units: finalUnits,
+            rate_pack: finalRatePack,
+            mrp_pack: finalMrpPack,
+            batch_no: finalBatchNo || item.batch_no || "",
+            expiry_date: finalExpiryDate || item.expiry_date || "",
+            hsn_no: finalHsn || item.hsn_no || "",
             cgst: cgstStr,
             sgst: sgstStr,
-            _is_auto_filled_rate: true,
+            total_amount: finalTotalAmount,
+            _is_auto_filled_rate: !hasValue(item.rate_pack),
 
             // Store inventory metadata for visual indicators
             _inventoryMeta: isInventory
@@ -1683,7 +2240,7 @@ export default function PurchasesPage() {
                   available_quantity: medicine.available_quantity,
                   stock_status: medicine.stock_status,
                   last_supplier: medicine.supplier_name,
-                  match_quality: medicine.matchQuality, // 'exact', 'good', or 'fuzzy'
+                  match_quality: medicine.matchQuality,
                 }
               : null,
           };
@@ -1691,12 +2248,11 @@ export default function PurchasesPage() {
           // Propagated row updates
           const updated = { ...item };
           if (shouldPropagateCgst) {
-            updated.cgst = cgstStr;
+            updated.cgst = finalCgst;
           }
           if (shouldPropagateSgst) {
-            updated.sgst = sgstStr;
+            updated.sgst = finalSgst;
           }
-          updated.total_amount = total;
           return updated;
         }
       });
@@ -1706,7 +2262,8 @@ export default function PurchasesPage() {
     checkPriceHistorySilent(
       itemId,
       medicine.product_name || medicine.name,
-      ratePackFixed
+      ratePackFixed,
+      mrpPackFixed
     );
 
     setSearchMedicine("");
@@ -1861,7 +2418,8 @@ export default function PurchasesPage() {
       return;
     }
 
-    const isPaidOrPartial = paymentStatus === "Paid" || paymentStatus === "Partial";
+    const isPaidOrPartial =
+      paymentStatus === "Paid" || paymentStatus === "Partial";
     if (
       settings?.purchase_payment_mode_mandatory &&
       isPaidOrPartial &&
@@ -1910,7 +2468,12 @@ export default function PurchasesPage() {
           sgst: parseFloat(item.sgst) || 0,
           discount: parseFloat(item.discount) || 0,
           scheme: parseInt(item.scheme) || 0,
-          shortage_threshold: item.shortage_threshold !== "" && item.shortage_threshold !== undefined && item.shortage_threshold !== null ? Number(item.shortage_threshold) : null,
+          shortage_threshold:
+            item.shortage_threshold !== "" &&
+            item.shortage_threshold !== undefined &&
+            item.shortage_threshold !== null
+              ? Number(item.shortage_threshold)
+              : null,
         })),
         payment_status: paymentStatus,
         amount_paid:
@@ -2015,7 +2578,11 @@ export default function PurchasesPage() {
       sgst: item.sgst !== undefined ? item.sgst : "",
       discount: item.discount !== undefined ? item.discount : "",
       scheme: item.scheme !== undefined ? item.scheme : "",
-      shortage_threshold: item.shortage_threshold !== undefined && item.shortage_threshold !== null ? String(item.shortage_threshold) : "",
+      shortage_threshold:
+        item.shortage_threshold !== undefined &&
+        item.shortage_threshold !== null
+          ? String(item.shortage_threshold)
+          : "",
     }));
 
     setPurchaseItems(mappedItems);
@@ -2047,7 +2614,12 @@ export default function PurchasesPage() {
             sgst: parseFloat(item.sgst) || 0,
             discount: parseFloat(item.discount) || 0,
             scheme: parseInt(item.scheme) || 0,
-            shortage_threshold: item.shortage_threshold !== "" && item.shortage_threshold !== undefined && item.shortage_threshold !== null ? Number(item.shortage_threshold) : null,
+            shortage_threshold:
+              item.shortage_threshold !== "" &&
+              item.shortage_threshold !== undefined &&
+              item.shortage_threshold !== null
+                ? Number(item.shortage_threshold)
+                : null,
           })),
         }
       );
@@ -2084,101 +2656,387 @@ export default function PurchasesPage() {
     }
   };
 
-  // ============ CSV IMPORT ============
+  // ============ CSV IMPORT & SUPPLIER TEMPLATES ============
+
+  const formatCsvDate = (dateStr) => {
+    if (!dateStr) return "";
+    const str = String(dateStr).trim();
+    if (!str) return "";
+
+    // Standard YYYY-MM-DD
+    if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;
+
+    // YYYY/MM/DD
+    if (/^\d{4}\/\d{2}\/\d{2}$/.test(str)) return str.replace(/\//g, "-");
+
+    // MM/YYYY or MM-YYYY
+    const mY = str.match(/^(\d{1,2})[\/\-](\d{4})$/);
+    if (mY) {
+      const month = mY[1].padStart(2, "0");
+      const year = mY[2];
+      return `${year}-${month}-01`;
+    }
+
+    // MM/YY or MM-YY
+    const mYShort = str.match(/^(\d{1,2})[\/\-](\d{2})$/);
+    if (mYShort) {
+      const month = mYShort[1].padStart(2, "0");
+      const year = `20${mYShort[2]}`;
+      return `${year}-${month}-01`;
+    }
+
+    // DD/MM/YYYY or DD-MM-YYYY
+    const dMY = str.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+    if (dMY) {
+      const day = dMY[1].padStart(2, "0");
+      const month = dMY[2].padStart(2, "0");
+      const year = dMY[3];
+      return `${year}-${month}-${day}`;
+    }
+
+    return str;
+  };
+
+  const convertCsvRowsToPurchaseItems = (rows, mapping) => {
+    if (!rows || rows.length === 0 || !mapping.product_name) return [];
+
+    return rows.map((row, idx) => {
+      const rawName = row[mapping.product_name] || `Item #${idx + 1}`;
+      const rawBatch = mapping.batch_no ? row[mapping.batch_no] : "";
+      const rawExpiry = mapping.expiry_date ? row[mapping.expiry_date] : "";
+      const rawQty =
+        (mapping.quantity && row[mapping.quantity]) ||
+        (mapping.pack_quantity && row[mapping.pack_quantity]) ||
+        "1";
+      const rawUnits =
+        (mapping.units && row[mapping.units]) ||
+        (mapping.units_per_pack && row[mapping.units_per_pack]) ||
+        "1";
+      const rawPackType = mapping.pack_type ? row[mapping.pack_type] : "Strip";
+      const rawRatePack = mapping.rate_pack ? row[mapping.rate_pack] : "0";
+      const rawMrpPack = mapping.mrp_pack ? row[mapping.mrp_pack] : "0";
+      const rawCgst = mapping.cgst ? row[mapping.cgst] : "";
+      const rawSgst = mapping.sgst ? row[mapping.sgst] : "";
+      const rawGstTotal = mapping.gst_percent ? row[mapping.gst_percent] : "";
+      const rawDiscount = mapping.discount ? row[mapping.discount] : "";
+      const rawScheme = mapping.scheme ? row[mapping.scheme] : "";
+      const rawHsn = mapping.hsn_no ? row[mapping.hsn_no] : "";
+      const rawMfr = mapping.manufacturer ? row[mapping.manufacturer] : "";
+      const rawComposition = mapping.salt_composition
+        ? row[mapping.salt_composition]
+        : "";
+
+      const parseNum = (val) => {
+        if (!val) return 0;
+        const cleaned = String(val).replace(/[^0-9.]/g, "");
+        return parseFloat(cleaned) || 0;
+      };
+
+      const packQty = parseNum(rawQty) || 1;
+      const unitsPerPack = parseNum(rawUnits) || 1;
+      const ratePack = parseNum(rawRatePack) || 0;
+      const mrpPack = parseNum(rawMrpPack) || 0;
+      let cgstVal = parseNum(rawCgst) || 0;
+      let sgstVal = parseNum(rawSgst) || 0;
+
+      if (!cgstVal && !sgstVal && rawGstTotal) {
+        const totalGst = parseNum(rawGstTotal) || 0;
+        cgstVal = totalGst / 2;
+        sgstVal = totalGst / 2;
+      }
+
+      const discountVal = parseNum(rawDiscount) || 0;
+      const schemeVal = parseNum(rawScheme) || 0;
+      const totalAmount = packQty * ratePack;
+
+      return {
+        id: `csv-${Date.now()}-${idx}`,
+        product_id: "",
+        product_name: rawName.trim(),
+        batch_no: (rawBatch || `BATCH-${Date.now()}-${idx}`).trim(),
+        expiry_date: formatCsvDate(rawExpiry),
+        quantity: String(packQty),
+        units: String(unitsPerPack),
+        pack_type: rawPackType || "Strip",
+        rate_pack: ratePack > 0 ? String(ratePack) : "",
+        mrp_pack: mrpPack > 0 ? String(mrpPack) : "",
+        total_amount: totalAmount > 0 ? String(totalAmount) : "",
+        cgst: cgstVal > 0 ? String(cgstVal) : "",
+        sgst: sgstVal > 0 ? String(sgstVal) : "",
+        discount: discountVal > 0 ? String(discountVal) : "",
+        scheme: schemeVal > 0 ? String(schemeVal) : "",
+        hsn_no: rawHsn ? rawHsn.trim() : "",
+        manufacturer: rawMfr ? rawMfr.trim() : "",
+        salt_composition: rawComposition ? rawComposition.trim() : "",
+        selected_product_id: "NEW",
+        _is_auto_filled_rate: true,
+      };
+    });
+  };
 
   const handleCsvFileSelect = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
 
     setCsvFile(file);
+    setCsvReading(true);
 
     const formData = new FormData();
     formData.append("file", file);
+    if (selectedSupplier) {
+      formData.append("supplier_id", selectedSupplier);
+    }
 
     try {
       const response = await axios.post(
-        `${API}/purchases/csv-columns`,
+        `${API}/purchases/parse-csv`,
         formData,
         {
           headers: { "Content-Type": "multipart/form-data" },
         }
       );
-      setCsvColumns(response.data.columns);
-      setCsvSampleData(response.data.sample_data);
+
+      const cols = response.data.columns || [];
+      setCsvColumns(cols);
+      setCsvSampleData(response.data.sample_data || []);
+      setCsvParsedRows(response.data.parsed_rows || []);
+      setCsvR2Key(response.data.r2_key || null);
+      setCsvR2Url(response.data.r2_url || null);
+      setSupplierTemplateInfo(response.data.supplier_template || null);
+
+      // Auto-match column headers intelligently
+      const newMapping = {
+        product_name: "",
+        batch_no: "",
+        expiry_date: "",
+        quantity: "",
+        units: "",
+        pack_type: "",
+        rate_pack: "",
+        mrp_pack: "",
+        cgst: "",
+        sgst: "",
+        gst_percent: "",
+        discount: "",
+        scheme: "",
+        hsn_no: "",
+        manufacturer: "",
+        salt_composition: "",
+      };
+
+      // 1. If saved supplier template exists
+      if (response.data.supplier_template?.mapped_fields) {
+        const savedMap = response.data.supplier_template.mapped_fields;
+        Object.keys(newMapping).forEach((targetKey) => {
+          if (savedMap[targetKey] && cols.includes(savedMap[targetKey])) {
+            newMapping[targetKey] = savedMap[targetKey];
+          }
+        });
+      }
+
+      // 2. Smart column auto-detection for unmapped fields
+      const lowerCols = cols.map((c) => ({
+        original: c,
+        lower: c.toLowerCase().trim(),
+      }));
+      const findBestCol = (keywords) => {
+        const match = lowerCols.find((c) =>
+          keywords.some((k) => c.lower.includes(k))
+        );
+        return match ? match.original : "";
+      };
+
+      if (!newMapping.product_name)
+        newMapping.product_name = findBestCol([
+          "item name",
+          "product name",
+          "product",
+          "item",
+          "description",
+          "medicine",
+          "name",
+        ]);
+      if (!newMapping.batch_no)
+        newMapping.batch_no = findBestCol([
+          "batch no",
+          "batch number",
+          "batch",
+          "lot",
+        ]);
+      if (!newMapping.expiry_date)
+        newMapping.expiry_date = findBestCol([
+          "expiry date",
+          "exp date",
+          "expiry",
+          "exp",
+        ]);
+      if (!newMapping.quantity)
+        newMapping.quantity = findBestCol([
+          "qty",
+          "quantity",
+          "packs",
+          "pack qty",
+          "pack quantity",
+          "units",
+        ]);
+      if (!newMapping.units)
+        newMapping.units = findBestCol([
+          "units/pack",
+          "units per pack",
+          "pack size",
+          "unit per pack",
+          "strip size",
+        ]);
+      if (!newMapping.pack_type)
+        newMapping.pack_type = findBestCol([
+          "pack type",
+          "packing",
+          "form",
+          "unit type",
+        ]);
+      if (!newMapping.rate_pack)
+        newMapping.rate_pack = findBestCol([
+          "purchase price",
+          "rate",
+          "cost",
+          "purchase rate",
+          "trade price",
+          "price",
+          "ftrate",
+          "p rate",
+        ]);
+      if (!newMapping.mrp_pack)
+        newMapping.mrp_pack = findBestCol([
+          "mrp",
+          "max retail price",
+          "retail price",
+        ]);
+      if (!newMapping.cgst)
+        newMapping.cgst = findBestCol(["cgst", "c gst", "cgst%"]);
+      if (!newMapping.sgst)
+        newMapping.sgst = findBestCol(["sgst", "s gst", "sgst%"]);
+      if (!newMapping.gst_percent)
+        newMapping.gst_percent = findBestCol([
+          "gst",
+          "gst%",
+          "tax%",
+          "tax",
+          "igst",
+        ]);
+      if (!newMapping.discount)
+        newMapping.discount = findBestCol(["discount", "disc", "disc%"]);
+      if (!newMapping.scheme)
+        newMapping.scheme = findBestCol(["scheme", "free", "scm"]);
+      if (!newMapping.hsn_no)
+        newMapping.hsn_no = findBestCol([
+          "hsn code",
+          "hsn",
+          "hsncode",
+          "hsn/sac",
+        ]);
+      if (!newMapping.manufacturer)
+        newMapping.manufacturer = findBestCol([
+          "manufacturer",
+          "mfr",
+          "company",
+          "brand",
+        ]);
+      if (!newMapping.salt_composition)
+        newMapping.salt_composition = findBestCol([
+          "composition",
+          "salt",
+          "generic",
+        ]);
+
+      setCsvMapping(newMapping);
     } catch (error) {
-      toast.error("Failed to read CSV file");
+      toast.error(error.response?.data?.detail || "Failed to parse CSV file");
+    } finally {
+      setCsvReading(false);
     }
   };
 
-  const handleCsvImport = async () => {
-    if (!selectedSupplier) {
-      toast.error("Please select a supplier");
-      return;
+  const saveSupplierCsvTemplateIfNeeded = async () => {
+    if (saveTemplateChecked && selectedSupplier && csvMapping.product_name) {
+      try {
+        await axios.post(`${API}/suppliers/${selectedSupplier}/csv-template`, {
+          mapped_fields: csvMapping,
+        });
+      } catch (err) {
+        console.error("Failed to auto-save supplier CSV template", err);
+      }
     }
-    if (!csvFile) {
-      toast.error("Please select a CSV file");
+  };
+
+  const handlePreviewPurchaseFromCsv = async () => {
+    if (!selectedSupplier) {
+      toast.error("Please select a supplier first");
       return;
     }
     if (
-      !csvMapping.product_name_col ||
-      !csvMapping.batch_no_col ||
-      !csvMapping.quantity_col ||
-      !csvMapping.purchase_price_col ||
-      !csvMapping.mrp_col ||
-      !csvMapping.expiry_date_col
+      !csvMapping.product_name ||
+      (!csvMapping.quantity && !csvMapping.pack_quantity)
     ) {
-      toast.error("Please map all required fields");
+      toast.error("Product Name and Quantity columns are required");
+      return;
+    }
+
+    const items = convertCsvRowsToPurchaseItems(csvParsedRows, csvMapping);
+    if (items.length === 0) {
+      toast.error("No valid items found in CSV file");
+      return;
+    }
+
+    await saveSupplierCsvTemplateIfNeeded();
+
+    setPurchaseItems(items);
+    setCsvDialog(false);
+    setShowNewPurchase(true);
+    toast.success(
+      `Loaded ${items.length} CSV items into Purchase Draft for preview`
+    );
+  };
+
+  const handleDirectCreatePurchaseFromCsv = async () => {
+    if (!selectedSupplier) {
+      toast.error("Please select a supplier first");
+      return;
+    }
+    if (!csvMapping.product_name || !csvMapping.pack_quantity) {
+      toast.error("Product Name and Quantity columns are required");
+      return;
+    }
+
+    const items = convertCsvRowsToPurchaseItems(csvParsedRows, csvMapping);
+    if (items.length === 0) {
+      toast.error("No valid items found in CSV file");
       return;
     }
 
     const supplier = suppliers.find((s) => s.id === selectedSupplier);
-    const formData = new FormData();
-    formData.append("file", csvFile);
-    formData.append("supplier_id", selectedSupplier);
-    formData.append("supplier_name", supplier?.name || "Unknown");
-    formData.append("product_name_col", csvMapping.product_name_col);
-    formData.append("batch_no_col", csvMapping.batch_no_col);
-    formData.append("expiry_date_col", csvMapping.expiry_date_col);
-    formData.append("quantity_col", csvMapping.quantity_col);
-    formData.append("purchase_price_col", csvMapping.purchase_price_col);
-    formData.append("mrp_col", csvMapping.mrp_col);
-    if (csvMapping.hsn_col && csvMapping.hsn_col !== "none") {
-      formData.append("hsn_col", csvMapping.hsn_col);
-    }
-
     setSubmitting(true);
     try {
-      const response = await axios.post(
-        `${API}/purchases/import-csv`,
-        formData,
-        {
-          headers: { "Content-Type": "multipart/form-data" },
-        }
-      );
+      await saveSupplierCsvTemplateIfNeeded();
+
+      await axios.post(`${API}/purchases/bulk-import`, {
+        supplier_id: selectedSupplier,
+        supplier_name: supplier?.name || "Unknown Supplier",
+        invoice_no: invoiceNo || `INV-CSV-${Date.now().toString().slice(-6)}`,
+        items,
+      });
 
       toast.success(
-        `CSV imported: ${response.data.items_imported} items added`
+        `Purchase Invoice created with ${items.length} items from CSV`
       );
-      if (response.data.errors?.length > 0) {
-        toast.warning(`${response.data.errors.length} rows had errors`);
-      }
-
       setCsvDialog(false);
       setCsvFile(null);
       setCsvColumns([]);
-      setCsvSampleData([]);
-      setCsvMapping({
-        product_name_col: "",
-        batch_no_col: "",
-        expiry_date_col: "",
-        quantity_col: "",
-        purchase_price_col: "",
-        mrp_col: "",
-        hsn_col: "",
-      });
-      await fetchPurchases(pagination.page);
+      setCsvParsedRows([]);
+      fetchPurchases(pagination.page);
     } catch (error) {
-      toast.error(error.response?.data?.detail || "CSV import failed");
+      toast.error(
+        error.response?.data?.detail || "Failed to create purchase from CSV"
+      );
     } finally {
       setSubmitting(false);
     }
@@ -2256,16 +3114,12 @@ export default function PurchasesPage() {
   };
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
-      </div>
-    );
+    return <Loader size="lg" text="Loading Purchases..." />;
   }
 
   return (
     <div
-      className="space-y-6 animate-fade-in pb-24"
+      className="space-y-3 animate-fade-in pb-12 select-none"
       data-testid="purchases-page"
     >
       <style>{`
@@ -2396,255 +3250,30 @@ export default function PurchasesPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-bold">Purchases</h1>
-          <p className="text-muted-foreground">
-            {pagination.total} purchases recorded • Items tracked in units
-          </p>
-        </div>
+      {/* Purchases Page View Area */}
 
-        <div className="flex gap-2">
-          <Button
-            variant="outline"
-            onClick={() => setShowShortcuts(true)}
-            data-testid="shortcuts-btn"
-          >
-            <Keyboard className="w-4 h-4 mr-2" />
-            Shortcuts
-          </Button>
-
-          <Button
-            variant="outline"
-            className="bg-gradient-to-r from-primary/10 to-primary/5 border-primary/30 hover:border-primary/50"
-            onClick={() => window.open("/scan", "_blank")}
-            data-testid="scan-products-btn"
-          >
-            <Upload className="w-4 h-4 mr-2" />
-            Scan
-          </Button>
-
-          <Dialog open={csvDialog} onOpenChange={setCsvDialog}>
-            <DialogTrigger asChild>
-              <Button variant="outline" data-testid="csv-import-btn">
-                <FileSpreadsheet className="w-4 h-4 mr-2" />
-                CSV
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-              <DialogHeader>
-                <DialogTitle>Import Purchases from CSV</DialogTitle>
-              </DialogHeader>
-              <div className="space-y-6 pt-4">
-                <div className="space-y-2">
-                  <Label>Supplier *</Label>
-                  <SupplierSelector
-                    selectedId={selectedSupplier}
-                    knownSuppliers={suppliers}
-                    onSelect={(s) => {
-                      setSelectedSupplier(s.id);
-                      if (!suppliers.find((x) => x.id === s.id)) {
-                        setSuppliers((prev) => [...prev, s]);
-                      }
-                    }}
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <Label>CSV File *</Label>
-                  <Input
-                    type="file"
-                    accept=".csv"
-                    onChange={handleCsvFileSelect}
-                  />
-                </div>
-
-                {csvColumns.length > 0 && (
-                  <div className="space-y-4">
-                    <h4 className="font-medium">Map CSV Columns</h4>
-                    <div className="grid grid-cols-2 gap-4">
-                      {[
-                        { key: "product_name_col", label: "Product Name *" },
-                        { key: "batch_no_col", label: "Batch Number *" },
-                        { key: "expiry_date_col", label: "Expiry Date *" },
-                        { key: "quantity_col", label: "Quantity (Units) *" },
-                        {
-                          key: "purchase_price_col",
-                          label: "Purchase Price/Unit *",
-                        },
-                        { key: "mrp_col", label: "MRP/Unit *" },
-                      ].map(({ key, label }) => (
-                        <div key={key} className="space-y-2">
-                          <Label>{label}</Label>
-                          <Select
-                            value={csvMapping[key]}
-                            onValueChange={(v) =>
-                              setCsvMapping({ ...csvMapping, [key]: v })
-                            }
-                          >
-                            <SelectTrigger>
-                              <SelectValue placeholder="Select column" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {csvColumns.map((col) => (
-                                <SelectItem key={col} value={col}>
-                                  {col}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                      ))}
-                      <div className="space-y-2">
-                        <Label>HSN Code (optional)</Label>
-                        <Select
-                          value={csvMapping.hsn_col}
-                          onValueChange={(v) =>
-                            setCsvMapping({ ...csvMapping, hsn_col: v })
-                          }
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select column" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="none">None</SelectItem>
-                            {csvColumns.map((col) => (
-                              <SelectItem key={col} value={col}>
-                                {col}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                <Button
-                  onClick={handleCsvImport}
-                  disabled={submitting || csvColumns.length === 0}
-                  className="w-full btn-primary"
-                >
-                  {submitting ? (
-                    <>
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      Importing...
-                    </>
-                  ) : (
-                    <>
-                      <Upload className="w-4 h-4 mr-2" />
-                      Import CSV
-                    </>
-                  )}
-                </Button>
-              </div>
-            </DialogContent>
-          </Dialog>
-
-          <Button
-            className="btn-primary"
-            onClick={handleStartNewPurchase}
-            data-testid="add-purchase-btn"
-          >
-            <Plus className="w-4 h-4 mr-2" />
-            {getOS() === "mac" ? "New (⌥N)" : "New (Alt+N)"}
-          </Button>
-        </div>
-      </div>
-
-      {/* New Purchase - Inline Table Entry with UNIT-BASED fields */}
       {showNewPurchase && (
-        <Card
-          className="glass bg-card/45 backdrop-blur-xl border border-primary/30 relative overflow-hidden shadow-2xl rounded-2xl"
+        <div
+          className="!mt-0 space-y-3 px-0.5 animate-in fade-in duration-300 relative"
           data-testid="new-purchase-form"
         >
-          {isAiLoading && !processingRowId && (
-            <div className="absolute inset-0 z-[100] flex flex-col items-center justify-center bg-background/60 backdrop-blur-md transition-all duration-300">
-              <div className="relative">
-                <div className="absolute inset-0 bg-primary/20 blur-xl rounded-full"></div>
-                <Loader2 className="w-12 h-12 text-primary animate-spin relative z-10" />
-              </div>
-              <p className="mt-5 text-lg font-extrabold text-foreground tracking-wide animate-pulse">
-                Running AI Analysis...
-              </p>
-              <p className="text-sm font-medium text-muted-foreground mt-1">
-                Extracting properties
-              </p>
+          {isAiLoading && (
+            <div className="absolute inset-0 z-[100] flex flex-col items-center justify-center bg-card/85 backdrop-blur-md rounded-2xl transition-all duration-300 shadow-2xl">
+              <AiLoader
+                size="lg"
+                text="Running AI Analysis & Extracting Properties..."
+              />
             </div>
           )}
-          <CardHeader className="pb-4">
-            <div className="flex flex-col gap-3">
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-lg flex items-center gap-2">
-                  <Package className="w-5 h-5" />
-                  New Purchase
-                  <span className="text-xs font-normal text-muted-foreground ml-2">
-                    (
-                    <kbd className="px-1 bg-muted rounded font-mono text-[10px]">
-                      Enter
-                    </kbd>{" "}
-                    to save)
-                  </span>
-                </CardTitle>
-                <div className="flex items-center gap-3">
-                  {purchaseItems.some(
-                    (item) =>
-                      item.product_name &&
-                      item.product_name.trim().length > 0 &&
-                      (!item.salt_composition ||
-                        !item.salt_composition.trim() ||
-                        !item.manufacturer ||
-                        !item.manufacturer.trim())
-                  ) && (
-                    <Button
-                      variant="default"
-                      onClick={handleAutofillWithAI}
-                      className="relative overflow-hidden group bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white shadow-lg shadow-indigo-500/30 border-none transition-all duration-300 font-bold"
-                      size="sm"
-                    >
-                      <div className="absolute inset-0 bg-white/20 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-700 ease-in-out skew-x-12"></div>
-                      ✨ Autofill with AI
-                      <span className="text-[10px] opacity-80 font-normal ml-1">
-                        ({getOS() === "mac" ? "⌥I" : "Alt+I"})
-                      </span>
-                    </Button>
-                  )}
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={handleCancelNewPurchase}
-                  >
-                    <X className="h-4 w-4" />
-                  </Button>
-                </div>
-              </div>
 
-              {/* Warning Text Dropdown */}
-              {purchaseItems.some(
-                (item) =>
-                  item.product_name &&
-                  item.product_name.trim().length > 0 &&
-                  (!item.salt_composition ||
-                    !item.salt_composition.trim() ||
-                    !item.manufacturer ||
-                    !item.manufacturer.trim())
-              ) && (
-                <div className="flex justify-end pr-10 transition-all duration-300">
-                  <div className="text-[11px] font-medium text-amber-600 dark:text-amber-400 bg-amber-500/10 px-3 py-1.5 rounded-md border border-amber-500/20 flex items-center gap-1.5 shadow-sm backdrop-blur-sm">
-                    <AlertCircle className="w-3.5 h-3.5" />
-                    Generative AI may be inaccurate. Please review the
-                    autofilled details below before saving.
-                  </div>
-                </div>
-              )}
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {/* Supplier & Invoice & Payment Tracking */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
-              <div className="space-y-2 lg:col-span-1">
-                <Label>Supplier *</Label>
+          {/* Unified Single Control Toolbar for New Purchase Entry */}
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 bg-card border-2 border-border p-3 rounded-2xl backdrop-blur-xl shadow-md">
+            {/* Left Fields Grid (Supplier, Invoice #, Date, Payment Status, Initial Amount Paid, Payment Mode) */}
+            <div className="flex flex-wrap items-end gap-3 flex-1">
+              <div className="space-y-1 w-full sm:w-[230px]">
+                <Label className="text-[11px] font-extrabold text-foreground/80">
+                  Supplier *
+                </Label>
                 <SupplierSelector
                   selectedId={selectedSupplier}
                   knownSuppliers={suppliers}
@@ -2657,81 +3286,107 @@ export default function PurchasesPage() {
                   }}
                 />
               </div>
-              <div className="space-y-2 lg:col-span-1">
-                <Label>Invoice Number</Label>
+
+              <div className="space-y-1 w-[145px]">
+                <Label className="text-[11px] font-extrabold text-foreground/80">
+                  Invoice Number
+                </Label>
                 <Input
-                  placeholder="INV-001"
+                  placeholder="e.g. INV-001"
                   value={invoiceNo}
                   disabled={processingRowId !== null}
                   onChange={(e) => setInvoiceNo(e.target.value)}
+                  className="h-9 text-xs font-semibold rounded-xl border-border bg-background text-foreground shadow-2xs focus-visible:ring-2 focus-visible:ring-orange-500/30 focus-visible:border-orange-500"
                   data-testid="invoice-no-input"
                 />
               </div>
-              <div className="space-y-2 lg:col-span-1">
-                <Label>Purchase Date *</Label>
+
+              <div className="space-y-1 w-[145px]">
+                <Label className="text-[11px] font-extrabold text-foreground/80">
+                  Purchase Date *
+                </Label>
                 <Input
                   type="date"
                   value={purchaseDate}
                   disabled={processingRowId !== null}
                   onChange={(e) => setPurchaseDate(e.target.value)}
+                  className="h-9 text-xs font-semibold rounded-xl border-border bg-background text-foreground shadow-2xs focus-visible:ring-2 focus-visible:ring-orange-500/30 focus-visible:border-orange-500"
                 />
               </div>
 
-              <div className="text-center p-2 rounded-lg bg-muted/50">
-                <span className="text-xs text-muted-foreground">
-                  Total Units
-                </span>
-                <div className="text-lg font-bold text-primary">
-                  {totalUnits}
-                </div>
-              </div>
-              <div className="text-center p-2 rounded-lg bg-primary/10 border border-primary/20 shadow-sm">
-                <span className="text-[10px] uppercase font-bold text-primary opacity-80">
-                  Total Amount
-                </span>
-                <div className="text-xl font-bold font-mono text-primary leading-none mt-1">
-                  ₹{totalAmount.toFixed(2)}
-                </div>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 pt-2 border-t border-border mt-2">
-              <div className="space-y-2 lg:col-span-2">
-                <Label>Payment Status</Label>
-                <div className="flex bg-muted/50 p-1 rounded-lg">
+              <div className="space-y-1 w-[200px]">
+                <Label className="text-[11px] font-extrabold text-foreground/80">
+                  Payment Status
+                </Label>
+                <div className="flex bg-muted p-1 rounded-xl h-9 border border-border">
                   {["Unpaid", "Partial", "Paid"]
-                    .filter(status => !(settings?.lock_unpaid_purchases && status === "Unpaid"))
+                    .filter(
+                      (status) =>
+                        !(
+                          settings?.lock_unpaid_purchases && status === "Unpaid"
+                        )
+                    )
                     .map((status) => (
-                    <button
-                      key={status}
-                      type="button"
-                      disabled={
-                        processingRowId !== null
-                      }
-                      onClick={() => {
-                        setPaymentStatus(status);
-                        if (status === "Unpaid") {
-                          setPaymentMode("");
+                      <button
+                        key={status}
+                        type="button"
+                        disabled={processingRowId !== null}
+                        onClick={() => {
+                          setPaymentStatus(status);
+                          if (status === "Unpaid") setPaymentMode("");
+                        }}
+                        className={`flex-1 text-[11px] font-bold rounded-lg transition-all px-1 ${
+                          paymentStatus === status
+                            ? status === "Paid"
+                              ? "bg-emerald-500 text-white shadow-xs"
+                              : status === "Unpaid"
+                                ? "bg-rose-500 text-white shadow-xs"
+                                : "bg-amber-500 text-white shadow-xs"
+                            : "text-muted-foreground hover:bg-card"
+                        }`}
+                      >
+                        {status === "Paid" ? "Fully Paid" : status}
+                      </button>
+                    ))}
+                </div>
+              </div>
+
+              {paymentStatus === "Partial" && (
+                <div className="space-y-1 w-[130px] animate-in fade-in zoom-in-95 duration-200">
+                  <Label className="text-[11px] font-extrabold text-amber-500 whitespace-nowrap">
+                    Initial Paid (₹)
+                  </Label>
+                  <div className="relative">
+                    <Input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      disabled={processingRowId !== null}
+                      value={amountPaid}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        const numericVal = parseFloat(val);
+                        if (numericVal && numericVal >= totalAmount) {
+                          setPaymentStatus("Paid");
+                          setAmountPaid("");
+                          toast.success(
+                            "Amount covers total. Marked as Fully Paid."
+                          );
+                        } else {
+                          setAmountPaid(val);
                         }
                       }}
-                      className={`flex-1 text-xs font-semibold py-1.5 px-3 rounded-md transition-all ${
-                        paymentStatus === status
-                          ? status === "Paid"
-                            ? "bg-green-500 text-white shadow-sm"
-                            : status === "Unpaid"
-                              ? "bg-red-500 text-white shadow-sm"
-                              : "bg-yellow-500 text-white shadow-sm"
-                          : "text-muted-foreground hover:bg-background/50"
-                      }`}
-                    >
-                      {status === "Paid" ? "Fully Paid" : status}
-                    </button>
-                  ))}
+                      placeholder="e.g. 500"
+                      className="h-9 text-xs font-bold w-full rounded-xl border-amber-500/60 bg-amber-500/10 text-amber-400 focus-visible:ring-2 focus-visible:ring-amber-500/30"
+                    />
+                  </div>
                 </div>
-              </div>
+              )}
 
-              <div className="space-y-2 lg:col-span-1">
-                <Label>Payment Mode</Label>
+              <div className="space-y-1 w-[140px]">
+                <Label className="text-[11px] font-extrabold text-foreground/80">
+                  Payment Mode
+                </Label>
                 <Select
                   value={paymentMode}
                   onValueChange={setPaymentMode}
@@ -2739,501 +3394,696 @@ export default function PurchasesPage() {
                     processingRowId !== null || paymentStatus === "Unpaid"
                   }
                 >
-                  <SelectTrigger className="h-9 w-full bg-background border border-border/80 rounded-lg text-xs font-semibold">
-                    <SelectValue placeholder="Select Mode" />
+                  <SelectTrigger className="h-9 w-full bg-background border border-border rounded-xl text-xs font-semibold text-foreground">
+                    <SelectValue placeholder="Mode" />
                   </SelectTrigger>
                   <SelectContent>
                     {!settings?.purchase_payment_mode_mandatory && (
-                      <SelectItem value="none">None</SelectItem>
+                      <SelectItem value="none">
+                        <span className="text-muted-foreground font-normal">
+                          None
+                        </span>
+                      </SelectItem>
                     )}
-                    <SelectItem value="Cash">Cash</SelectItem>
-                    <SelectItem value="UPI">UPI</SelectItem>
-                    <SelectItem value="Card">Card</SelectItem>
+                    <SelectItem value="Cash">
+                      <div className="flex items-center gap-2 font-bold">
+                        <RupeeCircleIcon className="w-4 h-4 text-emerald-500 shrink-0" />
+                        <span>Cash</span>
+                      </div>
+                    </SelectItem>
+                    <SelectItem value="UPI">
+                      <div className="flex items-center gap-2 font-bold">
+                        <UpiIcon className="w-4 h-4 shrink-0" />
+                        <span>UPI</span>
+                      </div>
+                    </SelectItem>
+                    <SelectItem value="Card">
+                      <div className="flex items-center gap-2 font-bold">
+                        <CreditCardIcon className="w-4 h-4 shrink-0" />
+                        <span>Card</span>
+                      </div>
+                    </SelectItem>
                   </SelectContent>
                 </Select>
               </div>
-
-              {paymentStatus === "Partial" && (
-                <div className="space-y-2 lg:col-span-2">
-                  <Label>Initial Amount Paid (₹)</Label>
-                  <Input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    disabled={processingRowId !== null}
-                    value={amountPaid}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      const numericVal = parseFloat(val);
-                      if (numericVal && numericVal >= totalAmount) {
-                        setPaymentStatus("Paid");
-                        setAmountPaid("");
-                        toast.success(
-                          "Amount covers total. Marked as Fully Paid."
-                        );
-                      } else {
-                        setAmountPaid(val);
-                      }
-                    }}
-                    placeholder="e.g. 500"
-                    className="border-yellow-500/50 focus-visible:ring-yellow-500/30"
-                  />
-                  {amountPaid && (
-                    <p className="text-[11px] text-muted-foreground">
-                      Remaining:{" "}
-                      <span className="font-bold text-red-400">
-                        ₹{(totalAmount - parseFloat(amountPaid)).toFixed(2)}
-                      </span>
-                    </p>
-                  )}
-                </div>
-              )}
             </div>
 
-            {/* Items Table - Inline Editable with enhanced fields */}
-            <div className="border border-border rounded-lg relative overflow-hidden">
-              <Table wrapperClassName="h-[380px]">
-                <TableHeader className="sticky top-0 bg-muted/95 backdrop-blur z-[50]">
-                  <TableRow>
-                    <TableHead className="w-[240px] font-bold text-foreground">
-                      Product / MFG / Salt
-                    </TableHead>
-                    <TableHead className="w-[120px] font-bold text-foreground">
-                      Batch / Expiry
-                    </TableHead>
-                    <TableHead className="w-[120px] font-bold text-foreground">
-                      HSN / Pack / Shortage
-                    </TableHead>
-                    <TableHead className="w-[150px] text-center font-bold text-foreground">
-                      <div className="flex flex-col items-center gap-1">
-                        <span>GST (CGST / SGST %)</span>
-                        <div className="flex items-center gap-3 text-[10px] font-medium text-muted-foreground/80">
-                          <label className="flex items-center gap-1 cursor-pointer select-none hover:text-foreground">
-                            <input
-                              type="checkbox"
-                              checked={applyCgstToAll}
-                              onChange={(e) =>
-                                handleApplyCgstToAllChange(e.target.checked)
-                              }
-                              className="h-3 w-3 rounded border border-border/80 text-primary"
-                            />
-                            Apply CGST
-                          </label>
-                          <label className="flex items-center gap-1 cursor-pointer select-none hover:text-foreground">
-                            <input
-                              type="checkbox"
-                              checked={applySgstToAll}
-                              onChange={(e) =>
-                                handleApplySgstToAllChange(e.target.checked)
-                              }
-                              className="h-3 w-3 rounded border border-border/80 text-primary"
-                            />
-                            Apply SGST
-                          </label>
-                        </div>
-                      </div>
-                    </TableHead>
-                    <TableHead className="w-[130px] text-center font-bold text-foreground">
-                      Discount % / Scheme
-                    </TableHead>
-                    <TableHead className="w-[130px] text-center font-bold text-foreground">
-                      Qty / Units (T.Units)
-                    </TableHead>
-                    <TableHead className="w-[130px] text-center font-bold text-foreground">
-                      Rate / MRP (Pack)
-                    </TableHead>
-                    <TableHead className="w-[110px] text-center font-bold text-foreground">
-                      Total
-                    </TableHead>
-                    <TableHead className="w-[60px] text-center font-bold text-foreground">
-                      Actions
-                    </TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody
-                  className={
-                    processingRowId !== null
-                      ? "pointer-events-none opacity-80"
-                      : ""
-                  }
+            {/* Right: Stats Summary + AI Autofill + Close */}
+            <div className="flex items-center gap-2 shrink-0 self-end lg:self-center">
+              {/* Total Stats Pill */}
+              <div className="flex items-center gap-2 bg-muted px-3 py-1 rounded-xl border border-border shadow-2xs h-9">
+                <div className="flex items-center gap-1 border-r border-border pr-2.5">
+                  <span className="text-[10px] uppercase font-extrabold text-muted-foreground">
+                    Units:
+                  </span>
+                  <span className="text-xs font-black font-mono text-foreground">
+                    {totalUnits}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <span className="text-[10px] uppercase font-extrabold text-orange-500">
+                    Total:
+                  </span>
+                  <span className="text-xs font-black font-mono text-orange-500">
+                    ₹{totalAmount.toFixed(2)}
+                  </span>
+                </div>
+                {paymentStatus === "Partial" && amountPaid && (
+                  <div className="flex items-center gap-1 border-l border-border pl-2.5">
+                    <span className="text-[10px] uppercase font-extrabold text-rose-500">
+                      Bal:
+                    </span>
+                    <span className="text-xs font-black font-mono text-rose-500">
+                      ₹{(totalAmount - parseFloat(amountPaid)).toFixed(2)}
+                    </span>
+                  </div>
+                )}
+              </div>
+              {/* Re-map CSV Columns Button */}
+              {csvColumns.length > 0 && (
+                <Button
+                  variant="outline"
+                  onClick={() => setCsvDialog(true)}
+                  className="h-9 px-3 text-xs font-extrabold border-orange-500/30 text-orange-500 hover:bg-orange-500/10 rounded-xl cursor-pointer flex items-center gap-1.5"
+                  size="sm"
+                  title="Re-open CSV mapping modal to adjust column selections"
                 >
-                  {/* Editable Item Rows */}
-                  {purchaseItems.map((item, index) => {
-                    const qty =
-                      parseInt(item.quantity) ||
-                      parseInt(item.pack_quantity) ||
-                      1;
-                    const scheme = parseFloat(item.scheme) || 0;
-                    const units =
-                      parseInt(item.units) ||
-                      parseInt(item.units_per_pack) ||
-                      1;
-                    const ratePack =
-                      parseFloat(item.rate_pack) ||
-                      parseFloat(item.pack_price) ||
-                      0;
-                    const mrpPack =
-                      parseFloat(item.mrp_pack) ||
-                      parseFloat(item.mrp_per_unit) * units ||
-                      0;
-                    const totalUnits = (qty + scheme) * units;
-                    const mrpUnit = units > 0 ? mrpPack / units : 0;
-                    const totalAmount =
-                      parseFloat(item.total_amount) || qty * ratePack;
+                  <FileSpreadsheet className="w-3.5 h-3.5 text-orange-500" />
+                  <span>Re-map CSV Columns</span>
+                </Button>
+              )}
 
-                    const hasScheme = scheme > 0;
+              {/* AI Autofill Button + Info Tooltip */}
+              {purchaseItems.some(
+                (item) =>
+                  item.product_name &&
+                  item.product_name.trim().length > 0 &&
+                  (!item.salt_composition ||
+                    !item.salt_composition.trim() ||
+                    !item.manufacturer ||
+                    !item.manufacturer.trim())
+              ) && (
+                <div className="flex items-center gap-1.5">
+                  <Button
+                    variant="default"
+                    onClick={handleAutofillWithAI}
+                    className="relative overflow-hidden group bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white shadow-md border-none font-extrabold text-xs h-9 rounded-xl px-3 flex items-center gap-1.5"
+                    size="sm"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-white" />
+                    <span>Autofill ({getOS() === "mac" ? "⌥I" : "Alt+I"})</span>
+                  </Button>
+                  <CustomTooltip
+                    position="bottom-right"
+                    breakWords={true}
+                    className="w-[300px] text-center font-medium leading-relaxed p-2.5 bg-slate-900 border border-slate-700 shadow-2xl rounded-xl text-white"
+                    text="Generative AI may be inaccurate. Please review the autofilled details below before saving."
+                  >
+                    <button
+                      type="button"
+                      className="h-9 w-9 flex items-center justify-center rounded-xl bg-muted hover:bg-muted/80 text-orange-500 border border-border transition-colors cursor-pointer"
+                    >
+                      <Info className="h-4 w-4" />
+                    </button>
+                  </CustomTooltip>
+                </div>
+              )}
 
-                    return (
-                      <TableRow
-                        key={item.id || index}
-                        className={`relative transition-all duration-500 ${
-                          processingRowId === item.id ? "ai-loading-row" : ""
-                        } ${sparkleRowId === item.id ? "ai-sparkle-row" : ""} ${
-                          priceAlerts[item.id] ? "animate-row-alert" : ""
-                        } ${
-                          hasScheme
-                            ? "bg-emerald-500/5 hover:bg-emerald-500/10 border-l-2 border-l-emerald-500"
-                            : "bg-primary/5"
-                        }`}
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleCancelNewPurchase}
+                className="h-9 w-9 p-0 rounded-xl hover:bg-muted"
+                title="Close"
+              >
+                <X className="h-4 w-4 text-muted-foreground" />
+              </Button>
+            </div>
+          </div>
+
+          {/* Items Table Container */}
+
+          {/* Items Table - Inline Editable with enhanced fields */}
+          <div className="border-2 border-border rounded-2xl relative overflow-hidden bg-card shadow-sm">
+            <Table wrapperClassName="h-[390px]">
+              <TableHeader className="sticky top-0 bg-muted/90 backdrop-blur z-[50] border-b-2 border-border">
+                <TableRow className="hover:bg-transparent">
+                  <TableHead className="w-[260px] py-2.5 font-extrabold text-foreground">
+                    Product / MFG / Salt
+                  </TableHead>
+                  <TableHead className="w-[130px] py-2.5 font-extrabold text-foreground">
+                    Batch / Expiry
+                  </TableHead>
+                  <TableHead className="w-[140px] py-2.5 font-extrabold text-foreground">
+                    HSN / Pack / Shortage
+                  </TableHead>
+                  <TableHead className="w-[140px] py-2.5 text-center font-extrabold text-foreground">
+                    <div className="flex flex-col items-center gap-1">
+                      <span>GST (CGST / SGST %)</span>
+                      <div className="flex items-center gap-2 text-[10px] font-bold text-muted-foreground">
+                        <label className="flex items-center gap-1 cursor-pointer select-none hover:text-foreground">
+                          <input
+                            type="checkbox"
+                            checked={applyCgstToAll}
+                            onChange={(e) =>
+                              handleApplyCgstToAllChange(e.target.checked)
+                            }
+                            className="h-3 w-3 rounded border border-border text-primary"
+                          />
+                          CGST
+                        </label>
+                        <label className="flex items-center gap-1 cursor-pointer select-none hover:text-foreground">
+                          <input
+                            type="checkbox"
+                            checked={applySgstToAll}
+                            onChange={(e) =>
+                              handleApplySgstToAllChange(e.target.checked)
+                            }
+                            className="h-3 w-3 rounded border border-border text-primary"
+                          />
+                          SGST
+                        </label>
+                      </div>
+                    </div>
+                  </TableHead>
+                  <TableHead className="w-[140px] py-2.5 text-center font-extrabold text-foreground">
+                    Discount % / Scheme
+                  </TableHead>
+                  <TableHead className="w-[140px] py-2.5 text-center font-extrabold text-foreground">
+                    Qty / Units (T.Units)
+                  </TableHead>
+                  <TableHead className="w-[150px] py-2.5 text-center font-extrabold text-foreground">
+                    Rate / MRP (Pack)
+                  </TableHead>
+                  <TableHead className="w-[110px] py-2.5 text-center font-extrabold text-foreground">
+                    Total
+                  </TableHead>
+                  <TableHead className="w-[50px] py-2.5 text-center font-extrabold text-foreground">
+                    Action
+                  </TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody
+                className={
+                  processingRowId !== null
+                    ? "pointer-events-none opacity-80"
+                    : ""
+                }
+              >
+                {/* Editable Item Rows */}
+                {purchaseItems.map((item, index) => {
+                  const qty =
+                    parseInt(item.quantity) ||
+                    parseInt(item.pack_quantity) ||
+                    1;
+                  const scheme = parseFloat(item.scheme) || 0;
+                  const units =
+                    parseInt(item.units) || parseInt(item.units_per_pack) || 1;
+                  const ratePack =
+                    parseFloat(item.rate_pack) ||
+                    parseFloat(item.pack_price) ||
+                    0;
+                  const mrpPack =
+                    parseFloat(item.mrp_pack) ||
+                    parseFloat(item.mrp_per_unit) * units ||
+                    0;
+                  const totalUnits = (qty + scheme) * units;
+                  const mrpUnit = units > 0 ? mrpPack / units : 0;
+                  const totalAmount =
+                    parseFloat(item.total_amount) || qty * ratePack;
+
+                  const hasScheme = scheme > 0;
+
+                  return (
+                    <TableRow
+                      key={item.id || index}
+                      className={`relative transition-all duration-200 border-b border-border ${
+                        processingRowId === item.id ? "ai-loading-row" : ""
+                      } ${sparkleRowId === item.id ? "ai-sparkle-row" : ""} ${
+                        priceAlerts[item.id]?.is_higher_price_alert ||
+                        priceAlerts[item.id]?.rate_increased
+                          ? "price-alert-row-blink"
+                          : ""
+                      } ${
+                        hasScheme
+                          ? "bg-emerald-500/10 hover:bg-emerald-500/15 border-l-4 border-l-emerald-500"
+                          : "bg-card hover:bg-muted/40"
+                      }`}
+                    >
+                      <TableCell
+                        className="w-[260px] p-2 align-top relative"
+                        style={{ overflow: "visible" }}
                       >
-                        <TableCell
-                          className="relative"
-                          style={{ overflow: "visible" }}
-                        >
-                          {sparkleRowId === item.id && (
-                            <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1 bg-emerald-500 text-white dark:bg-emerald-600 shadow-lg px-2 py-1 rounded-md z-[99] border border-emerald-400 animate-bounce">
-                              <Sparkles className="w-3.5 h-3.5 text-yellow-300 fill-yellow-200 animate-pulse" />
-                              <span className="text-[10px] font-extrabold uppercase tracking-wider">
-                                AI Done!
-                              </span>
-                            </div>
-                          )}
-                          <div className="flex flex-col gap-1.5 w-[220px]">
-                            <div className="flex items-center gap-2">
-                              <Input
-                                ref={(el) => {
-                                  setInputRef(el, item.id);
-                                  if (index === purchaseItems.length - 1) {
-                                    productInputRef.current = el;
+                        {sparkleRowId === item.id && (
+                          <div className="absolute right-2 top-2 flex items-center gap-1 bg-emerald-500 text-white dark:bg-emerald-600 shadow-lg px-2 py-0.5 rounded-md z-[99] border border-emerald-400 animate-bounce">
+                            <Sparkles className="w-3.5 h-3.5 text-yellow-300 fill-yellow-200 animate-pulse" />
+                            <span className="text-[10px] font-extrabold uppercase tracking-wider">
+                              AI Done!
+                            </span>
+                          </div>
+                        )}
+                        <div className="flex flex-col gap-1.5 w-full">
+                          <div className="flex items-center gap-1">
+                            <Input
+                              ref={(el) => {
+                                setInputRef(el, item.id);
+                                if (index === purchaseItems.length - 1) {
+                                  productInputRef.current = el;
+                                }
+                              }}
+                              value={item.product_name || ""}
+                              disabled={processingRowId !== null}
+                              onChange={(e) => {
+                                handleItemFieldChange(
+                                  item.id,
+                                  "product_name",
+                                  e.target.value
+                                );
+                                setHighlightedSuggestionIndex(-1);
+                              }}
+                              onFocus={() => {
+                                setSearchMedicine(item.product_name || "");
+                                setShowSuggestions(true);
+                                setActiveItemId(item.id);
+                                setHighlightedSuggestionIndex(-1);
+                              }}
+                              onBlur={(e) => {
+                                const currentId = item.id;
+                                setTimeout(() => {
+                                  if (!isMouseOverSuggestions) {
+                                    setActiveItemId((prev) => {
+                                      if (prev === currentId) {
+                                        setShowSuggestions(false);
+                                        setHighlightedSuggestionIndex(-1);
+                                        return null;
+                                      }
+                                      return prev;
+                                    });
                                   }
-                                }}
-                                value={item.product_name || ""}
-                                disabled={processingRowId !== null}
-                                onChange={(e) => {
-                                  handleItemFieldChange(
-                                    item.id,
-                                    "product_name",
-                                    e.target.value
+                                }, 200);
+                              }}
+                              onKeyDown={(e) => {
+                                const hasAiOption = searchMedicine.length > 1;
+                                const maxIndex = hasAiOption
+                                  ? medicineSuggestions.length
+                                  : medicineSuggestions.length - 1;
+
+                                if (
+                                  !showSuggestions ||
+                                  (medicineSuggestions.length === 0 &&
+                                    !hasAiOption)
+                                )
+                                  return;
+
+                                if (e.key === "ArrowDown") {
+                                  e.preventDefault();
+                                  setHighlightedSuggestionIndex((prev) =>
+                                    prev < maxIndex ? prev + 1 : 0
                                   );
-                                  setHighlightedSuggestionIndex(-1);
-                                }}
-                                onFocus={() => {
-                                  setSearchMedicine(item.product_name || "");
-                                  setShowSuggestions(true);
-                                  setActiveItemId(item.id);
-                                  setHighlightedSuggestionIndex(-1);
-                                }}
-                                onBlur={(e) => {
-                                  const currentId = item.id;
-                                  setTimeout(() => {
-                                    if (!isMouseOverSuggestions) {
-                                      setActiveItemId((prev) => {
-                                        if (prev === currentId) {
-                                          setShowSuggestions(false);
-                                          setHighlightedSuggestionIndex(-1);
-                                          return null;
-                                        }
-                                        return prev;
-                                      });
-                                    }
-                                  }, 200);
-                                }}
-                                onKeyDown={(e) => {
-                                  const hasAiOption = searchMedicine.length > 1;
-                                  const maxIndex = hasAiOption
-                                    ? medicineSuggestions.length
-                                    : medicineSuggestions.length - 1;
-
+                                } else if (e.key === "ArrowUp") {
+                                  e.preventDefault();
+                                  setHighlightedSuggestionIndex((prev) =>
+                                    prev > 0 ? prev - 1 : maxIndex
+                                  );
+                                } else if (e.key === "Enter") {
+                                  e.preventDefault();
                                   if (
-                                    !showSuggestions ||
-                                    (medicineSuggestions.length === 0 &&
-                                      !hasAiOption)
-                                  )
-                                    return;
-
-                                  if (e.key === "ArrowDown") {
-                                    e.preventDefault();
-                                    setHighlightedSuggestionIndex((prev) =>
-                                      prev < maxIndex ? prev + 1 : prev
-                                    );
-                                  } else if (e.key === "ArrowUp") {
-                                    e.preventDefault();
-                                    setHighlightedSuggestionIndex((prev) =>
-                                      prev > 0 ? prev - 1 : -1
+                                    highlightedSuggestionIndex >= 0 &&
+                                    highlightedSuggestionIndex <
+                                      medicineSuggestions.length
+                                  ) {
+                                    handleSelectMedicineForItem(
+                                      item.id,
+                                      medicineSuggestions[
+                                        highlightedSuggestionIndex
+                                      ]
                                     );
                                   } else if (
-                                    e.key === "Enter" &&
-                                    highlightedSuggestionIndex >= 0
+                                    highlightedSuggestionIndex ===
+                                      medicineSuggestions.length &&
+                                    hasAiOption
                                   ) {
-                                    e.preventDefault();
-                                    if (
-                                      highlightedSuggestionIndex ===
-                                      medicineSuggestions.length
-                                    ) {
-                                      handleSelectAiMedicineForItem(
-                                        item.id,
-                                        searchMedicine
-                                      );
-                                    } else {
-                                      handleSelectMedicineForItem(
-                                        item.id,
-                                        medicineSuggestions[
-                                          highlightedSuggestionIndex
-                                        ]
-                                      );
-                                    }
-                                    setHighlightedSuggestionIndex(-1);
-                                  } else if (e.key === "Escape") {
-                                    setShowSuggestions(false);
-                                    setHighlightedSuggestionIndex(-1);
+                                    handleAutofillSingleRowWithAI(item);
+                                  } else {
+                                    document
+                                      .getElementById(`batch-${item.id}`)
+                                      ?.focus({ preventScroll: true });
                                   }
-                                }}
-                                placeholder="Search..."
-                                className={`h-8 text-xs font-bold ${
-                                  item._inventoryMeta
-                                    ? item._inventoryMeta.stock_status ===
-                                      "In Stock"
-                                      ? "border-blue-300 bg-blue-50/30"
-                                      : "border-orange-300 bg-orange-50/30"
-                                    : ""
-                                }`}
-                                data-testid={`item-name-${index}`}
-                                autoComplete="off"
-                              />
+                                } else if (e.key === "Tab") {
+                                  setShowSuggestions(false);
+                                  setHighlightedSuggestionIndex(-1);
+                                }
+                              }}
+                              placeholder="Product Name"
+                              className="h-8 text-xs font-semibold rounded-lg border-border bg-background text-foreground"
+                              data-testid={`item-name-${index}`}
+                              autoComplete="off"
+                            />
 
-                              {/* Inventory Indicator Icon */}
-                              {item._inventoryMeta && (
-                                <CustomTooltip
-                                  position="top"
-                                  text={
+                            {/* Inventory Indicator Icon */}
+                            {item._inventoryMeta && (
+                              <CustomTooltip
+                                position="top"
+                                text={`In Catalog (${item._inventoryMeta.available_quantity || 0} units available)`}
+                              >
+                                <Package
+                                  className={`w-4 h-4 shrink-0 ${
                                     item._inventoryMeta.stock_status ===
                                     "In Stock"
-                                      ? `✅ In Stock: ${item._inventoryMeta.available_quantity} units\nBatch: ${item._inventoryMeta.batch_no || "N/A"}\nLast Supplier: ${item._inventoryMeta.last_supplier || "Unknown"}`
-                                      : `⚠️ Out of Stock\nLast Supplier: ${item._inventoryMeta.last_supplier || "Unknown"}`
-                                  }
+                                      ? "text-blue-500"
+                                      : "text-orange-500"
+                                  }`}
+                                />
+                              </CustomTooltip>
+                            )}
+
+                            {/* Product Info Button for Batches & History Sidebar */}
+                            {item.product_name &&
+                              item.product_name.trim().length > 0 && (
+                                <CustomTooltip
+                                  position="top"
+                                  text="View all batches & past purchases for this product"
                                 >
-                                  <Package
-                                    className={`w-4 h-4 shrink-0 ${
-                                      item._inventoryMeta.stock_status ===
-                                      "In Stock"
-                                        ? "text-blue-500"
-                                        : "text-orange-500"
-                                    }`}
-                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      handleOpenProductSidebar(
+                                        item.product_name,
+                                        item.id,
+                                        "history",
+                                        ratePack,
+                                        mrpPack
+                                      )
+                                    }
+                                    className="p-1 rounded-md bg-muted hover:bg-orange-500/20 text-muted-foreground hover:text-orange-500 transition-colors shrink-0 cursor-pointer"
+                                    title="Batches & History"
+                                  >
+                                    <Info className="w-3.5 h-3.5 text-orange-500" />
+                                  </button>
                                 </CustomTooltip>
                               )}
-                            </div>
-
-                            <div className="flex gap-1 items-center">
-                              <Input
-                                value={item.manufacturer || ""}
-                                onChange={(e) =>
-                                  handleItemFieldChange(
-                                    item.id,
-                                    "manufacturer",
-                                    e.target.value
-                                  )
-                                }
-                                placeholder="MFG"
-                                className="h-7 text-[10px] w-1/2"
-                              />
-                              <Button
-                                id={`add-salt-${item.id}`}
-                                type="button"
-                                variant="outline"
-                                className="h-7 text-[10px] w-1/2 justify-start truncate px-2"
-                                onClick={() =>
-                                  setSaltDialog({
-                                    open: true,
-                                    itemId: item.id,
-                                    value: item.salt_composition || "",
-                                  })
-                                }
-                              >
-                                {item.salt_composition
-                                  ? item.salt_composition.length > 10
-                                    ? item.salt_composition.slice(0, 8) + "..."
-                                    : item.salt_composition
-                                  : "Add Salt"}
-                              </Button>
-
-                              {hasScheme && (
-                                <span className="shrink-0 inline-flex items-center px-1.5 py-0.5 rounded text-[8px] font-bold bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 uppercase tracking-wider animate-pulse">
-                                  +{scheme} free
-                                </span>
-                              )}
-                            </div>
                           </div>
 
-                          {/* ========================================== */}
-                          {/* SUGGESTIONS DROPDOWN VIA PORTAL            */}
-                          {/* ========================================== */}
-                          {showSuggestions &&
-                            activeItemId === item.id &&
-                            (medicineSuggestions.length > 0 ||
-                              searchMedicine.length > 1) &&
-                            createPortal(
-                              <div
-                                data-suggestions-dropdown="true"
-                                className="bg-card/95 backdrop-blur-xl border border-border/80 rounded-xl shadow-2xl overflow-y-auto z-[99999]"
-                                onMouseEnter={() =>
-                                  setIsMouseOverSuggestions(true)
+                          <div className="flex gap-1.5 items-center w-full">
+                            <Input
+                              value={item.manufacturer || ""}
+                              onChange={(e) =>
+                                handleItemFieldChange(
+                                  item.id,
+                                  "manufacturer",
+                                  e.target.value
+                                )
+                              }
+                              placeholder="MFG Brand"
+                              className="h-7 text-xs w-1/2 rounded-lg border-border bg-background text-foreground"
+                            />
+                            <Button
+                              id={`add-salt-${item.id}`}
+                              type="button"
+                              variant="outline"
+                              className="h-7 text-xs w-1/2 justify-start truncate px-2 rounded-lg border-border font-medium text-foreground bg-background"
+                              onClick={() =>
+                                setSaltDialog({
+                                  open: true,
+                                  itemId: item.id,
+                                  value: item.salt_composition || "",
+                                })
+                              }
+                            >
+                              <span className="truncate">
+                                {item.salt_composition
+                                  ? item.salt_composition.length > 12
+                                    ? item.salt_composition.slice(0, 10) + "..."
+                                    : item.salt_composition
+                                  : "+ Salt"}
+                              </span>
+                            </Button>
+                          </div>
+
+                          {/* Rate & MRP Alert Inline Badges */}
+                          {priceAlerts[item.id]?.is_higher_price_alert && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleOpenProductSidebar(
+                                  item.product_name,
+                                  item.id,
+                                  "history",
+                                  ratePack,
+                                  mrpPack
+                                )
+                              }
+                              className="flex items-center gap-1 bg-amber-500/15 text-amber-500 hover:bg-amber-500/25 border border-amber-500/40 px-2 py-0.5 rounded-lg text-[10px] font-extrabold transition-all cursor-pointer shadow-2xs shrink-0 self-start mt-1"
+                              title="Higher rate than past purchases for the same MRP. Click to view history graph."
+                            >
+                              <AlertTriangle className="w-3 h-3 text-amber-500 shrink-0" />
+                              <span>
+                                Paying +₹
+                                {priceAlerts[item.id].rate_difference?.toFixed(
+                                  2
+                                )}{" "}
+                                Extra (Same MRP)
+                              </span>
+                            </button>
+                          )}
+                          {priceAlerts[item.id]?.mrp_increased &&
+                            !priceAlerts[item.id]?.is_higher_price_alert && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  handleOpenProductSidebar(
+                                    item.product_name,
+                                    item.id,
+                                    "history",
+                                    ratePack,
+                                    mrpPack
+                                  )
                                 }
-                                onMouseLeave={() => {
-                                  setIsMouseOverSuggestions(false);
-                                  const activeInput =
-                                    inputRefs.current[activeItemId];
-                                  if (
-                                    activeInput &&
-                                    document.activeElement !== activeInput
-                                  ) {
-                                    setShowSuggestions(false);
-                                    setActiveItemId(null);
-                                  }
-                                }}
-                                style={{
-                                  position: "fixed",
-                                  top: dropdownPosition.top,
-                                  left: dropdownPosition.left,
-                                  width: dropdownPosition.width || 480,
-                                  maxHeight: "300px",
-                                  transform:
-                                    dropdownPosition.transform || "none",
-                                  overscrollBehavior: "contain",
-                                  WebkitOverflowScrolling: "touch",
-                                }}
-                                onScroll={handleScrollSuggestions}
+                                className={`flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-extrabold transition-all cursor-pointer shadow-2xs shrink-0 self-start mt-1 ${
+                                  priceAlerts[item.id]?.rate_increased
+                                    ? "bg-amber-500/15 text-amber-400 hover:bg-amber-500/25 border border-amber-500/40"
+                                    : "bg-blue-500/15 text-blue-400 hover:bg-blue-500/25 border border-blue-500/40"
+                                }`}
+                                title="MRP and Rate trends from past purchases. Click to view price history."
                               >
-                                {medicineSuggestions[0]?.matchQuality && (
-                                  <div className="px-3 py-2 bg-muted border-b border-border text-xs text-muted-foreground flex gap-3 sticky top-0 z-10">
-                                    <span>
-                                      Good:{" "}
-                                      {
-                                        medicineSuggestions.filter(
-                                          (m) => m.matchQuality === "good"
-                                        ).length
-                                      }
-                                    </span>
+                                <TrendingUp
+                                  className={`w-3 h-3 shrink-0 ${priceAlerts[item.id]?.rate_increased ? "text-amber-400" : "text-blue-400"}`}
+                                />
+                                <span>
+                                  MRP Hike (+₹
+                                  {priceAlerts[item.id].mrp_difference?.toFixed(
+                                    2
+                                  )}
+                                  )
+                                  {priceAlerts[item.id]?.rate_increased && (
+                                    <>
+                                      {" "}
+                                      & Rate +₹
+                                      {priceAlerts[
+                                        item.id
+                                      ].rate_difference?.toFixed(2)}
+                                    </>
+                                  )}
+                                </span>
+                              </button>
+                            )}
+                          {(priceAlerts[item.id]?.mrp_lowered ||
+                            priceAlerts[item.id]?.is_mrp_lowered_alert) && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleOpenProductSidebar(
+                                  item.product_name,
+                                  item.id,
+                                  "history",
+                                  ratePack,
+                                  mrpPack
+                                )
+                              }
+                              className={`flex items-center gap-1 border px-2 py-0.5 rounded-lg text-[10px] font-extrabold transition-all cursor-pointer shadow-2xs shrink-0 self-start mt-1 ${
+                                priceAlerts[item.id]?.rate_increased
+                                  ? "bg-rose-500/15 text-rose-400 hover:bg-rose-500/25 border-rose-500/40 animate-pulse"
+                                  : "bg-purple-500/15 text-purple-400 hover:bg-purple-500/25 border-purple-500/40"
+                              }`}
+                              title="MRP lowered from past purchases. Click to view price comparison."
+                            >
+                              {priceAlerts[item.id]?.rate_increased ? (
+                                <AlertTriangle className="w-3 h-3 text-rose-400 shrink-0" />
+                              ) : (
+                                <TrendingDown className="w-3 h-3 text-purple-400 shrink-0" />
+                              )}
+                              <span>
+                                MRP Drop (-₹
+                                {priceAlerts[
+                                  item.id
+                                ].mrp_drop_difference?.toFixed(2)}
+                                )
+                                {priceAlerts[item.id].rate_increased
+                                  ? ` & Rate +₹${priceAlerts[item.id].rate_difference?.toFixed(2)}`
+                                  : ""}
+                              </span>
+                            </button>
+                          )}
+                        </div>
+
+                        {/* ========================================== */}
+                        {/* SUGGESTIONS DROPDOWN VIA PORTAL            */}
+                        {/* ========================================== */}
+                        {showSuggestions &&
+                          activeItemId === item.id &&
+                          (medicineSuggestions.length > 0 ||
+                            searchMedicine.length > 1 ||
+                            loadingSuggestions) &&
+                          createPortal(
+                            <div
+                              data-suggestions-dropdown="true"
+                              className="bg-card border-2 border-border rounded-2xl shadow-2xl overflow-y-auto z-[99999]"
+                              onMouseEnter={() =>
+                                setIsMouseOverSuggestions(true)
+                              }
+                              onMouseLeave={() => {
+                                setIsMouseOverSuggestions(false);
+                                const activeInput =
+                                  inputRefs.current[activeItemId];
+                                if (
+                                  activeInput &&
+                                  document.activeElement !== activeInput
+                                ) {
+                                  setShowSuggestions(false);
+                                  setActiveItemId(null);
+                                }
+                              }}
+                              style={{
+                                position: "fixed",
+                                top: dropdownPosition.top,
+                                left: dropdownPosition.left,
+                                width: dropdownPosition.width || 640,
+                                maxHeight: "320px",
+                                transform: dropdownPosition.transform || "none",
+                                overscrollBehavior: "contain",
+                                WebkitOverflowScrolling: "touch",
+                              }}
+                              onScroll={handleScrollSuggestions}
+                            >
+                              {loadingSuggestions &&
+                                medicineSuggestions.length === 0 && (
+                                  <div className="h-[140px] w-full flex flex-col items-center justify-center bg-card backdrop-blur-md">
+                                    <Loader
+                                      size="sm"
+                                      text="Searching medicines & inventory..."
+                                      variant="inline"
+                                    />
                                   </div>
                                 )}
 
-                                {medicineSuggestions.map((medicine, idx) => (
-                                  <div
-                                    key={idx}
-                                    id={`purchases-suggestion-${idx}`}
-                                    className={`p-3 cursor-pointer border-b border-border last:border-0 ${
-                                      highlightedSuggestionIndex === idx
-                                        ? "bg-primary/20"
-                                        : "hover:bg-primary/10"
-                                    }`}
-                                    onMouseDown={(e) => {
-                                      e.preventDefault();
-                                      handleSelectMedicineForItem(
-                                        item.id,
-                                        medicine
-                                      );
-                                      setHighlightedSuggestionIndex(-1);
-                                    }}
-                                    onMouseEnter={() =>
-                                      setHighlightedSuggestionIndex(idx)
-                                    }
-                                  >
-                                    <div className="flex items-center justify-between mb-1">
-                                      <div className="font-medium text-sm flex items-center gap-2 flex-wrap">
-                                        {medicine.name}
+                              {medicineSuggestions[0]?.matchQuality && (
+                                <div className="px-3.5 py-1.5 bg-muted border-b border-border text-xs font-semibold text-muted-foreground flex items-center justify-between sticky top-0 z-10">
+                                  <span>
+                                    Suggestions for "{searchMedicine}"
+                                  </span>
+                                  <span className="text-[10px] bg-blue-500/10 text-blue-400 px-2 py-0.5 rounded-full font-bold border border-blue-500/20">
+                                    {medicineSuggestions.length} matches
+                                  </span>
+                                </div>
+                              )}
 
-                                        {medicine.source === "inventory" && (
-                                          <span className="text-[10px] px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded-full font-medium">
-                                            Inventory
-                                          </span>
-                                        )}
-                                        {medicine.source === "global" && (
-                                          <span className="text-[10px] px-1.5 py-0.5 bg-gray-100 text-gray-600 rounded-full font-medium">
-                                            Not in Inventory
-                                          </span>
-                                        )}
-                                      </div>
-                                    </div>
-
-                                    <div className="text-xs text-muted-foreground">
-                                      <span>
-                                        {medicine.manufacturer ||
-                                          medicine.manufacturer_name}
-                                      </span>
-                                      {(medicine.salt_composition ||
-                                        medicine.short_composition1) && (
-                                        <span className="ml-2 text-primary/70">
-                                          (
-                                          {(
-                                            medicine.salt_composition ||
-                                            medicine.short_composition1
-                                          )?.slice(0, 35)}
-                                          ...)
+                              {medicineSuggestions.map((medicine, idx) => (
+                                <div
+                                  key={idx}
+                                  id={`purchases-suggestion-${idx}`}
+                                  className={`p-3 cursor-pointer border-b border-border/50 transition-colors last:border-0 ${
+                                    highlightedSuggestionIndex === idx
+                                      ? "bg-orange-500/15"
+                                      : "hover:bg-muted/50"
+                                  }`}
+                                  onMouseDown={(e) => {
+                                    e.preventDefault();
+                                    handleSelectMedicineForItem(
+                                      item.id,
+                                      medicine
+                                    );
+                                    setHighlightedSuggestionIndex(-1);
+                                  }}
+                                  onMouseEnter={() =>
+                                    setHighlightedSuggestionIndex(idx)
+                                  }
+                                >
+                                  <div className="flex items-center justify-between gap-2 mb-1">
+                                    <div className="font-bold text-sm text-foreground flex items-center gap-2 flex-wrap">
+                                      {medicine.name}
+                                      {medicine.source === "inventory" ? (
+                                        <span className="text-[10px] px-2 py-0.5 bg-blue-500/10 text-blue-400 border border-blue-500/30 rounded-full font-bold">
+                                          In Stock
+                                        </span>
+                                      ) : (
+                                        <span className="text-[10px] px-2 py-0.5 bg-muted text-muted-foreground border border-border rounded-full font-bold">
+                                          Global Catalog
                                         </span>
                                       )}
                                     </div>
-
-                                    {medicine.source === "inventory" && (
-                                      <div className="mt-2 flex items-center gap-2 flex-wrap text-xs">
+                                    <div className="flex items-center gap-2 shrink-0">
+                                      {medicine.stock_status && (
                                         <span
-                                          className={`px-2 py-0.5 rounded font-medium ${
+                                          className={`text-xs px-2 py-0.5 rounded-md font-bold ${
                                             medicine.stock_status === "In Stock"
-                                              ? "bg-green-500/20 text-green-700"
-                                              : "bg-red-500/20 text-red-700"
+                                              ? "bg-emerald-500/10 text-emerald-400"
+                                              : "bg-rose-500/10 text-rose-400"
                                           }`}
                                         >
                                           {medicine.stock_status}:{" "}
                                           {medicine.available_quantity || 0}{" "}
                                           units
                                         </span>
+                                      )}
+                                      <button
+                                        type="button"
+                                        onMouseDown={(e) => {
+                                          e.preventDefault();
+                                          e.stopPropagation();
+                                          handleOpenProductSidebar(
+                                            medicine.name,
+                                            item.id
+                                          );
+                                        }}
+                                        className="p-1 rounded-md bg-muted hover:bg-orange-500/20 text-muted-foreground hover:text-orange-500 transition-colors shrink-0 cursor-pointer"
+                                        title="View Batches & Past Purchases"
+                                      >
+                                        <Info className="w-3.5 h-3.5 text-orange-500" />
+                                      </button>
+                                    </div>
+                                  </div>
 
-                                        {medicine.batch_no && (
-                                          <span className="text-muted-foreground">
-                                            Batch: {medicine.batch_no}
-                                          </span>
-                                        )}
-
-                                        {medicine.expiry_date && (
-                                          <span
-                                            className={`${
-                                              new Date(medicine.expiry_date) <
-                                              new Date(
-                                                Date.now() +
-                                                  90 * 24 * 60 * 60 * 1000
-                                              )
-                                                ? "text-orange-600 font-medium"
-                                                : "text-muted-foreground"
-                                            }`}
-                                          >
-                                            Exp: {medicine.expiry_date}
-                                            {new Date(medicine.expiry_date) <
-                                              new Date() && " ⚠️ Expired"}
-                                          </span>
-                                        )}
-                                      </div>
+                                  <div className="flex items-center gap-2 text-xs text-muted-foreground flex-wrap">
+                                    {medicine.manufacturer ||
+                                    medicine.manufacturer_name ? (
+                                      <span className="font-semibold text-foreground/90">
+                                        MFG:{" "}
+                                        {medicine.manufacturer ||
+                                          medicine.manufacturer_name}
+                                      </span>
+                                    ) : null}
+                                    {(medicine.salt_composition ||
+                                      medicine.short_composition1) && (
+                                      <span className="text-orange-400 font-medium">
+                                        • Salt:{" "}
+                                        {medicine.salt_composition ||
+                                          medicine.short_composition1}
+                                      </span>
                                     )}
+                                  </div>
 
-                                    <div className="mt-2 flex items-center gap-3 text-xs">
+                                  <div className="mt-2 flex items-center justify-between text-xs text-muted-foreground flex-wrap pt-1 border-t border-border/40">
+                                    <div className="flex items-center gap-3">
                                       {medicine.source === "inventory" ? (
                                         <>
-                                          <span className="font-mono font-medium text-primary">
-                                            Purchase: ₹
+                                          <span className="font-mono font-bold text-orange-500">
+                                            Rate: ₹
                                             {Number(
                                               medicine.purchase_price || 0
                                             ).toFixed(2)}
-                                            /unit
+                                            /u
                                           </span>
-                                          <span className="font-mono text-muted-foreground">
+                                          <span className="font-mono text-foreground/80">
                                             MRP: ₹
                                             {Number(
                                               medicine.mrp_per_unit ||
@@ -3241,121 +4091,147 @@ export default function PurchasesPage() {
                                                 0
                                             ).toFixed(2)}
                                           </span>
-                                          {medicine.supplier_name && (
-                                            <span className="text-blue-600">
-                                              Last: {medicine.supplier_name}
-                                            </span>
-                                          )}
                                         </>
                                       ) : (
-                                        <span className="font-mono font-medium text-primary">
+                                        <span className="font-mono font-bold text-orange-500">
                                           MRP: ₹{medicine["price(₹)"] || 0} •{" "}
                                           {medicine.pack_size_label || "N/A"}
                                         </span>
                                       )}
                                     </div>
+                                    {medicine.batch_no && (
+                                      <span className="font-mono text-[11px] text-muted-foreground">
+                                        Batch: {medicine.batch_no} | Exp:{" "}
+                                        {medicine.expiry_date || "N/A"}
+                                      </span>
+                                    )}
                                   </div>
-                                ))}
-                                {loadingSuggestions && (
-                                  <div className="p-3 text-center border-t border-border">
-                                    <Loader2 className="w-5 h-5 animate-spin mx-auto text-muted-foreground" />
+                                </div>
+                              ))}
+
+                              {loadingSuggestions &&
+                                medicineSuggestions.length > 0 && (
+                                  <div className="p-3 text-center flex items-center justify-center bg-muted/80 border-t border-border">
+                                    <Loader
+                                      size="xs"
+                                      text="Loading more suggestions..."
+                                      variant="inline"
+                                    />
                                   </div>
                                 )}
 
-                                {!loadingSuggestions &&
-                                  searchMedicine.length > 1 && (
-                                    <div
-                                      id={`purchases-suggestion-${medicineSuggestions.length}`}
-                                      className={`p-3 cursor-pointer border-t border-indigo-100 dark:border-indigo-500/20 bg-indigo-50/50 dark:bg-indigo-500/10 hover:bg-indigo-100/50 dark:hover:bg-indigo-500/20 transition-colors ${
-                                        highlightedSuggestionIndex ===
+                              {!loadingSuggestions &&
+                                searchMedicine.length > 1 && (
+                                  <div
+                                    id={`purchases-suggestion-${medicineSuggestions.length}`}
+                                    className={`p-3 cursor-pointer border-t border-orange-500/30 bg-orange-500/10 hover:bg-orange-500/20 transition-colors ${
+                                      highlightedSuggestionIndex ===
+                                      medicineSuggestions.length
+                                        ? "bg-orange-500/25"
+                                        : ""
+                                    }`}
+                                    onMouseDown={(e) => {
+                                      e.preventDefault();
+                                      handleSelectAiMedicineForItem(
+                                        item.id,
+                                        searchMedicine
+                                      );
+                                    }}
+                                    onMouseEnter={() =>
+                                      setHighlightedSuggestionIndex(
                                         medicineSuggestions.length
-                                          ? "bg-indigo-100/80 dark:bg-indigo-500/30"
-                                          : ""
-                                      }`}
-                                      onMouseDown={(e) => {
-                                        e.preventDefault();
-                                        handleSelectAiMedicineForItem(
-                                          item.id,
-                                          searchMedicine
-                                        );
-                                      }}
-                                      onMouseEnter={() =>
-                                        setHighlightedSuggestionIndex(
-                                          medicineSuggestions.length
-                                        )
-                                      }
-                                    >
-                                      <div className="flex items-center gap-2 text-indigo-700 dark:text-indigo-400 font-semibold text-sm">
-                                        <div className="p-1.5 bg-indigo-100 dark:bg-indigo-500/20 rounded-md shadow-sm">
-                                          ✨
-                                        </div>
-                                        <span>
-                                          Get AI facts for{" "}
-                                          <span className="font-bold underline decoration-indigo-300 dark:decoration-indigo-600 underline-offset-2">
-                                            "{searchMedicine}"
-                                          </span>
-                                        </span>
-                                      </div>
-                                      <p className="text-[10.5px] font-medium text-indigo-500/80 dark:text-indigo-400/70 mt-1 ml-9">
-                                        Bypass search and instantly extract
-                                        properties
-                                      </p>
+                                      )
+                                    }
+                                  >
+                                    <div className="flex items-center gap-2 text-orange-400 font-bold text-sm">
+                                      <span className="p-1 bg-orange-500/20 rounded-md flex items-center justify-center">
+                                        <Sparkles className="w-3.5 h-3.5" />
+                                      </span>
+                                      <span>
+                                        Get AI facts for "{searchMedicine}"
+                                      </span>
                                     </div>
-                                  )}
-                              </div>,
-                              document.body
-                            )}
-                        </TableCell>
+                                  </div>
+                                )}
 
-                        <TableCell className="w-[120px]">
-                          <div className="flex flex-col gap-1.5">
-                            <Input
-                              id={`batch-${item.id}`}
-                              value={item.batch_no || ""}
-                              onChange={(e) =>
-                                handleItemFieldChange(
-                                  item.id,
-                                  "batch_no",
-                                  e.target.value
-                                )
-                              }
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter") {
-                                  e.preventDefault();
-                                  document
-                                    .getElementById(`hsn-${item.id}`)
-                                    ?.focus({ preventScroll: true });
-                                }
-                              }}
-                              placeholder="Batch"
-                              className="h-8 text-xs font-semibold"
-                            />
-                            <Input
-                              id={`expiry-${item.id}`}
-                              type="date"
-                              value={item.expiry_date || ""}
-                              onChange={(e) =>
-                                handleItemFieldChange(
-                                  item.id,
-                                  "expiry_date",
-                                  e.target.value
-                                )
-                              }
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter") {
-                                  e.preventDefault();
-                                  document
-                                    .getElementById(`cgst-${item.id}`)
-                                    ?.focus({ preventScroll: true });
-                                }
-                              }}
-                              className="h-7 text-[10px]"
-                            />
-                          </div>
-                        </TableCell>
+                              {!loadingSuggestions &&
+                                medicineSuggestions.length === 0 &&
+                                searchMedicine.length > 1 && (
+                                  <div className="p-6 text-center flex flex-col items-center justify-center bg-card border-t border-border animate-in fade-in zoom-in-95 duration-200">
+                                    <div className="w-12 h-12 rounded-2xl bg-orange-500/10 border border-orange-500/30 flex items-center justify-center text-orange-400 mb-2.5 shadow-xs">
+                                      <SearchX className="w-6 h-6" />
+                                    </div>
+                                    <h4 className="text-xs font-extrabold text-foreground tracking-wide">
+                                      No results match your search
+                                    </h4>
+                                    <p className="text-[11px] font-medium text-muted-foreground mt-1 max-w-[340px] leading-relaxed">
+                                      No medicines found matching "
+                                      <span className="font-bold text-foreground">
+                                        {searchMedicine}
+                                      </span>
+                                      ". Click{" "}
+                                      <span className="font-bold text-orange-400">
+                                        "Get AI facts"
+                                      </span>{" "}
+                                      above to auto-extract medicine details.
+                                    </p>
+                                  </div>
+                                )}
+                            </div>,
+                            document.body
+                          )}
+                      </TableCell>
 
-                        <TableCell className="w-[120px]">
-                          <div className="flex flex-col gap-1.5">
+                      <TableCell className="w-[130px] p-2 align-top">
+                        <div className="flex flex-col gap-1.5">
+                          <Input
+                            id={`batch-${item.id}`}
+                            value={item.batch_no || ""}
+                            onChange={(e) =>
+                              handleItemFieldChange(
+                                item.id,
+                                "batch_no",
+                                e.target.value
+                              )
+                            }
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                document
+                                  .getElementById(`hsn-${item.id}`)
+                                  ?.focus({ preventScroll: true });
+                              }
+                            }}
+                            placeholder="Batch No"
+                            className="h-8 text-xs font-semibold rounded-lg border-border bg-background text-foreground"
+                          />
+                          <Input
+                            id={`expiry-${item.id}`}
+                            type="date"
+                            value={item.expiry_date || ""}
+                            onChange={(e) =>
+                              handleItemFieldChange(
+                                item.id,
+                                "expiry_date",
+                                e.target.value
+                              )
+                            }
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                document
+                                  .getElementById(`cgst-${item.id}`)
+                                  ?.focus({ preventScroll: true });
+                              }
+                            }}
+                            className="h-7 text-xs rounded-lg border-border bg-background text-foreground"
+                          />
+                        </div>
+                      </TableCell>
+
+                      <TableCell className="w-[140px] p-2 align-top">
+                        <div className="flex flex-col gap-1.5">
+                          <div className="flex gap-1 w-full">
                             <Input
                               id={`hsn-${item.id}`}
                               value={item.hsn_no || ""}
@@ -3375,7 +4251,7 @@ export default function PurchasesPage() {
                                 }
                               }}
                               placeholder="HSN"
-                              className="h-8 text-xs font-semibold"
+                              className="h-8 text-xs font-semibold w-1/2 rounded-lg border-border bg-background text-foreground"
                             />
                             <Select
                               value={item.pack_type || "Strip"}
@@ -3383,7 +4259,7 @@ export default function PurchasesPage() {
                                 handleItemFieldChange(item.id, "pack_type", v)
                               }
                             >
-                              <SelectTrigger className="h-7 text-[10px]">
+                              <SelectTrigger className="h-8 text-xs w-1/2 rounded-lg border-border bg-background text-foreground px-1.5">
                                 <SelectValue />
                               </SelectTrigger>
                               <SelectContent>
@@ -3398,357 +4274,355 @@ export default function PurchasesPage() {
                                 ))}
                               </SelectContent>
                             </Select>
+                          </div>
+                          <Input
+                            type="number"
+                            value={
+                              item.shortage_threshold !== undefined
+                                ? item.shortage_threshold
+                                : ""
+                            }
+                            onChange={(e) =>
+                              handleItemFieldChange(
+                                item.id,
+                                "shortage_threshold",
+                                e.target.value
+                              )
+                            }
+                            placeholder="Shortage Qty"
+                            className="h-7 text-xs rounded-lg border-border bg-background text-foreground"
+                          />
+                        </div>
+                      </TableCell>
+
+                      <TableCell className="w-[140px] p-2 align-top">
+                        <div className="flex flex-col gap-1.5">
+                          <div className="flex gap-1 justify-center items-center w-full">
                             <Input
+                              id={`cgst-${item.id}`}
                               type="number"
-                              value={item.shortage_threshold !== undefined ? item.shortage_threshold : ""}
+                              step="0.01"
+                              value={item.cgst !== undefined ? item.cgst : ""}
                               onChange={(e) =>
-                                handleItemFieldChange(
+                                handleItemFieldChangeWithCalc(
                                   item.id,
-                                  "shortage_threshold",
+                                  "cgst",
                                   e.target.value
                                 )
                               }
-                              placeholder="Shortage Qty"
-                              className="h-7 text-[10px]"
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  e.preventDefault();
+                                  document
+                                    .getElementById(`sgst-${item.id}`)
+                                    ?.focus({ preventScroll: true });
+                                }
+                              }}
+                              placeholder="CGST %"
+                              className="h-8 text-xs text-center w-1/2 font-semibold rounded-lg border-border bg-background text-foreground"
+                              min="0"
+                            />
+                            <Input
+                              id={`sgst-${item.id}`}
+                              type="number"
+                              step="0.01"
+                              value={item.sgst !== undefined ? item.sgst : ""}
+                              onChange={(e) =>
+                                handleItemFieldChangeWithCalc(
+                                  item.id,
+                                  "sgst",
+                                  e.target.value
+                                )
+                              }
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  e.preventDefault();
+                                  document
+                                    .getElementById(`discount-${item.id}`)
+                                    ?.focus({ preventScroll: true });
+                                }
+                              }}
+                              placeholder="SGST %"
+                              className="h-8 text-xs text-center w-1/2 font-semibold rounded-lg border-border bg-background text-foreground"
+                              min="0"
                             />
                           </div>
-                        </TableCell>
-
-                        <TableCell className="w-[150px]">
-                          <div className="flex gap-1.5 justify-center items-center">
-                            <div className="flex flex-col items-center gap-0.5 w-1/2">
-                              <span className="text-[9px] text-muted-foreground font-semibold uppercase">
-                                CGST
-                              </span>
-                              <Input
-                                id={`cgst-${item.id}`}
-                                type="number"
-                                step="0.01"
-                                value={item.cgst !== undefined ? item.cgst : ""}
-                                onChange={(e) =>
-                                  handleItemFieldChangeWithCalc(
-                                    item.id,
-                                    "cgst",
-                                    e.target.value
-                                  )
-                                }
-                                onKeyDown={(e) => {
-                                  if (e.key === "Enter") {
-                                    e.preventDefault();
-                                    document
-                                      .getElementById(`sgst-${item.id}`)
-                                      ?.focus({ preventScroll: true });
-                                  }
-                                }}
-                                placeholder="0"
-                                className="h-8 text-xs text-center w-full"
-                                min="0"
-                              />
-                            </div>
-                            <div className="flex flex-col items-center gap-0.5 w-1/2">
-                              <span className="text-[9px] text-muted-foreground font-semibold uppercase">
-                                SGST
-                              </span>
-                              <Input
-                                id={`sgst-${item.id}`}
-                                type="number"
-                                step="0.01"
-                                value={item.sgst !== undefined ? item.sgst : ""}
-                                onChange={(e) =>
-                                  handleItemFieldChangeWithCalc(
-                                    item.id,
-                                    "sgst",
-                                    e.target.value
-                                  )
-                                }
-                                onKeyDown={(e) => {
-                                  if (e.key === "Enter") {
-                                    e.preventDefault();
-                                    document
-                                      .getElementById(`discount-${item.id}`)
-                                      ?.focus({ preventScroll: true });
-                                  }
-                                }}
-                                placeholder="0"
-                                className="h-8 text-xs text-center w-full"
-                                min="0"
-                              />
-                            </div>
+                          <div className="h-7 text-[10px] font-bold text-foreground bg-muted border border-border rounded-lg flex items-center justify-center font-mono">
+                            Tax: ₹
+                            {(
+                              ((((parseFloat(item.cgst) || 0) +
+                                (parseFloat(item.sgst) || 0)) *
+                                (parseFloat(item.rate_pack) || 0)) /
+                                100) *
+                              (parseInt(item.quantity) || 1)
+                            ).toFixed(2)}
                           </div>
-                        </TableCell>
+                        </div>
+                      </TableCell>
 
-                        <TableCell className="w-[130px]">
-                          <div className="flex gap-1.5 justify-center items-center">
-                            <div className="flex flex-col items-center gap-0.5 w-1/2">
-                              <span className="text-[9px] text-muted-foreground font-semibold uppercase">
-                                Disc %
-                              </span>
+                      <TableCell className="w-[140px] p-2 align-top">
+                        <div className="flex flex-col gap-1.5">
+                          <div className="flex gap-1 justify-center items-center w-full">
+                            <Input
+                              id={`discount-${item.id}`}
+                              type="number"
+                              step="0.01"
+                              value={
+                                item.discount !== undefined ? item.discount : ""
+                              }
+                              onChange={(e) =>
+                                handleItemFieldChangeWithCalc(
+                                  item.id,
+                                  "discount",
+                                  e.target.value
+                                )
+                              }
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  e.preventDefault();
+                                  document
+                                    .getElementById(`scheme-${item.id}`)
+                                    ?.focus({ preventScroll: true });
+                                }
+                              }}
+                              placeholder="Disc %"
+                              className="h-8 text-xs text-center w-1/2 font-semibold rounded-lg border-border bg-background text-foreground"
+                              min="0"
+                            />
+                            <Input
+                              id={`scheme-${item.id}`}
+                              type="number"
+                              value={
+                                item.scheme !== undefined ? item.scheme : ""
+                              }
+                              onChange={(e) =>
+                                handleItemFieldChangeWithCalc(
+                                  item.id,
+                                  "scheme",
+                                  e.target.value
+                                )
+                              }
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  e.preventDefault();
+                                  document
+                                    .getElementById(`qty-${item.id}`)
+                                    ?.focus({ preventScroll: true });
+                                }
+                              }}
+                              placeholder="Scheme"
+                              className={`h-8 text-xs text-center w-1/2 font-semibold rounded-lg border-border bg-background text-foreground ${
+                                hasScheme
+                                  ? "border-emerald-500 bg-emerald-500/10 font-bold text-emerald-400"
+                                  : ""
+                              }`}
+                              min="0"
+                            />
+                          </div>
+                          {hasScheme ? (
+                            <div className="h-7 text-[10px] font-bold text-emerald-300 bg-emerald-500/20 border border-emerald-500/30 rounded-lg flex items-center justify-center">
+                              +{scheme} Free
+                            </div>
+                          ) : (
+                            <div className="h-7 text-[10px] font-bold text-muted-foreground bg-muted flex items-center justify-center border border-border rounded-lg font-mono">
+                              No Scheme
+                            </div>
+                          )}
+                        </div>
+                      </TableCell>
+
+                      <TableCell className="w-[140px] p-2 align-top">
+                        <div className="flex flex-col gap-1.5">
+                          <div className="flex gap-1 justify-center items-center w-full">
+                            <Input
+                              id={`qty-${item.id}`}
+                              type="number"
+                              value={item.quantity || item.pack_quantity || ""}
+                              onChange={(e) =>
+                                handleItemFieldChangeWithCalc(
+                                  item.id,
+                                  "quantity",
+                                  e.target.value
+                                )
+                              }
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  e.preventDefault();
+                                  document
+                                    .getElementById(`units-${item.id}`)
+                                    ?.focus({ preventScroll: true });
+                                }
+                              }}
+                              placeholder="Qty"
+                              className="h-8 text-xs font-bold text-center w-1/2 rounded-lg border-border bg-background text-foreground"
+                              min="1"
+                            />
+                            <Input
+                              id={`units-${item.id}`}
+                              type="number"
+                              value={item.units || item.units_per_pack || ""}
+                              onChange={(e) =>
+                                handleItemFieldChange(
+                                  item.id,
+                                  "units",
+                                  e.target.value
+                                )
+                              }
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  e.preventDefault();
+                                  document
+                                    .getElementById(`rate-${item.id}`)
+                                    ?.focus({ preventScroll: true });
+                                }
+                              }}
+                              placeholder="Units"
+                              className="h-8 text-xs font-semibold text-center w-1/2 rounded-lg border-border bg-background text-foreground"
+                              min="1"
+                            />
+                          </div>
+                          <div className="h-7 text-[10px] font-bold text-foreground bg-muted border border-border rounded-lg flex items-center justify-center font-mono">
+                            Total:{" "}
+                            <span className="text-orange-500 ml-1 font-bold">
+                              {totalUnits} u
+                            </span>
+                          </div>
+                        </div>
+                      </TableCell>
+
+                      <TableCell className="w-[150px] p-2 align-top">
+                        <div className="flex flex-col gap-1.5">
+                          <div className="flex gap-1 justify-center items-center w-full">
+                            <div className="relative w-1/2">
                               <Input
-                                id={`discount-${item.id}`}
+                                id={`rate-${item.id}`}
                                 type="number"
                                 step="0.01"
-                                value={
-                                  item.discount !== undefined
-                                    ? item.discount
-                                    : ""
-                                }
+                                value={item.rate_pack || item.pack_price || ""}
                                 onChange={(e) =>
                                   handleItemFieldChangeWithCalc(
                                     item.id,
-                                    "discount",
+                                    "rate_pack",
                                     e.target.value
+                                  )
+                                }
+                                onBlur={() =>
+                                  checkPriceHistorySilent(
+                                    item.id,
+                                    item.product_name,
+                                    item.rate_pack || item.pack_price,
+                                    item.mrp_pack ||
+                                      (item.mrp_unit && item.units
+                                        ? item.mrp_unit * item.units
+                                        : 0)
                                   )
                                 }
                                 onKeyDown={(e) => {
                                   if (e.key === "Enter") {
                                     e.preventDefault();
                                     document
-                                      .getElementById(`scheme-${item.id}`)
+                                      .getElementById(`mrp-${item.id}`)
                                       ?.focus({ preventScroll: true });
                                   }
                                 }}
-                                placeholder="0"
-                                className="h-8 text-xs text-center w-full"
-                                min="0"
-                              />
-                            </div>
-                            <div className="flex flex-col items-center gap-0.5 w-1/2">
-                              <span className="text-[9px] text-muted-foreground font-semibold uppercase">
-                                Scheme
-                              </span>
-                              <Input
-                                id={`scheme-${item.id}`}
-                                type="number"
-                                value={
-                                  item.scheme !== undefined ? item.scheme : ""
-                                }
-                                onChange={(e) =>
-                                  handleItemFieldChangeWithCalc(
-                                    item.id,
-                                    "scheme",
-                                    e.target.value
-                                  )
-                                }
-                                onKeyDown={(e) => {
-                                  if (e.key === "Enter") {
-                                    e.preventDefault();
-                                    document
-                                      .getElementById(`qty-${item.id}`)
-                                      ?.focus({ preventScroll: true });
-                                  }
-                                }}
-                                placeholder="0"
-                                className={`h-8 text-xs text-center w-full ${
-                                  hasScheme
-                                    ? "border-emerald-500 bg-emerald-500/10 font-bold"
+                                placeholder="Rate ₹"
+                                className={`h-8 text-xs text-center w-full font-bold text-foreground rounded-lg border-border bg-background pr-5 ${
+                                  priceAlerts[item.id]
+                                    ? "border-amber-500 bg-amber-500/10 text-amber-400"
                                     : ""
                                 }`}
-                                min="0"
                               />
-                            </div>
-                          </div>
-                        </TableCell>
 
-                        <TableCell className="w-[130px]">
-                          <div className="flex flex-col gap-1 items-center">
-                            <div className="flex gap-1 w-full">
-                              <div className="flex flex-col items-center gap-0.5 w-1/2">
-                                <span className="text-[9px] text-muted-foreground font-semibold uppercase">
-                                  Qty
-                                </span>
-                                <Input
-                                  id={`qty-${item.id}`}
-                                  type="number"
-                                  value={
-                                    item.quantity || item.pack_quantity || ""
-                                  }
-                                  onChange={(e) =>
-                                    handleItemFieldChangeWithCalc(
+                              {(item.rate_pack || item.pack_price) && (
+                                <button
+                                  id={`price-history-${item.id}`}
+                                  type="button"
+                                  onClick={() => {
+                                    const currentRate =
+                                      parseFloat(item.rate_pack) ||
+                                      parseFloat(item.pack_price) ||
+                                      0;
+                                    const currentMrp =
+                                      parseFloat(item.mrp_pack) ||
+                                      (item.mrp_unit && item.units
+                                        ? parseFloat(item.mrp_unit) *
+                                          parseInt(item.units)
+                                        : 0);
+
+                                    if (!item.product_name) {
+                                      toast.error("Enter product name first");
+                                      return;
+                                    }
+
+                                    checkPriceHistory(
                                       item.id,
-                                      "quantity",
-                                      e.target.value
-                                    )
-                                  }
-                                  onKeyDown={(e) => {
-                                    if (e.key === "Enter") {
-                                      e.preventDefault();
-                                      document
-                                        .getElementById(`units-${item.id}`)
-                                        ?.focus({ preventScroll: true });
-                                    }
+                                      item.product_name,
+                                      currentRate,
+                                      currentMrp
+                                    );
                                   }}
-                                  placeholder="1"
-                                  className="h-8 text-xs text-center w-full font-bold"
-                                  min="1"
-                                />
-                              </div>
-                              <div className="flex flex-col items-center gap-0.5 w-1/2">
-                                <span className="text-[9px] text-muted-foreground font-semibold uppercase">
-                                  Units
-                                </span>
-                                <Input
-                                  id={`units-${item.id}`}
-                                  type="number"
-                                  value={
-                                    item.units || item.units_per_pack || ""
-                                  }
-                                  onChange={(e) =>
-                                    handleItemFieldChange(
-                                      item.id,
-                                      "units",
-                                      e.target.value
-                                    )
-                                  }
-                                  onKeyDown={(e) => {
-                                    if (e.key === "Enter") {
-                                      e.preventDefault();
-                                      document
-                                        .getElementById(`rate-${item.id}`)
-                                        ?.focus({ preventScroll: true });
-                                    }
-                                  }}
-                                  placeholder="1"
-                                  className="h-8 text-xs text-center w-full"
-                                  min="1"
-                                />
-                              </div>
+                                  className="absolute right-1 top-1/2 -translate-y-1/2 text-orange-500 hover:text-orange-600"
+                                  title="Compare with past rates"
+                                >
+                                  <CustomTooltip
+                                    position="top"
+                                    text="Compare with past rates"
+                                  >
+                                    <ArrowUpDown
+                                      className={`w-3.5 h-3.5 ${
+                                        priceAlerts[item.id]
+                                          ? "text-amber-500 animate-icon-alert cursor-pointer"
+                                          : ""
+                                      }`}
+                                    />
+                                  </CustomTooltip>
+                                </button>
+                              )}
                             </div>
-                            <span className="text-[10px] font-semibold text-muted-foreground/60 font-mono">
-                              Total Units:{" "}
-                              <span className="text-primary font-bold">
-                                {totalUnits}
-                              </span>
-                            </span>
+                            <Input
+                              id={`mrp-${item.id}`}
+                              type="number"
+                              step="0.01"
+                              value={item.mrp_pack || ""}
+                              onChange={(e) =>
+                                handleItemFieldChange(
+                                  item.id,
+                                  "mrp_pack",
+                                  e.target.value
+                                )
+                              }
+                              onBlur={() =>
+                                checkPriceHistorySilent(
+                                  item.id,
+                                  item.product_name,
+                                  item.rate_pack || item.pack_price,
+                                  item.mrp_pack ||
+                                    (item.mrp_unit && item.units
+                                      ? item.mrp_unit * item.units
+                                      : 0)
+                                )
+                              }
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  e.preventDefault();
+                                  document
+                                    .getElementById(`total-${item.id}`)
+                                    ?.focus({ preventScroll: true });
+                                }
+                              }}
+                              placeholder="MRP ₹"
+                              className="h-8 text-xs text-center w-1/2 font-bold rounded-lg border-amber-500/40 bg-amber-500/10 text-amber-400"
+                            />
                           </div>
-                        </TableCell>
-
-                        <TableCell className="w-[130px]">
-                          <div className="flex flex-col gap-1 items-center">
-                            <div className="flex gap-1 w-full">
-                              <div className="flex flex-col items-center gap-0.5 w-1/2 relative">
-                                <span className="text-[9px] text-muted-foreground font-semibold uppercase">
-                                  Rate/P
-                                </span>
-                                <div className="relative w-full">
-                                  <Input
-                                    id={`rate-${item.id}`}
-                                    type="number"
-                                    step="0.01"
-                                    value={
-                                      item.rate_pack || item.pack_price || ""
-                                    }
-                                    onChange={(e) =>
-                                      handleItemFieldChangeWithCalc(
-                                        item.id,
-                                        "rate_pack",
-                                        e.target.value
-                                      )
-                                    }
-                                    onBlur={() =>
-                                      checkPriceHistorySilent(
-                                        item.id,
-                                        item.product_name,
-                                        item.rate_pack || item.pack_price
-                                      )
-                                    }
-                                    onKeyDown={(e) => {
-                                      if (e.key === "Enter") {
-                                        e.preventDefault();
-                                        document
-                                          .getElementById(`mrp-${item.id}`)
-                                          ?.focus({ preventScroll: true });
-                                      }
-                                    }}
-                                    placeholder="₹"
-                                    className={`h-8 text-xs text-center w-full font-bold text-primary pr-6 bg-primary/5 border-primary/30 ${
-                                      priceAlerts[item.id]
-                                        ? "border-yellow-500 bg-yellow-500/10"
-                                        : ""
-                                    }`}
-                                  />
-
-                                  {(item.rate_pack || item.pack_price) && (
-                                    <button
-                                      id={`price-history-${item.id}`}
-                                      type="button"
-                                      onClick={() => {
-                                        const currentRate =
-                                          parseFloat(item.rate_pack) ||
-                                          parseFloat(item.pack_price) ||
-                                          0;
-
-                                        if (!item.product_name) {
-                                          toast.error(
-                                            "Enter product name first"
-                                          );
-                                          return;
-                                        }
-
-                                        checkPriceHistory(
-                                          item.id,
-                                          item.product_name,
-                                          currentRate
-                                        );
-                                      }}
-                                      className="absolute right-1 top-1/2 -translate-y-1/2 text-primary hover:text-primary/70"
-                                      title="Compare with past rates"
-                                    >
-                                      <CustomTooltip
-                                        position="top"
-                                        text="Compare with past rates"
-                                      >
-                                        <ArrowUpDown
-                                          className={`w-3.5 h-3.5 ${
-                                            priceAlerts[item.id]
-                                              ? "text-yellow-500 animate-icon-alert cursor-pointer"
-                                              : ""
-                                          }`}
-                                        />
-                                      </CustomTooltip>
-                                    </button>
-                                  )}
-                                </div>
-                              </div>
-
-                              <div className="flex flex-col items-center gap-0.5 w-1/2">
-                                <span className="text-[9px] text-muted-foreground font-semibold uppercase">
-                                  MRP/P
-                                </span>
-                                <Input
-                                  id={`mrp-${item.id}`}
-                                  type="number"
-                                  step="0.01"
-                                  value={item.mrp_pack || ""}
-                                  onChange={(e) =>
-                                    handleItemFieldChange(
-                                      item.id,
-                                      "mrp_pack",
-                                      e.target.value
-                                    )
-                                  }
-                                  onKeyDown={(e) => {
-                                    if (e.key === "Enter") {
-                                      e.preventDefault();
-                                      document
-                                        .getElementById(`total-${item.id}`)
-                                        ?.focus({ preventScroll: true });
-                                    }
-                                  }}
-                                  placeholder="₹"
-                                  className="h-8 text-xs text-center w-full font-bold border-amber-500/30 bg-amber-500/5 dark:bg-amber-500/10 text-amber-600 dark:text-amber-400"
-                                />
-                              </div>
-                            </div>
-                            <span className="text-[9px] font-semibold text-muted-foreground/50 font-mono">
-                              MRP/U:{" "}
-                              {mrpPack && units
-                                ? `₹${mrpUnit.toFixed(2)}`
-                                : "-"}
-                            </span>
+                          <div className="h-7 text-[10px] font-semibold text-muted-foreground bg-muted border border-border rounded-lg flex items-center justify-center font-mono">
+                            MRP/U:{" "}
+                            {mrpPack && units ? `₹${mrpUnit.toFixed(2)}` : "-"}
                           </div>
-                        </TableCell>
+                        </div>
+                      </TableCell>
 
-                        <TableCell className="w-[110px]">
+                      <TableCell className="w-[110px] p-2 align-top">
+                        <div className="flex flex-col gap-1.5">
                           <Input
                             id={`total-${item.id}`}
                             type="number"
@@ -3775,61 +4649,76 @@ export default function PurchasesPage() {
                                 }
                               }
                             }}
-                            placeholder="₹"
-                            className="h-8 w-full text-xs text-center font-bold"
+                            placeholder="Total ₹"
+                            className="h-8 w-full text-xs text-center font-black text-foreground rounded-lg border-border bg-background"
                           />
-                        </TableCell>
-                        <TableCell className="w-[60px] text-center">
+                          <div className="h-7 text-[10px] font-mono font-semibold text-muted-foreground flex items-center justify-center border border-border rounded-lg bg-muted">
+                            ₹
+                            {(
+                              (parseFloat(item.total_amount) || totalAmount) /
+                              (totalUnits || 1)
+                            ).toFixed(2)}
+                            /u
+                          </div>
+                        </div>
+                      </TableCell>
+
+                      <TableCell className="w-[50px] p-2 align-top text-center">
+                        <div className="h-[67px] flex items-center justify-center">
                           <Button
                             size="icon"
                             variant="ghost"
-                            className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                            className="h-8 w-8 text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-500/10 rounded-lg transition-colors"
                             onClick={() => handleRemoveItem(item.id)}
+                            title="Delete row"
                           >
                             <Trash2 className="h-4 w-4" />
                           </Button>
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
-
-                  {purchaseItems.length === 0 && (
-                    <TableRow>
-                      <TableCell
-                        colSpan={9}
-                        className="text-center py-8 text-muted-foreground"
-                      >
-                        <Package className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                        No items. Click "Add Item" to add a row.
+                        </div>
                       </TableCell>
                     </TableRow>
-                  )}
-                </TableBody>
-              </Table>
-            </div>
+                  );
+                })}
 
-            {/* Hint for unit-based system */}
-            <p className="text-xs text-muted-foreground bg-muted/30 p-2 rounded">
-              💡 <strong>Tip:</strong> Enter Qty and either Rate(Pack) OR Total
-              - the other will auto-calculate. Salt, HSN, Batch, Expiry are
+                {purchaseItems.length === 0 && (
+                  <TableRow>
+                    <TableCell
+                      colSpan={9}
+                      className="text-center py-8 text-muted-foreground"
+                    >
+                      <Package className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                      No items. Click "Add Item" to add a row.
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </div>
+
+          {/* Hint for unit-based system */}
+          <p className="text-xs text-muted-foreground bg-muted/30 p-2 rounded flex items-center gap-1.5">
+            <Info className="w-3.5 h-3.5 text-orange-500 shrink-0" />
+            <span>
+              <strong>Tip:</strong> Enter Qty and either Rate(Pack) OR Total -
+              the other will auto-calculate. Salt, HSN, Batch, Expiry are
               optional.
-            </p>
+            </span>
+          </p>
 
-            {/* Action Buttons - Add Item always visible */}
-            <div className="flex items-center justify-between pt-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleAddNewRow}
-                disabled={processingRowId !== null}
-                data-testid="add-item-btn"
-              >
-                <Plus className="h-4 w-4 mr-1" /> Add Item
-              </Button>
-              {/* Submit moved to fixed footer */}
-            </div>
-          </CardContent>
-        </Card>
+          {/* Action Buttons - Add Item always visible */}
+          <div className="flex items-center justify-between pt-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleAddNewRow}
+              disabled={processingRowId !== null}
+              data-testid="add-item-btn"
+            >
+              <Plus className="h-4 w-4 mr-1" /> Add Item
+            </Button>
+            {/* Submit moved to fixed footer */}
+          </div>
+        </div>
       )}
 
       {/* Edit Existing Purchase Modal */}
@@ -4117,28 +5006,89 @@ export default function PurchasesPage() {
         </Dialog>
       )} */}
 
-      {/* Search and Filters */}
+      {/* Unenclosed Seamless Top Header & Toolbar */}
       {!showNewPurchase && editingPurchaseId === null && (
         <>
-          <Card className="glass bg-card/45 backdrop-blur-xl border border-border/70 shadow-lg rounded-2xl p-5">
-            <div className="flex flex-col md:flex-row gap-4">
-              <div className="flex-1">
+          <div className="space-y-3 px-0.5 py-0.5">
+            {/* Line 1: Page Title, Stats Badge & Action Buttons */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <h1 className="text-2xl font-black tracking-tight text-foreground">
+                  Purchases
+                </h1>
+                <span className="px-2.5 py-0.5 rounded-full bg-orange-500/10 border border-orange-500/30 text-orange-600 dark:text-orange-400 font-mono font-bold text-xs">
+                  {pagination.total} recorded
+                </span>
+                <span className="hidden md:inline-block text-xs font-semibold text-muted-foreground">
+                  • Tracked in units
+                </span>
+              </div>
+
+              <div className="flex items-center gap-2 flex-wrap">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowShortcuts(true)}
+                  data-testid="shortcuts-btn"
+                  className="h-8 text-xs font-bold rounded-xl border-border/70"
+                >
+                  <Keyboard className="w-3.5 h-3.5 mr-1.5 text-muted-foreground" />
+                  Shortcuts
+                </Button>
+
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 text-xs font-bold rounded-xl bg-gradient-to-r from-orange-500/10 to-amber-500/10 border-orange-500/30 text-orange-600 dark:text-orange-400 hover:border-orange-500/50"
+                  onClick={() => window.open("/scan", "_blank")}
+                  data-testid="scan-products-btn"
+                >
+                  <Upload className="w-3.5 h-3.5 mr-1.5" />
+                  Scan
+                </Button>
+
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 text-xs font-bold rounded-xl border-border/70 cursor-pointer"
+                  onClick={() => setCsvDialog(true)}
+                  data-testid="csv-import-btn"
+                >
+                  <FileSpreadsheet className="w-3.5 h-3.5 mr-1.5 text-orange-500" />
+                  CSV Import
+                </Button>
+
+                <Button
+                  size="sm"
+                  className="h-8 px-3.5 text-xs font-extrabold bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white rounded-xl shadow-xs border-none"
+                  onClick={handleStartNewPurchase}
+                  data-testid="add-purchase-btn"
+                >
+                  <Plus className="w-3.5 h-3.5 mr-1 stroke-[3]" />
+                  {getOS() === "mac" ? "New (⌥N)" : "New (Alt+N)"}
+                </Button>
+              </div>
+            </div>
+
+            {/* Line 2: Search Input + Supplier & Date Filters */}
+            <div className="flex flex-col md:flex-row items-center gap-3 pt-1">
+              <div className="flex-1 w-full">
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                   <Input
                     placeholder="Search purchases by supplier, invoice..."
-                    className="pl-10"
+                    className="pl-9 h-9 text-xs font-medium rounded-xl border-border/70 bg-card/60 backdrop-blur-md"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                   />
                 </div>
               </div>
-              <div className="flex gap-2 flex-wrap">
+              <div className="flex items-center gap-2 w-full md:w-auto flex-wrap">
                 <SupplierSelector
                   selectedId={filterSupplier}
                   knownSuppliers={suppliers}
                   showAllOption={true}
-                  className="w-48"
+                  className="w-44"
                   onSelect={(s) => {
                     handleSupplierFilterChange(s.id);
                     if (
@@ -4154,21 +5104,23 @@ export default function PurchasesPage() {
                   placeholder="Start date"
                   value={startDate}
                   onChange={(e) => setStartDate(e.target.value)}
-                  className="w-40"
+                  className="w-36 h-9 text-xs rounded-xl border-border/70 bg-card/60 backdrop-blur-md"
                 />
                 <Input
                   type="date"
                   placeholder="End date"
                   value={endDate}
                   onChange={(e) => setEndDate(e.target.value)}
-                  className="w-40"
+                  className="w-36 h-9 text-xs rounded-xl border-border/70 bg-card/60 backdrop-blur-md"
                 />
                 {(searchQuery ||
                   (filterSupplier && filterSupplier !== "all") ||
                   startDate ||
                   endDate) && (
                   <Button
-                    variant="outline"
+                    variant="ghost"
+                    size="sm"
+                    className="h-9 px-3 text-xs font-bold text-muted-foreground hover:text-foreground rounded-xl"
                     onClick={() => {
                       setSearchQuery("");
                       setFilterSupplier("all");
@@ -4181,7 +5133,7 @@ export default function PurchasesPage() {
                 )}
               </div>
             </div>
-          </Card>
+          </div>
 
           {/* Purchases Table */}
           <Card className="glass bg-card/35 backdrop-blur-xl border border-border/70 shadow-lg rounded-2xl overflow-hidden">
@@ -4292,8 +5244,12 @@ export default function PurchasesPage() {
                         </div>
                         {purchase.payment_mode &&
                           purchase.payment_mode !== "none" && (
-                            <div className="text-[10px] text-muted-foreground/80 mt-1 font-bold uppercase tracking-wider">
-                              {purchase.payment_mode}
+                            <div className="text-[10px] text-muted-foreground/80 mt-1 font-bold uppercase tracking-wider flex items-center justify-center gap-1.5">
+                              {getPaymentModeIcon(
+                                purchase.payment_mode,
+                                "w-3.5 h-3.5"
+                              )}
+                              <span>{purchase.payment_mode}</span>
                             </div>
                           )}
                       </TableCell>
@@ -4398,9 +5354,14 @@ export default function PurchasesPage() {
                                     <TableRow key={idx}>
                                       <TableCell className="font-medium">
                                         <div>{item.product_name}</div>
-                                        {item.shortage_threshold !== undefined && item.shortage_threshold !== null && (
-                                          <div className="text-[10px] text-muted-foreground font-semibold">Shortage: {item.shortage_threshold} units</div>
-                                        )}
+                                        {item.shortage_threshold !==
+                                          undefined &&
+                                          item.shortage_threshold !== null && (
+                                            <div className="text-[10px] text-muted-foreground font-semibold">
+                                              Shortage:{" "}
+                                              {item.shortage_threshold} units
+                                            </div>
+                                          )}
                                       </TableCell>
                                       <TableCell>{item.batch_no}</TableCell>
                                       <TableCell>{item.expiry_date}</TableCell>
@@ -4558,14 +5519,19 @@ export default function PurchasesPage() {
                             <div className="mt-4 p-4 rounded-xl bg-muted/20 border border-border/60 shadow-sm space-y-3">
                               <h4 className="font-bold text-xs text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
                                 <History className="w-3.5 h-3.5 text-amber-500" />
-                                Purchase Edit History ({purchase.history.length})
+                                Purchase Edit History ({purchase.history.length}
+                                )
                               </h4>
                               <div className="space-y-4 max-h-60 overflow-y-auto pr-1">
                                 {purchase.history.map((hist, hIdx) => {
-                                  const name = hist.updated_by_name || "Unknown User";
+                                  const name =
+                                    hist.updated_by_name || "Unknown User";
                                   const initial = name.charAt(0).toUpperCase();
                                   return (
-                                    <div key={hIdx} className="flex gap-3 text-xs border-b border-border/30 pb-3 last:border-0 last:pb-0 text-left">
+                                    <div
+                                      key={hIdx}
+                                      className="flex gap-3 text-xs border-b border-border/30 pb-3 last:border-0 last:pb-0 text-left"
+                                    >
                                       {hist.updated_by_avatar ? (
                                         <img
                                           src={hist.updated_by_avatar}
@@ -4579,21 +5545,28 @@ export default function PurchasesPage() {
                                       )}
                                       <div className="flex-1 space-y-1.5">
                                         <div className="flex justify-between items-center text-[11px] text-muted-foreground font-semibold">
-                                          <span className="text-foreground/95 font-bold">{name}</span>
+                                          <span className="text-foreground/95 font-bold">
+                                            {name}
+                                          </span>
                                           <span className="font-mono">
-                                            {new Date(hist.updated_at).toLocaleString("en-IN", {
+                                            {new Date(
+                                              hist.updated_at
+                                            ).toLocaleString("en-IN", {
                                               day: "2-digit",
                                               month: "short",
                                               year: "numeric",
                                               hour: "2-digit",
                                               minute: "2-digit",
-                                              hour12: true
+                                              hour12: true,
                                             })}
                                           </span>
                                         </div>
                                         <div className="space-y-1 text-foreground/80 font-medium">
                                           {hist.changes.map((ch, cIdx) => (
-                                            <div key={cIdx} className="bg-background/50 px-3 py-1.5 rounded-xl border border-border/40 text-[11px]">
+                                            <div
+                                              key={cIdx}
+                                              className="bg-background/50 px-3 py-1.5 rounded-xl border border-border/40 text-[11px]"
+                                            >
                                               {ch.description}
                                             </div>
                                           ))}
@@ -5076,7 +6049,7 @@ export default function PurchasesPage() {
       {/* TABS & ACTION NAVBAR */}
       {(showNewPurchase || editingPurchaseId) &&
         createPortal(
-          <div className="fixed bottom-0 left-0 md:left-[250px] right-0 z-[100] flex items-center justify-between bg-card/85 backdrop-blur-xl border-t border-border/80 shadow-[0_-8px_30px_rgba(0,0,0,0.12)] px-6 py-4 gap-4 overflow-x-auto scroller-hide overflow-y-hidden mb-0 transition-all duration-300">
+          <div className="fixed bottom-0 left-0 right-0 z-[100] flex items-center justify-between bg-card/95 backdrop-blur-xl border-t-2 border-border shadow-2xl px-6 py-3.5 gap-4 overflow-x-auto scroller-hide overflow-y-hidden mb-0 transition-all duration-300">
             <div className="flex items-center gap-2 overflow-x-auto scroller-hide">
               {showNewPurchase &&
                 tabs.map((tab, idx) => {
@@ -5098,7 +6071,7 @@ export default function PurchasesPage() {
                           e.preventDefault();
                           switchTab(tab.id);
                         }}
-                        className={`pr-8 h-9 rounded-full transition-all duration-200 ${isActive ? "bg-primary text-primary-foreground shadow-md font-bold ring-1 ring-primary/50" : "bg-muted/65 hover:bg-muted/90 text-muted-foreground hover:text-foreground font-medium"}`}
+                        className={`pr-8 h-9 rounded-full transition-all duration-200 ${isActive ? "bg-orange-500 text-white shadow-md shadow-orange-500/20 font-bold" : "bg-slate-100 hover:bg-slate-200 dark:bg-muted/65 dark:hover:bg-muted/90 text-slate-700 dark:text-muted-foreground border border-slate-200/80 dark:border-border/50 font-semibold"}`}
                       >
                         <FileText className="w-3.5 h-3.5 mr-1.5 opacity-70" />
                         <span className="max-w-[120px] truncate">
@@ -5178,6 +6151,741 @@ export default function PurchasesPage() {
           </div>,
           document.body
         )}
+
+      {/* PRODUCT DETAILS & PAST PURCHASES SLIDE-OVER SIDEBAR */}
+      {productSidebar.open &&
+        createPortal(
+          <div className="fixed inset-0 z-[99999] flex justify-end">
+            {/* Backdrop */}
+            <div
+              className="fixed inset-0 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200"
+              onClick={() =>
+                setProductSidebar((prev) => ({ ...prev, open: false }))
+              }
+            />
+
+            {/* Slideover Drawer Container */}
+            <div className="relative w-full sm:w-[540px] h-full bg-card border-l-2 border-border shadow-2xl flex flex-col z-10 animate-in slide-in-from-right duration-300">
+              {/* Drawer Header */}
+              <div className="p-4 border-b border-border bg-muted/40 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5 overflow-hidden">
+                  <div className="p-2 rounded-xl bg-orange-500/10 text-orange-500 border border-orange-500/20 shrink-0">
+                    <Package className="w-5 h-5" />
+                  </div>
+                  <div className="truncate">
+                    <h3 className="font-black text-sm text-foreground truncate">
+                      {productSidebar.productName}
+                    </h3>
+                    <p className="text-[11px] font-medium text-muted-foreground truncate">
+                      Inventory Batches & Historical Purchases
+                    </p>
+                  </div>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() =>
+                    setProductSidebar((prev) => ({ ...prev, open: false }))
+                  }
+                  className="h-8 w-8 p-0 rounded-xl hover:bg-muted shrink-0"
+                >
+                  <X className="w-4 h-4 text-muted-foreground" />
+                </Button>
+              </div>
+
+              {/* Navigation Tabs */}
+              <div className="flex border-b border-border bg-muted/20 px-4 pt-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setProductSidebar((prev) => ({
+                      ...prev,
+                      activeTab: "batches",
+                    }))
+                  }
+                  className={`pb-2.5 px-3 text-xs font-bold transition-all border-b-2 flex items-center gap-2 cursor-pointer ${
+                    productSidebar.activeTab === "batches"
+                      ? "border-orange-500 text-orange-500"
+                      : "border-transparent text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <Package className="w-3.5 h-3.5" />
+                  <span>All Batches</span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-muted font-mono font-bold border border-border">
+                    {productSidebar.batches.length}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    setProductSidebar((prev) => ({
+                      ...prev,
+                      activeTab: "history",
+                    }))
+                  }
+                  className={`pb-2.5 px-3 text-xs font-bold transition-all border-b-2 flex items-center gap-2 cursor-pointer ${
+                    productSidebar.activeTab === "history"
+                      ? "border-orange-500 text-orange-500"
+                      : "border-transparent text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <History className="w-3.5 h-3.5" />
+                  <span>Past Purchases</span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-muted font-mono font-bold border border-border">
+                    {productSidebar.history.length}
+                  </span>
+                </button>
+              </div>
+
+              {/* Drawer Body Content */}
+              <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                {productSidebar.loading ? (
+                  <div className="h-[240px] flex flex-col items-center justify-center">
+                    <Loader
+                      size="sm"
+                      text="Loading details..."
+                      variant="inline"
+                    />
+                  </div>
+                ) : productSidebar.activeTab === "batches" ? (
+                  /* TAB 1: ALL BATCHES */
+                  productSidebar.batches.length === 0 ? (
+                    <div className="p-8 text-center flex flex-col items-center justify-center text-muted-foreground border-2 border-dashed border-border rounded-2xl">
+                      <Package className="w-8 h-8 mb-2 opacity-40 text-orange-500" />
+                      <p className="text-xs font-bold text-foreground">
+                        No active inventory batches
+                      </p>
+                      <p className="text-[11px] mt-0.5">
+                        There are no existing inventory batches recorded for
+                        this product.
+                      </p>
+                    </div>
+                  ) : (
+                    productSidebar.batches.map((batch, idx) => {
+                      const packPrice = Number(
+                        batch.pack_price || batch.purchase_price || 0
+                      );
+                      const mrpPrice = Number(
+                        batch.mrp_pack ||
+                          (batch.mrp
+                            ? batch.mrp * (batch.units_per_pack || 1)
+                            : 0)
+                      );
+                      return (
+                        <div
+                          key={batch.id || idx}
+                          className="p-3.5 rounded-xl border border-border bg-card hover:border-orange-500/40 transition-all space-y-2.5 shadow-2xs"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="space-y-1 truncate">
+                              <span
+                                className="font-extrabold text-xs text-foreground block truncate"
+                                title={
+                                  batch.product_name ||
+                                  productSidebar.productName
+                                }
+                              >
+                                {batch.product_name ||
+                                  productSidebar.productName}
+                              </span>
+                              <div className="flex items-center gap-2">
+                                <span className="font-mono font-bold text-xs bg-muted px-2 py-0.5 rounded-md text-foreground border border-border">
+                                  Batch: {batch.batch_no || "N/A"}
+                                </span>
+                                <span
+                                  className={`text-[10px] font-extrabold px-2 py-0.5 rounded-md ${
+                                    (batch.available_quantity || 0) > 0
+                                      ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                                      : "bg-rose-500/10 text-rose-400 border border-rose-500/20"
+                                  }`}
+                                >
+                                  Stock: {batch.available_quantity || 0} u
+                                </span>
+                              </div>
+                            </div>
+                            <Button
+                              size="sm"
+                              onClick={() => handleApplyBatchToRow(batch)}
+                              className="h-8 px-3 text-xs font-extrabold bg-orange-500 hover:bg-orange-600 active:scale-95 text-white shadow-sm hover:shadow-orange-500/20 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 shrink-0"
+                            >
+                              <CheckCircle2 className="w-3.5 h-3.5" />
+                              <span>Use Batch</span>
+                            </Button>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-2 text-xs pt-2 border-t border-border/40 font-mono">
+                            <div>
+                              <span className="text-[10px] uppercase font-bold text-muted-foreground block">
+                                Expiry Date:
+                              </span>
+                              <span className="font-semibold text-foreground">
+                                {batch.expiry_date || "N/A"}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-[10px] uppercase font-bold text-muted-foreground block">
+                                Supplier:
+                              </span>
+                              <span className="font-semibold text-foreground truncate block">
+                                {batch.supplier_name || "Unknown"}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-[10px] uppercase font-bold text-muted-foreground block">
+                                Pack Price:
+                              </span>
+                              <span className="font-bold text-orange-400">
+                                ₹{packPrice.toFixed(2)}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-[10px] uppercase font-bold text-muted-foreground block">
+                                MRP (Pack):
+                              </span>
+                              <span className="font-semibold text-foreground">
+                                ₹{mrpPrice.toFixed(2)}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )
+                ) : (
+                  /* TAB 2: PAST PURCHASES & PRICE HISTORY */ <div className="space-y-4">
+                    {/* Price Trend Trajectory Chart */}
+                    {productSidebar.priceHistoryDetail?.price_history_trend
+                      ?.length > 0 && (
+                      <PriceTrendChart
+                        trendData={
+                          productSidebar.priceHistoryDetail.price_history_trend
+                        }
+                        currentRate={
+                          productSidebar.priceHistoryDetail.current_rate
+                        }
+                        currentMrp={
+                          productSidebar.priceHistoryDetail.current_mrp
+                        }
+                      />
+                    )}
+
+                    {/* Rate & MRP Comparison Summary Card */}
+                    {productSidebar.priceHistoryDetail && (
+                      <div className="p-3.5 rounded-2xl border border-border bg-muted/20 space-y-2.5">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-black uppercase text-foreground tracking-tight">
+                            Rate & MRP Comparison
+                          </span>
+                          {productSidebar.priceHistoryDetail
+                            .is_mrp_lowered_alert ||
+                          productSidebar.priceHistoryDetail.mrp_lowered ? (
+                            productSidebar.priceHistoryDetail.rate_increased ? (
+                              <span className="text-[10px] font-black px-2.5 py-0.5 rounded-full bg-rose-500/15 text-rose-400 border border-rose-500/30 flex items-center gap-1 animate-pulse">
+                                <AlertTriangle className="w-3 h-3" />
+                                <span>MRP Drop & Rate Hike</span>
+                              </span>
+                            ) : (
+                              <span className="text-[10px] font-black px-2.5 py-0.5 rounded-full bg-purple-500/15 text-purple-400 border border-purple-500/30 flex items-center gap-1">
+                                <TrendingDown className="w-3 h-3" />
+                                <span>MRP Drop</span>
+                              </span>
+                            )
+                          ) : productSidebar.priceHistoryDetail
+                              .is_higher_price_alert ? (
+                            <span className="text-[10px] font-black px-2.5 py-0.5 rounded-full bg-amber-500/15 text-amber-500 border border-amber-500/30 flex items-center gap-1">
+                              <AlertTriangle className="w-3 h-3" />
+                              <span>Higher Rate (Same MRP)</span>
+                            </span>
+                          ) : productSidebar.priceHistoryDetail
+                              .mrp_increased ? (
+                            <span
+                              className={`text-[10px] font-black px-2.5 py-0.5 rounded-full flex items-center gap-1 ${
+                                productSidebar.priceHistoryDetail.rate_increased
+                                  ? "bg-amber-500/15 text-amber-400 border border-amber-500/30"
+                                  : "bg-blue-500/15 text-blue-400 border border-blue-500/30"
+                              }`}
+                            >
+                              <TrendingUp className="w-3 h-3" />
+                              <span>
+                                MRP Hike
+                                {productSidebar.priceHistoryDetail
+                                  .rate_increased && " & Rate Hike"}
+                              </span>
+                            </span>
+                          ) : (
+                            <span className="text-[10px] font-black px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-500 border border-emerald-500/30 flex items-center gap-1">
+                              <CheckCircle2 className="w-3 h-3" />
+                              <span>Normal Price</span>
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="grid grid-cols-3 gap-2 font-mono text-xs">
+                          <div className="p-2 rounded-xl bg-card border border-border/60">
+                            <span className="text-[10px] text-muted-foreground uppercase font-extrabold block">
+                              Entered Rate
+                            </span>
+                            <span className="font-extrabold text-orange-500">
+                              ₹
+                              {(
+                                productSidebar.priceHistoryDetail
+                                  .current_rate || 0
+                              ).toFixed(2)}
+                            </span>
+                          </div>
+
+                          <div className="p-2 rounded-xl bg-card border border-border/60">
+                            <span className="text-[10px] text-muted-foreground uppercase font-extrabold block">
+                              Latest Rate
+                            </span>
+                            <span className="font-extrabold text-foreground">
+                              ₹
+                              {(
+                                productSidebar.priceHistoryDetail.latest_rate ||
+                                0
+                              ).toFixed(2)}
+                            </span>
+                          </div>
+
+                          <div className="p-2 rounded-xl bg-card border border-border/60">
+                            <span className="text-[10px] text-muted-foreground uppercase font-extrabold block">
+                              Best Rate
+                            </span>
+                            <span className="font-extrabold text-emerald-400">
+                              ₹
+                              {(
+                                productSidebar.priceHistoryDetail
+                                  .cheapest_rate || 0
+                              ).toFixed(2)}
+                            </span>
+                          </div>
+                        </div>
+
+                        {productSidebar.priceHistoryDetail
+                          .is_higher_price_alert && (
+                          <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-[11px] font-semibold text-amber-500 leading-relaxed flex items-start gap-2">
+                            <AlertTriangle className="w-4 h-4 shrink-0 text-amber-500 mt-0.5" />
+                            <div>
+                              <strong>Higher Rate Warning:</strong> Purchasing
+                              at +₹
+                              {productSidebar.priceHistoryDetail.rate_difference?.toFixed(
+                                2
+                              )}{" "}
+                              higher than previous purchases for the same MRP (₹
+                              {productSidebar.priceHistoryDetail.latest_mrp?.toFixed(
+                                2
+                              )}
+                              ).
+                            </div>
+                          </div>
+                        )}
+
+                        {productSidebar.priceHistoryDetail.mrp_increased && (
+                          <div className="p-2.5 rounded-xl bg-blue-500/10 border border-blue-500/20 text-[11px] font-semibold text-blue-400 leading-relaxed flex items-start gap-2">
+                            <Info className="w-4 h-4 shrink-0 text-blue-400 mt-0.5" />
+                            <div>
+                              <strong>MRP Hike Detected:</strong> Product MRP
+                              increased by +₹
+                              {productSidebar.priceHistoryDetail.mrp_difference?.toFixed(
+                                2
+                              )}{" "}
+                              (from ₹
+                              {productSidebar.priceHistoryDetail.latest_mrp?.toFixed(
+                                2
+                              )}{" "}
+                              to ₹
+                              {productSidebar.priceHistoryDetail.current_mrp?.toFixed(
+                                2
+                              )}
+                              ). Rate increased proportionally (+₹
+                              {productSidebar.priceHistoryDetail.rate_difference?.toFixed(
+                                2
+                              )}
+                              ).
+                            </div>
+                          </div>
+                        )}
+
+                        {(productSidebar.priceHistoryDetail
+                          .is_mrp_lowered_alert ||
+                          productSidebar.priceHistoryDetail.mrp_lowered) &&
+                          (productSidebar.priceHistoryDetail.rate_increased ? (
+                            <div className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-[11px] font-semibold text-rose-400 leading-relaxed flex items-start gap-2">
+                              <AlertTriangle className="w-4 h-4 shrink-0 text-rose-400 mt-0.5" />
+                              <div>
+                                <strong>Higher Rate Warning:</strong> Product
+                                MRP dropped by -₹
+                                {productSidebar.priceHistoryDetail.mrp_drop_difference?.toFixed(
+                                  2
+                                )}{" "}
+                                (from ₹
+                                {productSidebar.priceHistoryDetail.latest_mrp?.toFixed(
+                                  2
+                                )}{" "}
+                                to ₹
+                                {productSidebar.priceHistoryDetail.current_mrp?.toFixed(
+                                  2
+                                )}
+                                ), BUT Rate increased by +₹
+                                {productSidebar.priceHistoryDetail.rate_difference?.toFixed(
+                                  2
+                                )}{" "}
+                                (from ₹
+                                {productSidebar.priceHistoryDetail.latest_rate?.toFixed(
+                                  2
+                                )}{" "}
+                                to ₹
+                                {productSidebar.priceHistoryDetail.current_rate?.toFixed(
+                                  2
+                                )}
+                                ).
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="p-2.5 rounded-xl bg-purple-500/10 border border-purple-500/20 text-[11px] font-semibold text-purple-400 leading-relaxed flex items-start gap-2">
+                              <TrendingDown className="w-4 h-4 shrink-0 text-purple-400 mt-0.5" />
+                              <div>
+                                <strong>MRP Drop Detected:</strong> Product MRP
+                                dropped by -₹
+                                {productSidebar.priceHistoryDetail.mrp_drop_difference?.toFixed(
+                                  2
+                                )}{" "}
+                                (from ₹
+                                {productSidebar.priceHistoryDetail.latest_mrp?.toFixed(
+                                  2
+                                )}{" "}
+                                to ₹
+                                {productSidebar.priceHistoryDetail.current_mrp?.toFixed(
+                                  2
+                                )}
+                                ).
+                              </div>
+                            </div>
+                          ))}
+                      </div>
+                    )}
+
+                    {/* Historical Purchases List */}
+                    {productSidebar.history.length === 0 ? (
+                      <div className="p-8 text-center flex flex-col items-center justify-center text-muted-foreground border-2 border-dashed border-border rounded-2xl">
+                        <History className="w-8 h-8 mb-2 opacity-40 text-orange-500" />
+                        <p className="text-xs font-bold text-foreground">
+                          No past purchases found
+                        </p>
+                        <p className="text-[11px] mt-0.5">
+                          No previous purchase records found for this product.
+                        </p>
+                      </div>
+                    ) : (
+                      productSidebar.history.map((record, idx) => {
+                        const packPrice = Number(
+                          record.pack_price || record.rate_pack || 0
+                        );
+                        const mrpPrice = Number(record.mrp_pack || 0);
+                        const isCheapest =
+                          productSidebar.priceHistoryDetail?.cheapest_rate ===
+                          packPrice;
+
+                        return (
+                          <div
+                            key={record.purchase_id || idx}
+                            className={`p-3.5 rounded-2xl border transition-all space-y-2.5 shadow-2xs ${
+                              isCheapest
+                                ? "border-emerald-500/40 bg-emerald-500/5"
+                                : "border-border bg-card hover:border-orange-500/40"
+                            }`}
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="space-y-0.5 truncate">
+                                <span
+                                  className="font-extrabold text-xs text-orange-400 block truncate"
+                                  title={
+                                    record.product_name ||
+                                    productSidebar.productName
+                                  }
+                                >
+                                  {record.product_name ||
+                                    productSidebar.productName}
+                                </span>
+                                <div className="flex items-center gap-2">
+                                  <span className="font-bold text-xs text-foreground block">
+                                    {record.supplier_name || "Unknown Supplier"}
+                                  </span>
+                                  {isCheapest && (
+                                    <span className="text-[9px] font-black uppercase px-1.5 py-0.2 bg-emerald-500/20 text-emerald-400 rounded-md border border-emerald-500/30">
+                                      Lowest Rate
+                                    </span>
+                                  )}
+                                </div>
+                                <span className="text-[10px] font-mono text-muted-foreground block">
+                                  {record.purchase_date?.slice(0, 10)} • Inv:{" "}
+                                  {record.invoice_no || "N/A"}
+                                </span>
+                              </div>
+                              <Button
+                                size="sm"
+                                onClick={() => handleApplyHistoryToRow(record)}
+                                className="h-8 px-3 text-xs font-extrabold bg-orange-500 hover:bg-orange-600 active:scale-95 text-white shadow-sm hover:shadow-orange-500/20 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 shrink-0"
+                              >
+                                <Sparkles className="w-3.5 h-3.5" />
+                                <span>Apply Rate</span>
+                              </Button>
+                            </div>
+
+                            <div className="grid grid-cols-3 gap-2 text-xs pt-2 border-t border-border/40 font-mono">
+                              <div>
+                                <span className="text-[10px] uppercase font-bold text-muted-foreground block">
+                                  Batch & Exp:
+                                </span>
+                                <span className="font-semibold text-foreground">
+                                  {record.batch_no || "N/A"} (
+                                  {record.expiry_date || "N/A"})
+                                </span>
+                              </div>
+                              <div>
+                                <span className="text-[10px] uppercase font-bold text-muted-foreground block">
+                                  Pack Rate:
+                                </span>
+                                <span className="font-bold text-orange-400">
+                                  ₹{packPrice.toFixed(2)}
+                                </span>
+                              </div>
+                              <div>
+                                <span className="text-[10px] uppercase font-bold text-muted-foreground block">
+                                  MRP (Pack):
+                                </span>
+                                <span className="font-semibold text-foreground">
+                                  ₹{mrpPrice.toFixed(2)}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
+      {/* Global CSV Import & Re-map Dialog Modal */}
+      <Dialog open={csvDialog} onOpenChange={setCsvDialog}>
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-hidden flex flex-col p-6 rounded-2xl border border-border bg-background shadow-2xl">
+          <DialogHeader className="shrink-0 mb-2">
+            <DialogTitle className="text-xl font-bold flex items-center gap-2">
+              <FileSpreadsheet className="w-5 h-5 text-orange-500" />
+              <span>Import Purchases from CSV</span>
+            </DialogTitle>
+            <DialogDescription className="text-xs text-muted-foreground">
+              Upload any supplier CSV invoice to parse items, map columns, and
+              preview purchase draft.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex-1 overflow-y-auto space-y-5 pr-1 custom-scrollbar">
+            {/* Supplier Selector */}
+            <div className="space-y-1.5 bg-muted/20 p-3.5 rounded-xl border border-border/60">
+              <Label className="text-xs font-extrabold uppercase tracking-wider text-muted-foreground">
+                Select Supplier *
+              </Label>
+              <SupplierSelector
+                selectedId={selectedSupplier}
+                knownSuppliers={suppliers}
+                onSelect={(s) => {
+                  setSelectedSupplier(s.id);
+                  if (!suppliers.find((x) => x.id === s.id)) {
+                    setSuppliers((prev) => [...prev, s]);
+                  }
+                }}
+              />
+            </div>
+
+            {/* CSV File Upload Box */}
+            <div className="space-y-1.5">
+              <Label className="text-xs font-extrabold uppercase tracking-wider text-muted-foreground">
+                CSV File *
+              </Label>
+              <div className="relative border-2 border-dashed border-border hover:border-orange-500/50 rounded-xl p-5 text-center bg-muted/10 transition-colors">
+                <Input
+                  type="file"
+                  accept=".csv,.txt"
+                  onChange={handleCsvFileSelect}
+                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                />
+                <div className="flex flex-col items-center justify-center space-y-2 pointer-events-none">
+                  <Upload className="w-7 h-7 text-orange-500 animate-bounce" />
+                  <div className="text-xs font-bold text-foreground">
+                    {csvFile
+                      ? csvFile.name
+                      : "Click or drag & drop CSV file to upload"}
+                  </div>
+                  <span className="text-[10px] text-muted-foreground">
+                    Supports .csv, .txt, semicolon, and tab delimited files
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* CSV Parsing Loader */}
+            {csvReading && (
+              <div className="py-6 text-center flex flex-col items-center justify-center space-y-2">
+                <Loader2 className="w-6 h-6 animate-spin text-orange-500" />
+                <span className="text-xs text-muted-foreground font-medium">
+                  Reading CSV and checking supplier template...
+                </span>
+              </div>
+            )}
+
+            {/* Template Match Status Banner */}
+            {supplierTemplateInfo && !csvReading && (
+              <div
+                className={`p-3.5 rounded-xl border text-xs font-semibold flex items-center justify-between gap-2 ${
+                  supplierTemplateInfo.matched
+                    ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-600 dark:text-emerald-400"
+                    : "bg-amber-500/10 border-amber-500/20 text-amber-600 dark:text-amber-400"
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  {supplierTemplateInfo.matched ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+                  ) : (
+                    <Info className="w-4 h-4 text-amber-500 shrink-0" />
+                  )}
+                  <span>
+                    {supplierTemplateInfo.matched
+                      ? "Matched saved CSV template for this supplier! Column mappings auto-filled below."
+                      : supplierTemplateInfo.missing_fields?.length > 0
+                        ? `${supplierTemplateInfo.missing_fields.length} column(s) mismatched from saved supplier template. Please verify mappings below.`
+                        : "No saved CSV template found for this supplier. Verify column mappings below."}
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {/* Column Mapping Section */}
+            {csvColumns.length > 0 && !csvReading && (
+              <div className="space-y-3 bg-muted/30 p-4 rounded-xl border border-border/60">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-extrabold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                    <Sparkles className="w-4 h-4 text-orange-500" /> Map CSV
+                    Columns to Purchase Fields
+                  </h4>
+                  <span className="text-[11px] font-mono text-muted-foreground font-bold">
+                    {csvParsedRows.length} Rows Found
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 pt-1">
+                  {[
+                    { key: "product_name", label: "Product Name *", req: true },
+                    { key: "batch_no", label: "Batch Number", req: false },
+                    { key: "expiry_date", label: "Expiry Date", req: false },
+                    { key: "quantity", label: "Quantity (Packs) *", req: true },
+                    { key: "units", label: "Units Per Pack", req: false },
+                    {
+                      key: "pack_type",
+                      label: "Pack Type (Strip/Box)",
+                      req: false,
+                    },
+                    {
+                      key: "rate_pack",
+                      label: "Purchase Rate / Pack",
+                      req: false,
+                    },
+                    { key: "mrp_pack", label: "MRP / Pack", req: false },
+                    { key: "cgst", label: "CGST %", req: false },
+                    { key: "sgst", label: "SGST %", req: false },
+                    {
+                      key: "gst_percent",
+                      label: "GST % (Splits 50/50)",
+                      req: false,
+                    },
+                    { key: "discount", label: "Discount %", req: false },
+                    { key: "scheme", label: "Scheme Qty", req: false },
+                    { key: "hsn_no", label: "HSN Code", req: false },
+                    { key: "manufacturer", label: "Manufacturer", req: false },
+                    {
+                      key: "salt_composition",
+                      label: "Salt Composition",
+                      req: false,
+                    },
+                  ].map(({ key, label }) => (
+                    <div key={key} className="space-y-1">
+                      <Label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">
+                        {label}
+                      </Label>
+                      <Select
+                        value={csvMapping[key] || "none"}
+                        onValueChange={(v) =>
+                          setCsvMapping({
+                            ...csvMapping,
+                            [key]: v === "none" ? "" : v,
+                          })
+                        }
+                      >
+                        <SelectTrigger className="h-8 text-xs bg-background border-border rounded-lg font-bold">
+                          <SelectValue placeholder="Select CSV Column..." />
+                        </SelectTrigger>
+                        <SelectContent className="max-h-56">
+                          <SelectItem value="none">-- Unmapped --</SelectItem>
+                          {csvColumns.map((col) => (
+                            <SelectItem key={col} value={col}>
+                              {col}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Toggle to save supplier template */}
+                {selectedSupplier && (
+                  <div className="pt-2 flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      id="save-template-toggle"
+                      checked={saveTemplateChecked}
+                      onChange={(e) => setSaveTemplateChecked(e.target.checked)}
+                      className="rounded border-border text-orange-500 focus:ring-orange-500 cursor-pointer"
+                    />
+                    <Label
+                      htmlFor="save-template-toggle"
+                      className="text-xs font-semibold text-muted-foreground cursor-pointer"
+                    >
+                      Save these column mappings as default template for
+                      selected supplier
+                    </Label>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Action Footer - Mandatory Preview */}
+          <div className="pt-4 border-t border-border flex flex-col sm:flex-row items-center justify-between gap-3 shrink-0">
+            <Button
+              variant="outline"
+              onClick={() => setCsvDialog(false)}
+              className="w-full sm:w-auto h-9 text-xs font-bold rounded-xl border-border hover:bg-muted cursor-pointer"
+            >
+              Cancel
+            </Button>
+
+            <Button
+              onClick={handlePreviewPurchaseFromCsv}
+              disabled={submitting || csvColumns.length === 0 || csvReading}
+              className="w-full sm:w-auto h-9 px-5 bg-orange-500 hover:bg-orange-600 text-white font-extrabold text-xs rounded-xl shadow-md cursor-pointer flex items-center justify-center gap-1.5"
+            >
+              <Eye className="w-4 h-4" />
+              <span>Preview Purchase Draft</span>
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

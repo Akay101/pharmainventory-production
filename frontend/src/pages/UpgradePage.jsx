@@ -35,7 +35,7 @@ const plans = [
     popular: true,
     description:
       "Advanced tracking and metrics for growing pharmacy businesses.",
-    icon: <Zap className="w-6 h-6 text-indigo-300" />,
+    icon: <Zap className="w-6 h-6 text-orange-400" />,
     features: [
       "Unlimited Invoices",
       "Real-time Inventory Alerts",
@@ -43,19 +43,19 @@ const plans = [
       "Priority 24/7 Support",
       "Multi-user Access",
     ],
-    iconBg: "bg-indigo-900/50 backdrop-blur-sm",
+    iconBg: "bg-orange-950/60 backdrop-blur-sm",
     theme: "dark",
     gradientClass:
-      "bg-gradient-to-br from-indigo-900 via-purple-900 to-slate-900 border border-indigo-500/30",
+      "bg-gradient-to-br from-orange-950 via-zinc-900 to-black border border-orange-500/30",
     textClass: "text-white",
-    subTextClass: "text-indigo-200",
+    subTextClass: "text-orange-200",
   },
   {
     name: "AGENTIC",
     rank: 3,
     price: parseInt(process.env.REACT_APP_PLAN_AGENTIC_PRICE) || 80,
     description: "AI-powered automation for maximum efficiency and growth.",
-    icon: <Sparkles className="w-6 h-6 text-purple-500" />,
+    icon: <Sparkles className="w-6 h-6 text-amber-500" />,
     features: [
       "Everything in Advanced",
       "AI Inventory Predictions",
@@ -63,10 +63,10 @@ const plans = [
       "Custom Data Integrations",
       "Dedicated Account Manager",
     ],
-    iconBg: "bg-purple-100",
+    iconBg: "bg-amber-100",
     theme: "light",
     gradientClass:
-      "bg-gradient-to-br from-white/90 to-purple-50/50 border border-white/60",
+      "bg-gradient-to-br from-white/90 to-amber-50/50 border border-white/60",
     textClass: "text-slate-900",
     subTextClass: "text-slate-500",
   },
@@ -176,7 +176,7 @@ export default function UpgradePage() {
 
         {/* Moving Gradient Background */}
         <div className="fixed inset-0 overflow-hidden pointer-events-none z-0">
-          <div className="absolute top-0 -left-4 w-96 h-96 bg-purple-300 rounded-full mix-blend-multiply filter blur-3xl opacity-50 animate-blob" />
+          <div className="absolute top-0 -left-4 w-96 h-96 bg-orange-300 rounded-full mix-blend-multiply filter blur-3xl opacity-50 animate-blob" />
           <div className="absolute top-0 -right-4 w-96 h-96 bg-yellow-300 rounded-full mix-blend-multiply filter blur-3xl opacity-50 animate-blob animation-delay-2000" />
           <div className="absolute -bottom-8 left-20 w-96 h-96 bg-pink-300 rounded-full mix-blend-multiply filter blur-3xl opacity-50 animate-blob animation-delay-4000" />
           <div className="absolute -bottom-8 right-20 w-96 h-96 bg-blue-300 rounded-full mix-blend-multiply filter blur-3xl opacity-50 animate-blob" />
@@ -186,7 +186,7 @@ export default function UpgradePage() {
           <div className="text-center max-w-3xl mx-auto mb-16 animate-in fade-in slide-in-from-bottom-8 duration-700">
             <h1 className="text-5xl md:text-6xl font-extrabold text-slate-900 tracking-tight mb-6 drop-shadow-sm">
               Unlock the Full Potential of{" "}
-              <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600">
+              <span className="text-transparent bg-clip-text bg-gradient-to-r from-orange-500 via-amber-500 to-yellow-500">
                 Software
               </span>
             </h1>
@@ -204,12 +204,12 @@ export default function UpgradePage() {
                 style={{ animationDelay: `${index * 150}ms` }}
               >
                 {plan.popular && (
-                  <div className="absolute top-0 inset-x-0 h-1.5 bg-gradient-to-r from-pink-500 via-red-500 to-yellow-500" />
+                  <div className="absolute top-0 inset-x-0 h-1.5 bg-gradient-to-r from-orange-500 via-amber-500 to-yellow-500" />
                 )}
 
                 <CardContent className="p-8 flex-1 flex flex-col">
                   {plan.popular && (
-                    <span className="inline-block px-4 py-1.5 bg-indigo-500/20 text-indigo-200 text-xs font-bold tracking-wider rounded-full mb-6 uppercase border border-indigo-400/30">
+                    <span className="inline-block px-4 py-1.5 bg-orange-500/20 text-orange-200 text-xs font-bold tracking-wider rounded-full mb-6 uppercase border border-orange-400/30">
                       MOST POPULAR
                     </span>
                   )}
@@ -251,7 +251,7 @@ export default function UpgradePage() {
                     }
                     className={`w-full mb-10 py-6 text-lg font-bold rounded-xl transition-all duration-300 ring-offset-2 hover:ring-2 ${
                       plan.theme === "dark"
-                        ? "bg-white text-indigo-900 hover:bg-slate-50 ring-indigo-400 shadow-[0_0_20px_rgba(255,255,255,0.3)] disabled:bg-indigo-800 disabled:text-indigo-300 disabled:ring-0 disabled:shadow-none"
+                        ? "bg-white text-orange-950 hover:bg-slate-50 ring-orange-400 shadow-[0_0_20px_rgba(255,255,255,0.3)] disabled:bg-orange-900 disabled:text-orange-300 disabled:ring-0 disabled:shadow-none"
                         : "bg-slate-900 text-white hover:bg-slate-800 ring-slate-900 shadow-xl shadow-slate-900/10 disabled:bg-slate-200 disabled:text-slate-400 disabled:ring-0 disabled:shadow-none"
                     }`}
                   >
@@ -275,7 +275,7 @@ export default function UpgradePage() {
                         <div
                           className={`mt-1 rounded-full p-1 shadow-sm shrink-0 ${
                             plan.theme === "dark"
-                              ? "bg-indigo-800 text-green-400"
+                              ? "bg-orange-950 text-orange-400"
                               : "bg-white text-green-500 shadow-slate-200/50"
                           }`}
                         >
@@ -284,7 +284,7 @@ export default function UpgradePage() {
                         <span
                           className={`text-base font-medium leading-relaxed ${
                             plan.theme === "dark"
-                              ? "text-indigo-100"
+                              ? "text-orange-100"
                               : "text-slate-700"
                           }`}
                         >
@@ -316,7 +316,7 @@ export default function UpgradePage() {
                   <Button
                     onClick={handleApplyPromo}
                     disabled={isApplyingPromo}
-                    className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-8 py-6 rounded-xl shadow-none transition-all active:scale-95 font-bold border border-indigo-100/50"
+                    className="bg-orange-50 hover:bg-orange-100 text-orange-700 px-8 py-6 rounded-xl shadow-none transition-all active:scale-95 font-bold border border-orange-100/50"
                   >
                     {isApplyingPromo ? (
                       <div className="w-5 h-5 border-2 border-current border-t-transparent rounded-full animate-spin" />

@@ -41,10 +41,15 @@ import {
   ExternalLink, 
   ShieldCheck,
   Users,
-  Layers
+  Layers,
+  FileSpreadsheet,
+  Settings2,
+  Save,
+  CheckCircle2
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatDate } from "./utils";
+import Loader from "../components/Loader";
 
 export default function SuppliersPage() {
   const navigate = useNavigate();
@@ -86,6 +91,113 @@ export default function SuppliersPage() {
   const [mergeNewName, setMergeNewName] = useState("");
   const [mergeLoading, setMergeLoading] = useState(false);
   const [previewLoading, setPreviewLoading] = useState(false);
+
+  // CSV Template Dialog State
+  const [csvTemplateDialog, setCsvTemplateDialog] = useState({
+    open: false,
+    supplier: null,
+    loading: false,
+    saving: false,
+    mapping: {
+      product_name: "Item Name",
+      batch_no: "Batch No",
+      expiry_date: "Expiry Date",
+      quantity: "Quantity",
+      units: "Units/Pack",
+      pack_type: "Pack Type",
+      rate_pack: "Purchase Price",
+      mrp_pack: "MRP",
+      cgst: "CGST %",
+      sgst: "SGST %",
+      gst_percent: "GST %",
+      discount: "Discount %",
+      scheme: "Scheme Qty",
+      hsn_no: "HSN Code",
+      manufacturer: "Manufacturer",
+      salt_composition: "Composition",
+    },
+  });
+
+  const openCsvTemplateModal = async (supplier) => {
+    setCsvTemplateDialog({
+      open: true,
+      supplier,
+      loading: true,
+      saving: false,
+      mapping: {
+        product_name: "Item Name",
+        batch_no: "Batch No",
+        expiry_date: "Expiry Date",
+        quantity: "Quantity",
+        units: "Units/Pack",
+        pack_type: "Pack Type",
+        rate_pack: "Purchase Price",
+        mrp_pack: "MRP",
+        cgst: "CGST %",
+        sgst: "SGST %",
+        gst_percent: "GST %",
+        discount: "Discount %",
+        scheme: "Scheme Qty",
+        hsn_no: "HSN Code",
+        manufacturer: "Manufacturer",
+        salt_composition: "Composition",
+      },
+    });
+
+    try {
+      const response = await axios.get(`${API}/suppliers/${supplier.id}/csv-template`);
+      if (response.data.csv_template?.mapped_fields) {
+        setCsvTemplateDialog((prev) => ({
+          ...prev,
+          loading: false,
+          mapping: { ...prev.mapping, ...response.data.csv_template.mapped_fields },
+        }));
+      } else {
+        setCsvTemplateDialog((prev) => ({ ...prev, loading: false }));
+      }
+    } catch (e) {
+      setCsvTemplateDialog((prev) => ({ ...prev, loading: false }));
+    }
+  };
+
+  const handleSaveCsvTemplate = async () => {
+    const { supplier, mapping } = csvTemplateDialog;
+    if (!supplier) return;
+
+    if (!mapping.product_name || !mapping.pack_quantity) {
+      toast.error("Product Name and Quantity column names are required");
+      return;
+    }
+
+    setCsvTemplateDialog((prev) => ({ ...prev, saving: true }));
+    try {
+      await axios.post(`${API}/suppliers/${supplier.id}/csv-template`, {
+        mapped_fields: mapping,
+      });
+      toast.success(`Saved CSV template for ${supplier.name}`);
+      setCsvTemplateDialog((prev) => ({ ...prev, open: false, saving: false }));
+      fetchSuppliers(pagination.page);
+    } catch (e) {
+      toast.error("Failed to save CSV template");
+      setCsvTemplateDialog((prev) => ({ ...prev, saving: false }));
+    }
+  };
+
+  const handleRemoveCsvTemplate = async () => {
+    const { supplier } = csvTemplateDialog;
+    if (!supplier) return;
+
+    setCsvTemplateDialog((prev) => ({ ...prev, saving: true }));
+    try {
+      await axios.delete(`${API}/suppliers/${supplier.id}/csv-template`);
+      toast.success(`Reset CSV template for ${supplier.name}`);
+      setCsvTemplateDialog((prev) => ({ ...prev, open: false, saving: false }));
+      fetchSuppliers(pagination.page);
+    } catch (e) {
+      toast.error("Failed to remove CSV template");
+      setCsvTemplateDialog((prev) => ({ ...prev, saving: false }));
+    }
+  };
 
   const fetchSuppliers = useCallback(async (page = 1, highlightId = undefined) => {
     try {
@@ -365,17 +477,7 @@ export default function SuppliersPage() {
   };
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <div className="text-center space-y-4">
-          <div className="relative w-12 h-12 mx-auto">
-            <div className="absolute inset-0 rounded-full border-4 border-primary/20"></div>
-            <div className="absolute inset-0 rounded-full border-4 border-primary border-t-transparent animate-spin"></div>
-          </div>
-          <p className="text-xs font-bold text-muted-foreground/80 uppercase tracking-widest animate-pulse">Loading Suppliers...</p>
-        </div>
-      </div>
-    );
+    return <Loader size="lg" text="Loading Suppliers Directory..." />;
   }
 
   // Active page statistics calculations
@@ -1029,6 +1131,19 @@ export default function SuppliersPage() {
                       <Button
                         variant="ghost"
                         size="icon"
+                        onClick={() => openCsvTemplateModal(supplier)}
+                        className={`w-8 h-8 rounded-md transition-all ${
+                          supplier.csv_template
+                            ? "text-emerald-500 hover:bg-emerald-500/10"
+                            : "text-muted-foreground hover:text-primary hover:bg-primary/10"
+                        }`}
+                        title={supplier.csv_template ? "Saved CSV Template Active" : "Configure CSV Template"}
+                      >
+                        <FileSpreadsheet className="w-3.5 h-3.5" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
                         onClick={() => handleEdit(supplier)}
                         className="w-8 h-8 rounded-md text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all"
                         data-testid={`edit-supplier-${supplier.id}`}
@@ -1145,6 +1260,120 @@ export default function SuppliersPage() {
           )}
         </>
       )}
+
+      {/* CSV Template Configurator Modal */}
+      <Dialog
+        open={csvTemplateDialog.open}
+        onOpenChange={(open) => !open && setCsvTemplateDialog((prev) => ({ ...prev, open: false }))}
+      >
+        <DialogContent className="max-w-xl max-h-[85vh] overflow-hidden flex flex-col p-6 rounded-2xl border border-border bg-background shadow-2xl">
+          <DialogHeader className="shrink-0 mb-3">
+            <DialogTitle className="text-xl font-bold flex items-center gap-2">
+              <FileSpreadsheet className="w-5 h-5 text-orange-500" />
+              <span>CSV Mapping Template</span>
+            </DialogTitle>
+            <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
+              Configure default CSV column headers for <b>{csvTemplateDialog.supplier?.name}</b>. When importing a CSV for this supplier, matching headers will automatically bypass manual column mapping!
+            </p>
+          </DialogHeader>
+
+          {csvTemplateDialog.loading ? (
+            <div className="py-12 text-center flex flex-col items-center justify-center space-y-3">
+              <Loader2 className="w-6 h-6 animate-spin text-orange-500" />
+              <span className="text-xs text-muted-foreground font-medium">Loading saved template...</span>
+            </div>
+          ) : (
+            <div className="flex-1 overflow-y-auto space-y-4 pr-1 custom-scrollbar">
+              <div className="bg-muted/30 p-3.5 rounded-xl border border-border/60 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-extrabold uppercase tracking-wider text-muted-foreground">
+                    Target Field Column Mapping
+                  </span>
+                  {csvTemplateDialog.supplier?.csv_template && (
+                    <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-[10px] font-bold border border-emerald-500/20 flex items-center gap-1">
+                      <CheckCircle2 className="w-3 h-3 text-emerald-500" /> Saved Template Active
+                    </span>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                  {[
+                    { key: "product_name", label: "Product Name *", req: true },
+                    { key: "batch_no", label: "Batch Number", req: false },
+                    { key: "expiry_date", label: "Expiry Date", req: false },
+                    { key: "quantity", label: "Quantity (Packs) *", req: true },
+                    { key: "units", label: "Units Per Pack", req: false },
+                    { key: "pack_type", label: "Pack Type (Strip/Box)", req: false },
+                    { key: "rate_pack", label: "Purchase Rate (Pack)", req: false },
+                    { key: "mrp_pack", label: "MRP (Pack)", req: false },
+                    { key: "cgst", label: "CGST %", req: false },
+                    { key: "sgst", label: "SGST %", req: false },
+                    { key: "gst_percent", label: "GST % (Splits 50/50)", req: false },
+                    { key: "discount", label: "Discount %", req: false },
+                    { key: "scheme", label: "Scheme Qty", req: false },
+                    { key: "hsn_no", label: "HSN Code", req: false },
+                    { key: "manufacturer", label: "Manufacturer", req: false },
+                    { key: "salt_composition", label: "Salt Composition", req: false },
+                  ].map((field) => (
+                    <div key={field.key} className="space-y-1">
+                      <Label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">
+                        {field.label}
+                      </Label>
+                      <Input
+                        value={csvTemplateDialog.mapping[field.key] || ""}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setCsvTemplateDialog((prev) => ({
+                            ...prev,
+                            mapping: { ...prev.mapping, [field.key]: val },
+                          }));
+                        }}
+                        placeholder={`CSV Header for ${field.key}`}
+                        className="h-8 text-xs bg-background border-border rounded-lg font-bold"
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="pt-4 border-t border-border flex items-center justify-between shrink-0">
+            {csvTemplateDialog.supplier?.csv_template ? (
+              <Button
+                variant="ghost"
+                onClick={handleRemoveCsvTemplate}
+                disabled={csvTemplateDialog.saving}
+                className="text-rose-500 hover:text-rose-600 hover:bg-rose-500/10 text-xs font-bold h-9 rounded-xl cursor-pointer"
+              >
+                Reset Template
+              </Button>
+            ) : <div />}
+
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                onClick={() => setCsvTemplateDialog((prev) => ({ ...prev, open: false }))}
+                className="h-9 text-xs font-bold rounded-xl border-border hover:bg-muted cursor-pointer"
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleSaveCsvTemplate}
+                disabled={csvTemplateDialog.saving || csvTemplateDialog.loading}
+                className="h-9 px-4 bg-orange-500 hover:bg-orange-600 text-white font-extrabold text-xs rounded-xl shadow-md cursor-pointer flex items-center gap-1.5"
+              >
+                {csvTemplateDialog.saving ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Save className="w-3.5 h-3.5" />
+                )}
+                <span>Save CSV Template</span>
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
