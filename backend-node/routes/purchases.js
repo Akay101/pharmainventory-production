@@ -831,13 +831,21 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
       });
     }
 
+    const validPurchaseDate =
+      purchase_date &&
+      purchase_date !== "today" &&
+      purchase_date !== "aaj" &&
+      !isNaN(new Date(purchase_date).getTime())
+        ? new Date(purchase_date).toISOString().slice(0, 10)
+        : new Date().toISOString().slice(0, 10);
+
     const purchaseData = {
       id: purchaseId,
       pharmacy_id: req.user.pharmacy_id,
       supplier_id,
       supplier_name,
       invoice_no: invoice_no || null,
-      purchase_date: purchase_date || new Date().toISOString().slice(0, 10),
+      purchase_date: validPurchaseDate,
       items: processedItems,
       total_amount: totalAmount,
       payment_status: pStatus,

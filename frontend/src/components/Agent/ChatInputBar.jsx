@@ -35,7 +35,7 @@ const ChatInputBar = memo(({ onSendMessage, isLoading, userId, onOpenFollowup })
   };
 
   return (
-    <div className="p-4 bg-[#090d16] border-t border-slate-800/80 flex flex-col items-center shrink-0">
+    <div className="p-4 bg-card border-t border-border flex flex-col items-center shrink-0">
       <form onSubmit={handleSubmit} className="w-full max-w-3xl relative flex items-center">
         <Input
           type="text"
@@ -43,7 +43,7 @@ const ChatInputBar = memo(({ onSendMessage, isLoading, userId, onOpenFollowup })
           value={localValue}
           onChange={handleChange}
           disabled={isLoading}
-          className="pr-24 bg-[#0f172a] border-slate-800 rounded-full h-14 shadow-2xl focus-visible:ring-2 focus-visible:ring-indigo-500 text-sm text-slate-100 placeholder:text-slate-500 font-medium"
+          className="pr-24 bg-background border-border/80 rounded-full h-14 shadow-lg focus-visible:ring-2 focus-visible:ring-orange-500 text-sm text-foreground placeholder:text-muted-foreground font-medium"
         />
 
         <div className="absolute right-2.5 flex items-center gap-1.5">
@@ -52,7 +52,7 @@ const ChatInputBar = memo(({ onSendMessage, isLoading, userId, onOpenFollowup })
             variant="ghost"
             size="icon"
             onClick={onOpenFollowup}
-            className="h-9 w-9 rounded-full text-slate-400 hover:text-indigo-400 hover:bg-slate-800 transition-colors"
+            className="h-9 w-9 rounded-full text-muted-foreground hover:text-orange-500 hover:bg-orange-500/10 transition-colors"
             title="Open Interactive Follow-up Form Modal"
           >
             <Mic className="w-4 h-4" />
@@ -62,14 +62,14 @@ const ChatInputBar = memo(({ onSendMessage, isLoading, userId, onOpenFollowup })
             type="submit"
             size="icon"
             disabled={!localValue.trim() || isLoading}
-            className="h-9 w-9 rounded-full bg-gradient-to-r from-indigo-600 via-purple-600 to-teal-500 hover:opacity-95 text-white shadow-lg shadow-indigo-600/30 transition-all"
+            className="h-9 w-9 rounded-full bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white shadow-md shadow-orange-500/20 transition-all cursor-pointer"
           >
-             <Send className="w-4 h-4" />
+            <Send className="w-4 h-4" />
           </Button>
         </div>
       </form>
 
-      <p className="text-[10px] text-slate-500 mt-2 text-center tracking-wide font-sans">
+      <p className="text-[10px] text-muted-foreground mt-2 text-center tracking-wide font-sans">
         Pharmalogy Agent can take actions on your behalf — always confirm before executing irreversible decisions.
       </p>
     </div>

@@ -57,6 +57,16 @@ import {
   AlertDialogTitle,
 } from "../ui/alert-dialog";
 
+const sanitizeText = (txt) => {
+  if (!txt) return "";
+  return txt
+    .replace(/[\u{1F300}-\u{1F9FF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]|✅|❌|⚡|🎉|📌|🏆|💡|💊|🩺/gu, "")
+    .replace(/\*\*/g, "")
+    .replace(/#+/g, "")
+    .replace(/Purchase Order/gi, "Purchase")
+    .trim();
+};
+
 const MarkdownComponents = {
   p: ({ children }) => (
     <p className="mb-2 last:mb-0 leading-relaxed text-sm break-words">
@@ -65,72 +75,72 @@ const MarkdownComponents = {
   ),
   h1: ({ children }) => (
     <h1 className="text-xl font-bold text-orange-500 mb-2 mt-4 inline-flex items-center gap-2">
-      <Sparkles className="w-5 h-5" />
+      <Sparkles className="w-5 h-5 text-orange-500" />
       {children}
     </h1>
   ),
   h2: ({ children }) => (
-    <h2 className="text-md font-bold text-indigo-400/90 mb-2 mt-4 pb-1 border-b border-slate-800">
+    <h2 className="text-md font-bold text-amber-500 mb-2 mt-4 pb-1 border-b border-border">
       {children}
     </h2>
   ),
   h3: ({ children }) => (
-    <h3 className="text-sm font-semibold text-indigo-400 mb-1 mt-3 underline decoration-indigo-500/30 underline-offset-4 decoration-2">
+    <h3 className="text-sm font-semibold text-orange-500 mb-1 mt-3 underline decoration-orange-500/30 underline-offset-4 decoration-2">
       {children}
     </h3>
   ),
   ul: ({ children }) => (
-    <ul className="list-disc pl-5 mb-3 space-y-1.5 text-sm marker:text-indigo-500">
+    <ul className="list-disc pl-5 mb-3 space-y-1.5 text-sm marker:text-orange-500">
       {children}
     </ul>
   ),
   ol: ({ children }) => (
-    <ol className="list-decimal pl-5 mb-3 space-y-1.5 text-sm marker:text-indigo-500 marker:font-bold">
+    <ol className="list-decimal pl-5 mb-3 space-y-1.5 text-sm marker:text-orange-500 marker:font-bold">
       {children}
     </ol>
   ),
   li: ({ children }) => <li className="pl-1 leading-relaxed">{children}</li>,
   strong: ({ children }) => (
-    <strong className="font-extrabold text-indigo-400 bg-indigo-500/10 px-1 rounded-sm">
+    <strong className="font-extrabold text-orange-500 bg-orange-500/10 px-1 rounded-xs">
       {children}
     </strong>
   ),
   blockquote: ({ children }) => (
-    <blockquote className="border-l-4 border-indigo-500 flex items-start gap-2 pl-3 py-2 my-3 bg-indigo-500/10 italic rounded-r-lg text-sm">
+    <blockquote className="border-l-4 border-orange-500 flex items-start gap-2 pl-3 py-2 my-3 bg-orange-500/10 italic rounded-r-lg text-sm">
       <div className="pt-0.5">
-        <Bot className="w-3.5 h-3.5 text-indigo-400" />
+        <Bot className="w-3.5 h-3.5 text-orange-500" />
       </div>
       <div className="flex-1">{children}</div>
     </blockquote>
   ),
   table: ({ children }) => (
-    <div className="w-full overflow-x-auto rounded-xl border border-slate-800 my-3 bg-[#0b0f19] scrollbar-thin">
+    <div className="w-full overflow-x-auto rounded-xl border border-border my-3 bg-card scrollbar-thin">
       <table className="w-full text-left text-xs border-collapse min-w-[500px]">
         {children}
       </table>
     </div>
   ),
   thead: ({ children }) => (
-    <thead className="bg-[#1e293b] border-b border-slate-800">{children}</thead>
+    <thead className="bg-muted/50 border-b border-border">{children}</thead>
   ),
   tbody: ({ children }) => (
-    <tbody className="divide-y divide-slate-800">{children}</tbody>
+    <tbody className="divide-y divide-border/50">{children}</tbody>
   ),
   tr: ({ children }) => (
-    <tr className="hover:bg-[#1e293b]/50 transition-colors">{children}</tr>
+    <tr className="hover:bg-muted/30 transition-colors">{children}</tr>
   ),
   th: ({ children }) => (
-    <th className="p-2 font-semibold text-slate-400">{children}</th>
+    <th className="p-2 font-semibold text-muted-foreground">{children}</th>
   ),
   td: ({ children }) => <td className="p-2">{children}</td>,
   code: ({ inline, children }) =>
     inline ? (
-      <code className="bg-[#1e293b] px-1.5 py-0.5 rounded font-mono text-xs text-indigo-300">
+      <code className="bg-muted px-1.5 py-0.5 rounded font-mono text-xs text-orange-500">
         {children}
       </code>
     ) : (
-      <div className="bg-[#0b0f19] border border-slate-800 rounded-xl p-3 my-3 overflow-x-auto">
-        <code className="font-mono text-xs text-indigo-300">{children}</code>
+      <div className="bg-muted/40 border border-border rounded-xl p-3 my-3 overflow-x-auto">
+        <code className="font-mono text-xs text-orange-500">{children}</code>
       </div>
     ),
 };
@@ -146,53 +156,60 @@ const MessageBubble = memo(
     onConfirmAction,
     onSendChip,
   }) => {
+    // If msg has draftState, display a clean intro text to prevent ugly duplicate summary text
+    const displayMarkdownText = msg.draftState
+      ? "Please review your purchase details and click confirm to save:"
+      : sanitizeText(msg.text);
+
     return (
       <div
         className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
       >
         {msg.role === "model" && (
-          <Avatar className="w-8 h-8 mr-3 mt-1 border border-slate-800 shadow-md shrink-0">
-            <AvatarFallback className="bg-gradient-to-br from-indigo-500 via-purple-600 to-teal-500 text-white text-xs font-bold shadow-lg shadow-indigo-500/20">
+          <Avatar className="w-8 h-8 mr-3 mt-1 border border-border shadow-xs shrink-0">
+            <AvatarFallback className="bg-gradient-to-r from-orange-500 to-amber-500 text-white text-xs font-bold shadow-xs">
               <Bot className="w-4 h-4" />
             </AvatarFallback>
           </Avatar>
         )}
 
-        <div className="max-w-[85%] flex flex-col gap-2">
+        <div className="max-w-[85%] flex flex-col gap-3">
+          {/* AI Conversational Response Box */}
           <div
-            className={`rounded-2xl p-4 shadow-xl ${
+            className={`rounded-2xl p-4 shadow-xs ${
               msg.role === "user"
-                ? "bg-gradient-to-r from-indigo-600 via-purple-600 to-teal-500 text-white rounded-tr-sm font-medium shadow-indigo-600/20"
-                : "bg-[#0f172a] border border-slate-800 text-slate-100 rounded-tl-sm"
+                ? "bg-gradient-to-r from-orange-500 to-amber-500 text-white rounded-tr-xs font-medium shadow-orange-500/20"
+                : "bg-card border border-orange-500/20 text-foreground rounded-tl-xs shadow-sm ring-1 ring-orange-500/10"
             }`}
           >
             {msg.role === "model" ? (
-              <>
-                <ReactMarkdown
-                  remarkPlugins={[remarkGfm]}
-                  components={MarkdownComponents}
-                >
-                  {msg.text}
-                </ReactMarkdown>
-
-                {/* Render Rich Data Canvas Table if viewType is purchase_table */}
-                {msg.viewType === "purchase_table" && msg.purchasesData && (
-                  <PurchaseTableCanvas purchasesData={msg.purchasesData} />
-                )}
-
-                {/* Render Draft Purchase Order Card if present */}
-                {msg.draftState && (
-                  <DraftPurchaseCard
-                    draftState={msg.draftState}
-                    isExecuting={actionExecuting}
-                    onConfirm={onConfirmAction}
-                  />
-                )}
-              </>
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                components={MarkdownComponents}
+              >
+                {displayMarkdownText}
+              </ReactMarkdown>
             ) : (
-              <p className="text-sm font-medium">{msg.text}</p>
+              <p className="text-sm font-medium">{sanitizeText(msg.text)}</p>
             )}
           </div>
+
+          {/* Separate Interactive Workspace Canvas / Draft Card Widget */}
+          {msg.role === "model" && msg.viewType === "purchase_table" && msg.purchasesData && (
+            <div className="mt-1">
+              <PurchaseTableCanvas purchasesData={msg.purchasesData} />
+            </div>
+          )}
+
+          {msg.role === "model" && msg.draftState && (
+            <div className="mt-1">
+              <DraftPurchaseCard
+                draftState={msg.draftState}
+                isExecuting={actionExecuting}
+                onConfirm={onConfirmAction}
+              />
+            </div>
+          )}
 
           {msg.role === "model" &&
             msg.chips &&
@@ -201,16 +218,16 @@ const MessageBubble = memo(
             !pendingAction &&
             !isLoading &&
             !msg.draftState?.recorded && (
-              <div className="flex flex-wrap gap-2 mt-1 ml-1">
+              <div className="flex flex-wrap gap-2 mt-1.5 ml-1">
                 {msg.chips.map((opt, i) => (
                   <Button
                     key={i}
                     size="sm"
                     variant="outline"
-                    className="rounded-xl border-indigo-500/30 bg-[#0f172a] hover:bg-[#1e293b] text-indigo-400 hover:text-indigo-300 text-xs h-7 font-medium shadow-sm"
-                    onClick={() => onSendChip(opt)}
+                    className="rounded-full border border-border bg-card hover:bg-orange-500/10 hover:border-orange-500/30 text-foreground hover:text-orange-500 text-xs px-3 py-1 h-7 font-medium transition-all shadow-xs cursor-pointer"
+                    onClick={() => onSendChip(sanitizeText(opt))}
                   >
-                    {opt}
+                    {sanitizeText(opt)}
                   </Button>
                 ))}
               </div>
@@ -564,36 +581,36 @@ export default function AgentWidget({ user }) {
         <div className="fixed bottom-6 right-6 z-[9999]">
           <button
             onClick={() => setIsOpen(true)}
-            className="relative flex items-center justify-center w-14 h-14 bg-gradient-to-br from-indigo-600 via-purple-600 to-teal-500 text-white rounded-full shadow-2xl shadow-indigo-600/30 ring-2 ring-indigo-400/30 hover:scale-105 transition-all"
+            className="relative flex items-center justify-center w-14 h-14 bg-gradient-to-r from-orange-500 to-amber-500 text-white rounded-full shadow-2xl shadow-orange-500/30 ring-2 ring-orange-400/40 hover:scale-105 transition-all cursor-pointer"
           >
             <Bot className="w-6 h-6" />
-            <Sparkles className="w-3.5 h-3.5 text-yellow-300 absolute top-2.5 right-2.5 animate-pulse" />
+            <Sparkles className="w-3.5 h-3.5 text-amber-200 absolute top-2.5 right-2.5 animate-pulse" />
           </button>
         </div>
       )}
 
-      {/* FULL AGENTIC WORKSPACE CONTAINER (ZERO BLURS, FAST PERFORMANCE) */}
+      {/* FULL AGENTIC WORKSPACE CONTAINER */}
       {isOpen && (
-        <div className="fixed inset-0 z-[9999] bg-[#090d16] text-slate-100 flex flex-col font-sans select-none overflow-hidden animate-in fade-in duration-150">
+        <div className="fixed inset-0 z-[9999] bg-background text-foreground flex flex-col font-sans select-none overflow-hidden animate-in fade-in duration-150">
           {/* Top Bar Header with Pharmalogy AI Gradients */}
-          <div className="h-14 border-b border-slate-800 bg-[#0f172a] px-4 flex items-center justify-between shrink-0">
+          <div className="h-14 border-b border-border bg-card px-4 flex items-center justify-between shrink-0">
             <div className="flex items-center gap-3">
-              <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-indigo-500 via-purple-600 to-teal-500 flex items-center justify-center text-white shadow-md shadow-indigo-500/20">
-                <Sparkles className="w-4 h-4" />
+              <div className="w-7 h-7 rounded-lg bg-gradient-to-r from-orange-500 to-amber-500 flex items-center justify-center text-white shadow-md shadow-orange-500/20">
+                <Sparkles className="w-4 h-4 text-white" />
               </div>
-              <h2 className="font-bold text-sm text-slate-100 flex items-center gap-2">
+              <h2 className="font-bold text-sm text-foreground flex items-center gap-2">
                 You are in Pharmalogy's Agentic Workspace
               </h2>
 
               <Badge
                 variant="outline"
-                className="bg-gradient-to-r from-indigo-500/20 to-purple-500/20 text-indigo-300 border-indigo-500/30 text-xs px-2.5 py-0.5 font-semibold"
+                className="bg-orange-500/10 text-orange-600 dark:text-orange-400 border-orange-500/30 text-xs px-2.5 py-0.5 font-bold"
               >
                 Pharmacy • AI Mode
               </Badge>
 
-              <div className="flex items-center gap-1.5 text-emerald-400 text-xs bg-emerald-500/10 px-2.5 py-0.5 rounded-full border border-emerald-500/20 font-medium">
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+              <div className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 text-xs bg-emerald-500/10 px-2.5 py-0.5 rounded-full border border-emerald-500/20 font-bold">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
                 4 agents live
               </div>
             </div>
@@ -604,7 +621,7 @@ export default function AgentWidget({ user }) {
                 size="icon"
                 onClick={handleNewChat}
                 title="Reset Workspace"
-                className="h-8 w-8 text-slate-400 hover:text-slate-100 hover:bg-slate-800 rounded-lg"
+                className="h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg"
               >
                 <RotateCcw className="w-4 h-4" />
               </Button>
@@ -613,7 +630,7 @@ export default function AgentWidget({ user }) {
                 variant="outline"
                 size="sm"
                 onClick={() => setIsOpen(false)}
-                className="h-8 border-slate-700 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs gap-1.5 rounded-lg"
+                className="h-8 bg-orange-600 hover:bg-orange-700 text-white border-0 text-xs font-black gap-1.5 rounded-xl cursor-pointer shadow-sm"
               >
                 <X className="w-3.5 h-3.5" /> Exit AI mode
               </Button>
@@ -623,13 +640,13 @@ export default function AgentWidget({ user }) {
           {/* Main Workspace Body */}
           <div className="flex-1 flex min-h-0 overflow-hidden">
             {/* 1. Slim Icon Navigation Rail */}
-            <div className="w-14 bg-[#0b0f19] border-r border-slate-800/80 flex flex-col items-center py-4 gap-4 shrink-0">
+            <div className="w-14 bg-card/80 border-r border-border flex flex-col items-center py-4 gap-4 shrink-0">
               <button
                 onClick={() => setLeftNavTab("chats")}
                 className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all ${
                   leftNavTab === "chats"
-                    ? "bg-gradient-to-br from-indigo-600 to-purple-600 text-white shadow-md shadow-indigo-600/30"
-                    : "text-slate-400 hover:bg-slate-800/60"
+                    ? "bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-md shadow-orange-500/20"
+                    : "text-muted-foreground hover:bg-muted"
                 }`}
                 title="Past Chats"
               >
@@ -640,8 +657,8 @@ export default function AgentWidget({ user }) {
                 onClick={() => setLeftNavTab("agents")}
                 className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all ${
                   leftNavTab === "agents"
-                    ? "bg-gradient-to-br from-indigo-600 to-purple-600 text-white shadow-md shadow-indigo-600/30"
-                    : "text-slate-400 hover:bg-slate-800/60"
+                    ? "bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-md shadow-orange-500/20"
+                    : "text-muted-foreground hover:bg-muted"
                 }`}
                 title="Active Agents & Metrics"
               >
@@ -650,134 +667,134 @@ export default function AgentWidget({ user }) {
             </div>
 
             {/* 2. Secondary Left Sidebar Panel */}
-            <div className="w-64 bg-[#0f172a] border-r border-slate-800 flex flex-col min-h-0 shrink-0">
+            <div className="w-64 bg-card border-r border-border flex flex-col min-h-0 shrink-0">
               {leftNavTab === "agents" ? (
                 /* Active Agents & Live Pharmacy Context */
                 <div className="p-4 flex-1 overflow-y-auto space-y-5 scrollbar-thin text-xs">
                   <div>
-                    <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2.5 flex items-center gap-1">
+                    <h4 className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-2.5 flex items-center gap-1">
                       ACTIVE DOMAIN AGENTS
                     </h4>
                     <div className="space-y-1.5">
-                      <div className="p-2.5 rounded-xl bg-gradient-to-r from-indigo-600/15 to-purple-600/15 border border-indigo-500/30 flex items-center justify-between shadow-sm">
+                      <div className="p-2.5 rounded-xl bg-orange-500/15 border border-orange-500/30 flex items-center justify-between shadow-xs">
                         <div>
-                          <span className="font-bold text-indigo-300 block text-xs">
+                          <span className="font-bold text-orange-600 dark:text-orange-400 block text-xs">
                             Purchase Agent
                           </span>
-                          <span className="text-[10px] text-slate-400">
+                          <span className="text-[10px] text-muted-foreground">
                             PO & Price History
                           </span>
                         </div>
-                        <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                        <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
                       </div>
 
-                      <div className="p-2.5 rounded-xl bg-[#1e293b]/40 border border-slate-800/60 flex items-center justify-between">
+                      <div className="p-2.5 rounded-xl bg-muted/30 border border-border/60 flex items-center justify-between">
                         <div>
-                          <span className="font-bold text-slate-300 block text-xs">
+                          <span className="font-bold text-foreground block text-xs">
                             Billing Agent
                           </span>
-                          <span className="text-[10px] text-slate-400">
+                          <span className="text-[10px] text-muted-foreground">
                             Invoices & Discounts
                           </span>
                         </div>
-                        <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
+                        <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
                       </div>
 
-                      <div className="p-2.5 rounded-xl bg-[#1e293b]/40 border border-slate-800/60 flex items-center justify-between">
+                      <div className="p-2.5 rounded-xl bg-muted/30 border border-border/60 flex items-center justify-between">
                         <div>
-                          <span className="font-bold text-slate-300 block text-xs">
+                          <span className="font-bold text-foreground block text-xs">
                             Inventory Agent
                           </span>
-                          <span className="text-[10px] text-slate-400">
+                          <span className="text-[10px] text-muted-foreground">
                             Stock & Expiry
                           </span>
                         </div>
-                        <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
+                        <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
                       </div>
 
-                      <div className="p-2.5 rounded-xl bg-[#1e293b]/40 border border-slate-800/60 flex items-center justify-between">
+                      <div className="p-2.5 rounded-xl bg-muted/30 border border-border/60 flex items-center justify-between">
                         <div>
-                          <span className="font-bold text-slate-300 block text-xs">
+                          <span className="font-bold text-foreground block text-xs">
                             Supplier Agent
                           </span>
-                          <span className="text-[10px] text-slate-400">
+                          <span className="text-[10px] text-muted-foreground">
                             Dues & Ledger
                           </span>
                         </div>
-                        <span className="w-2 h-2 rounded-full bg-amber-400"></span>
+                        <span className="w-2 h-2 rounded-full bg-amber-500"></span>
                       </div>
                     </div>
                   </div>
 
                   {/* Real-time Draft Session Context */}
-                  <div className="pt-2 border-t border-slate-800">
-                    <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">
+                  <div className="pt-2 border-t border-border">
+                    <h4 className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-2">
                       SESSION CONTEXT
                     </h4>
                     <div className="space-y-1.5 text-[11px]">
-                      <div className="flex justify-between text-slate-400">
+                      <div className="flex justify-between text-muted-foreground">
                         <span>Active Supplier:</span>
-                        <span className="text-slate-200 font-medium truncate max-w-[120px]">
+                        <span className="text-foreground font-medium truncate max-w-[120px]">
                           {activeDraftState?.supplier_name || "None selected"}
                         </span>
                       </div>
-                      <div className="flex justify-between text-slate-400">
+                      <div className="flex justify-between text-muted-foreground">
                         <span>Draft Items:</span>
-                        <span className="font-mono text-slate-200">
+                        <span className="font-mono text-foreground">
                           {activeDraftState?.items
                             ? activeDraftState.items.length
                             : 0}{" "}
                           pkts
                         </span>
                       </div>
-                      <div className="flex justify-between text-slate-400">
+                      <div className="flex justify-between text-muted-foreground">
                         <span>Draft Total:</span>
-                        <span className="font-mono text-indigo-400 font-bold">
+                        <span className="font-mono text-orange-600 dark:text-orange-400 font-bold">
                           ₹{(activeDraftState?.total_amount || 0).toFixed(2)}
                         </span>
                       </div>
                     </div>
                   </div>
 
-                  {/* Real-time Pharmacy Metrics (No Hardcoded Numbers) */}
-                  <div className="pt-2 border-t border-slate-800">
-                    <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">
+                  {/* Real-time Pharmacy Metrics */}
+                  <div className="pt-2 border-t border-border">
+                    <h4 className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-2">
                       PHARMACY METRICS
                     </h4>
                     <div className="grid grid-cols-2 gap-2 text-center">
-                      <div className="p-2 rounded-lg bg-[#1e293b]/50 border border-slate-800">
-                        <span className="text-xs font-bold text-rose-400 block font-mono">
+                      <div className="p-2 rounded-lg bg-muted/40 border border-border">
+                        <span className="text-xs font-bold text-rose-500 block font-mono">
                           {pharmacyStats.low_stock_count}
                         </span>
-                        <span className="text-[9px] text-slate-400">
+                        <span className="text-[9px] text-muted-foreground">
                           Low Stock Alerts
                         </span>
                       </div>
-                      <div className="p-2 rounded-lg bg-[#1e293b]/50 border border-slate-800">
-                        <span className="text-xs font-bold text-indigo-400 block font-mono">
+                      <div className="p-2 rounded-lg bg-muted/40 border border-border">
+                        <span className="text-xs font-bold text-orange-600 dark:text-orange-400 block font-mono">
                           {pharmacyStats.active_suppliers}
                         </span>
-                        <span className="text-[9px] text-slate-400">
+                        <span className="text-[9px] text-muted-foreground">
                           Suppliers
                         </span>
                       </div>
                     </div>
                   </div>
 
-                  <div className="pt-2 border-t border-slate-800">
-                    <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">
+                  <div className="pt-2 border-t border-border">
+                    <h4 className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-2">
                       SPEND OVERVIEW
                     </h4>
                     <div className="space-y-1 text-[11px]">
                       <div className="flex justify-between">
-                        <span className="text-slate-400">MTD Purchases:</span>
-                        <span className="font-mono text-emerald-400 font-bold">
+                        <span className="text-muted-foreground">MTD Purchases:</span>
+                        <span className="font-mono text-emerald-600 dark:text-emerald-400 font-bold">
                           ₹{(pharmacyStats.mtd_purchases || 0).toLocaleString()}
                         </span>
                       </div>
                       <div className="flex justify-between">
-                        <span className="text-slate-400">Supplier Dues:</span>
-                        <span className="font-mono text-amber-400 font-bold">
+                        <span className="text-muted-foreground">Supplier Dues:</span>
+                        <span className="font-mono text-amber-600 dark:text-amber-400 font-bold">
                           ₹{(pharmacyStats.supplier_dues || 0).toLocaleString()}
                         </span>
                       </div>
@@ -788,14 +805,14 @@ export default function AgentWidget({ user }) {
                 /* Past Chats Sidebar Tab */
                 <div className="p-4 flex-1 flex flex-col min-h-0 text-xs">
                   <div className="flex items-center justify-between mb-3">
-                    <h4 className="font-bold text-xs text-slate-300">
+                    <h4 className="font-bold text-xs text-foreground">
                       PAST SESSIONS
                     </h4>
                     <Button
                       variant="ghost"
                       size="sm"
                       onClick={handleNewChat}
-                      className="h-7 text-[11px] text-indigo-400 hover:bg-indigo-500/10 gap-1 rounded-lg font-semibold"
+                      className="h-7 text-[11px] text-orange-600 dark:text-orange-400 hover:bg-orange-500/10 gap-1 rounded-lg font-bold cursor-pointer"
                     >
                       <Plus className="w-3.5 h-3.5" /> NEW
                     </Button>
@@ -803,7 +820,7 @@ export default function AgentWidget({ user }) {
 
                   <div className="flex-1 overflow-y-auto space-y-1.5 pr-1 scrollbar-thin">
                     {conversations.length === 0 ? (
-                      <div className="p-8 text-center text-slate-500 italic">
+                      <div className="p-8 text-center text-muted-foreground italic">
                         No history yet
                       </div>
                     ) : (
@@ -813,21 +830,21 @@ export default function AgentWidget({ user }) {
                           onClick={() => handleSwitchConversation(conv.id)}
                           className={`group relative p-2.5 rounded-xl border cursor-pointer transition-all ${
                             activeConvId === conv.id
-                              ? "bg-indigo-600/20 border-indigo-500/40 font-semibold"
-                              : "border-transparent hover:bg-slate-800/60"
+                              ? "bg-orange-500/15 border-orange-500/40 font-semibold"
+                              : "border-transparent hover:bg-muted"
                           }`}
                         >
-                          <p className="text-xs truncate pr-6 text-slate-200">
-                            {conv.title}
+                          <p className="text-xs truncate pr-6 text-foreground">
+                            {sanitizeText(conv.title)}
                           </p>
-                          <p className="text-[10px] text-slate-400 truncate mt-0.5">
-                            {conv.last_message || "Empty..."}
+                          <p className="text-[10px] text-muted-foreground truncate mt-0.5">
+                            {sanitizeText(conv.last_message) || "Empty..."}
                           </p>
                           <button
                             onClick={(e) =>
                               handleDeleteConversation(e, conv.id)
                             }
-                            className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 p-1 text-red-400 hover:text-red-300"
+                            className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 p-1 text-red-500 hover:text-red-600"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
@@ -840,20 +857,20 @@ export default function AgentWidget({ user }) {
             </div>
 
             {/* 3. Central Canvas Workspace */}
-            <div className="flex-1 flex flex-col min-w-0 bg-[#090d16] relative">
+            <div className="flex-1 flex flex-col min-w-0 bg-background relative">
               {/* Message Stream or Empty Welcome View */}
               <div className="flex-1 overflow-y-auto p-6 space-y-6 scroll-smooth scrollbar-thin">
                 {messages.length === 0 ? (
                   /* Custom Pharmacy Welcome View with AI Gradients */
                   <div className="h-full flex flex-col items-center justify-center text-center max-w-2xl mx-auto my-auto py-12">
-                    <div className="w-16 h-16 rounded-3xl bg-gradient-to-br from-indigo-600 via-purple-600 to-teal-500 flex items-center justify-center text-white shadow-2xl shadow-indigo-600/30 mb-5 ring-4 ring-indigo-500/20">
-                      <Sparkles className="w-8 h-8" />
+                    <div className="w-16 h-16 rounded-3xl bg-gradient-to-r from-orange-500 to-amber-500 flex items-center justify-center text-white shadow-2xl shadow-orange-500/30 mb-5 ring-4 ring-orange-500/20">
+                      <Sparkles className="w-8 h-8 text-white" />
                     </div>
 
-                    <h1 className="text-2xl font-bold text-slate-100 mb-2">
+                    <h1 className="text-2xl font-black text-foreground mb-2">
                       Hello, {userName}
                     </h1>
-                    <p className="text-sm text-slate-400 mb-8">
+                    <p className="text-sm text-muted-foreground mb-8">
                       What would you like help with today in your pharmacy
                       workspace?
                     </p>
@@ -867,18 +884,18 @@ export default function AgentWidget({ user }) {
                               "Provide medicine, supplier & quantity to create purchase:",
                           })
                         }
-                        className="p-4 rounded-2xl bg-[#0f172a] border border-slate-800 hover:border-indigo-500/50 cursor-pointer transition-all group shadow-lg"
+                        className="p-4 rounded-2xl bg-card border border-border hover:border-orange-500/50 cursor-pointer transition-all group shadow-sm"
                       >
                         <div className="flex items-center gap-3 mb-2">
-                          <div className="w-8 h-8 rounded-xl bg-indigo-600/20 text-indigo-400 flex items-center justify-center border border-indigo-500/30">
+                          <div className="w-8 h-8 rounded-xl bg-orange-500/10 text-orange-500 flex items-center justify-center border border-orange-500/30">
                             <ShoppingCart className="w-4 h-4" />
                           </div>
-                          <h4 className="font-bold text-sm text-slate-200 group-hover:text-indigo-400 transition-colors">
-                            New Purchase Order
+                          <h4 className="font-bold text-sm text-foreground group-hover:text-orange-500 transition-colors">
+                            New Purchase
                           </h4>
                         </div>
-                        <p className="text-xs text-slate-400">
-                          Automate your purchase workflow with interactive
+                        <p className="text-xs text-muted-foreground">
+                          Automate your purchase creation with interactive
                           follow-up forms.
                         </p>
                       </div>
@@ -887,18 +904,18 @@ export default function AgentWidget({ user }) {
                         onClick={() =>
                           handleSendMessage("I want to create a bill")
                         }
-                        className="p-4 rounded-2xl bg-[#0f172a] border border-slate-800 hover:border-purple-500/50 cursor-pointer transition-all group shadow-lg"
+                        className="p-4 rounded-2xl bg-card border border-border hover:border-orange-500/50 cursor-pointer transition-all group shadow-sm"
                       >
                         <div className="flex items-center gap-3 mb-2">
-                          <div className="w-8 h-8 rounded-xl bg-purple-600/20 text-purple-400 flex items-center justify-center border border-purple-500/30">
+                          <div className="w-8 h-8 rounded-xl bg-amber-500/10 text-amber-500 flex items-center justify-center border border-amber-500/30">
                             <Receipt className="w-4 h-4" />
                           </div>
-                          <h4 className="font-bold text-sm text-slate-200 group-hover:text-purple-400 transition-colors">
+                          <h4 className="font-bold text-sm text-foreground group-hover:text-amber-500 transition-colors">
                             Quick Billing
                           </h4>
                         </div>
-                        <p className="text-xs text-slate-400">
-                          Generate bills, apply discounts & manage patient
+                        <p className="text-xs text-muted-foreground">
+                          Generate customer invoices, apply discounts & manage patient
                           checkouts.
                         </p>
                       </div>
@@ -909,19 +926,19 @@ export default function AgentWidget({ user }) {
                             "Show low stock and expiring medicines"
                           )
                         }
-                        className="p-4 rounded-2xl bg-[#0f172a] border border-slate-800 hover:border-rose-500/50 cursor-pointer transition-all group shadow-lg"
+                        className="p-4 rounded-2xl bg-card border border-border hover:border-rose-500/50 cursor-pointer transition-all group shadow-sm"
                       >
                         <div className="flex items-center gap-3 mb-2">
-                          <div className="w-8 h-8 rounded-xl bg-rose-600/20 text-rose-400 flex items-center justify-center border border-rose-500/30">
+                          <div className="w-8 h-8 rounded-xl bg-rose-500/10 text-rose-500 flex items-center justify-center border border-rose-500/30">
                             <AlertCircle className="w-4 h-4" />
                           </div>
-                          <h4 className="font-bold text-sm text-slate-200 group-hover:text-rose-400 transition-colors">
+                          <h4 className="font-bold text-sm text-foreground group-hover:text-rose-500 transition-colors">
                             Stock & Expiry Alerts
                           </h4>
                         </div>
-                        <p className="text-xs text-slate-400">
-                          Review medicines below shortage thresholds & near
-                          expiry.
+                        <p className="text-xs text-muted-foreground">
+                          Review inventory below shortage thresholds & near
+                          expiry batches.
                         </p>
                       </div>
 
@@ -929,19 +946,18 @@ export default function AgentWidget({ user }) {
                         onClick={() =>
                           handleSendMessage("Give all past 7 days purchases")
                         }
-                        className="p-4 rounded-2xl bg-[#0f172a] border border-slate-800 hover:border-emerald-500/50 cursor-pointer transition-all group shadow-lg"
+                        className="p-4 rounded-2xl bg-card border border-border hover:border-emerald-500/50 cursor-pointer transition-all group shadow-sm"
                       >
                         <div className="flex items-center gap-3 mb-2">
-                          <div className="w-8 h-8 rounded-xl bg-emerald-600/20 text-emerald-400 flex items-center justify-center border border-emerald-500/30">
+                          <div className="w-8 h-8 rounded-xl bg-emerald-500/10 text-emerald-500 flex items-center justify-center border border-emerald-500/30">
                             <FileText className="w-4 h-4" />
                           </div>
-                          <h4 className="font-bold text-sm text-slate-200 group-hover:text-emerald-400 transition-colors">
+                          <h4 className="font-bold text-sm text-foreground group-hover:text-emerald-500 transition-colors">
                             Business Analytics
                           </h4>
                         </div>
-                        <p className="text-xs text-slate-400">
-                          Render rich interactive purchase data canvas tables &
-                          reports.
+                        <p className="text-xs text-muted-foreground">
+                          Analyze purchase ledgers and historical supplier trends.
                         </p>
                       </div>
                     </div>
@@ -967,9 +983,9 @@ export default function AgentWidget({ user }) {
                 )}
 
                 {pendingAction && (
-                  <div className="ml-11 flex items-center gap-3 p-3 bg-[#0f172a] border border-slate-800 rounded-xl">
-                    <Loader2 className="w-5 h-5 text-indigo-400 animate-spin" />
-                    <span className="text-xs font-bold text-indigo-300 uppercase tracking-wide">
+                  <div className="ml-11 flex items-center gap-3 p-3 bg-card border border-border rounded-xl">
+                    <Loader2 className="w-5 h-5 text-orange-500 animate-spin" />
+                    <span className="text-xs font-bold text-orange-600 dark:text-orange-400 uppercase tracking-wide">
                       Executing Agent Action:{" "}
                       {pendingAction.function_name.replace(/_/g, " ")}
                     </span>
@@ -981,7 +997,7 @@ export default function AgentWidget({ user }) {
                     {[0, 1, 2].map((i) => (
                       <div
                         key={i}
-                        className="w-2 h-2 bg-indigo-500 rounded-full animate-bounce-custom"
+                        className="w-2 h-2 bg-orange-500 rounded-full animate-bounce-custom"
                         style={{ animationDelay: `${i * 0.15}s` }}
                       />
                     ))}
@@ -1023,20 +1039,20 @@ export default function AgentWidget({ user }) {
         open={deleteConfirm.open}
         onOpenChange={(open) => setDeleteConfirm({ ...deleteConfirm, open })}
       >
-        <AlertDialogContent className="bg-[#0f172a] border-slate-800 text-slate-100">
+        <AlertDialogContent className="bg-card border-border text-foreground">
           <AlertDialogHeader>
             <AlertDialogTitle>Delete Session</AlertDialogTitle>
-            <AlertDialogDescription className="text-slate-400">
+            <AlertDialogDescription className="text-muted-foreground">
               Are you sure you want to delete this chat session?
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel className="bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700">
+            <AlertDialogCancel className="bg-muted text-foreground border-border hover:bg-muted/80">
               Cancel
             </AlertDialogCancel>
             <AlertDialogAction
               onClick={confirmDeleteChat}
-              className="bg-rose-600 text-white hover:bg-rose-500"
+              className="bg-rose-600 text-white hover:bg-rose-700 font-bold"
             >
               Delete
             </AlertDialogAction>
