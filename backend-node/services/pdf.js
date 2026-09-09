@@ -1,4 +1,5 @@
 const PDFDocument = require("pdfkit");
+const { downloadFromS3 } = require("./s3");
 
 const generateBillPDF = async (bill, pharmacy) => {
   return new Promise(async (resolve, reject) => {
@@ -60,7 +61,13 @@ const generateBillPDF = async (bill, pharmacy) => {
 
       let logoBuffer = null;
       if (pharmacy?.logo_url) {
-        const rawBuffer = await fetchImageBuffer(pharmacy.logo_url);
+        let rawBuffer = null;
+        try {
+          rawBuffer = await downloadFromS3(pharmacy.logo_url);
+        } catch (e) {}
+        if (!rawBuffer) {
+          rawBuffer = await fetchImageBuffer(pharmacy.logo_url);
+        }
         if (rawBuffer) {
           try {
             const sharp = require("sharp");
@@ -621,7 +628,13 @@ const generatePurchasePDF = async (purchase, pharmacy) => {
 
       let logoBuffer = null;
       if (pharmacy?.logo_url) {
-        const rawBuffer = await fetchImageBuffer(pharmacy.logo_url);
+        let rawBuffer = null;
+        try {
+          rawBuffer = await downloadFromS3(pharmacy.logo_url);
+        } catch (e) {}
+        if (!rawBuffer) {
+          rawBuffer = await fetchImageBuffer(pharmacy.logo_url);
+        }
         if (rawBuffer) {
           try {
             const sharp = require("sharp");

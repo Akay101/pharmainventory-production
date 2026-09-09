@@ -10,7 +10,7 @@ const sharp = require("sharp");
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const { auth } = require("../middleware/auth");
 const { generateBillPDF } = require("../services/pdf");
-const { uploadToR2 } = require("../services/r2");
+const { uploadToS3, getPresignedUrl } = require("../services/s3");
 const { sendBillEmail } = require("../services/email");
 const { logActivity } = require("../utils/activityLogger");
 const { requireSubscription } = require("../middleware/subscription");
@@ -1210,9 +1210,9 @@ router.post(
       // Generate PDF
       const pdfBuffer = await generateBillPDF(bill, pharmacy);
 
-      // Upload to R2
+      // Upload to S3
       const key = `bills/${req.user.pharmacy_id}/${bill.bill_no}.pdf`;
-      const pdfUrl = await uploadToR2(key, pdfBuffer, "application/pdf");
+      const pdfUrl = await uploadToS3(key, pdfBuffer, "application/pdf");
 
       // Update bill with PDF URL
       await db
@@ -1249,6 +1249,9 @@ router.post(
       }
 
       let pdfUrl = bill.pdf_url;
+      if (pdfUrl) {
+        pdfUrl = await getPresignedUrl(pdfUrl);
+      }
 
       // Generate PDF if not exists
       if (!pdfUrl) {
@@ -1291,7 +1294,7 @@ router.post(
 
         const pdfBuffer = await generateBillPDF(bill, pharmacy);
         const key = `bills/${req.user.pharmacy_id}/${bill.bill_no}.pdf`;
-        pdfUrl = await uploadToR2(key, pdfBuffer, "application/pdf");
+        pdfUrl = await uploadToS3(key, pdfBuffer, "application/pdf");
 
         await db
           .collection("bills")

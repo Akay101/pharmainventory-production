@@ -11,7 +11,7 @@ dotenv.config({ path: path.join(__dirname, "../.env") });
 const { connection } = require("../services/ai/queue");
 const ScanJob = require("../models/scanJob");
 const { cleanupTmpFolder } = require("../services/ai/cleanup_service");
-const { deleteFromR2, downloadFromR2, R2_PUBLIC_URL } = require("../services/r2");
+const { deleteFromS3, downloadFromS3, S3_PUBLIC_URL } = require("../services/s3");
 
 // Connect to MongoDB
 const MONGO_URL =
@@ -43,7 +43,7 @@ const worker = new Worker(
     const localPaths = [];
     for (const key of r2Keys) {
       try {
-        const buffer = await downloadFromR2(key);
+        const buffer = await downloadFromS3(key);
         const localPath = path.join(tempDir, path.basename(key));
         fs.writeFileSync(localPath, buffer);
         localPaths.push(localPath);
@@ -114,7 +114,7 @@ const worker = new Worker(
           const maxAttempts = job.opts.attempts || 3;
           if (job.attemptsMade >= maxAttempts) {
             for (const key of r2Keys) {
-              try { await deleteFromR2(key); } catch (e) {}
+              try { await deleteFromS3(key); } catch (e) {}
             }
           }
 
@@ -157,7 +157,7 @@ const worker = new Worker(
             const maxAttempts = job.opts.attempts || 3;
             if (job.attemptsMade >= maxAttempts) {
               for (const key of r2Keys) {
-                try { await deleteFromR2(key); } catch (e) {}
+                try { await deleteFromS3(key); } catch (e) {}
               }
             }
 
@@ -173,7 +173,7 @@ const worker = new Worker(
             const maxAttempts = job.opts.attempts || 3;
             if (job.attemptsMade >= maxAttempts) {
               for (const key of r2Keys) {
-                try { await deleteFromR2(key); } catch (e) {}
+                try { await deleteFromS3(key); } catch (e) {}
               }
             }
             return reject(new Error(result.error || "AI extraction failed"));
@@ -182,7 +182,7 @@ const worker = new Worker(
           // If successful, clean up R2 files immediately
           for (const key of r2Keys) {
             try {
-              await deleteFromR2(key);
+              await deleteFromS3(key);
             } catch (e) {}
           }
 
@@ -222,7 +222,7 @@ worker.on("failed", async (job, err) => {
     // Safety cleanup fallback
     for (const key of job.data.r2Keys) {
       try {
-        await deleteFromR2(key);
+        await deleteFromS3(key);
       } catch (e) {}
     }
 

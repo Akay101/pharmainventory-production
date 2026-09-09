@@ -3,7 +3,7 @@ const router = express.Router();
 const mongoose = require("mongoose");
 const multer = require("multer");
 const { auth, adminOnly } = require("../middleware/auth");
-const { uploadToR2 } = require("../services/r2");
+const { uploadToS3 } = require("../services/s3");
 
 const { requireSubscription } = require("../middleware/subscription");
 
@@ -81,7 +81,7 @@ router.post(
       }
 
       const key = `logos/${req.user.pharmacy_id}-${Date.now()}.${req.file.originalname.split(".").pop()}`;
-      const url = await uploadToR2(key, req.file.buffer, req.file.mimetype);
+      const url = await uploadToS3(key, req.file.buffer, req.file.mimetype);
 
       const db = mongoose.connection.db;
       await db

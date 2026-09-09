@@ -6,7 +6,7 @@ const { v4: uuidv4 } = require("uuid");
 const multer = require("multer");
 const { auth, adminOnly } = require("../middleware/auth");
 const { sendOTPEmail } = require("../services/email");
-const { uploadToR2 } = require("../services/r2");
+const { uploadToS3 } = require("../services/s3");
 
 const { requireSubscription } = require("../middleware/subscription");
 const { logActivity } = require("../utils/activityLogger");
@@ -232,7 +232,7 @@ router.post(
       }
 
       const key = `avatars/${req.user.id}-${Date.now()}.${req.file.originalname.split(".").pop()}`;
-      const url = await uploadToR2(key, req.file.buffer, req.file.mimetype);
+      const url = await uploadToS3(key, req.file.buffer, req.file.mimetype);
 
       const db = mongoose.connection.db;
       await db
