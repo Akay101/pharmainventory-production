@@ -4656,7 +4656,7 @@ export default function PurchasesPage() {
                             ₹
                             {(
                               (parseFloat(item.total_amount) || totalAmount) /
-                              (totalUnits || 1)
+                              ((qty * units) || 1)
                             ).toFixed(2)}
                             /u
                           </div>
@@ -5308,6 +5308,9 @@ export default function PurchasesPage() {
                                   <TableHead className="text-center">
                                     Packs
                                   </TableHead>
+                                  <TableHead className="text-center text-emerald-600 dark:text-emerald-400">
+                                    Scheme
+                                  </TableHead>
                                   <TableHead className="text-center">
                                     Units/Pack
                                   </TableHead>
@@ -5335,20 +5338,28 @@ export default function PurchasesPage() {
                                 {purchase.items?.map((item, idx) => {
                                   const packQty =
                                     item.pack_quantity || item.quantity || 1;
+                                  const scheme = parseFloat(item.scheme) || 0;
+                                  const hasScheme = scheme > 0;
                                   const unitsPerPack = item.units_per_pack || 1;
                                   const totalUnits =
-                                    item.total_units || packQty * unitsPerPack;
-                                  const costPerUnit =
-                                    item.price_per_unit ||
-                                    item.purchase_price ||
-                                    0;
-                                  const mrpPerUnit =
-                                    item.mrp_per_unit || item.mrp || 0;
+                                    item.total_units || (packQty + scheme) * unitsPerPack;
                                   const packPrice =
                                     item.pack_price ||
-                                    costPerUnit * unitsPerPack;
+                                    (item.purchase_price ? item.purchase_price * unitsPerPack : 0);
+                                  const discount = parseFloat(item.discount) || 0;
+                                  const costPerUnit =
+                                    item.price_per_unit ||
+                                    (unitsPerPack > 0 && packPrice > 0
+                                      ? (packPrice * (1 - discount / 100)) / unitsPerPack
+                                      : item.purchase_price || 0);
+                                  const mrpPerUnit =
+                                    item.mrp_per_unit || item.mrp || 0;
                                   const total =
-                                    item.item_total || packQty * packPrice;
+                                    item.item_total ||
+                                    packQty *
+                                      packPrice *
+                                      (1 - discount / 100) *
+                                      (1 + ((parseFloat(item.cgst) || 0) + (parseFloat(item.sgst) || 0)) / 100);
 
                                   return (
                                     <TableRow key={idx}>
@@ -5369,10 +5380,29 @@ export default function PurchasesPage() {
                                         {packQty}
                                       </TableCell>
                                       <TableCell className="text-center">
+                                        {hasScheme ? (
+                                          <div className="flex flex-col items-center">
+                                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                                              +{scheme} Free
+                                            </span>
+                                            <span className="text-[10px] text-muted-foreground font-mono">
+                                              (+{scheme * unitsPerPack} u)
+                                            </span>
+                                          </div>
+                                        ) : (
+                                          <span className="text-muted-foreground text-xs font-mono">-</span>
+                                        )}
+                                      </TableCell>
+                                      <TableCell className="text-center">
                                         {unitsPerPack}
                                       </TableCell>
                                       <TableCell className="text-center font-medium text-primary">
-                                        {totalUnits}
+                                        <div>{totalUnits}</div>
+                                        {hasScheme && (
+                                          <div className="text-[10px] text-emerald-600 dark:text-emerald-400 font-mono">
+                                            ({packQty * unitsPerPack} + {scheme * unitsPerPack} free)
+                                          </div>
+                                        )}
                                       </TableCell>
                                       <TableCell className="text-center font-bold text-primary bg-primary/5 dark:bg-primary/10">
                                         ₹{costPerUnit.toFixed(2)}

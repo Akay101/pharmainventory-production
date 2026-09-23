@@ -15,7 +15,7 @@ const generateOTP = () => {
 };
 
 const getCookieOptions = (req, isRefresh = false) => {
-  const isSecure = req.secure || req.headers['x-forwarded-proto'] === 'https';
+  const isSecure = req.secure || req.headers["x-forwarded-proto"] === "https";
   return {
     httpOnly: false,
     secure: isSecure,
@@ -129,11 +129,18 @@ router.post("/verify-otp", async (req, res, next) => {
       );
 
     // Generate token
-    const { token, refreshToken } = generateToken(user.id, user.token_version || 0);
+    const { token, refreshToken } = generateToken(
+      user.id,
+      user.token_version || 0
+    );
 
     // Set cookies
     res.cookie("pharmalogy_token", token, getCookieOptions(req, false));
-    res.cookie("pharmalogy_refresh_token", refreshToken, getCookieOptions(req, true));
+    res.cookie(
+      "pharmalogy_refresh_token",
+      refreshToken,
+      getCookieOptions(req, true)
+    );
 
     // Get pharmacy
     const pharmacy = await db
@@ -218,11 +225,18 @@ router.post("/login", async (req, res, next) => {
         .json({ detail: "Email not verified", email: user.email });
     }
 
-    const { token, refreshToken } = generateToken(user.id, user.token_version || 0);
+    const { token, refreshToken } = generateToken(
+      user.id,
+      user.token_version || 0
+    );
 
     // Set cookies
     res.cookie("pharmalogy_token", token, getCookieOptions(req, false));
-    res.cookie("pharmalogy_refresh_token", refreshToken, getCookieOptions(req, true));
+    res.cookie(
+      "pharmalogy_refresh_token",
+      refreshToken,
+      getCookieOptions(req, true)
+    );
 
     const pharmacy = await db
       .collection("pharmacies")
@@ -305,10 +319,14 @@ router.post("/refresh", async (req, res, next) => {
     let refreshToken = req.body.refreshToken;
     if (!refreshToken && req.headers.cookie) {
       const cookies = parseCookies(req.headers.cookie);
-      refreshToken = cookies['pharmalogy_refresh_token'];
+      refreshToken = cookies["pharmalogy_refresh_token"];
     }
 
-    if (!refreshToken || refreshToken === "undefined" || refreshToken === "null") {
+    if (
+      !refreshToken ||
+      refreshToken === "undefined" ||
+      refreshToken === "null"
+    ) {
       return res.status(401).json({ detail: "Refresh token is required" });
     }
 
@@ -320,10 +338,12 @@ router.post("/refresh", async (req, res, next) => {
       }
 
       const db = mongoose.connection.db;
-      const user = await db.collection("users").findOne(
-        { id: decoded.user_id },
-        { projection: { _id: 0, password_hash: 0, password: 0 } }
-      );
+      const user = await db
+        .collection("users")
+        .findOne(
+          { id: decoded.user_id },
+          { projection: { _id: 0, password_hash: 0, password: 0 } }
+        );
 
       if (!user) {
         return res.status(401).json({ detail: "User not found" });
@@ -331,14 +351,24 @@ router.post("/refresh", async (req, res, next) => {
 
       // Verify token version matches user token version
       if ((decoded.token_version || 0) !== (user.token_version || 0)) {
-        return res.status(401).json({ detail: "Session expired or invalidated" });
+        return res
+          .status(401)
+          .json({ detail: "Session expired or invalidated" });
       }
 
       const tokens = generateToken(user.id, user.token_version || 0);
 
       // Set cookies
-      res.cookie("pharmalogy_token", tokens.token, getCookieOptions(req, false));
-      res.cookie("pharmalogy_refresh_token", tokens.refreshToken, getCookieOptions(req, true));
+      res.cookie(
+        "pharmalogy_token",
+        tokens.token,
+        getCookieOptions(req, false)
+      );
+      res.cookie(
+        "pharmalogy_refresh_token",
+        tokens.refreshToken,
+        getCookieOptions(req, true)
+      );
 
       res.json({
         message: "Token refreshed successfully",
@@ -346,7 +376,9 @@ router.post("/refresh", async (req, res, next) => {
         refreshToken: tokens.refreshToken,
       });
     } catch (err) {
-      return res.status(401).json({ detail: "Invalid or expired refresh token" });
+      return res
+        .status(401)
+        .json({ detail: "Invalid or expired refresh token" });
     }
   } catch (error) {
     next(error);
@@ -357,15 +389,14 @@ router.post("/refresh", async (req, res, next) => {
 router.post("/logout", auth, async (req, res, next) => {
   try {
     const db = mongoose.connection.db;
-    
+
     // Invalidate session by incrementing token_version
-    await db.collection("users").updateOne(
-      { id: req.user.id },
-      { $inc: { token_version: 1 } }
-    );
+    await db
+      .collection("users")
+      .updateOne({ id: req.user.id }, { $inc: { token_version: 1 } });
 
     // Clear cookies
-    const isSecure = req.secure || req.headers['x-forwarded-proto'] === 'https';
+    const isSecure = req.secure || req.headers["x-forwarded-proto"] === "https";
     const clearOpts = {
       path: "/",
       secure: isSecure,

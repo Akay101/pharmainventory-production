@@ -693,7 +693,7 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
       const totalUnits = totalPacks * unitsPerPack;
       
       const netBasePrice = packQty * packPrice * (1 - discount / 100);
-      const pricePerUnit = totalUnits > 0 ? netBasePrice / totalUnits : 0;
+      const pricePerUnit = unitsPerPack > 0 ? (packPrice * (1 - discount / 100)) / unitsPerPack : 0;
 
       const cgst = parseFloat(item.cgst) || 0;
       const sgst = parseFloat(item.sgst) || 0;
@@ -1022,7 +1022,7 @@ router.put(
         const totalUnits = totalPacks * unitsPerPack;
         
         const netBasePrice = packQty * packPrice * (1 - discount / 100);
-        const pricePerUnit = totalUnits > 0 ? netBasePrice / totalUnits : 0;
+        const pricePerUnit = unitsPerPack > 0 ? (packPrice * (1 - discount / 100)) / unitsPerPack : 0;
 
         const cgst = parseFloat(item.cgst) || 0;
         const sgst = parseFloat(item.sgst) || 0;
@@ -1707,14 +1707,17 @@ router.post(
 
       for (const item of items) {
         const packQty = parseInt(item.pack_quantity) || parseInt(item.quantity) || 1;
+        const scheme = parseFloat(item.scheme) || 0;
         const unitsPerPack = parseInt(item.units_per_pack) || 1;
         const packPrice = parseFloat(item.pack_price) || parseFloat(item.rate_pack) || parseFloat(item.purchase_price) || 0;
         const mrpPack = parseFloat(item.mrp_pack) || parseFloat(item.mrp) || 0;
+        const discount = parseFloat(item.discount) || 0;
 
-        const totalUnits = packQty * unitsPerPack;
-        const pricePerUnit = unitsPerPack > 0 ? packPrice / unitsPerPack : packPrice;
+        const totalPacks = packQty + scheme;
+        const totalUnits = totalPacks * unitsPerPack;
+        const pricePerUnit = unitsPerPack > 0 ? (packPrice * (1 - discount / 100)) / unitsPerPack : packPrice;
         const mrpPerUnit = unitsPerPack > 0 ? mrpPack / unitsPerPack : mrpPack;
-        const itemTotal = packQty * packPrice;
+        const itemTotal = packQty * packPrice * (1 - discount / 100);
         totalAmount += itemTotal;
 
         const processedItem = {
@@ -1727,6 +1730,7 @@ router.post(
           hsn_no: item.hsn_no || null,
           expiry_date: item.expiry_date || new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
           pack_quantity: packQty,
+          scheme: scheme,
           units_per_pack: unitsPerPack,
           total_units: totalUnits,
           pack_price: packPrice,
