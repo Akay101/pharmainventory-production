@@ -31,10 +31,27 @@ const app = express();
 app.set("trust proxy", 1);
 const PORT = process.env.PORT || 8001;
 // Middleware
+const allowedOrigins = [
+  "https://store.davadesk.in",
+  "https://store-dev.pharmalogy.co.in",
+  "https://app.davadesk.in",
+  "https://api.davadesk.in",
+  "http://localhost:3000",
+  "http://localhost:5173",
+];
+
 app.use(
   cors({
     origin: (origin, callback) => {
-      callback(null, origin || true);
+      if (!origin) return callback(null, true);
+      if (
+        allowedOrigins.includes(origin) ||
+        origin.endsWith(".davadesk.in") ||
+        origin.endsWith(".pharmalogy.co.in")
+      ) {
+        return callback(null, true);
+      }
+      return callback(new Error("Not allowed by CORS"));
     },
     credentials: true,
   })
