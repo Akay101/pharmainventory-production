@@ -5,32 +5,39 @@ const { auth } = require("../middleware/auth");
 
 const { requireSubscription } = require("../middleware/subscription");
 
+// Safe regex escaping helper
+const escapeRegex = (str) => {
+  if (!str) return "";
+  return String(str).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+};
+
 // Helper function to create fuzzy regex patterns
 const createFuzzyRegex = (query) => {
-  if (!query || query.length < 2) return null;
+  if (!query || query.length < 2) return [];
 
-  const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  // Create pattern that allows 1-2 character differences for longer words
-  const chars = escaped.split("");
-  const patterns = [];
+  const clean = String(query).replace(/[.*+?^${}()|[\]\\]/g, "");
+  if (!clean || clean.length < 2) {
+    return [escapeRegex(query)];
+  }
 
-  // Exact match
-  patterns.push(escaped);
+  const patterns = [escapeRegex(query)];
 
-  // Allow one character to be optional (for typos like "para" -> "para" with missing 'c')
-  if (chars.length > 3) {
-    for (let i = 1; i < chars.length - 1; i++) {
-      const fuzzy = [...chars.slice(0, i), "?", ...chars.slice(i + 1)].join("");
+  // Allow one character variation or missing letter
+  if (clean.length > 3) {
+    const chars = clean.split("");
+    for (let i = 0; i < chars.length; i++) {
+      const fuzzy = [...chars.slice(0, i), ".", ...chars.slice(i + 1)].map(c => c === "." ? "." : escapeRegex(c)).join("");
       patterns.push(fuzzy);
     }
   }
 
-  // Allow character swaps (for typos like "acetaminophen" -> "acetaminophen")
-  if (chars.length > 4) {
+  // Allow adjacent character swap
+  if (clean.length > 4) {
+    const chars = clean.split("");
     for (let i = 0; i < chars.length - 1; i++) {
       const swapped = [...chars];
       [swapped[i], swapped[i + 1]] = [swapped[i + 1], swapped[i]];
-      patterns.push(swapped.join(""));
+      patterns.push(swapped.map(c => escapeRegex(c)).join(""));
     }
   }
 
@@ -174,8 +181,8 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
     const internalLimit = parsedLimit * parsedPage + 100;
     const enableFuzzy = fuzzy === "true";
 
-    // Build search conditions
-    const searchRegex = { $regex: q, $options: "i" };
+    const escapedQ = escapeRegex(q);
+    const searchRegex = { $regex: escapedQ, $options: "i" };
 
     // Create fuzzy regex patterns if enabled
     let fuzzyConditions = [];
@@ -195,6 +202,7 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
       $or: [
         { product_name: searchRegex },
         { salt_composition: searchRegex },
+        { batch_no: searchRegex },
         ...(enableFuzzy && fuzzyConditions.length > 0 ? fuzzyConditions : []),
       ],
     };
@@ -224,6 +232,7 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
           manufacturer: { $first: "$manufacturer" },
           salt_composition: { $first: "$salt_composition" },
           hsn_no: { $first: "$hsn_no" },
+          pack_type: { $first: "$pack_type" },
           available_quantity: { $sum: "$available_quantity" },
           quantity: { $sum: "$quantity" },
           units_per_pack: { $first: "$units_per_pack" },
@@ -238,6 +247,10 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
               expiry_date: "$expiry_date",
               available_quantity: "$available_quantity",
               quantity: "$quantity",
+              units_per_pack: "$units_per_pack",
+              pack_type: "$pack_type",
+              pack_price: "$pack_price",
+              mrp_pack: "$mrp_pack",
               purchase_price: "$purchase_price",
               mrp: "$mrp",
               cgst: "$cgst",
@@ -281,7 +294,8 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
                       case: {
                         $regexMatch: {
                           input: "$$nameLower",
-                          regex: `^${q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`,
+                          regex: `^${escapedQ}`,
+                          options: "i",
                         },
                       },
                       then: 90,
@@ -290,7 +304,8 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
                       case: {
                         $regexMatch: {
                           input: "$$nameLower",
-                          regex: q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+                          regex: escapedQ,
+                          options: "i",
                         },
                       },
                       then: 70,
@@ -345,6 +360,8 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
           purchase_price: "$purchase_price",
           mrp_per_unit: "$mrp",
           mrp: "$mrp",
+          units_per_pack: "$units_per_pack",
+          pack_type: "$pack_type",
           "price(₹)": "$mrp",
           supplier_name: "$supplier.name",
           supplier_id: "$supplier_id",
@@ -559,6 +576,7 @@ router.get(
 
       const parsedLimit = parseInt(limit);
       const searchLower = q.toLowerCase();
+      const escapedQ = escapeRegex(q);
 
       // Quick prefix search with fallback to fuzzy
       let inventoryResults = await db
@@ -568,8 +586,9 @@ router.get(
             $match: {
               pharmacy_id: pharmacyId,
               $or: [
-                { product_name: { $regex: `^${q}`, $options: "i" } },
-                { product_name: { $regex: q, $options: "i" } },
+                { product_name: { $regex: `^${escapedQ}`, $options: "i" } },
+                { product_name: { $regex: escapedQ, $options: "i" } },
+                { batch_no: { $regex: escapedQ, $options: "i" } },
               ],
             }
           },
@@ -578,6 +597,10 @@ router.get(
               _id: "$product_name",
               product_name: { $first: "$product_name" },
               product_id: { $first: "$product_id" },
+              batch_no: { $first: "$batch_no" },
+              mrp: { $first: "$mrp" },
+              units_per_pack: { $first: "$units_per_pack" },
+              pack_type: { $first: "$pack_type" },
               available_quantity: { $sum: "$available_quantity" }
             }
           },
@@ -587,30 +610,40 @@ router.get(
 
       // If few results, try fuzzy
       if (inventoryResults.length < 3 && q.length > 3) {
-        const fuzzyPattern = q.split("").join(".*?");
-        const fuzzyResults = await db
-          .collection("inventory")
-          .aggregate([
-            {
-              $match: {
-                pharmacy_id: pharmacyId,
-                product_name: { $regex: fuzzyPattern, $options: "i" },
-                product_name: { $not: { $regex: `^${q}`, $options: "i" } }, // Exclude already found
-              }
-            },
-            {
-              $group: {
-                _id: "$product_name",
-                product_name: { $first: "$product_name" },
-                product_id: { $first: "$product_id" },
-                available_quantity: { $sum: "$available_quantity" }
-              }
-            },
-            { $limit: parsedLimit - inventoryResults.length }
-          ])
-          .toArray();
+        const cleanFuzzy = String(q).replace(/[.*+?^${}()|[\]\\]/g, "");
+        if (cleanFuzzy.length >= 2) {
+          const fuzzyPattern = cleanFuzzy.split("").map(c => escapeRegex(c)).join(".*?");
+          const fuzzyResults = await db
+            .collection("inventory")
+            .aggregate([
+              {
+                $match: {
+                  pharmacy_id: pharmacyId,
+                  $or: [
+                    { product_name: { $regex: fuzzyPattern, $options: "i" } },
+                    { batch_no: { $regex: fuzzyPattern, $options: "i" } },
+                  ],
+                  product_name: { $not: { $regex: `^${escapedQ}`, $options: "i" } }, // Exclude already found
+                }
+              },
+              {
+                $group: {
+                  _id: "$product_name",
+                  product_name: { $first: "$product_name" },
+                  product_id: { $first: "$product_id" },
+                  batch_no: { $first: "$batch_no" },
+                  mrp: { $first: "$mrp" },
+                  units_per_pack: { $first: "$units_per_pack" },
+                  pack_type: { $first: "$pack_type" },
+                  available_quantity: { $sum: "$available_quantity" }
+                }
+              },
+              { $limit: parsedLimit - inventoryResults.length }
+            ])
+            .toArray();
 
-        inventoryResults = [...inventoryResults, ...fuzzyResults];
+          inventoryResults = [...inventoryResults, ...fuzzyResults];
+        }
       }
 
       // Global medicines suggestions
@@ -618,7 +651,7 @@ router.get(
         .collection("global_medicines")
         .find(
           {
-            name: { $regex: `^${q}`, $options: "i" },
+            name: { $regex: `^${escapedQ}`, $options: "i" },
           },
           {
             projection: {

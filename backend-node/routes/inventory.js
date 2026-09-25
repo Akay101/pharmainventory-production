@@ -6,6 +6,11 @@ const { auth } = require("../middleware/auth");
 const { requireSubscription } = require("../middleware/subscription");
 const { logActivity } = require("../utils/activityLogger");
 
+const escapeRegex = (str) => {
+  if (!str) return "";
+  return String(str).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+};
+
 // GET /api/inventory
 router.get("/", auth, requireSubscription(), async (req, res, next) => {
   try {
@@ -34,10 +39,11 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
       query.product_id = product_id;
     }
     if (search) {
+      const escapedSearch = escapeRegex(search);
       query.$or = [
-        { product_name: { $regex: search, $options: "i" } },
-        { batch_no: { $regex: search, $options: "i" } },
-        { salt_composition: { $regex: search, $options: "i" } },
+        { product_name: { $regex: escapedSearch, $options: "i" } },
+        { batch_no: { $regex: escapedSearch, $options: "i" } },
+        { salt_composition: { $regex: escapedSearch, $options: "i" } },
       ];
     }
 
@@ -177,6 +183,13 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
                 mrp: "$mrp",
                 shortage_threshold: "$shortage_threshold",
                 supplier_name: "$supplier_name",
+                expiry_status: "$expiry_status",
+                return_status: "$return_status",
+                expiry_bundle_id: "$expiry_bundle_id",
+                return_bundle_id: "$return_bundle_id",
+                expiry_bundle_no: "$expiry_bundle_no",
+                return_bundle_no: "$return_bundle_no",
+                status: "$status",
                 created_at: "$created_at",
               },
             },
@@ -380,13 +393,16 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
 
     const parsedLimit = parseInt(limit);
     const parsedPage = parseInt(page);
+    const escapedQ = escapeRegex(q);
 
     const query = {
       pharmacy_id: req.user.pharmacy_id,
+      available_quantity: { $gt: 0 },
+      status: { $nin: ["Returned", "Expired & Returned"] },
       $or: [
-        { product_name: { $regex: q, $options: "i" } },
-        { batch_no: { $regex: q, $options: "i" } },
-        { salt_composition: { $regex: q, $options: "i" } },
+        { product_name: { $regex: escapedQ, $options: "i" } },
+        { batch_no: { $regex: escapedQ, $options: "i" } },
+        { salt_composition: { $regex: escapedQ, $options: "i" } },
       ],
     };
 
@@ -436,6 +452,7 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
             available_quantity: { $sum: "$available_quantity" },
             quantity: { $sum: "$quantity" },
             units_per_pack: { $first: "$units_per_pack" },
+            pack_type: { $first: "$pack_type" },
             purchase_price: { $first: "$purchase_price" },
             mrp: { $first: "$mrp" },
             created_at: { $max: "$created_at" },
@@ -451,6 +468,8 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
                 quantity: "$quantity",
                 purchase_price: "$purchase_price",
                 mrp: "$mrp",
+                units_per_pack: "$units_per_pack",
+                pack_type: "$pack_type",
                 cgst: "$cgst",
                 sgst: "$sgst",
                 supplier_name: "$batch_supplier.name",

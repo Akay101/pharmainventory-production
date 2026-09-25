@@ -7,6 +7,11 @@ const { logActivity } = require("../utils/activityLogger");
 
 const { requireSubscription } = require("../middleware/subscription");
 
+const escapeRegex = (str) => {
+  if (!str) return "";
+  return String(str).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+};
+
 // GET /api/products
 router.get("/", auth, requireSubscription(), async (req, res, next) => {
   try {
@@ -15,7 +20,7 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
 
     const query = { pharmacy_id: req.user.pharmacy_id };
     if (search) {
-      query.name = { $regex: search, $options: "i" };
+      query.name = { $regex: escapeRegex(search), $options: "i" };
     }
 
     const pageNum = parseInt(page) || 1;

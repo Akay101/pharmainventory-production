@@ -15,6 +15,11 @@ const { sendBillEmail } = require("../services/email");
 const { logActivity } = require("../utils/activityLogger");
 const { requireSubscription } = require("../middleware/subscription");
 
+const escapeRegex = (str) => {
+  if (!str) return "";
+  return String(str).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+};
+
 const scanUploadDir = path.join(__dirname, "../tmp/uploads");
 if (!fs.existsSync(scanUploadDir)) {
   fs.mkdirSync(scanUploadDir, { recursive: true });
@@ -60,16 +65,17 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
     const query = { pharmacy_id: req.user.pharmacy_id };
 
     if (search) {
+      const escapedSearch = escapeRegex(search);
       query.$or = [
-        { bill_no: { $regex: search, $options: "i" } },
-        { customer_name: { $regex: search, $options: "i" } },
-        { customer_mobile: { $regex: search, $options: "i" } },
-        { customer_email: { $regex: search, $options: "i" } },
-        { doctor: { $regex: search, $options: "i" } },
-        { notes: { $regex: search, $options: "i" } },
-        { billing_date: { $regex: search, $options: "i" } },
-        { "items.product_name": { $regex: search, $options: "i" } },
-        { "items.batch_no": { $regex: search, $options: "i" } },
+        { bill_no: { $regex: escapedSearch, $options: "i" } },
+        { customer_name: { $regex: escapedSearch, $options: "i" } },
+        { customer_mobile: { $regex: escapedSearch, $options: "i" } },
+        { customer_email: { $regex: escapedSearch, $options: "i" } },
+        { doctor: { $regex: escapedSearch, $options: "i" } },
+        { notes: { $regex: escapedSearch, $options: "i" } },
+        { billing_date: { $regex: escapedSearch, $options: "i" } },
+        { "items.product_name": { $regex: escapedSearch, $options: "i" } },
+        { "items.batch_no": { $regex: escapedSearch, $options: "i" } },
       ];
     }
 

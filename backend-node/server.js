@@ -70,6 +70,8 @@ app.use("/api/migrate", migrateRoutes);
 app.use("/api/pharmacy", pharmacyRoutes);
 app.use("/api/activities", activityRoutes);
 app.use("/api/settings", settingsRoutes);
+app.use("/api/expiry", require("./routes/expiry"));
+app.use("/api/returns", require("./routes/returns"));
 
 app.use("/api/payments", require("./routes/payments"));
 app.use("/api/webhook", require("./routes/webhook"));

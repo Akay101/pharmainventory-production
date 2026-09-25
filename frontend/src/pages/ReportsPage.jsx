@@ -1206,7 +1206,7 @@ export default function ReportsPage() {
       {/* TAB 4: DEBT & CREDIT RISKS */}
       {activeTab === "dues" && (
         <div className="space-y-6">
-          {loadingDues ? (
+          {loadingDebtDues ? (
             <Loader size="md" text="Calculating outstanding accounts receivables and payables..." />
           ) : (
             <div className="space-y-6 animate-fade-in">

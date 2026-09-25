@@ -15,6 +15,11 @@ const { uploadToR2, deleteFromR2 } = require("../services/r2");
 const { logActivity } = require("../utils/activityLogger");
 const { requireSubscription } = require("../middleware/subscription");
 
+const escapeRegex = (str) => {
+  if (!str) return "";
+  return String(str).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+};
+
 const ScanJob = require("../models/scanJob");
 const { scanQueue } = require("../services/ai/queue");
 const { compressImage } = require("../services/ai/image_processor");
@@ -534,10 +539,11 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
     const query = { pharmacy_id: req.user.pharmacy_id };
 
     if (search) {
+      const escapedSearch = escapeRegex(search);
       query.$or = [
-        { invoice_no: { $regex: search, $options: "i" } },
-        { supplier_name: { $regex: search, $options: "i" } },
-        { "items.product_name": { $regex: search, $options: "i" } },
+        { invoice_no: { $regex: escapedSearch, $options: "i" } },
+        { supplier_name: { $regex: escapedSearch, $options: "i" } },
+        { "items.product_name": { $regex: escapedSearch, $options: "i" } },
       ];
     }
     if (supplier_id) query.supplier_id = supplier_id;
@@ -614,6 +620,15 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
       await session.abortTransaction();
       session.endSession();
       return res.status(400).json({ detail: "Payment mode is mandatory" });
+    }
+
+    if (payment_status === "Partial") {
+      const pAmount = parseFloat(amount_paid);
+      if (isNaN(pAmount) || pAmount <= 0) {
+        await session.abortTransaction();
+        session.endSession();
+        return res.status(400).json({ detail: "Initial paid amount is mandatory for Partial payment" });
+      }
     }
 
     if (!items || items.length === 0) {
@@ -1106,6 +1121,12 @@ router.put(
         finalAmountPaid = totalAmount;
       } else if (finalStatus === "Unpaid") {
         finalAmountPaid = 0;
+      } else if (finalStatus === "Partial") {
+        if (isNaN(finalAmountPaid) || finalAmountPaid <= 0) {
+          await session.abortTransaction();
+          session.endSession();
+          return res.status(400).json({ detail: "Initial paid amount is mandatory for Partial payment" });
+        }
       }
 
       const updatePayload = {
@@ -1119,8 +1140,20 @@ router.put(
         updated_at: new Date().toISOString(),
       };
 
-      if (supplier_id !== undefined) updatePayload.supplier_id = supplier_id;
-      if (supplier_name !== undefined) updatePayload.supplier_name = supplier_name;
+      let finalSupplierId = supplier_id !== undefined ? supplier_id : purchase.supplier_id;
+      let finalSupplierName = supplier_name;
+      if (!finalSupplierName || finalSupplierName === "Unknown") {
+        if (finalSupplierId) {
+          const s = await db.collection("suppliers").findOne({ id: finalSupplierId });
+          if (s && s.name) finalSupplierName = s.name;
+        }
+        if (!finalSupplierName || finalSupplierName === "Unknown") {
+          finalSupplierName = purchase.supplier_name && purchase.supplier_name !== "Unknown" ? purchase.supplier_name : "Unknown";
+        }
+      }
+
+      if (finalSupplierId !== undefined) updatePayload.supplier_id = finalSupplierId;
+      if (finalSupplierName !== undefined) updatePayload.supplier_name = finalSupplierName;
 
       // Calculate Edit History Changes
       const changes = [];
@@ -1825,7 +1858,7 @@ router.post(
     session.startTransaction();
 
     try {
-      const { amount, date, notes } = req.body;
+      const { amount, date, notes, payment_mode } = req.body;
       const db = mongoose.connection.db;
 
       if (!amount || amount <= 0) {
@@ -1858,6 +1891,7 @@ router.post(
         amount: paymentAmount,
         date: date || new Date().toISOString(),
         notes: notes || "Partial Payment",
+        payment_mode: payment_mode || "UPI",
       };
 
       await db.collection("purchases").updateOne(
@@ -1867,6 +1901,7 @@ router.post(
           $set: {
             amount_paid: newAmountPaid,
             payment_status: newStatus,
+            payment_mode: payment_mode || purchase.payment_mode || "UPI",
             updated_at: new Date().toISOString(),
           },
         },

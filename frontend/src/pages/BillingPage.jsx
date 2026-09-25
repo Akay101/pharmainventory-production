@@ -263,10 +263,60 @@ export default function BillingPage() {
   const [scannerModalOpen, setScannerModalOpen] = useState(false);
 
   // Draft bills state & handlers
+  const [activeViewTab, setActiveViewTab] = useState("all");
   const [drafts, setDrafts] = useState([]);
   const [draftsLoading, setDraftsLoading] = useState(false);
-  const [activeViewTab, setActiveViewTab] = useState("all");
   const [pendingDraftId, setPendingDraftId] = useState(null);
+  // Helper to extract batch count and nearest expiry among all batches
+  const getNearestExpiryInfo = (invItem) => {
+    const batches = invItem?.batches || [];
+    const batchCount = batches.length > 0 ? batches.length : (invItem?.batch_no ? 1 : 0);
+    
+    if (batches.length === 0) {
+      return {
+        batchCount,
+        batchLabel: invItem?.batch_no || "-",
+        expiryLabel: invItem?.expiry_date || "-",
+        isMultiple: false
+      };
+    }
+
+    let nearestExp = "-";
+    let minTime = Infinity;
+
+    batches.forEach((b) => {
+      const exp = b.expiry_date;
+      if (!exp || exp === "-") return;
+      
+      let dateObj = null;
+      if (/^\d{2}\/\d{2}$/.test(exp)) {
+        const [m, y] = exp.split("/");
+        dateObj = new Date(2000 + parseInt(y), parseInt(m) - 1, 1);
+      } else if (/^\d{2}\/\d{4}$/.test(exp)) {
+        const [m, y] = exp.split("/");
+        dateObj = new Date(parseInt(y), parseInt(m) - 1, 1);
+      } else {
+        dateObj = new Date(exp);
+      }
+
+      const t = isNaN(dateObj?.getTime()) ? Infinity : dateObj.getTime();
+      if (t < minTime) {
+        minTime = t;
+        nearestExp = exp;
+      }
+    });
+
+    if (nearestExp === "-" && invItem.expiry_date) {
+      nearestExp = invItem.expiry_date;
+    }
+
+    return {
+      batchCount,
+      batchLabel: batches.length > 1 ? `${batches.length} Batches` : (batches[0]?.batch_no || invItem.batch_no || "-"),
+      expiryLabel: nearestExp,
+      isMultiple: batches.length > 1
+    };
+  };
 
   const fetchDrafts = async () => {
     try {
@@ -3316,21 +3366,44 @@ export default function BillingPage() {
                                       </div>
 
                                       {/* Row 3: Footer details - Rate, MRP, Batch & Expiry */}
-                                      <div className="mt-1.5 flex items-center justify-between text-xs text-muted-foreground/90 flex-wrap pt-1 border-t border-border/40 font-mono">
-                                        <div className="flex items-center gap-3">
-                                          {invItem.purchase_price !== undefined && (
-                                            <span className="text-blue-500 font-bold">
-                                              Rate: ₹{Number(invItem.purchase_price || 0).toFixed(2)}
-                                            </span>
-                                          )}
-                                          <span>
-                                            MRP: ₹{Number(invItem.mrp_per_unit || invItem.mrp || 0).toFixed(2)}
-                                          </span>
-                                        </div>
-                                        <div>
-                                          Batch: <span className="font-bold text-foreground">{invItem.batch_no || "-"}</span> | Exp: <span className="font-bold text-foreground">{invItem.expiry_date || "-"}</span>
-                                        </div>
-                                      </div>
+                                      {(() => {
+                                        const expInfo = getNearestExpiryInfo(invItem);
+                                        return (
+                                          <div className="mt-1.5 flex items-center justify-between text-xs text-muted-foreground/90 flex-wrap pt-1 border-t border-border/40 font-mono">
+                                            <div className="flex items-center gap-3">
+                                              {invItem.purchase_price !== undefined && (
+                                                <span className="text-blue-500 font-bold">
+                                                  Rate: ₹{Number(invItem.purchase_price || 0).toFixed(2)}
+                                                </span>
+                                              )}
+                                              <span>
+                                                MRP: ₹{Number(invItem.mrp_per_unit || invItem.mrp || 0).toFixed(2)}
+                                              </span>
+                                            </div>
+                                            <div className="flex items-center gap-2">
+                                              {expInfo.isMultiple ? (
+                                                <>
+                                                  <span className="px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 font-bold text-[10px] border border-amber-500/30">
+                                                    {expInfo.batchCount} Batches
+                                                  </span>
+                                                  <span>
+                                                    Nearest Exp: <span className="font-bold text-foreground">{expInfo.expiryLabel}</span>
+                                                  </span>
+                                                </>
+                                              ) : (
+                                                <>
+                                                  <span>
+                                                    Batch: <span className="font-bold text-foreground">{expInfo.batchLabel}</span>
+                                                  </span>
+                                                  <span>
+                                                    Exp: <span className="font-bold text-foreground">{expInfo.expiryLabel}</span>
+                                                  </span>
+                                                </>
+                                              )}
+                                            </div>
+                                          </div>
+                                        );
+                                      })()}
                                     </div>
                                   )
                                 )}
@@ -4518,21 +4591,44 @@ export default function BillingPage() {
                                           </div>
 
                                           {/* Row 3: Footer details - Rate, MRP, Batch & Expiry */}
-                                          <div className="mt-1.5 flex items-center justify-between text-xs text-muted-foreground/90 flex-wrap pt-1 border-t border-border/40 font-mono">
-                                            <div className="flex items-center gap-3">
-                                              {invItem.purchase_price !== undefined && (
-                                                <span className="text-blue-500 font-bold">
-                                                  Rate: ₹{Number(invItem.purchase_price || 0).toFixed(2)}
-                                                </span>
-                                              )}
-                                              <span>
-                                                MRP: ₹{Number(invItem.mrp_per_unit || invItem.mrp || 0).toFixed(2)}
-                                              </span>
-                                            </div>
-                                            <div>
-                                              Batch: <span className="font-bold text-foreground">{invItem.batch_no || "-"}</span> | Exp: <span className="font-bold text-foreground">{invItem.expiry_date || "-"}</span>
-                                            </div>
-                                          </div>
+                                          {(() => {
+                                            const expInfo = getNearestExpiryInfo(invItem);
+                                            return (
+                                              <div className="mt-1.5 flex items-center justify-between text-xs text-muted-foreground/90 flex-wrap pt-1 border-t border-border/40 font-mono">
+                                                <div className="flex items-center gap-3">
+                                                  {invItem.purchase_price !== undefined && (
+                                                    <span className="text-blue-500 font-bold">
+                                                      Rate: ₹{Number(invItem.purchase_price || 0).toFixed(2)}
+                                                    </span>
+                                                  )}
+                                                  <span>
+                                                    MRP: ₹{Number(invItem.mrp_per_unit || invItem.mrp || 0).toFixed(2)}
+                                                  </span>
+                                                </div>
+                                                <div className="flex items-center gap-2">
+                                                  {expInfo.isMultiple ? (
+                                                    <>
+                                                      <span className="px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 font-bold text-[10px] border border-amber-500/30">
+                                                        {expInfo.batchCount} Batches
+                                                      </span>
+                                                      <span>
+                                                        Nearest Exp: <span className="font-bold text-foreground">{expInfo.expiryLabel}</span>
+                                                      </span>
+                                                    </>
+                                                  ) : (
+                                                    <>
+                                                      <span>
+                                                        Batch: <span className="font-bold text-foreground">{expInfo.batchLabel}</span>
+                                                      </span>
+                                                      <span>
+                                                        Exp: <span className="font-bold text-foreground">{expInfo.expiryLabel}</span>
+                                                      </span>
+                                                    </>
+                                                  )}
+                                                </div>
+                                              </div>
+                                            );
+                                          })()}
                                         </div>
                                       )
                                     )}
@@ -6087,12 +6183,12 @@ export default function BillingPage() {
 
           {/* Pagination matched to InventoryPage */}
           {totalPages > 1 && (
-            <div className="flex items-center justify-between px-6 py-4 border-t border-border/40 bg-muted/5">
-              <div className="text-xs font-bold text-muted-foreground/80">
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-4 px-6 py-4 border-t border-border/40 bg-muted/5">
+              <div className="text-xs font-bold text-muted-foreground/80 sm:w-1/3 text-left">
                 Showing {((page - 1) * limit) + 1} to {Math.min(page * limit, totalBills)} of {totalBills} bills
               </div>
               
-              <div className="flex items-center gap-2">
+              <div className="flex items-center justify-center gap-2 sm:w-1/3">
                 <Button
                   variant="outline"
                   size="sm"
@@ -6136,6 +6232,10 @@ export default function BillingPage() {
                   Next
                   <ChevronRight className="h-3.5 w-3.5 ml-1 text-primary" />
                 </Button>
+              </div>
+
+              <div className="hidden sm:block sm:w-1/3 text-right text-xs font-bold text-muted-foreground/60">
+                Page {page} of {totalPages}
               </div>
             </div>
           )}

@@ -35,6 +35,8 @@ import {
   Moon,
   Activity,
   Sparkles,
+  CalendarX,
+  RotateCcw,
 } from "lucide-react";
 
 import RecentActivitySidebar from "./RecentActivitySidebar";
@@ -69,6 +71,18 @@ const navItems = [
     icon: Users,
     shortcut: ["alt", "c"],
   },
+  {
+    path: "/expiry",
+    label: "Expiry",
+    icon: CalendarX,
+    shortcut: ["alt", "e"],
+  },
+  {
+    path: "/returns",
+    label: "Returns",
+    icon: RotateCcw,
+    shortcut: ["alt", "r"],
+  },
   { path: "/users", label: "Users", icon: UserCog, adminOnly: true },
   { path: "/reports", label: "Reports", icon: BarChart3 },
   { path: "/settings", label: "Settings", icon: Settings },
@@ -96,6 +110,8 @@ export default function DashboardLayout() {
   useKeyboardShortcut(["alt", "b"], () => navigate("/billing"));
   useKeyboardShortcut(["alt", "s"], () => navigate("/suppliers"));
   useKeyboardShortcut(["alt", "c"], () => navigate("/customers"));
+  useKeyboardShortcut(["alt", "e"], () => navigate("/expiry"));
+  useKeyboardShortcut(["alt", "r"], () => navigate("/returns"));
   useKeyboardShortcut(["alt", "a"], () => toggleActivity());
 
   // Listen to dark/light theme mutations

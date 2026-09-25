@@ -103,6 +103,47 @@ const DEFAULT_REGISTRY = [
     category: "Preferences",
     description: "Prevent unticking the Paid option when creating/editing bills.",
   },
+  {
+    key: "purchase_permanent_autofill",
+    label: "Permanent Autofill",
+    type: "boolean",
+    default: true,
+    category: "Preferences",
+    description: "Automatically autofill composition, manufacturer, and pack details during purchase entry without manual confirmation.",
+  },
+  {
+    key: "expiry_warning_days",
+    label: "Near Expiry Alert Threshold (Days)",
+    type: "number",
+    default: 90,
+    category: "Expiry & Returns Management",
+    description: "Days before product expiry to trigger near-expiry alerts across Inventory and Billing.",
+  },
+  {
+    key: "expiry_critical_days",
+    label: "Critical Expiry Alert Threshold (Days)",
+    type: "number",
+    default: 30,
+    category: "Expiry & Returns Management",
+    description: "Days before product expiry to highlight products as critically expiring soon.",
+  },
+  {
+    key: "allow_return_expired",
+    label: "Allow Expired Items in Returns",
+    type: "boolean",
+    default: true,
+    category: "Expiry & Returns Management",
+    description: "Allow expired medicine batches to be processed in return bills and credit notes.",
+  },
+  {
+    key: "return_default_payment_mode",
+    label: "Default Return Refund Mode",
+    type: "select",
+    options: ["none", "Cash", "UPI", "Credit Note"],
+    default: "Cash",
+    category: "Expiry & Returns Management",
+    description: "Default payment or refund method for customer and supplier return transactions.",
+  },
 ];
 
 // Helper to ensure registry exists in DB

@@ -7,6 +7,11 @@ const { logActivity } = require("../utils/activityLogger");
 
 const { requireSubscription } = require("../middleware/subscription");
 
+const escapeRegex = (str) => {
+  if (!str) return "";
+  return String(str).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+};
+
 // GET /api/customers
 router.get("/", auth, requireSubscription(), async (req, res, next) => {
   try {
@@ -15,9 +20,10 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
 
     const query = { pharmacy_id: req.user.pharmacy_id };
     if (search) {
+      const escapedSearch = escapeRegex(search);
       query.$or = [
-        { name: { $regex: search, $options: "i" } },
-        { mobile: { $regex: search, $options: "i" } },
+        { name: { $regex: escapedSearch, $options: "i" } },
+        { mobile: { $regex: escapedSearch, $options: "i" } },
       ];
     }
 
@@ -99,6 +105,7 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
   try {
     const { q, limit = 10 } = req.query;
     const db = mongoose.connection.db;
+    const escapedQ = escapeRegex(q || "");
 
     const customers = await db
       .collection("customers")
@@ -106,8 +113,8 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
         {
           pharmacy_id: req.user.pharmacy_id,
           $or: [
-            { name: { $regex: q || "", $options: "i" } },
-            { mobile: { $regex: q || "", $options: "i" } },
+            { name: { $regex: escapedQ, $options: "i" } },
+            { mobile: { $regex: escapedQ, $options: "i" } },
           ],
         },
         { projection: { _id: 0 } }

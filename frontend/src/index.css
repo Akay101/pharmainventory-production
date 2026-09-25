@@ -215,9 +215,44 @@ input[type="password"],
 input[type="number"],
 input[type="tel"],
 input[type="date"],
+input[type="datetime-local"],
+input[type="month"],
 textarea,
 select {
   @apply bg-background/50 border-input focus:border-primary focus:ring-1 focus:ring-primary/50 rounded-lg transition-all placeholder:text-muted-foreground/50;
+}
+
+input[type="date"],
+input[type="datetime-local"],
+input[type="month"] {
+  color-scheme: dark light;
+  cursor: pointer;
+}
+
+.dark input[type="date"],
+.dark input[type="datetime-local"],
+.dark input[type="month"] {
+  color-scheme: dark;
+}
+
+.light input[type="date"],
+.light input[type="datetime-local"],
+.light input[type="month"] {
+  color-scheme: light;
+}
+
+input[type="date"]::-webkit-calendar-picker-indicator,
+input[type="datetime-local"]::-webkit-calendar-picker-indicator,
+input[type="month"]::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+  opacity: 0.85;
+}
+
+.dark input[type="date"]::-webkit-calendar-picker-indicator,
+.dark input[type="datetime-local"]::-webkit-calendar-picker-indicator,
+.dark input[type="month"]::-webkit-calendar-picker-indicator {
+  filter: invert(0.9);
+  opacity: 0.9;
 }
 
 /* Button hover animations */

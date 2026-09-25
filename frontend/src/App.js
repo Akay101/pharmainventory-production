@@ -24,6 +24,8 @@ import SettingsPage from "./pages/SettingsPage";
 import ReportsPage from "./pages/ReportsPage";
 import ScannerPage from "./pages/ScannerPage";
 import BillingScannerPage from "./pages/BillingScannerPage";
+import ExpiryPage from "./pages/ExpiryPage";
+import ReturnsPage from "./pages/ReturnsPage";
 
 // Layout
 import DashboardLayout from "./components/DashboardLayout";
@@ -460,6 +462,8 @@ function App() {
             <Route path="billing" element={<BillingPage />} />
             <Route path="suppliers" element={<SuppliersPage />} />
             <Route path="customers" element={<CustomersPage />} />
+            <Route path="expiry" element={<ExpiryPage />} />
+            <Route path="returns" element={<ReturnsPage />} />
             <Route
               path="users"
               element={

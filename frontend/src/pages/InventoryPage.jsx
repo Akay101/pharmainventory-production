@@ -39,7 +39,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "../components/ui/alert-dialog";
-import { Search, Plus, Package, AlertTriangle, ChevronLeft, ChevronRight, ArrowUpDown, Trash2, Loader2, BellOff, Info, X } from "lucide-react";
+import { Search, Plus, Package, AlertTriangle, ChevronLeft, ChevronRight, ArrowUpDown, Trash2, Loader2, BellOff, Info, X, CalendarX, RotateCcw, CheckCircle2, Clock } from "lucide-react";
 import { toast } from "sonner";
 import Loader from "../components/Loader";
 import RightSidebarDrawer from "../components/RightSidebarDrawer";
@@ -233,6 +233,44 @@ export default function InventoryPage() {
       toast.error(err.response?.data?.detail || "Failed to merge products");
     } finally {
       setMergingOther(false);
+    }
+  };
+
+  const handleMoveBatchToExpiry = async (batch) => {
+    try {
+      await axios.post(`${API}/expiry/move-batch`, {
+        inventory_id: batch.id,
+        batch_no: batch.batch_no,
+        product_name: detailProduct?.name || batch.product_name,
+      });
+      toast.success(`Batch ${batch.batch_no} moved to Expiry`);
+      await fetchData();
+      if (detailProduct?.name) {
+        const res = await axios.get(`${API}/inventory?grouped=true&search=${encodeURIComponent(detailProduct.name)}`);
+        const matched = (res.data.inventory || []).find(g => (g.product_name || g.name) === detailProduct.name);
+        if (matched?.batches) setDetailBatches(matched.batches);
+      }
+    } catch (e) {
+      toast.error("Failed to move batch to expiry");
+    }
+  };
+
+  const handleMoveBatchToReturns = async (batch) => {
+    try {
+      await axios.post(`${API}/returns/move-batch`, {
+        inventory_id: batch.id,
+        batch_no: batch.batch_no,
+        product_name: detailProduct?.name || batch.product_name,
+      });
+      toast.success(`Batch ${batch.batch_no} moved to Returns`);
+      await fetchData();
+      if (detailProduct?.name) {
+        const res = await axios.get(`${API}/inventory?grouped=true&search=${encodeURIComponent(detailProduct.name)}`);
+        const matched = (res.data.inventory || []).find(g => (g.product_name || g.name) === detailProduct.name);
+        if (matched?.batches) setDetailBatches(matched.batches);
+      }
+    } catch (e) {
+      toast.error("Failed to move batch to returns");
     }
   };
 
@@ -825,12 +863,12 @@ export default function InventoryPage() {
         
         {/* Pagination */}
         {pagination.total_pages > 1 && (
-          <div className="flex items-center justify-between px-6 py-4 border-t border-border/40 bg-muted/5">
-            <div className="text-xs font-bold text-muted-foreground/80">
+          <div className="flex flex-col sm:flex-row items-center justify-between px-6 py-4 border-t border-border/40 bg-muted/5 gap-4">
+            <div className="text-xs font-bold text-muted-foreground/80 sm:w-1/3 text-left">
               Showing {((pagination.page - 1) * pagination.limit) + 1} to {Math.min(pagination.page * pagination.limit, pagination.total)} of {pagination.total} items
             </div>
             
-            <div className="flex items-center gap-2">
+            <div className="flex items-center justify-center gap-2 sm:w-1/3">
               <Button
                 variant="outline"
                 size="sm"
@@ -874,6 +912,10 @@ export default function InventoryPage() {
                 Next
                 <ChevronRight className="h-3.5 w-3.5 ml-1 text-primary" />
               </Button>
+            </div>
+
+            <div className="hidden sm:block sm:w-1/3 text-right text-xs font-bold text-muted-foreground/60">
+              Page {pagination.page} of {pagination.total_pages}
             </div>
           </div>
         )}
@@ -1097,16 +1139,44 @@ export default function InventoryPage() {
                     </div>
                   ) : (
                     detailBatches.map((batch) => {
-                      const isExpired = batch.expiry_date && new Date(batch.expiry_date) < new Date();
+                      const isExpired = batch.expiry_date && batch.expiry_date !== "-" && new Date(batch.expiry_date) < new Date();
+                      const isExpiryMoved = batch.expiry_status === "Moved to Expiry" || batch.expiry_status === "Picked";
+                      const isExpiryReturned = batch.expiry_status === "Expired & Returned";
+                      const isReturnMoved = batch.return_status === "Moved to Returns" || batch.return_status === "Picked";
+                      const isGeneralReturned = batch.return_status === "Returned";
+
                       const shortageThresh = detailProduct?.shortage_threshold !== undefined && detailProduct?.shortage_threshold !== null ? Number(detailProduct.shortage_threshold) : (settings?.shortage_threshold || 10);
                       const isShortage = batch.available_quantity <= shortageThresh;
                       const isLowStock = batch.available_quantity <= (detailProduct?.low_stock_threshold || 10);
-                      let statusLabel = "In Stock";
                       
-                      if (isExpired) statusLabel = "Expired";
-                      else if (batch.available_quantity <= 0) statusLabel = "Out of Stock";
-                      else if (isShortage) statusLabel = "Shortage";
-                      else if (isLowStock) statusLabel = "Low Stock";
+                      let statusLabel = "In Stock";
+                      let statusColor = "bg-emerald-500/15 text-emerald-400 border-emerald-500/30";
+
+                      if (isExpiryReturned) {
+                        statusLabel = "Expired & Returned";
+                        statusColor = "bg-emerald-500/15 text-emerald-400 border-emerald-500/30";
+                      } else if (isExpiryMoved) {
+                        statusLabel = "Moved to Expiry";
+                        statusColor = "bg-amber-500/15 text-amber-400 border-amber-500/30";
+                      } else if (isGeneralReturned) {
+                        statusLabel = "Returned";
+                        statusColor = "bg-emerald-500/15 text-emerald-400 border-emerald-500/30";
+                      } else if (isReturnMoved) {
+                        statusLabel = "Moved to Returns";
+                        statusColor = "bg-blue-500/15 text-blue-400 border-blue-500/30";
+                      } else if (isExpired) {
+                        statusLabel = "Expired";
+                        statusColor = "bg-rose-500/15 text-rose-400 border-rose-500/30";
+                      } else if (batch.available_quantity <= 0) {
+                        statusLabel = "Out of Stock";
+                        statusColor = "bg-rose-500/15 text-rose-400 border-rose-500/30";
+                      } else if (isShortage) {
+                        statusLabel = "Shortage";
+                        statusColor = "bg-orange-500/15 text-orange-400 border-orange-500/30";
+                      } else if (isLowStock) {
+                        statusLabel = "Low Stock";
+                        statusColor = "bg-amber-500/15 text-amber-400 border-amber-500/30";
+                      }
 
                       return (
                         <div key={batch.id} className="p-3.5 rounded-xl bg-card/40 border border-border/40 space-y-2 hover:border-border/70 transition-colors">
@@ -1115,15 +1185,7 @@ export default function InventoryPage() {
                               <span className="font-mono text-xs font-black text-foreground">Batch: {batch.batch_no}</span>
                               <span className="text-[10px] font-semibold text-muted-foreground">({batch.pack_type || "Strip"})</span>
                             </div>
-                            <span className={`text-[9px] font-black px-2 py-0.5 rounded-md border ${
-                              statusLabel === "Expired" || statusLabel === "Out of Stock"
-                                ? "bg-rose-500/15 text-rose-400 border-rose-500/30"
-                                : statusLabel === "Shortage"
-                                ? "bg-orange-500/15 text-orange-400 border-orange-500/30"
-                                : statusLabel === "Low Stock"
-                                ? "bg-amber-500/15 text-amber-400 border-amber-500/30"
-                                : "bg-emerald-500/15 text-emerald-400 border-emerald-500/30"
-                            }`}>
+                            <span className={`text-[9px] font-black px-2 py-0.5 rounded-md border ${statusColor}`}>
                               {statusLabel}
                             </span>
                           </div>
@@ -1131,7 +1193,9 @@ export default function InventoryPage() {
                           <div className="grid grid-cols-3 gap-2 text-xs pt-2 border-t border-border/20">
                             <div>
                               <p className="text-[10px] font-bold text-muted-foreground uppercase">Expiry</p>
-                              <p className="font-mono font-bold text-foreground text-xs mt-0.5">{batch.expiry_date || "-"}</p>
+                              <p className={`font-mono font-bold text-xs mt-0.5 ${isExpired ? "text-rose-500" : "text-foreground"}`}>
+                                {batch.expiry_date || "-"}
+                              </p>
                             </div>
                             <div>
                               <p className="text-[10px] font-bold text-muted-foreground uppercase">Stock</p>
@@ -1143,15 +1207,69 @@ export default function InventoryPage() {
                             </div>
                           </div>
 
-                          <div className="flex items-center justify-between pt-2 border-t border-border/20">
-                            <span className="text-[10px] text-muted-foreground font-semibold truncate max-w-[200px]">
+                          <div className="flex items-center justify-between pt-2 border-t border-border/20 gap-1 flex-wrap">
+                            <span className="text-[10px] text-muted-foreground font-semibold truncate max-w-[150px]">
                               Supplier: {batch.supplier_name || "-"}
                             </span>
+
                             <div className="flex items-center gap-1">
+                              {/* Move to Expiry or Returns Action */}
+                              {isExpired && !isExpiryMoved && !isExpiryReturned && (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-6 px-2 text-[10px] font-bold border-rose-500/30 text-rose-500 hover:bg-rose-500/10 rounded-md cursor-pointer"
+                                  onClick={() => handleMoveBatchToExpiry(batch)}
+                                  title="Move this expired batch to Expiry management"
+                                >
+                                  <CalendarX className="w-3 h-3 mr-1" />
+                                  Move to Expiry
+                                </Button>
+                              )}
+
+                              {!isExpired && !isReturnMoved && !isGeneralReturned && batch.available_quantity > 0 && (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-6 px-2 text-[10px] font-bold border-blue-500/30 text-blue-500 hover:bg-blue-500/10 rounded-md cursor-pointer"
+                                  onClick={() => handleMoveBatchToReturns(batch)}
+                                  title="Move this batch to Returns management"
+                                >
+                                  <RotateCcw className="w-3 h-3 mr-1" />
+                                  Move to Returns
+                                </Button>
+                              )}
+
+                              {isExpiryMoved && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-6 px-1.5 text-[10px] font-bold text-amber-500 hover:bg-amber-500/10 rounded-md cursor-pointer"
+                                  onClick={() => navigate("/expiry")}
+                                  title="View in Expiry Management"
+                                >
+                                  <Clock className="w-3 h-3 mr-1" />
+                                  In Expiry
+                                </Button>
+                              )}
+
+                              {isReturnMoved && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-6 px-1.5 text-[10px] font-bold text-blue-500 hover:bg-blue-500/10 rounded-md cursor-pointer"
+                                  onClick={() => navigate("/returns")}
+                                  title="View in Returns Management"
+                                >
+                                  <RotateCcw className="w-3 h-3 mr-1" />
+                                  In Returns
+                                </Button>
+                              )}
+
                               <Button
                                 variant="ghost"
                                 size="icon"
-                                className="text-orange-500 hover:text-orange-400 hover:bg-orange-500/15 rounded-lg h-7 w-7 cursor-pointer"
+                                className="text-orange-500 hover:text-orange-400 hover:bg-orange-500/15 rounded-lg h-6 w-6 cursor-pointer"
                                 onClick={() => setAddStockDialog({ open: true, item: batch, quantityToAdd: "" })}
                                 title="Add Stock"
                               >
@@ -1160,7 +1278,7 @@ export default function InventoryPage() {
                               <Button
                                 variant="ghost"
                                 size="icon"
-                                className="text-rose-400 hover:text-rose-300 hover:bg-rose-500/15 rounded-lg h-7 w-7 cursor-pointer"
+                                className="text-rose-400 hover:text-rose-300 hover:bg-rose-500/15 rounded-lg h-6 w-6 cursor-pointer"
                                 onClick={() => setDeleteDialog({ open: true, item: batch, type: "inventory" })}
                                 title="Delete Batch"
                               >

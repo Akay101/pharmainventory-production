@@ -11,6 +11,7 @@ import {
   CardTitle,
 } from "../components/ui/card";
 import { Button } from "../components/ui/button";
+import { Badge } from "../components/ui/badge";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import {
@@ -105,8 +106,43 @@ const SupplierSelector = ({
   const [hasMore, setHasMore] = useState(true);
   const [loading, setLoading] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState(-1);
+  const [showAddSupplierDialog, setShowAddSupplierDialog] = useState(false);
+  const [newSupName, setNewSupName] = useState("");
+  const [newSupPhone, setNewSupPhone] = useState("");
+  const [newSupGstin, setNewSupGstin] = useState("");
+  const [newSupEmail, setNewSupEmail] = useState("");
+  const [newSupAddress, setNewSupAddress] = useState("");
+  const [creatingSup, setCreatingSup] = useState(false);
   const dropdownRef = useRef(null);
   const scrollContainerRef = useRef(null);
+
+  const handleCreateSupplier = async () => {
+    if (!newSupName.trim()) return;
+    setCreatingSup(true);
+    try {
+      const res = await axios.post(`${API}/suppliers`, {
+        name: newSupName.trim(),
+        phone: newSupPhone.trim() || null,
+        gstin: newSupGstin.trim() || null,
+        email: newSupEmail.trim() || null,
+        address: newSupAddress.trim() || null,
+      });
+      const created = res.data.supplier || res.data;
+      setSuppliers((prev) => [created, ...prev]);
+      onSelect(created);
+      setShowAddSupplierDialog(false);
+      setNewSupName("");
+      setNewSupPhone("");
+      setNewSupGstin("");
+      setNewSupEmail("");
+      setNewSupAddress("");
+      toast.success(`Supplier "${created.name}" created and selected!`);
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Failed to create supplier");
+    } finally {
+      setCreatingSup(false);
+    }
+  };
 
   const fetchSuppliers = async (p = 1, s = "", append = false) => {
     if (loading) return;
@@ -331,8 +367,104 @@ const SupplierSelector = ({
               </div>
             )}
           </div>
+          <div className="p-1.5 border-t border-border/40 bg-muted/20">
+            <button
+              type="button"
+              className="w-full flex items-center justify-center gap-1.5 py-2 px-3 text-xs font-bold text-primary hover:bg-primary/10 rounded-lg transition-colors"
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowAddSupplierDialog(true);
+                setIsOpen(false);
+              }}
+            >
+              <Plus className="w-4 h-4" />
+              Add New Supplier
+            </button>
+          </div>
         </div>
       )}
+
+      {/* Quick Add Supplier Dialog */}
+      <Dialog open={showAddSupplierDialog} onOpenChange={setShowAddSupplierDialog}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Add New Supplier</DialogTitle>
+            <DialogDescription>
+              Create a supplier directly from the purchase flow.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <div>
+              <Label className="text-xs font-semibold">Supplier Name *</Label>
+              <Input
+                placeholder="e.g. Acme Pharmaceuticals"
+                value={newSupName}
+                onChange={(e) => setNewSupName(e.target.value)}
+                className="mt-1 h-9 text-xs"
+                autoFocus
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <Label className="text-xs font-semibold">Phone</Label>
+                <Input
+                  placeholder="e.g. 9876543210"
+                  value={newSupPhone}
+                  onChange={(e) => setNewSupPhone(e.target.value)}
+                  className="mt-1 h-9 text-xs"
+                />
+              </div>
+              <div>
+                <Label className="text-xs font-semibold">GSTIN</Label>
+                <Input
+                  placeholder="e.g. 27ABCDE1234F1Z5"
+                  value={newSupGstin}
+                  onChange={(e) => setNewSupGstin(e.target.value)}
+                  className="mt-1 h-9 text-xs"
+                />
+              </div>
+            </div>
+            <div>
+              <Label className="text-xs font-semibold">Email (optional)</Label>
+              <Input
+                type="email"
+                placeholder="e.g. supplier@example.com"
+                value={newSupEmail}
+                onChange={(e) => setNewSupEmail(e.target.value)}
+                className="mt-1 h-9 text-xs"
+              />
+            </div>
+            <div>
+              <Label className="text-xs font-semibold">Address (optional)</Label>
+              <Input
+                placeholder="e.g. Wholesale Market, Mumbai"
+                value={newSupAddress}
+                onChange={(e) => setNewSupAddress(e.target.value)}
+                className="mt-1 h-9 text-xs"
+              />
+            </div>
+          </div>
+          <div className="flex justify-end gap-2 mt-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setShowAddSupplierDialog(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              className="btn-primary"
+              disabled={creatingSup || !newSupName.trim()}
+              onClick={handleCreateSupplier}
+            >
+              {creatingSup ? "Creating..." : "Create Supplier"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
@@ -940,6 +1072,7 @@ export default function PurchasesPage() {
   });
   const [newPaymentAmount, setNewPaymentAmount] = useState("");
   const [newPaymentNotes, setNewPaymentNotes] = useState("");
+  const [newPaymentMode, setNewPaymentMode] = useState("UPI");
   const [pdfConfirmDialog, setPdfConfirmDialog] = useState({
     open: false,
     purchaseId: null,
@@ -948,6 +1081,7 @@ export default function PurchasesPage() {
     open: false,
     itemId: null,
   });
+  const [showDiscardConfirmDialog, setShowDiscardConfirmDialog] = useState(false);
 
   // Your existing state and refs are correct
   // Replace your current dropdownPosition state and updateDropdownPosition with this:
@@ -1630,7 +1764,14 @@ export default function PurchasesPage() {
     }
   };
 
-  const handleCancelNewPurchase = () => {
+  const handleCancelNewPurchase = (force = false) => {
+    const hasUnsavedData = purchaseItems.some(
+      (i) => i.product_name && i.product_name.trim() !== ""
+    );
+    if (!force && hasUnsavedData) {
+      setShowDiscardConfirmDialog(true);
+      return;
+    }
     setShowNewPurchase(false);
     setEditingPurchaseId(null);
     setPurchaseItems([]);
@@ -1643,6 +1784,7 @@ export default function PurchasesPage() {
     setApplyCgstToAll(false);
     setApplySgstToAll(false);
     clearDraft();
+    setShowDiscardConfirmDialog(false);
   };
 
   const handleStartAddItem = () => {
@@ -2431,6 +2573,14 @@ export default function PurchasesPage() {
       return;
     }
 
+    if (paymentStatus === "Partial") {
+      const pAmount = parseFloat(amountPaid);
+      if (isNaN(pAmount) || pAmount <= 0) {
+        toast.error("Please enter a valid Initial Paid amount for Partial payment");
+        return;
+      }
+    }
+
     const validItems = purchaseItems.filter(
       (item) => item.product_name && item.product_name.trim() !== ""
     );
@@ -2445,12 +2595,46 @@ export default function PurchasesPage() {
     setSubmitting(true);
 
     try {
+      let itemsToProcess = [...validItems];
+      if (settings?.purchase_permanent_autofill !== false) {
+        const missingCandidates = itemsToProcess.filter(
+          (item) =>
+            (!item.salt_composition || !item.salt_composition.trim()) ||
+            (!item.manufacturer || !item.manufacturer.trim())
+        );
+        if (missingCandidates.length > 0) {
+          try {
+            await Promise.all(
+              missingCandidates.map(async (cItem) => {
+                try {
+                  const enrichRes = await axios.post(`${API}/medicines/enrich`, {
+                    product_name: cItem.product_name,
+                  }, { timeout: 3500 });
+                  if (enrichRes.data) {
+                    if (!cItem.manufacturer && enrichRes.data.manufacturer) {
+                      cItem.manufacturer = enrichRes.data.manufacturer;
+                    }
+                    if (!cItem.salt_composition && enrichRes.data.salt_composition) {
+                      cItem.salt_composition = enrichRes.data.salt_composition;
+                    }
+                  }
+                } catch (e) {
+                  console.warn(`Permanent autofill fallback for ${cItem.product_name}:`, e.message);
+                }
+              })
+            );
+          } catch (e) {
+            console.warn("Permanent autofill error fallback:", e);
+          }
+        }
+      }
+
       const payload = {
         supplier_id: selectedSupplier,
         supplier_name: supplier?.name || "Unknown",
         invoice_no: invoiceNo || null,
         purchase_date: purchaseDate,
-        items: validItems.map((item) => ({
+        items: itemsToProcess.map((item) => ({
           product_id: item.product_id,
           product_name: item.product_name,
           batch_no: item.batch_no || null,
@@ -2507,7 +2691,7 @@ export default function PurchasesPage() {
       setPaymentStatus("Unpaid");
       setAmountPaid("");
       clearDraft();
-      handleCancelNewPurchase();
+      handleCancelNewPurchase(true);
       await fetchPurchases(pagination.page);
     } catch (error) {
       toast.error(error.response?.data?.detail || "Failed to save purchase");
@@ -3082,12 +3266,14 @@ export default function PurchasesPage() {
         {
           amount: parseFloat(newPaymentAmount),
           notes: newPaymentNotes,
+          payment_mode: newPaymentMode || "UPI",
         }
       );
       toast.success("Payment added successfully");
       setPaymentDialog({ open: false, purchase: null });
       setNewPaymentAmount("");
       setNewPaymentNotes("");
+      setNewPaymentMode("UPI");
       await fetchPurchases(pagination.page);
     } catch (error) {
       toast.error(error.response?.data?.detail || "Failed to add payment");
@@ -3176,9 +3362,26 @@ export default function PurchasesPage() {
               )}
             </div>
             <div className="space-y-2">
+              <Label>Payment Mode *</Label>
+              <Select
+                value={newPaymentMode || "UPI"}
+                onValueChange={(val) => setNewPaymentMode(val)}
+              >
+                <SelectTrigger className="h-9">
+                  <SelectValue placeholder="Select Mode" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="UPI">UPI</SelectItem>
+                  <SelectItem value="Cash">Cash</SelectItem>
+                  <SelectItem value="Card">Card</SelectItem>
+                  <SelectItem value="Net Banking">Net Banking</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
               <Label>Notes (optional)</Label>
               <Input
-                placeholder="Payment via UPI, Bank Transfer..."
+                placeholder="Payment reference or notes..."
                 value={newPaymentNotes}
                 onChange={(e) => setNewPaymentNotes(e.target.value)}
               />
@@ -3193,6 +3396,39 @@ export default function PurchasesPage() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Discard / Close Confirmation Dialog */}
+      <AlertDialog
+        open={showDiscardConfirmDialog}
+        onOpenChange={setShowDiscardConfirmDialog}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-amber-500">
+              <AlertTriangle className="w-5 h-5" /> Unsaved Purchase Items
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              You have entered items in the purchase invoice. Do you want to save
+              this draft before closing or discard all changes?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="flex-col sm:flex-row gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowDiscardConfirmDialog(false)}
+            >
+              Keep Editing
+            </Button>
+            <AlertDialogAction
+              className="bg-destructive hover:bg-destructive/90 text-destructive-foreground"
+              onClick={() => handleCancelNewPurchase(true)}
+            >
+              Discard Changes
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Keyboard Shortcuts Dialog */}
       <Dialog open={showShortcuts} onOpenChange={setShowShortcuts}>
@@ -3310,7 +3546,8 @@ export default function PurchasesPage() {
                   value={purchaseDate}
                   disabled={processingRowId !== null}
                   onChange={(e) => setPurchaseDate(e.target.value)}
-                  className="h-9 text-xs font-semibold rounded-xl border-border bg-background text-foreground shadow-2xs focus-visible:ring-2 focus-visible:ring-orange-500/30 focus-visible:border-orange-500"
+                  style={{ colorScheme: "dark light" }}
+                  className="h-9 text-xs font-semibold rounded-xl border-border bg-background text-foreground shadow-2xs focus-visible:ring-2 focus-visible:ring-orange-500/30 focus-visible:border-orange-500 cursor-pointer"
                 />
               </div>
 
@@ -3535,7 +3772,7 @@ export default function PurchasesPage() {
                     Batch / Expiry
                   </TableHead>
                   <TableHead className="w-[140px] py-2.5 font-extrabold text-foreground">
-                    HSN / Pack / Shortage
+                    HSN / Pack
                   </TableHead>
                   <TableHead className="w-[140px] py-2.5 text-center font-extrabold text-foreground">
                     <div className="flex flex-col items-center gap-1">
@@ -3723,7 +3960,10 @@ export default function PurchasesPage() {
                                       medicineSuggestions.length &&
                                     hasAiOption
                                   ) {
-                                    handleAutofillSingleRowWithAI(item);
+                                    handleSelectAiMedicineForItem(
+                                      item.id,
+                                      searchMedicine
+                                    );
                                   } else {
                                     document
                                       .getElementById(`batch-${item.id}`)
@@ -4224,7 +4464,8 @@ export default function PurchasesPage() {
                                   ?.focus({ preventScroll: true });
                               }
                             }}
-                            className="h-7 text-xs rounded-lg border-border bg-background text-foreground"
+                            style={{ colorScheme: "dark light" }}
+                            className="h-7 text-xs rounded-lg border-border bg-background text-foreground cursor-pointer"
                           />
                         </div>
                       </TableCell>
@@ -4275,23 +4516,6 @@ export default function PurchasesPage() {
                               </SelectContent>
                             </Select>
                           </div>
-                          <Input
-                            type="number"
-                            value={
-                              item.shortage_threshold !== undefined
-                                ? item.shortage_threshold
-                                : ""
-                            }
-                            onChange={(e) =>
-                              handleItemFieldChange(
-                                item.id,
-                                "shortage_threshold",
-                                e.target.value
-                              )
-                            }
-                            placeholder="Shortage Qty"
-                            className="h-7 text-xs rounded-lg border-border bg-background text-foreground"
-                          />
                         </div>
                       </TableCell>
 
@@ -5364,15 +5588,19 @@ export default function PurchasesPage() {
                                   return (
                                     <TableRow key={idx}>
                                       <TableCell className="font-medium">
-                                        <div>{item.product_name}</div>
-                                        {item.shortage_threshold !==
-                                          undefined &&
-                                          item.shortage_threshold !== null && (
-                                            <div className="text-[10px] text-muted-foreground font-semibold">
-                                              Shortage:{" "}
-                                              {item.shortage_threshold} units
-                                            </div>
+                                        <div className="flex items-center gap-1.5 flex-wrap">
+                                          <span>{item.product_name}</span>
+                                          {item.status === "Expired & Returned" && (
+                                            <Badge className="px-1.5 py-0 text-[9px] font-black bg-rose-500/15 text-rose-500 border-rose-500/30">
+                                              Expired & Returned
+                                            </Badge>
                                           )}
+                                          {item.status === "Returned" && (
+                                            <Badge className="px-1.5 py-0 text-[9px] font-black bg-blue-500/15 text-blue-500 border-blue-500/30">
+                                              Returned
+                                            </Badge>
+                                          )}
+                                        </div>
                                       </TableCell>
                                       <TableCell>{item.batch_no}</TableCell>
                                       <TableCell>{item.expiry_date}</TableCell>
@@ -5627,8 +5855,8 @@ export default function PurchasesPage() {
             </Table>
             {/* Pagination */}
             {pagination.total_pages > 1 && (
-              <div className="flex items-center justify-between px-6 py-4 border-t border-border/40 bg-muted/5">
-                <div className="text-xs font-bold text-muted-foreground/80">
+              <div className="flex flex-col sm:flex-row items-center justify-between px-6 py-4 border-t border-border/40 bg-muted/5 gap-4">
+                <div className="text-xs font-bold text-muted-foreground/80 sm:w-1/3 text-left">
                   Showing {(pagination.page - 1) * pagination.limit + 1} to{" "}
                   {Math.min(
                     pagination.page * pagination.limit,
@@ -5637,7 +5865,7 @@ export default function PurchasesPage() {
                   of {pagination.total} purchases
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex items-center justify-center gap-2 sm:w-1/3">
                   <Button
                     variant="outline"
                     size="sm"
@@ -5695,6 +5923,10 @@ export default function PurchasesPage() {
                     Next
                     <ChevronRight className="h-3.5 w-3.5 ml-1 text-primary" />
                   </Button>
+                </div>
+
+                <div className="hidden sm:block sm:w-1/3 text-right text-xs font-bold text-muted-foreground/60">
+                  Page {pagination.page} of {pagination.total_pages}
                 </div>
               </div>
             )}
