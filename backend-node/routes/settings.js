@@ -302,7 +302,7 @@ router.post("/request-lock-otp", auth, async (req, res, next) => {
       }
     );
 
-    const emailSent = await sendOTPEmail(req.user.email, req.user.name, otp);
+    const emailSent = await sendOTPEmail(req.user.email, req.user.name, otp, "settings");
 
     res.json({
       message: "OTP sent to your email",

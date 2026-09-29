@@ -1,10 +1,9 @@
 import { useState } from "react";
-import { useNavigate, Link } from "react-router-dom";
+import { Link } from "react-router-dom";
 import axios from "axios";
 import { API } from "../App";
 import { Button } from "../components/ui/button";
-import { Input } from "../components/ui/input";
-import { Label } from "../components/ui/label";
+import WaveInput from "../components/ui/WaveInput";
 import {
   InputOTP,
   InputOTPGroup,
@@ -17,8 +16,6 @@ import {
   Loader2,
   ArrowLeft,
   ArrowRight,
-  Check,
-  Activity,
   User,
   Mail,
   Phone,
@@ -28,21 +25,19 @@ import {
   FileText,
   Calendar,
   AlertTriangle,
-  Sparkles,
 } from "lucide-react";
-import FluidLinePattern from "../components/ui/FluidLinePattern";
 import ThemeToggle from "../components/ui/ThemeToggle";
-import CornerPattern from "../components/ui/CornerPattern";
+import FluidLinePattern from "../components/ui/FluidLinePattern";
+import AuthLeftPanel from "../components/ui/AuthLeftPanel";
 
 const STEPS = ["Personal Info", "Pharmacy Details", "Verify Email"];
 
 export default function RegisterPage() {
-  const navigate = useNavigate();
   const [step, setStep] = useState(0);
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [otp, setOtp] = useState("");
-  const [fallbackOtp, setFallbackOtp] = useState(""); // OTP returned when email fails
+  const [fallbackOtp, setFallbackOtp] = useState("");
   const [formData, setFormData] = useState({
     name: "",
     email: "",
@@ -54,64 +49,164 @@ export default function RegisterPage() {
     yearsOld: "",
   });
 
-  const handleNext = () => {
-    if (step === 0) {
-      if (
-        !formData.name ||
-        !formData.email ||
-        !formData.mobile ||
-        !formData.password
-      ) {
-        toast.error("Please fill all required fields");
-        return;
-      }
-      if (formData.password.length < 6) {
-        toast.error("Password must be at least 6 characters");
-        return;
+  const [errors, setErrors] = useState({});
+
+  // Clean and format mobile input to strictly 10 digits
+  const handleMobileChange = (e) => {
+    const rawVal = e.target.value;
+    const digitsOnly = rawVal.replace(/\D/g, "").slice(0, 10);
+    setFormData((prev) => ({ ...prev, mobile: digitsOnly }));
+
+    if (errors.mobile) {
+      if (digitsOnly.length === 10) {
+        setErrors((prev) => ({ ...prev, mobile: "" }));
       }
     }
+  };
+
+  const validateStep0 = () => {
+    const newErrors = {};
+    let valid = true;
+
+    const trimmedName = formData.name.trim();
+    if (!trimmedName) {
+      newErrors.name = "Full name is required";
+      valid = false;
+    } else if (trimmedName.length < 2) {
+      newErrors.name = "Name must be at least 2 characters";
+      valid = false;
+    } else if (trimmedName.length > 50) {
+      newErrors.name = "Name cannot exceed 50 characters";
+      valid = false;
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!formData.email.trim()) {
+      newErrors.email = "Email address is required";
+      valid = false;
+    } else if (!emailRegex.test(formData.email.trim())) {
+      newErrors.email = "Please enter a valid email address";
+      valid = false;
+    }
+
+    if (!formData.mobile) {
+      newErrors.mobile = "10-digit mobile number is required";
+      valid = false;
+    } else if (!/^\d{10}$/.test(formData.mobile)) {
+      newErrors.mobile = `Enter complete 10 digits (${formData.mobile.length}/10 entered)`;
+      valid = false;
+    }
+
+    if (!formData.password) {
+      newErrors.password = "Password is required";
+      valid = false;
+    } else if (formData.password.length < 6) {
+      newErrors.password = "Password must be at least 6 characters";
+      valid = false;
+    }
+
+    setErrors(newErrors);
+    return valid;
+  };
+
+  const validateStep1 = () => {
+    const newErrors = {};
+    let valid = true;
+
+    const trimmedPharm = formData.pharmacyName.trim();
+    if (!trimmedPharm) {
+      newErrors.pharmacyName = "Pharmacy name is required";
+      valid = false;
+    } else if (trimmedPharm.length < 2) {
+      newErrors.pharmacyName = "Pharmacy name must be at least 2 characters";
+      valid = false;
+    } else if (trimmedPharm.length > 60) {
+      newErrors.pharmacyName = "Pharmacy name cannot exceed 60 characters";
+      valid = false;
+    }
+
+    const trimmedLoc = formData.location.trim();
+    if (!trimmedLoc) {
+      newErrors.location = "Store address / location is required";
+      valid = false;
+    } else if (trimmedLoc.length < 3) {
+      newErrors.location = "Please enter a detailed location";
+      valid = false;
+    } else if (trimmedLoc.length > 120) {
+      newErrors.location = "Location cannot exceed 120 characters";
+      valid = false;
+    }
+
+    if (formData.licenseNo && formData.licenseNo.length > 35) {
+      newErrors.licenseNo = "License number cannot exceed 35 characters";
+      valid = false;
+    }
+
+    if (formData.yearsOld) {
+      const parsedYears = parseInt(formData.yearsOld, 10);
+      if (isNaN(parsedYears) || parsedYears < 0 || parsedYears > 150) {
+        newErrors.yearsOld = "Enter valid years between 0 and 150";
+        valid = false;
+      }
+    }
+
+    setErrors(newErrors);
+    return valid;
+  };
+
+  const handleNext = () => {
+    if (step === 0) {
+      if (!validateStep0()) {
+        toast.error("Please fill all required fields correctly");
+        return;
+      }
+      setStep(1);
+      return;
+    }
+
     if (step === 1) {
-      if (!formData.pharmacyName || !formData.location) {
-        toast.error("Please fill pharmacy name and location");
+      if (!validateStep1()) {
+        toast.error("Please complete pharmacy details correctly");
         return;
       }
       handleRegister();
       return;
     }
-    setStep(step + 1);
   };
 
   const handleBack = () => {
-    setStep(step - 1);
+    setErrors({});
+    setStep((prev) => Math.max(0, prev - 1));
   };
 
   const handleRegister = async () => {
     setLoading(true);
     try {
       const response = await axios.post(`${API}/auth/register`, {
-        name: formData.name,
-        email: formData.email,
+        name: formData.name.trim(),
+        email: formData.email.trim(),
         mobile: formData.mobile,
         password: formData.password,
         pharmacy: {
-          name: formData.pharmacyName,
-          location: formData.location,
-          license_no: formData.licenseNo || null,
-          years_old: formData.yearsOld ? parseInt(formData.yearsOld) : null,
+          name: formData.pharmacyName.trim(),
+          location: formData.location.trim(),
+          license_no: formData.licenseNo.trim() || null,
+          years_old: formData.yearsOld ? parseInt(formData.yearsOld, 10) : null,
         },
       });
 
-      // Check if OTP was returned (email delivery failed)
       if (response.data.otp) {
         setFallbackOtp(response.data.otp);
         toast.warning("Email delivery failed. Your OTP is displayed below.");
       } else {
-        toast.success("OTP sent to your email!");
+        toast.success("OTP sent to your email address!");
       }
       setStep(2);
     } catch (error) {
       console.error("Registration error:", error);
-      toast.error(error.response?.data?.detail || "Registration failed");
+      const errMsg =
+        error.response?.data?.detail || "Registration failed. Please check inputs.";
+      toast.error(errMsg);
     } finally {
       setLoading(false);
     }
@@ -119,21 +214,21 @@ export default function RegisterPage() {
 
   const handleVerifyOTP = async () => {
     if (otp.length !== 6) {
-      toast.error("Please enter complete OTP");
+      toast.error("Please enter the complete 6-digit OTP");
       return;
     }
 
     setLoading(true);
     try {
-      const response = await axios.post(`${API}/auth/verify-otp`, {
-        email: formData.email,
+      await axios.post(`${API}/auth/verify-otp`, {
+        email: formData.email.trim(),
         otp: otp,
       });
-      toast.success("Registration successful!");
+      toast.success("Account verified successfully! Welcome to DavaDesk.");
       window.location.href = "/dashboard";
     } catch (error) {
       console.error("Verification error:", error);
-      toast.error(error.response?.data?.detail || "Invalid OTP");
+      toast.error(error.response?.data?.detail || "Invalid OTP entered");
     } finally {
       setLoading(false);
     }
@@ -145,7 +240,7 @@ export default function RegisterPage() {
       const response = await axios.post(
         `${API}/auth/resend-otp`,
         {
-          email: formData.email,
+          email: formData.email.trim(),
         },
         {
           headers: {
@@ -174,394 +269,221 @@ export default function RegisterPage() {
       className="min-h-screen w-full grid grid-cols-1 md:grid-cols-12 bg-background select-none overflow-hidden relative"
       data-testid="register-page"
     >
-      {/* Left Panel: Aesthetic Sidebar with Interactive Fluid Wave Mesh */}
-      <div className="hidden md:flex md:col-span-5 bg-card/70 dark:bg-zinc-950/75 border-r border-border/80 dark:border-border/50 p-8 lg:p-12 flex-col justify-between relative overflow-hidden transition-colors duration-300">
-        {/* Interactive Canvas Line Pattern */}
-        <FluidLinePattern />
-
-        {/* Ambient Light Orbs */}
-        <div className="absolute top-[-10%] left-[-10%] w-[60%] h-[60%] rounded-full bg-gradient-to-br from-orange-500/15 via-amber-500/8 to-transparent pointer-events-none blur-2xl"></div>
-        <div className="absolute bottom-[-10%] right-[-10%] w-[60%] h-[60%] rounded-full bg-gradient-to-tl from-orange-500/15 via-amber-500/8 to-transparent pointer-events-none blur-2xl"></div>
-
-        {/* Header Logo */}
-        <div className="flex items-center gap-3 relative z-10">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-orange-500 to-amber-500 flex items-center justify-center shadow-lg shadow-orange-500/25 shrink-0">
-            <Activity className="w-5 h-5 text-white" />
-          </div>
-          <span className="font-extrabold text-lg lg:text-xl tracking-tight text-foreground">
-            Pharmacy - Test Instance
-          </span>
-        </div>
-
-        {/* Dynamic Progress Timeline */}
-        <div className="my-auto space-y-8 relative z-10 max-w-sm py-6">
-          <div className="space-y-3">
-            <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-orange-500/10 border border-orange-500/30 text-orange-600 dark:text-orange-400 text-xs font-extrabold uppercase tracking-wider shadow-2xs">
-              <Sparkles className="w-3.5 h-3.5" />
-              <span>Workspace Setup</span>
-            </div>
-            <h1 className="text-3xl lg:text-4xl font-black tracking-tight text-foreground leading-[1.15]">
-              Get Started with <br />
-              <span className="bg-gradient-to-r from-orange-500 via-amber-500 to-orange-600 bg-clip-text text-transparent">
-                Pharmacy Control.
-              </span>
-            </h1>
-            <p className="text-muted-foreground text-sm font-semibold leading-relaxed">
-              Create your account and workspace parameters in three simple steps.
-            </p>
-          </div>
-
-          {/* Step Progress Timeline list with Distinguished Light Mode Borders */}
-          <div className="space-y-4 pt-2">
-            {STEPS.map((s, i) => {
-              const isActive = i === step;
-              const isCompleted = i < step;
-              return (
-                <div
-                  key={i}
-                  className={`flex items-start gap-4 p-4 rounded-2xl border-2 transition-all duration-300 backdrop-blur-md ${
-                    isActive
-                      ? "bg-card border-orange-500/50 dark:border-orange-500/40 shadow-md shadow-orange-500/10"
-                      : isCompleted
-                        ? "bg-card border-border/90 dark:border-border/60 shadow-2xs"
-                        : "bg-card/50 border-border/70 dark:border-border/40"
-                  }`}
-                >
-                  <div
-                    className={`w-9 h-9 rounded-xl flex items-center justify-center text-sm font-bold shrink-0 transition-all duration-300 ${
-                      isCompleted
-                        ? "bg-emerald-500 text-white shadow-md shadow-emerald-500/20"
-                        : isActive
-                          ? "bg-gradient-to-br from-orange-500 to-amber-500 text-white shadow-md shadow-orange-500/30"
-                          : "bg-muted text-muted-foreground border border-border/80"
-                    }`}
-                  >
-                    {isCompleted ? (
-                      <Check className="w-4 h-4 stroke-[3]" />
-                    ) : (
-                      i + 1
-                    )}
-                  </div>
-                  <div className="space-y-1">
-                    <h3
-                      className={`text-sm font-extrabold transition-colors ${
-                        isActive
-                          ? "text-orange-600 dark:text-orange-400"
-                          : isCompleted
-                            ? "text-foreground"
-                            : "text-muted-foreground"
-                      }`}
-                    >
-                      {s}
-                    </h3>
-                    <p className="text-xs text-muted-foreground font-semibold leading-relaxed">
-                      {i === 0 &&
-                        "Provide credentials for your secure administrator login."}
-                      {i === 1 &&
-                        "Configure names, licensing, and database properties."}
-                      {i === 2 &&
-                        "Authenticate your email using the verification code."}
-                    </p>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Footer */}
-        <div className="text-xs text-muted-foreground font-semibold relative z-10">
-          © {new Date().getFullYear()} Krishna Medicose Inc. All rights reserved.
-        </div>
+      {/* Left Panel: Full Background Image Slideshow with Step Progress */}
+      <div className="hidden md:block md:col-span-5 relative overflow-hidden">
+        <AuthLeftPanel
+          steps={STEPS}
+          currentStep={step}
+          autoPlayInterval={5000}
+        />
       </div>
 
-      {/* Right Panel: Scrollable Input Forms with Theme Toggle & Corner Pattern */}
-      <div className="col-span-12 md:col-span-7 flex items-center justify-center p-6 sm:p-12 bg-background relative overflow-y-auto h-screen">
+      {/* Right Panel: Clean Subtle Pattern & Scrollable Input Form */}
+      <div className="col-span-12 md:col-span-7 flex items-center justify-center p-6 sm:p-12 bg-background relative overflow-y-auto max-h-screen">
+        {/* Soft, Subtle Fluid Pattern Background */}
+        <FluidLinePattern />
+
         {/* Top-Right Theme Toggle Switch */}
         <div className="absolute top-6 right-6 z-20">
           <ThemeToggle />
         </div>
 
-        {/* Bottom-Right Decorative Corner Pattern */}
-        <CornerPattern />
-
-        {/* Decorative backdrop light on mobile */}
-        <div className="md:hidden absolute top-[-20%] right-[-20%] w-[60%] h-[60%] rounded-full bg-orange-500/5 pointer-events-none blur-3xl"></div>
-
-        <div className="w-full max-w-md space-y-8 my-auto relative z-10">
-          {/* Header Mobile Logo */}
-          <div className="md:hidden flex flex-col items-center text-center space-y-3">
-            <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-orange-500 to-amber-500 flex items-center justify-center shadow-lg shadow-orange-500/25">
-              <Activity className="w-6 h-6 text-white" />
-            </div>
-            <div>
-              <h2 className="text-2xl font-black tracking-tight text-foreground">
-                Pharmacy management
-              </h2>
-              <p className="text-muted-foreground text-xs font-semibold">
-                Setup your pharmacy store workspace
-              </p>
-            </div>
-
-            {/* Mobile progress indicators */}
-            <div className="flex items-center gap-1.5 pt-2">
-              {STEPS.map((_, i) => (
-                <div
-                  key={i}
-                  className={`h-1.5 rounded-full transition-all duration-300 ${
-                    i === step
-                      ? "w-8 bg-orange-500"
-                      : i < step
-                        ? "w-2 bg-emerald-500"
-                        : "w-2 bg-muted"
-                  }`}
-                ></div>
-              ))}
+        <div className="w-full max-w-md space-y-7 my-auto relative z-10">
+          {/* Brand Logo & Header */}
+          <div className="flex items-center gap-3">
+            <img
+              src="/assets/svgs/logoBrand/logoOnlyWithoutBackground.svg"
+              alt="DavaDesk"
+              className="w-12 h-12 object-contain shrink-0 drop-shadow-sm"
+            />
+            <div className="flex flex-col">
+              <span className="font-extrabold text-2xl tracking-tight text-foreground leading-tight">
+                DavaDesk
+              </span>
+              <span className="text-xs font-semibold text-muted-foreground">
+                Smart Pharmacy Software
+              </span>
             </div>
           </div>
 
-          {/* Form Header (Desktop only) */}
-          <div className="hidden md:block space-y-2">
-            <span className="text-[10px] font-extrabold uppercase tracking-widest text-orange-600 dark:text-orange-400 px-3 py-1 bg-orange-500/10 rounded-full border border-orange-500/30 inline-block shadow-2xs">
+          {/* Form Header */}
+          <div className="space-y-1.5 pt-1">
+            <span className="text-[10px] font-extrabold uppercase tracking-widest text-orange-600 dark:text-orange-400 px-3 py-1 bg-orange-500/10 rounded-full border border-orange-500/30 inline-block">
               Step {step + 1} of 3 • {STEPS[step]}
             </span>
-            <h2 className="text-3xl font-extrabold tracking-tight text-foreground pt-2">
+            <h2 className="text-3xl font-extrabold tracking-tight text-foreground pt-1">
               {step === 0 && "Create Account"}
               {step === 1 && "Pharmacy Details"}
               {step === 2 && "Verify Email"}
             </h2>
             <p className="text-muted-foreground text-sm font-semibold">
-              {step === 0 && "Enter your contact and security details."}
-              {step === 1 && "Set up workspace identifiers."}
-              {step === 2 && `We sent a passcode to your verification address.`}
+              {step === 0 && "Enter your contact and administrator details."}
+              {step === 1 && "Enter your pharmacy name and location."}
+              {step === 2 && `Enter the 6-digit OTP sent to ${formData.email}`}
             </p>
           </div>
 
-          {/* Form Content Wrapper with Crisp Light Mode Borders */}
-          <div className="bg-card/90 md:bg-transparent border border-border/80 md:border-0 rounded-2xl p-6 sm:p-8 md:p-0 shadow-xl md:shadow-none space-y-6">
-            {/* Step 1: Personal Info */}
+          {/* Form Content */}
+          <div className="space-y-5">
+            {/* Step 0: Personal Info */}
             {step === 0 && (
-              <div className="space-y-5 animate-in fade-in duration-300">
-                <div className="space-y-2">
-                  <Label
-                    htmlFor="name"
-                    className="text-xs font-bold uppercase tracking-wider text-foreground/90"
-                  >
-                    Full Name *
-                  </Label>
-                  <div className="relative group">
-                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground group-focus-within:text-orange-500 transition-colors">
-                      <User className="w-4 h-4" />
-                    </span>
-                    <Input
-                      id="name"
-                      placeholder="John Doe"
-                      value={formData.name}
-                      onChange={(e) =>
-                        setFormData({ ...formData, name: e.target.value })
-                      }
-                      data-testid="register-name-input"
-                      className="pl-10 h-11 border-border/90 dark:border-border/80 focus-visible:ring-1 focus-visible:ring-orange-500 focus-visible:border-orange-500 transition-all bg-background dark:bg-card/25 text-foreground font-semibold rounded-xl shadow-xs"
-                    />
-                  </div>
-                </div>
+              <div className="space-y-4 animate-in fade-in duration-300">
+                <WaveInput
+                  id="name"
+                  type="text"
+                  label="Full Name"
+                  value={formData.name}
+                  onChange={(e) => {
+                    setFormData({ ...formData, name: e.target.value });
+                    if (errors.name) setErrors({ ...errors, name: "" });
+                  }}
+                  leftIcon={User}
+                  required
+                  maxLength={50}
+                  error={errors.name}
+                  data-testid="register-name-input"
+                  autoComplete="name"
+                />
 
-                <div className="space-y-2">
-                  <Label
-                    htmlFor="email"
-                    className="text-xs font-bold uppercase tracking-wider text-foreground/90"
-                  >
-                    Email Address *
-                  </Label>
-                  <div className="relative group">
-                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground group-focus-within:text-orange-500 transition-colors">
-                      <Mail className="w-4 h-4" />
-                    </span>
-                    <Input
-                      id="email"
-                      type="email"
-                      placeholder="name@pharmacy.com"
-                      value={formData.email}
-                      onChange={(e) =>
-                        setFormData({ ...formData, email: e.target.value })
-                      }
-                      data-testid="register-email-input"
-                      className="pl-10 h-11 border-border/90 dark:border-border/80 focus-visible:ring-1 focus-visible:ring-orange-500 focus-visible:border-orange-500 transition-all bg-background dark:bg-card/25 text-foreground font-semibold rounded-xl shadow-xs"
-                    />
-                  </div>
-                </div>
+                <WaveInput
+                  id="email"
+                  type="email"
+                  label="Email Address"
+                  value={formData.email}
+                  onChange={(e) => {
+                    setFormData({ ...formData, email: e.target.value });
+                    if (errors.email) setErrors({ ...errors, email: "" });
+                  }}
+                  leftIcon={Mail}
+                  required
+                  maxLength={80}
+                  error={errors.email}
+                  data-testid="register-email-input"
+                  autoComplete="email"
+                />
 
-                <div className="space-y-2">
-                  <Label
-                    htmlFor="mobile"
-                    className="text-xs font-bold uppercase tracking-wider text-foreground/90"
-                  >
-                    Mobile Number *
-                  </Label>
-                  <div className="relative group">
-                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground group-focus-within:text-orange-500 transition-colors">
-                      <Phone className="w-4 h-4" />
-                    </span>
-                    <Input
-                      id="mobile"
-                      type="tel"
-                      placeholder="+91 9876543210"
-                      value={formData.mobile}
-                      onChange={(e) =>
-                        setFormData({ ...formData, mobile: e.target.value })
-                      }
-                      data-testid="register-mobile-input"
-                      className="pl-10 h-11 border-border/90 dark:border-border/80 focus-visible:ring-1 focus-visible:ring-orange-500 focus-visible:border-orange-500 transition-all bg-background dark:bg-card/25 text-foreground font-semibold rounded-xl shadow-xs"
-                    />
-                  </div>
-                </div>
+                <WaveInput
+                  id="mobile"
+                  type="tel"
+                  label="Mobile Number (10 Digits)"
+                  value={formData.mobile}
+                  onChange={handleMobileChange}
+                  leftIcon={Phone}
+                  required
+                  maxLength={10}
+                  error={errors.mobile}
+                  helperText="Enter 10-digit Indian mobile number"
+                  data-testid="register-mobile-input"
+                  autoComplete="tel"
+                />
 
-                <div className="space-y-2">
-                  <Label
-                    htmlFor="password"
-                    className="text-xs font-bold uppercase tracking-wider text-foreground/90"
-                  >
-                    Password *
-                  </Label>
-                  <div className="relative group">
-                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground group-focus-within:text-orange-500 transition-colors">
-                      <Lock className="w-4 h-4" />
-                    </span>
-                    <Input
-                      id="password"
-                      type={showPassword ? "text" : "password"}
-                      placeholder="Min 6 characters"
-                      value={formData.password}
-                      onChange={(e) =>
-                        setFormData({ ...formData, password: e.target.value })
-                      }
-                      data-testid="register-password-input"
-                      className="pl-10 pr-10 h-11 border-border/90 dark:border-border/80 focus-visible:ring-1 focus-visible:ring-orange-500 focus-visible:border-orange-500 transition-all bg-background dark:bg-card/25 text-foreground font-semibold rounded-xl shadow-xs"
-                    />
-                    <Button
+                <WaveInput
+                  id="password"
+                  type={showPassword ? "text" : "password"}
+                  label="Password (Min 6 chars)"
+                  value={formData.password}
+                  onChange={(e) => {
+                    setFormData({ ...formData, password: e.target.value });
+                    if (errors.password) setErrors({ ...errors, password: "" });
+                  }}
+                  leftIcon={Lock}
+                  required
+                  maxLength={64}
+                  error={errors.password}
+                  data-testid="register-password-input"
+                  autoComplete="new-password"
+                  rightElement={
+                    <button
                       type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="absolute right-1 top-1/2 -translate-y-1/2 h-9 w-9 hover:bg-muted text-muted-foreground hover:text-foreground rounded-lg"
+                      tabIndex={-1}
+                      className="p-1 text-muted-foreground hover:text-foreground transition-colors rounded-lg focus:outline-none"
                       onClick={() => setShowPassword(!showPassword)}
+                      aria-label={showPassword ? "Hide password" : "Show password"}
                     >
                       {showPassword ? (
                         <EyeOff className="w-4 h-4" />
                       ) : (
                         <Eye className="w-4 h-4" />
                       )}
-                    </Button>
-                  </div>
-                </div>
+                    </button>
+                  }
+                />
               </div>
             )}
 
-            {/* Step 2: Pharmacy Details */}
+            {/* Step 1: Pharmacy Details */}
             {step === 1 && (
-              <div className="space-y-5 animate-in fade-in duration-300">
-                <div className="space-y-2">
-                  <Label
-                    htmlFor="pharmacyName"
-                    className="text-xs font-bold uppercase tracking-wider text-foreground/90"
-                  >
-                    Pharmacy Name *
-                  </Label>
-                  <div className="relative group">
-                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground group-focus-within:text-orange-500 transition-colors">
-                      <Building className="w-4 h-4" />
-                    </span>
-                    <Input
-                      id="pharmacyName"
-                      placeholder="City Pharmacy"
-                      value={formData.pharmacyName}
-                      onChange={(e) =>
-                        setFormData({
-                          ...formData,
-                          pharmacyName: e.target.value,
-                        })
-                      }
-                      data-testid="register-pharmacy-name-input"
-                      className="pl-10 h-11 border-border/90 dark:border-border/80 focus-visible:ring-1 focus-visible:ring-orange-500 focus-visible:border-orange-500 transition-all bg-background dark:bg-card/25 text-foreground font-semibold rounded-xl shadow-xs"
-                    />
-                  </div>
-                </div>
+              <div className="space-y-4 animate-in fade-in duration-300">
+                <WaveInput
+                  id="pharmacyName"
+                  type="text"
+                  label="Pharmacy Name"
+                  value={formData.pharmacyName}
+                  onChange={(e) => {
+                    setFormData({ ...formData, pharmacyName: e.target.value });
+                    if (errors.pharmacyName) setErrors({ ...errors, pharmacyName: "" });
+                  }}
+                  leftIcon={Building}
+                  required
+                  maxLength={60}
+                  error={errors.pharmacyName}
+                  data-testid="register-pharmacy-name-input"
+                  autoComplete="organization"
+                />
 
-                <div className="space-y-2">
-                  <Label
-                    htmlFor="location"
-                    className="text-xs font-bold uppercase tracking-wider text-foreground/90"
-                  >
-                    Location *
-                  </Label>
-                  <div className="relative group">
-                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground group-focus-within:text-orange-500 transition-colors">
-                      <MapPin className="w-4 h-4" />
-                    </span>
-                    <Input
-                      id="location"
-                      placeholder="123 Main Street, City"
-                      value={formData.location}
-                      onChange={(e) =>
-                        setFormData({ ...formData, location: e.target.value })
-                      }
-                      data-testid="register-location-input"
-                      className="pl-10 h-11 border-border/90 dark:border-border/80 focus-visible:ring-1 focus-visible:ring-orange-500 focus-visible:border-orange-500 transition-all bg-background dark:bg-card/25 text-foreground font-semibold rounded-xl shadow-xs"
-                    />
-                  </div>
-                </div>
+                <WaveInput
+                  id="location"
+                  type="text"
+                  label="Store Location / Address"
+                  value={formData.location}
+                  onChange={(e) => {
+                    setFormData({ ...formData, location: e.target.value });
+                    if (errors.location) setErrors({ ...errors, location: "" });
+                  }}
+                  leftIcon={MapPin}
+                  required
+                  maxLength={120}
+                  error={errors.location}
+                  data-testid="register-location-input"
+                  autoComplete="street-address"
+                />
 
-                <div className="space-y-2">
-                  <Label
-                    htmlFor="licenseNo"
-                    className="text-xs font-bold uppercase tracking-wider text-foreground/90"
-                  >
-                    License Number (Optional)
-                  </Label>
-                  <div className="relative group">
-                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground group-focus-within:text-orange-500 transition-colors">
-                      <FileText className="w-4 h-4" />
-                    </span>
-                    <Input
-                      id="licenseNo"
-                      placeholder="DL-12345"
-                      value={formData.licenseNo}
-                      onChange={(e) =>
-                        setFormData({ ...formData, licenseNo: e.target.value })
-                      }
-                      data-testid="register-license-input"
-                      className="pl-10 h-11 border-border/90 dark:border-border/80 focus-visible:ring-1 focus-visible:ring-orange-500 focus-visible:border-orange-500 transition-all bg-background dark:bg-card/25 text-foreground font-semibold rounded-xl shadow-xs"
-                    />
-                  </div>
-                </div>
+                <WaveInput
+                  id="licenseNo"
+                  type="text"
+                  label="Drug License Number (Optional)"
+                  value={formData.licenseNo}
+                  onChange={(e) => {
+                    setFormData({ ...formData, licenseNo: e.target.value });
+                    if (errors.licenseNo) setErrors({ ...errors, licenseNo: "" });
+                  }}
+                  leftIcon={FileText}
+                  maxLength={35}
+                  error={errors.licenseNo}
+                  helperText="e.g. DL-20B/21B-XXXX"
+                  data-testid="register-license-input"
+                />
 
-                <div className="space-y-2">
-                  <Label
-                    htmlFor="yearsOld"
-                    className="text-xs font-bold uppercase tracking-wider text-foreground/90"
-                  >
-                    Years in Business (Optional)
-                  </Label>
-                  <div className="relative group">
-                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground group-focus-within:text-orange-500 transition-colors">
-                      <Calendar className="w-4 h-4" />
-                    </span>
-                    <Input
-                      id="yearsOld"
-                      type="number"
-                      placeholder="e.g. 5"
-                      value={formData.yearsOld}
-                      onChange={(e) =>
-                        setFormData({ ...formData, yearsOld: e.target.value })
-                      }
-                      data-testid="register-years-input"
-                      className="pl-10 h-11 border-border/90 dark:border-border/80 focus-visible:ring-1 focus-visible:ring-orange-500 focus-visible:border-orange-500 transition-all bg-background dark:bg-card/25 text-foreground font-semibold rounded-xl shadow-xs"
-                    />
-                  </div>
-                </div>
+                <WaveInput
+                  id="yearsOld"
+                  type="number"
+                  label="Years in Business (Optional)"
+                  value={formData.yearsOld}
+                  onChange={(e) => {
+                    setFormData({ ...formData, yearsOld: e.target.value });
+                    if (errors.yearsOld) setErrors({ ...errors, yearsOld: "" });
+                  }}
+                  leftIcon={Calendar}
+                  min="0"
+                  max="150"
+                  error={errors.yearsOld}
+                  helperText="e.g. 5"
+                  data-testid="register-years-input"
+                />
               </div>
             )}
 
-            {/* Step 3: OTP Verification */}
+            {/* Step 2: OTP Verification */}
             {step === 2 && (
               <div className="space-y-6 animate-in fade-in duration-300">
                 <div className="text-center space-y-4">
@@ -572,7 +494,6 @@ export default function RegisterPage() {
                     </span>
                   </p>
 
-                  {/* Fallback OTP Display banner (email failures) */}
                   {fallbackOtp && (
                     <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/40 flex items-start gap-3 text-left animate-in fade-in duration-200">
                       <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
@@ -580,15 +501,8 @@ export default function RegisterPage() {
                         <p className="text-amber-500 font-bold text-xs uppercase tracking-wider">
                           OTP Delivery Fallback
                         </p>
-                        <p className="text-lg font-mono font-black text-amber-500 tracking-wider">
+                        <p className="text-xl font-mono font-black text-amber-500 tracking-wider">
                           {fallbackOtp}
-                        </p>
-                        <p className="text-[10px] text-muted-foreground leading-normal pt-1 font-semibold">
-                          Configure Brevo account whitelist for IP{" "}
-                          <code className="font-mono bg-muted px-1 py-0.5 rounded text-foreground font-bold">
-                            34.16.56.64
-                          </code>
-                          .
                         </p>
                       </div>
                     </div>
@@ -602,30 +516,13 @@ export default function RegisterPage() {
                       data-testid="otp-input"
                     >
                       <InputOTPGroup className="gap-2">
-                        <InputOTPSlot
-                          index={0}
-                          className="w-10 h-12 sm:w-12 sm:h-14 text-base border border-border/90 dark:border-border/80 rounded-xl bg-background dark:bg-card/25 font-bold text-foreground shadow-xs"
-                        />
-                        <InputOTPSlot
-                          index={1}
-                          className="w-10 h-12 sm:w-12 sm:h-14 text-base border border-border/90 dark:border-border/80 rounded-xl bg-background dark:bg-card/25 font-bold text-foreground shadow-xs"
-                        />
-                        <InputOTPSlot
-                          index={2}
-                          className="w-10 h-12 sm:w-12 sm:h-14 text-base border border-border/90 dark:border-border/80 rounded-xl bg-background dark:bg-card/25 font-bold text-foreground shadow-xs"
-                        />
-                        <InputOTPSlot
-                          index={3}
-                          className="w-10 h-12 sm:w-12 sm:h-14 text-base border border-border/90 dark:border-border/80 rounded-xl bg-background dark:bg-card/25 font-bold text-foreground shadow-xs"
-                        />
-                        <InputOTPSlot
-                          index={4}
-                          className="w-10 h-12 sm:w-12 sm:h-14 text-base border border-border/90 dark:border-border/80 rounded-xl bg-background dark:bg-card/25 font-bold text-foreground shadow-xs"
-                        />
-                        <InputOTPSlot
-                          index={5}
-                          className="w-10 h-12 sm:w-12 sm:h-14 text-base border border-border/90 dark:border-border/80 rounded-xl bg-background dark:bg-card/25 font-bold text-foreground shadow-xs"
-                        />
+                        {[0, 1, 2, 3, 4, 5].map((idx) => (
+                          <InputOTPSlot
+                            key={idx}
+                            index={idx}
+                            className="w-10 h-12 sm:w-12 sm:h-14 text-base border border-border/90 dark:border-border/80 rounded-xl bg-background dark:bg-card/25 font-bold text-foreground shadow-xs focus:ring-2 focus:ring-orange-500"
+                          />
+                        ))}
                       </InputOTPGroup>
                     </InputOTP>
                   </div>
@@ -642,7 +539,7 @@ export default function RegisterPage() {
                 </div>
 
                 <Button
-                  className="w-full h-11 font-bold text-sm bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white shadow-lg shadow-orange-500/25 transition-all duration-200 hover:-translate-y-0.5 active:translate-y-0 rounded-xl border-none mt-4"
+                  className="w-full h-12 font-bold text-sm bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white shadow-lg shadow-orange-500/25 transition-all duration-200 hover:-translate-y-0.5 active:translate-y-0 rounded-xl border-none mt-4"
                   onClick={handleVerifyOTP}
                   disabled={loading || otp.length !== 6}
                   data-testid="verify-otp-btn"
@@ -661,7 +558,7 @@ export default function RegisterPage() {
 
             {/* Navigation Buttons for step 0 and 1 */}
             {step < 2 && (
-              <div className="flex justify-between items-center gap-4 pt-4 border-t border-border/40 mt-6">
+              <div className="flex justify-between items-center gap-4 pt-4 border-t border-border/40 mt-5">
                 {step > 0 ? (
                   <Button
                     variant="outline"
@@ -673,13 +570,13 @@ export default function RegisterPage() {
                     Back
                   </Button>
                 ) : (
-                  <div></div>
+                  <div />
                 )}
 
                 <Button
                   onClick={handleNext}
                   disabled={loading}
-                  className="h-11 px-6 font-bold text-sm bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white shadow-lg shadow-orange-500/25 transition-all duration-200 hover:-translate-y-0.5 active:translate-y-0 rounded-xl border-none"
+                  className="h-11 px-6 font-bold text-sm bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white shadow-lg shadow-orange-500/25 transition-all duration-200 hover:-translate-y-0.5 active:translate-y-0 rounded-xl border-none ml-auto"
                   data-testid="next-btn"
                 >
                   {loading ? (
@@ -688,10 +585,13 @@ export default function RegisterPage() {
                       <span>Processing...</span>
                     </div>
                   ) : step === 1 ? (
-                    <span>Register</span>
+                    <span className="flex items-center gap-2">
+                      Complete Registration
+                      <ArrowRight className="w-4 h-4" />
+                    </span>
                   ) : (
                     <span className="flex items-center gap-2">
-                      Next
+                      Next Step
                       <ArrowRight className="w-4 h-4" />
                     </span>
                   )}
@@ -699,8 +599,8 @@ export default function RegisterPage() {
               </div>
             )}
 
-            {/* Sign in fallback link */}
-            <div className="text-center text-sm font-semibold text-muted-foreground pt-4 border-t border-border/40 mt-6">
+            {/* Sign in link */}
+            <div className="text-center text-sm font-semibold text-muted-foreground pt-3 border-t border-border/40">
               Already have an account?{" "}
               <Link
                 to="/login"

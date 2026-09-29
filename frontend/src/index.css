@@ -842,12 +842,175 @@ aside.fixed,
 }
 
 /* 4. Chrome/Safari Autofill Background & Color Overrides */
+/* Chrome/Safari Autofill Background & Color Overrides */
 input:-webkit-autofill,
 input:-webkit-autofill:hover,
 input:-webkit-autofill:focus,
 input:-webkit-autofill:active {
   -webkit-text-fill-color: hsl(var(--foreground)) !important;
-  -webkit-box-shadow: 0 0 0px 1000px hsl(var(--card) / 0.85) inset !important;
-  transition: background-color 5000s ease-in-out 0s;
-  border-color: hsl(var(--primary) / 0.5) !important;
+  -webkit-box-shadow: 0 0 0px 1000px hsl(var(--background)) inset !important;
+  box-shadow: 0 0 0px 1000px hsl(var(--background)) inset !important;
+  transition: background-color 9999999s ease-in-out 0s;
+  caret-color: hsl(var(--foreground)) !important;
+  background-color: transparent !important;
 }
+
+/* ==========================================================================
+   PURE BORDERLESS WAVE GROUP ANIMATED FLOATING INPUT
+   ========================================================================== */
+.wave-group {
+  position: relative;
+  width: 100%;
+  margin-top: 14px;
+  margin-bottom: 4px;
+}
+
+.wave-group .wave-input {
+  font-size: 15px;
+  padding: 8px 10px 8px 4px;
+  display: block;
+  width: 100%;
+  border: none !important;
+  border-bottom: 1.5px solid #515151 !important;
+  background: transparent !important;
+  color: hsl(var(--foreground)) !important;
+  font-weight: 500;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  transition: border-color 0.2s ease;
+}
+
+.light .wave-group .wave-input {
+  border-bottom-color: #cbd5e1 !important;
+}
+
+.wave-group.has-left-icon .wave-input {
+  padding-left: 32px;
+}
+
+.wave-group.has-right-icon .wave-input {
+  padding-right: 36px;
+}
+
+.wave-group .wave-input:focus {
+  outline: none !important;
+  border-bottom-color: #515151 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.light .wave-group .wave-input:focus {
+  border-bottom-color: #cbd5e1 !important;
+}
+
+.wave-group .wave-label {
+  color: #888888;
+  font-size: 14px;
+  font-weight: 400;
+  position: absolute;
+  pointer-events: none;
+  left: 4px;
+  top: 8px;
+  display: flex;
+  user-select: none;
+}
+
+.wave-group.has-left-icon .wave-label {
+  left: 32px;
+}
+
+.wave-group .wave-char {
+  display: inline-block;
+  transition: 0.22s cubic-bezier(0.4, 0, 0.2, 1) all;
+  transition-delay: calc(var(--index) * 0.03s);
+}
+
+.wave-group .wave-required-star {
+  color: #ff751f !important;
+  font-weight: 800;
+  display: inline-block;
+}
+
+/* Floating animation: raises label and required asterisk up smoothly above the underline */
+.wave-group .wave-input:focus ~ .wave-label .wave-char,
+.wave-group.has-value .wave-label .wave-char,
+.wave-group .wave-input:not(:placeholder-shown) ~ .wave-label .wave-char,
+.wave-group .wave-input:-webkit-autofill ~ .wave-label .wave-char {
+  transform: translateY(-22px);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: #ff751f;
+}
+
+.wave-group.has-value:not(.is-focused):not(:focus-within) .wave-label .wave-char {
+  color: #888888;
+}
+
+.wave-group.has-value:not(.is-focused):not(:focus-within) .wave-label .wave-required-star {
+  color: #ff751f !important;
+}
+
+.wave-group .wave-bar {
+  position: relative;
+  display: block;
+  width: 100%;
+}
+
+.wave-group .wave-bar:before,
+.wave-group .wave-bar:after {
+  content: '';
+  height: 2px;
+  width: 0;
+  bottom: 0px;
+  position: absolute;
+  background: #ff751f;
+  transition: 0.25s cubic-bezier(0.4, 0, 0.2, 1) all;
+  -webkit-transition: 0.25s cubic-bezier(0.4, 0, 0.2, 1) all;
+  box-shadow: 0 0 8px rgba(255, 117, 31, 0.6);
+}
+
+.wave-group .wave-bar:before {
+  left: 50%;
+}
+
+.wave-group .wave-bar:after {
+  right: 50%;
+}
+
+.wave-group .wave-input:focus ~ .wave-bar:before,
+.wave-group .wave-input:focus ~ .wave-bar:after,
+.wave-group.is-focused .wave-bar:before,
+.wave-group.is-focused .wave-bar:after {
+  width: 50%;
+}
+
+/* Error State */
+.wave-group.has-error .wave-input {
+  border-bottom-color: #ef4444 !important;
+}
+
+.wave-group.has-error .wave-bar:before,
+.wave-group.has-error .wave-bar:after {
+  background: #ef4444;
+  box-shadow: 0 0 8px rgba(239, 68, 68, 0.6);
+}
+
+.wave-group.has-error .wave-label .wave-char {
+  color: #ef4444 !important;
+}
+
+/* Chrome / Safari / Edge Autofill Override - Clean Transparent No Disturbance */
+.wave-group input:-webkit-autofill,
+.wave-group input:-webkit-autofill:hover,
+.wave-group input:-webkit-autofill:focus,
+.wave-group input:-webkit-autofill:active {
+  -webkit-text-fill-color: hsl(var(--foreground)) !important;
+  -webkit-box-shadow: 0 0 0px 1000px hsl(var(--background)) inset !important;
+  box-shadow: 0 0 0px 1000px hsl(var(--background)) inset !important;
+  transition: background-color 9999999s ease-in-out 0s;
+  caret-color: hsl(var(--foreground)) !important;
+  background-color: transparent !important;
+}
+
+

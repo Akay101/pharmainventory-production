@@ -236,13 +236,15 @@ export default function DashboardLayout() {
                           className="w-10 h-10 rounded-xl object-cover border border-border/50 shadow-sm"
                         />
                       ) : (
-                        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-orange-500 to-amber-500 flex items-center justify-center text-white font-black text-base shadow-md shadow-orange-500/20">
-                          {pharmacy?.name?.charAt(0) || "P"}
-                        </div>
+                        <img
+                          src="/assets/svgs/logoBrand/logoOnlyWithoutBackground.svg"
+                          alt="DavaDesk"
+                          className="w-10 h-10 object-contain"
+                        />
                       )}
                       <div>
                         <h2 className="font-black text-sm text-foreground leading-tight">
-                          {pharmacy?.name || "Pharmalogy"}
+                          {pharmacy?.name || "DavaDesk"}
                         </h2>
                         <span className="text-[10px] text-orange-600 dark:text-orange-400 font-extrabold flex items-center gap-1 mt-0.5">
                           <Sparkles className="w-2.5 h-2.5 text-orange-500" />
@@ -305,13 +307,15 @@ export default function DashboardLayout() {
                     className="w-9 h-9 rounded-xl object-cover border border-border/60 shadow-sm group-hover:scale-105 transition-transform"
                   />
                 ) : (
-                  <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-orange-500 to-amber-500 flex items-center justify-center text-white font-black text-sm shadow-md shadow-orange-500/20 group-hover:scale-105 transition-transform">
-                    {pharmacy?.name?.charAt(0) || "P"}
-                  </div>
+                  <img
+                    src="/assets/svgs/logoBrand/logoOnlyWithoutBackground.svg"
+                    alt="DavaDesk"
+                    className="w-9 h-9 object-contain group-hover:scale-105 transition-transform"
+                  />
                 )}
                 <div className="hidden sm:flex flex-col">
                   <span className="font-black text-sm tracking-tight text-foreground group-hover:text-orange-500 transition-colors leading-tight">
-                    {pharmacy?.name || "Pharmalogy"}
+                    {pharmacy?.name || "DavaDesk"}
                   </span>
                   <span className="text-[10px] text-orange-600 dark:text-orange-400 font-extrabold flex items-center gap-1">
                     <Sparkles className="w-2.5 h-2.5 text-orange-500" />

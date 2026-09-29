@@ -2,7 +2,7 @@
   "swagger": "2.0",
   "info": {
     "title": "Pharmalogy API",
-    "description": "Complete API documentation for the Pharmalogy Pharmacy Management System backend.",
+    "description": "Complete API documentation for the Davadesk Pharmacy Management System backend.",
     "version": "2.0.0"
   },
   "host": "localhost:8001",
@@ -57,10 +57,7 @@
       "description": "AI Assistant conversations"
     }
   ],
-  "schemes": [
-    "http",
-    "https"
-  ],
+  "schemes": ["http", "https"],
   "securityDefinitions": {
     "BearerAuth": {
       "type": "apiKey",

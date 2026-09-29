@@ -1,7 +1,7 @@
 {
   "name": "pharmalogy-api",
   "version": "1.0.0",
-  "description": "Pharmalogy Pharmacy Management System - Node.js Backend",
+  "description": "Davadesk Pharmacy Management System - Node.js Backend",
   "main": "server.js",
   "scripts": {
     "swagger": "node swagger.js",
@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.450.0",
+    "@aws-sdk/client-ses": "^3.1142.0",
     "@bull-board/api": "^7.0.0",
     "@bull-board/express": "^7.0.0",
     "@google/generative-ai": "^0.24.1",

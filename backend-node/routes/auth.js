@@ -82,7 +82,7 @@ router.post("/register", async (req, res, next) => {
     await db.collection("users").insertOne(userData);
 
     // Send OTP email
-    const emailSent = await sendOTPEmail(email, name, otp);
+    const emailSent = await sendOTPEmail(email, name, otp, "signup");
 
     res.status(201).json({
       message: "Registration successful. Please verify your email.",
@@ -185,7 +185,7 @@ router.post("/resend-otp", async (req, res, next) => {
       .collection("users")
       .updateOne({ id: user.id }, { $set: { otp, otp_expiry: otpExpiry } });
 
-    const emailSent = await sendOTPEmail(email, user.name, otp);
+    const emailSent = await sendOTPEmail(email, user.name, otp, "verification");
 
     res.json({
       message: "OTP resent",

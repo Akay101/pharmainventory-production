@@ -1310,7 +1310,8 @@ router.post(
         bill.customer_name,
         bill.bill_no,
         pdfUrl,
-        bill.total_amount
+        bill.total_amount,
+        { pharmacyName: pharmacyDoc?.name || "Pharmacy Store" }
       );
 
       if (!sent) {

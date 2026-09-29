@@ -116,7 +116,7 @@ router.post(
 
       await logActivity(db, req.user.pharmacy_id, req.user.id, req.user.name, "CREATE", "USERS", userId, `Added new staff member ${name}`, `/users`);
 
-      const emailSent = await sendOTPEmail(email, name, otp);
+      const emailSent = await sendOTPEmail(email, name, otp, "user_invite");
 
       res.status(201).json({
         message: "User created. They need to verify their email.",
@@ -271,7 +271,7 @@ router.post(
         }
       );
 
-      const emailSent = await sendOTPEmail(req.user.email, req.user.name, otp);
+      const emailSent = await sendOTPEmail(req.user.email, req.user.name, otp, "security");
 
       res.json({
         message: "OTP sent to your email",
