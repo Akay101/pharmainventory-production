@@ -273,7 +273,11 @@ const SupplierSelector = ({
       onKeyDown={handleKeyDown}
     >
       <div
-        className={`flex h-10 w-full items-center justify-between rounded-xl border bg-background/50 backdrop-blur-sm px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer hover:border-primary/50 transition-all ${isOpen ? "border-primary ring-2 ring-primary/10" : "border-border/70"}`}
+        className={`flex h-9 w-full items-center justify-between border-0 border-b border-[#515151] light:border-slate-300 rounded-none bg-transparent px-2 py-2 text-sm placeholder:text-muted-foreground/60 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer transition-all ${
+          isOpen
+            ? "border-b-orange-500 shadow-[0_1px_0_#ff751f,0_0_8px_rgba(255,117,31,0.4)]"
+            : "hover:border-b-orange-400"
+        }`}
         onClick={() => !disabled && setIsOpen(!isOpen)}
         tabIndex={0}
       >
@@ -285,7 +289,7 @@ const SupplierSelector = ({
             : selectedSupplier?.name || placeholder}
         </span>
         <ChevronDown
-          className={`h-4 w-4 text-muted-foreground transition-transform duration-200 ${isOpen ? "rotate-180" : ""}`}
+          className={`h-4 w-4 text-muted-foreground transition-transform duration-200 ${isOpen ? "rotate-180 text-orange-500" : ""}`}
         />
       </div>
 
@@ -1358,6 +1362,50 @@ export default function PurchasesPage() {
       setTimeout(() => productInputRef.current?.focus(), 150);
     }
   }, [showNewPurchase, purchaseItems.length]);
+
+  // Handle Restock Reminder items transferred from notification or reminder center
+  useEffect(() => {
+    if (location.state?.openNew || location.state?.restockItems) {
+      const restockItems = location.state.restockItems;
+      const mappedRows = Array.isArray(restockItems) && restockItems.length > 0
+        ? restockItems.map((item, idx) => ({
+            ...emptyItem,
+            id: `restock-${Date.now()}-${idx}`,
+            product_name: item.product_name || "",
+            quantity: String(item.quantity || "10"),
+            batch_no: item.batch_no || "",
+            mrp_per_unit: item.unit_price ? String(item.unit_price) : "",
+          }))
+        : [{ ...emptyItem, id: `temp-${Date.now()}` }];
+
+      setShowNewPurchase(true);
+      setPurchaseItems(mappedRows);
+
+      const newTabId = uuidv4();
+      const defaultMode = settings?.purchase_payment_mode_default || "";
+      const defaultStatus = settings?.purchase_payment_status || "Unpaid";
+      setTabs((prev) => [
+        ...prev,
+        {
+          id: newTabId,
+          data: {
+            selectedSupplier: "",
+            invoiceNo: "",
+            purchaseDate: new Date().toISOString().slice(0, 10),
+            purchaseItems: mappedRows,
+            paymentStatus: defaultStatus,
+            amountPaid: "",
+            paymentMode: defaultMode !== "none" ? defaultMode : "",
+          },
+        },
+      ]);
+      setActiveTabId(newTabId);
+
+      // Clean history state so refresh does not re-open
+      window.history.replaceState({}, document.title);
+      toast.info("Restock items prefilled in Purchase Order");
+    }
+  }, [location.state, settings]);
 
   const createNewTab = () => {
     if (tabs.length >= 10) {
@@ -2465,7 +2513,7 @@ export default function PurchasesPage() {
             };
           })
         );
-        toast.success("AI recovered global product attributes ✨");
+        toast.success("AI recovered global product attributes");
       } else {
         toast.info("AI couldn't confidently extract properties for this item.");
       }
@@ -2540,7 +2588,7 @@ export default function PurchasesPage() {
 
       if (filledCount > 0) {
         toast.success(
-          `AI Autofilled missing metadata for ${filledCount} item(s) ✨`
+          `AI Autofilled missing metadata for ${filledCount} item(s)`
         );
       } else {
         toast.info("AI couldn't extract properties for the missing items.");
@@ -6259,8 +6307,9 @@ export default function PurchasesPage() {
           )}
           {priceHistoryDialog?.data?.type === "cheapest" && (
             <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-4">
-              <p className="font-semibold text-green-600">
-                ✅ You are already at the best historical price!
+              <p className="font-semibold text-green-600 flex items-center gap-1.5">
+                <CheckCircle2 className="w-4 h-4 text-green-600 shrink-0" />
+                You are already at the best historical price!
               </p>
               <p className="text-sm text-muted-foreground mt-1">
                 Current Rate: ₹

@@ -578,6 +578,71 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
       }
     }
 
+    // Handle Optional Restock / Refill Reminder
+    const reminderConfig = req.body.refill_reminder || req.body.restock_reminder;
+    if (reminderConfig && (reminderConfig.enabled === true || reminderConfig.enabled === 'true')) {
+      try {
+        const todayStr = new Date().toISOString().slice(0, 10);
+        const bDate = billing_date || todayStr;
+        const daysSupply = parseInt(reminderConfig.days_supply) || 30;
+        const remindBeforeDays = parseInt(reminderConfig.remind_before_days) || 5;
+
+        let targetDate = reminderConfig.refill_target_date;
+        if (!targetDate) {
+          const d = new Date(bDate);
+          d.setDate(d.getDate() + daysSupply);
+          targetDate = d.toISOString().slice(0, 10);
+        }
+
+        let reminderDate = reminderConfig.reminder_date;
+        if (!reminderDate) {
+          const d = new Date(targetDate);
+          d.setDate(d.getDate() - remindBeforeDays);
+          reminderDate = d.toISOString().slice(0, 10);
+        }
+
+        const reminderItems = Array.isArray(reminderConfig.items) && reminderConfig.items.length > 0
+          ? reminderConfig.items
+          : processedItems.map(i => ({
+              product_name: i.product_name,
+              batch_no: i.batch_no || null,
+              quantity: i.quantity,
+              unit_price: i.unit_price,
+              days_supply: daysSupply,
+            }));
+
+        const reminderId = uuidv4();
+        await db.collection("reminders").insertOne({
+          id: reminderId,
+          pharmacy_id: req.user.pharmacy_id,
+          customer_id: finalCustomerId || null,
+          customer_name: customer_name || "Customer",
+          customer_mobile: customer_mobile || null,
+          bill_id: billId,
+          bill_no: billNo,
+          items: reminderItems,
+          billing_date: bDate,
+          refill_target_date: targetDate,
+          reminder_date: reminderDate,
+          notes: reminderConfig.notes || `Refill reminder for Bill #${billNo}`,
+          is_active: true,
+          status: "PENDING",
+          notified_at: null,
+          completed_at: null,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+
+        // If reminder date is already due today, process immediately
+        if (reminderDate <= todayStr) {
+          const { checkAndProcessDueReminders } = require("../services/notifications");
+          await checkAndProcessDueReminders(db, req.user.pharmacy_id);
+        }
+      } catch (remErr) {
+        console.error("Failed to create refill reminder from bill:", remErr);
+      }
+    }
+
     const { _id, ...bill } = billData;
     await logActivity(db, req.user.pharmacy_id, req.user.id, req.user.name, "CREATE", "BILLING", billId, `Created Bill ${billNo} for ₹${totalAmount}`, `/billing`);
 

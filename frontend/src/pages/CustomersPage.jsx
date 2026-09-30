@@ -43,10 +43,25 @@ import {
   CreditCard,
   ShieldCheck,
   Loader2,
-  ExternalLink
+  ExternalLink,
+  Bell,
+  RotateCcw,
+  Plus,
+  Trash2,
+  CheckCircle2,
+  MessageCircle,
+  Calendar,
+  Clock,
+  Check,
+  Send,
+  AlertTriangle,
+  Save,
+  Pill,
+  Package,
 } from "lucide-react";
 import { toast } from "sonner";
 import Loader from "../components/Loader";
+import { openWhatsApp } from "../utils/whatsapp";
 
 export default function CustomersPage() {
   const navigate = useNavigate();
@@ -58,6 +73,22 @@ export default function CustomersPage() {
   const [selectedCustomer, setSelectedCustomer] = useState(null);
   const [customerBills, setCustomerBills] = useState([]);
   const [detailsOpen, setDetailsOpen] = useState(false);
+
+  // Refill Reminders State
+  const [customerReminders, setCustomerReminders] = useState([]);
+  const [loadingReminders, setLoadingReminders] = useState(false);
+  const [activeDetailTab, setActiveDetailTab] = useState("reminders");
+  const [addReminderDialog, setAddReminderDialog] = useState({
+    open: false,
+    medicineName: "",
+    quantity: 1,
+    daysSupply: 30,
+    remindBefore: 5,
+    refillTargetDate: "",
+    reminderDate: "",
+    notes: "",
+  });
+  const [actionLoading, setActionLoading] = useState({});
 
   //debt states
   const [unpaidBills, setUnpaidBills] = useState([]);
@@ -84,21 +115,144 @@ export default function CustomersPage() {
   const [sortBy, setSortBy] = useState("created_at");
   const [sortOrder, setSortOrder] = useState("desc");
 
+  const computeReminderDates = (daysSupply = 30, remindBefore = 5, baseDate = new Date()) => {
+    try {
+      const base = new Date(baseDate);
+      const target = new Date(base);
+      target.setDate(target.getDate() + parseInt(daysSupply || 30));
+      const targetDate = target.toISOString().slice(0, 10);
+
+      const reminder = new Date(target);
+      reminder.setDate(reminder.getDate() - parseInt(remindBefore || 5));
+      const reminderDate = reminder.toISOString().slice(0, 10);
+
+      return { targetDate, reminderDate };
+    } catch (e) {
+      return { targetDate: "", reminderDate: "" };
+    }
+  };
+
   const handleViewCustomer = async (customer) => {
     setSelectedCustomer(customer);
     setDetailsOpen(true);
+    setActiveDetailTab("reminders");
+    setLoadingReminders(true);
 
     try {
-      const [billsRes, unpaidRes] = await Promise.all([
+      const [billsRes, unpaidRes, remindersRes] = await Promise.all([
         axios.get(`${API}/customers/${customer.id}`),
         axios.get(`${API}/customers/${customer.id}/unpaid-bills`),
+        axios.get(`${API}/reminders?customer_id=${customer.id}`).catch(() => ({ data: { reminders: [] } })),
       ]);
 
       setCustomerBills(billsRes.data.bills || []);
       setUnpaidBills(unpaidRes.data.unpaid_bills || []);
       setUnpaidTotal(unpaidRes.data.total_debt || 0);
+      setCustomerReminders(remindersRes.data.reminders || []);
     } catch (error) {
       toast.error("Failed to load customer details");
+    } finally {
+      setLoadingReminders(false);
+    }
+  };
+
+  const handleToggleReminder = async (reminderId) => {
+    try {
+      setActionLoading((prev) => ({ ...prev, [reminderId]: true }));
+      const res = await axios.put(`${API}/reminders/${reminderId}/toggle`);
+      setCustomerReminders((prev) =>
+        prev.map((r) => (r.id === reminderId ? { ...r, is_active: res.data.is_active } : r))
+      );
+      toast.success(res.data.message || "Reminder updated");
+    } catch (err) {
+      toast.error("Failed to toggle reminder status");
+    } finally {
+      setActionLoading((prev) => ({ ...prev, [reminderId]: false }));
+    }
+  };
+
+  const handleCompleteReminder = async (reminderId) => {
+    try {
+      setActionLoading((prev) => ({ ...prev, [reminderId]: true }));
+      await axios.post(`${API}/reminders/${reminderId}/complete`);
+      setCustomerReminders((prev) =>
+        prev.map((r) => (r.id === reminderId ? { ...r, status: "COMPLETED", is_active: false } : r))
+      );
+      toast.success("Reminder marked as completed");
+    } catch (err) {
+      toast.error("Failed to complete reminder");
+    } finally {
+      setActionLoading((prev) => ({ ...prev, [reminderId]: false }));
+    }
+  };
+
+  const handleDeleteReminder = async (reminderId) => {
+    try {
+      setActionLoading((prev) => ({ ...prev, [reminderId]: true }));
+      await axios.delete(`${API}/reminders/${reminderId}`);
+      setCustomerReminders((prev) => prev.filter((r) => r.id !== reminderId));
+      toast.success("Reminder deleted");
+    } catch (err) {
+      toast.error("Failed to delete reminder");
+    } finally {
+      setActionLoading((prev) => ({ ...prev, [reminderId]: false }));
+    }
+  };
+
+  const handleSendWhatsApp = (reminder) => {
+    if (!selectedCustomer?.mobile) {
+      toast.error("Customer mobile number not available");
+      return;
+    }
+    const medNames = (reminder.items || []).map((i) => `${i.product_name}${i.quantity ? ` (${i.quantity} units)` : ""}`).join(", ") || "medicines";
+    const msg = `Hello ${selectedCustomer.name},\n\nThis is a friendly restock reminder from our pharmacy regarding your medicines:\n*${medNames}*\n\nYour expected refill date is *${reminder.refill_target_date}*.\n\nPlease visit us or reply to have your prescription order packed and ready.\n\nThank you!`;
+    openWhatsApp({
+      phone: selectedCustomer.mobile,
+      message: msg,
+    });
+  };
+
+  const handleCreateCustomReminder = async () => {
+    if (!addReminderDialog.medicineName.trim()) {
+      toast.error("Please enter medicine name");
+      return;
+    }
+    try {
+      const dates = computeReminderDates(addReminderDialog.daysSupply, addReminderDialog.remindBefore);
+      const targetDate = addReminderDialog.refillTargetDate || dates.targetDate;
+      const reminderDate = addReminderDialog.reminderDate || dates.reminderDate;
+
+      const payload = {
+        customer_id: selectedCustomer.id,
+        customer_name: selectedCustomer.name,
+        customer_mobile: selectedCustomer.mobile,
+        items: [
+          {
+            product_name: addReminderDialog.medicineName.trim(),
+            quantity: parseInt(addReminderDialog.quantity) || 1,
+            days_supply: parseInt(addReminderDialog.daysSupply) || 30,
+          },
+        ],
+        refill_target_date: targetDate,
+        reminder_date: reminderDate,
+        notes: addReminderDialog.notes || `Refill reminder for ${selectedCustomer.name}`,
+      };
+
+      const res = await axios.post(`${API}/reminders`, payload);
+      setCustomerReminders((prev) => [res.data.reminder, ...prev]);
+      toast.success("Refill reminder created successfully");
+      setAddReminderDialog({
+        open: false,
+        medicineName: "",
+        quantity: 1,
+        daysSupply: 30,
+        remindBefore: 5,
+        refillTargetDate: "",
+        reminderDate: "",
+        notes: "",
+      });
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Failed to create reminder");
     }
   };
 
@@ -394,235 +548,687 @@ export default function CustomersPage() {
 
       {/* Customer Details Dialog */}
       <Dialog open={detailsOpen} onOpenChange={setDetailsOpen}>
-        <DialogContent className="max-w-2xl max-h-[85vh] overflow-hidden flex flex-col p-0 border border-border/70 bg-background/95 backdrop-blur-xl rounded-2xl shadow-2xl w-11/12">
-          <DialogHeader className="p-6 pb-4 border-b border-border/40 shrink-0">
-            <DialogTitle className="text-xl font-bold">Customer Details</DialogTitle>
+        <DialogContent className="max-w-3xl max-h-[88vh] overflow-hidden flex flex-col p-0 border border-border/70 bg-background/95 backdrop-blur-xl rounded-2xl shadow-2xl w-11/12">
+          <DialogHeader className="p-5 pb-3 border-b border-border/40 shrink-0 flex flex-row items-center justify-between">
+            <DialogTitle className="text-lg font-bold flex items-center gap-2">
+              <Users className="w-5 h-5 text-primary" /> Customer Profile & History
+            </DialogTitle>
+            {selectedCustomer && (
+              <Button
+                size="sm"
+                onClick={() => {
+                  const dates = computeReminderDates(30, 5);
+                  setAddReminderDialog({
+                    open: true,
+                    medicineName: "",
+                    quantity: 1,
+                    daysSupply: 30,
+                    remindBefore: 5,
+                    refillTargetDate: dates.targetDate,
+                    reminderDate: dates.reminderDate,
+                    notes: "",
+                  });
+                }}
+                className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold h-8 text-xs rounded-xl shadow-xs flex items-center gap-1.5"
+              >
+                <Plus className="w-3.5 h-3.5" /> New Refill Reminder
+              </Button>
+            )}
           </DialogHeader>
 
           {selectedCustomer && (
-            <div className="flex-1 overflow-y-auto p-6 space-y-6">
-              {/* Customer Info */}
-              <div className="flex items-start gap-4">
-                <div className="w-14 h-14 rounded-xl bg-gradient-to-br from-primary/10 to-accent/10 border border-primary/20 flex items-center justify-center shrink-0">
-                  <Users className="w-7 h-7 text-primary" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <h3 className="text-xl font-bold text-foreground truncate">
-                    {selectedCustomer.name}
-                  </h3>
-                  <div className="flex flex-wrap gap-x-4 gap-y-1.5 mt-2 text-xs font-semibold text-muted-foreground">
-                    <span className="flex items-center gap-1.5">
-                      <Phone className="w-3.5 h-3.5 text-primary/70 shrink-0" />
-                      {selectedCustomer.mobile}
-                    </span>
-                    {selectedCustomer.email && (
+            <div className="flex-1 overflow-y-auto p-5 space-y-5">
+              {/* Customer Info Card */}
+              <div className="flex items-start justify-between gap-4 p-4 rounded-2xl bg-muted/20 border border-border/50">
+                <div className="flex items-center gap-3.5 min-w-0">
+                  <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-primary/15 to-indigo-500/15 border border-primary/20 flex items-center justify-center shrink-0">
+                    <Users className="w-6 h-6 text-primary" />
+                  </div>
+                  <div className="min-w-0">
+                    <h3 className="text-lg font-bold text-foreground truncate">
+                      {selectedCustomer.name}
+                    </h3>
+                    <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1 text-xs font-semibold text-muted-foreground">
                       <span className="flex items-center gap-1.5">
-                        <Mail className="w-3.5 h-3.5 text-primary/70 shrink-0" />
-                        {selectedCustomer.email}
+                        <Phone className="w-3.5 h-3.5 text-primary/70 shrink-0" />
+                        {selectedCustomer.mobile}
                       </span>
-                    )}
+                      {selectedCustomer.email && (
+                        <span className="flex items-center gap-1.5">
+                          <Mail className="w-3.5 h-3.5 text-primary/70 shrink-0" />
+                          {selectedCustomer.email}
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </div>
+
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    openWhatsApp({
+                      phone: selectedCustomer.mobile,
+                      message: `Hello ${selectedCustomer.name}, this is from pharmacy.`,
+                    });
+                  }}
+                  className="shrink-0 h-8 border-emerald-500/30 text-emerald-600 hover:bg-emerald-500/10 font-bold text-xs rounded-xl"
+                >
+                  <MessageCircle className="w-3.5 h-3.5 mr-1 text-emerald-500" /> WhatsApp
+                </Button>
               </div>
 
               {/* Stats Overview */}
-              <div className="grid grid-cols-3 gap-4">
-                <div className="p-4 rounded-xl bg-primary/5 border border-primary/10">
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-1">
+              <div className="grid grid-cols-3 gap-3">
+                <div className="p-3.5 rounded-xl bg-primary/5 border border-primary/10">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-0.5">
                     Total Purchases
                   </p>
-                  <p className="text-2xl font-black font-mono tracking-tight text-primary">
-                    ₹
-                    {selectedCustomer.total_purchases?.toLocaleString(
-                      "en-IN"
-                    ) || 0}
+                  <p className="text-xl font-black font-mono tracking-tight text-primary">
+                    ₹{selectedCustomer.total_purchases?.toLocaleString("en-IN") || 0}
                   </p>
                 </div>
                 <div
-                  className={`p-4 rounded-xl relative overflow-hidden transition-all ${
+                  onClick={() => setActiveDetailTab("reminders")}
+                  className="p-3.5 rounded-xl bg-indigo-500/5 border border-indigo-500/20 cursor-pointer hover:bg-indigo-500/10 transition-colors"
+                >
+                  <div className="flex items-center justify-between mb-0.5">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-indigo-500">
+                      Refill Reminders
+                    </p>
+                    <Badge className="bg-indigo-500/20 text-indigo-500 border-0 text-[10px] font-extrabold h-4 px-1.5 rounded-full">
+                      {customerReminders.filter((r) => r.is_active).length} Active
+                    </Badge>
+                  </div>
+                  <p className="text-xl font-black font-mono tracking-tight text-indigo-600 dark:text-indigo-400">
+                    {customerReminders.length} Total
+                  </p>
+                </div>
+                <div
+                  className={`p-3.5 rounded-xl relative overflow-hidden transition-all ${
                     selectedCustomer.total_debt > 0
                       ? "bg-yellow-500/5 border border-yellow-500/20"
                       : "bg-muted/30 border border-border/40"
                   }`}
                 >
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-1">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-0.5">
                     Outstanding Debt
                   </p>
                   <p
-                    className={`text-2xl font-black font-mono tracking-tight ${
+                    className={`text-xl font-black font-mono tracking-tight ${
                       selectedCustomer.total_debt > 0 ? "text-yellow-500" : "text-muted-foreground/60"
                     }`}
                   >
                     ₹{selectedCustomer.total_debt?.toLocaleString("en-IN") || 0}
                   </p>
-                  {selectedCustomer.total_debt > 0 && (
-                    <Button
-                      size="sm"
-                      className="mt-3 w-full bg-yellow-500 hover:bg-yellow-600 text-black font-bold shadow-md h-8 text-xs flex items-center justify-center gap-1"
-                      onClick={() => handleClearDebt(selectedCustomer.id)}
-                      data-testid="clear-debt-btn"
-                    >
-                      <ShieldCheck className="w-3.5 h-3.5" /> Clear Full Debt
-                    </Button>
-                  )}
-                </div>
-                <div
-                  className={`p-4 rounded-xl relative overflow-hidden transition-all ${
-                    selectedCustomer.total_advance > 0
-                      ? "bg-emerald-500/5 border border-emerald-500/20"
-                      : "bg-muted/30 border border-border/40"
-                  }`}
-                >
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-1">
-                    Active Advance
-                  </p>
-                  <p
-                    className={`text-2xl font-black font-mono tracking-tight ${
-                      selectedCustomer.total_advance > 0 ? "text-emerald-500" : "text-muted-foreground/60"
-                    }`}
-                  >
-                    ₹{selectedCustomer.total_advance?.toLocaleString("en-IN") || 0}
-                  </p>
                 </div>
               </div>
 
-              {/* Unpaid Bills */}
-              {unpaidBills.length > 0 && (
-                <div className="space-y-3">
-                  <h4 className="text-xs font-bold uppercase tracking-wider text-yellow-500 flex items-center gap-1.5">
-                    <AlertCircle className="w-4 h-4" /> Outstanding Bills ({unpaidBills.length})
-                  </h4>
+              {/* Tabs Navigation */}
+              <div className="flex items-center gap-2 border-b border-border/60 pb-2">
+                <Button
+                  type="button"
+                  variant={activeDetailTab === "reminders" ? "default" : "ghost"}
+                  size="sm"
+                  onClick={() => setActiveDetailTab("reminders")}
+                  className={`h-8 px-3.5 font-bold text-xs rounded-xl transition-all ${
+                    activeDetailTab === "reminders"
+                      ? "bg-indigo-600 hover:bg-indigo-700 text-white shadow-xs"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <RotateCcw className="w-3.5 h-3.5 mr-1.5" />
+                  Refill Reminders ({customerReminders.length})
+                </Button>
+                <Button
+                  type="button"
+                  variant={activeDetailTab === "purchases" ? "default" : "ghost"}
+                  size="sm"
+                  onClick={() => setActiveDetailTab("purchases")}
+                  className={`h-8 px-3.5 font-bold text-xs rounded-xl transition-all ${
+                    activeDetailTab === "purchases"
+                      ? "bg-primary text-primary-foreground shadow-xs"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <Receipt className="w-3.5 h-3.5 mr-1.5" />
+                  Purchase Bills ({customerBills.length})
+                </Button>
+                {unpaidBills.length > 0 && (
+                  <Button
+                    type="button"
+                    variant={activeDetailTab === "unpaid" ? "default" : "ghost"}
+                    size="sm"
+                    onClick={() => setActiveDetailTab("unpaid")}
+                    className={`h-8 px-3.5 font-bold text-xs rounded-xl transition-all ${
+                      activeDetailTab === "unpaid"
+                        ? "bg-yellow-500 hover:bg-yellow-600 text-black shadow-xs"
+                        : "text-yellow-600 dark:text-yellow-400 hover:text-foreground"
+                    }`}
+                  >
+                    <AlertCircle className="w-3.5 h-3.5 mr-1.5" />
+                    Unpaid / Khata ({unpaidBills.length})
+                  </Button>
+                )}
+              </div>
 
-                  <div className="space-y-2">
-                    {unpaidBills.map((bill) => (
-                      <div
-                        key={bill.id}
-                        className="flex items-center justify-between p-3.5 rounded-xl bg-yellow-500/5 border border-yellow-500/10 hover:border-yellow-500/20 transition-all shadow-sm"
+              {/* TAB 1: REFILL REMINDERS */}
+              {activeDetailTab === "reminders" && (
+                <div className="space-y-3 animate-in fade-in duration-200">
+                  {loadingReminders ? (
+                    <div className="text-center py-10">
+                      <Loader2 className="w-6 h-6 animate-spin mx-auto text-indigo-500" />
+                      <p className="text-xs text-muted-foreground mt-2 font-medium">Loading reminders...</p>
+                    </div>
+                  ) : customerReminders.length === 0 ? (
+                    <div className="text-center py-10 rounded-2xl bg-indigo-500/5 border border-dashed border-indigo-500/20 space-y-3">
+                      <div className="w-12 h-12 rounded-2xl bg-indigo-500/10 text-indigo-500 flex items-center justify-center mx-auto">
+                        <RotateCcw className="w-6 h-6" />
+                      </div>
+                      <div className="max-w-xs mx-auto">
+                        <h4 className="text-sm font-bold text-foreground">No Refill Reminders Yet</h4>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Set automatic refill alerts to notify you when this customer's medicine is running low.
+                        </p>
+                      </div>
+                      <Button
+                        size="sm"
+                        onClick={() => {
+                          const dates = computeReminderDates(30, 5);
+                          setAddReminderDialog({
+                            open: true,
+                            medicineName: "",
+                            quantity: 1,
+                            daysSupply: 30,
+                            remindBefore: 5,
+                            refillTargetDate: dates.targetDate,
+                            reminderDate: dates.reminderDate,
+                            notes: "",
+                          });
+                        }}
+                        className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold h-8 text-xs rounded-xl shadow-xs"
                       >
-                        <div>
-                          <p className="font-mono text-sm font-bold text-foreground">{bill.bill_no}</p>
-                          <p className="text-xs text-muted-foreground font-semibold mt-0.5">
-                            {new Date(
-                              bill.billing_date || bill.created_at
-                            ).toLocaleDateString()}
-                          </p>
-                        </div>
+                        <Plus className="w-3.5 h-3.5 mr-1" /> Create First Refill Alert
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {customerReminders.map((rem) => {
+                        const todayStr = new Date().toISOString().slice(0, 10);
+                        const isDue = rem.is_active && rem.reminder_date <= todayStr;
+                        const isCompleted = rem.status === "COMPLETED";
 
-                        <div className="flex items-center gap-3 flex-wrap">
-                          {bill.is_advance_paid ? (() => {
-                            const currentPaid = bill.total_paid !== undefined ? bill.total_paid : (bill.is_paid ? (bill.grand_total || bill.total_amount || 0) : (bill.advance_amount || 0));
-                            const remainingUnpaid = Math.max(0, (bill.grand_total || bill.total_amount || 0) - currentPaid);
-                            return (
-                              <div className="flex items-center gap-2">
-                                <Badge className={`font-bold rounded-full py-0.5 px-2 text-[10px] uppercase ${
-                                  bill.delivery_status === "Delivered" 
-                                    ? "bg-emerald-500/10 text-emerald-500 border border-emerald-500/20" 
-                                    : (bill.delivery_status === "Partially Delivered" ? "bg-blue-500/10 text-blue-500 border border-blue-500/20" : "bg-yellow-500/10 text-yellow-600 border border-yellow-500/20 animate-pulse")
-                                }`}>
-                                  {bill.delivery_status}
-                                </Badge>
-                                {remainingUnpaid > 0 ? (
-                                  <div className="flex items-center gap-2">
-                                    <span className="font-mono text-red-500 font-bold text-xs">
-                                      Unpaid: ₹{remainingUnpaid.toFixed(2)}
-                                    </span>
-                                    <Button
-                                      size="sm"
-                                      variant="outline"
-                                      className="border-primary/50 text-primary hover:bg-primary/5 h-8 font-bold text-xs"
-                                      onClick={() => {
-                                        setDetailsOpen(false);
-                                        navigate(`/billing?highlightId=${bill.id}`);
-                                      }}
+                        return (
+                          <div
+                            key={rem.id}
+                            className={`p-4 rounded-2xl border transition-all duration-200 ${
+                              isCompleted
+                                ? "bg-muted/15 border-border/40 opacity-75"
+                                : isDue
+                                ? "bg-amber-500/10 border-amber-500/30 shadow-xs"
+                                : rem.is_active
+                                ? "bg-indigo-500/5 border-indigo-500/20 hover:border-indigo-500/30"
+                                : "bg-muted/10 border-border/40 opacity-60"
+                            }`}
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="space-y-1.5 flex-1 min-w-0">
+                                {/* Medicine Tags */}
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  {(rem.items && rem.items.length > 0 ? rem.items : [{ product_name: "Medicines", quantity: 1 }]).map((item, idx) => (
+                                    <span
+                                      key={idx}
+                                      className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg text-xs font-bold bg-background border border-border text-foreground shadow-2xs"
                                     >
-                                      Pay
-                                    </Button>
+                                      <Pill className="w-3 h-3 text-primary shrink-0" />
+                                      <span>{item.product_name}</span>
+                                      {item.quantity ? <span className="text-muted-foreground font-normal">(Qty: {item.quantity})</span> : null}
+                                    </span>
+                                  ))}
+                                  {rem.bill_no && (
+                                    <span className="text-[10px] font-mono text-muted-foreground font-semibold">
+                                      Bill #{rem.bill_no}
+                                    </span>
+                                  )}
+                                </div>
+
+                                {/* Dates info */}
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 pt-1 text-xs text-muted-foreground font-semibold">
+                                  <div className="flex items-center gap-1.5">
+                                    <Calendar className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+                                    <span>Expected Refill:</span>
+                                    <span className="font-bold text-foreground">
+                                      {new Date(rem.refill_target_date).toLocaleDateString("en-IN", {
+                                        day: "numeric",
+                                        month: "short",
+                                        year: "numeric",
+                                      })}
+                                    </span>
                                   </div>
-                                ) : (
-                                  <span className="font-mono text-emerald-500 font-bold text-xs">
-                                    Paid
-                                  </span>
+                                  <div className="flex items-center gap-1.5">
+                                    <Bell className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                                    <span>Alert Date:</span>
+                                    <span className={`font-bold ${isDue ? "text-amber-600 dark:text-amber-400" : "text-foreground"}`}>
+                                      {new Date(rem.reminder_date).toLocaleDateString("en-IN", {
+                                        day: "numeric",
+                                        month: "short",
+                                        year: "numeric",
+                                      })}
+                                    </span>
+                                    {isDue && (
+                                      <Badge className="bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/30 text-[9px] font-bold py-0 px-1.5 rounded-full animate-pulse">
+                                        Due Now
+                                      </Badge>
+                                    )}
+                                  </div>
+                                </div>
+
+                                {rem.notes && (
+                                  <p className="text-[11px] text-muted-foreground italic pt-0.5">
+                                    "{rem.notes}"
+                                  </p>
                                 )}
                               </div>
-                            );
-                          })() : (
-                            <>
-                              <span className="font-mono text-yellow-500 font-black text-sm">
-                                ₹
-                                {(
-                                  bill.grand_total ||
-                                  bill.total_amount ||
-                                  0
-                                ).toFixed(2)}
-                              </span>
+
+                              {/* Status & Active Toggle */}
+                              <div className="flex flex-col items-end gap-2 shrink-0">
+                                <div className="flex items-center gap-2">
+                                  <span className={`text-[10px] font-bold uppercase tracking-wider ${
+                                    rem.is_active ? "text-indigo-500" : "text-muted-foreground"
+                                  }`}>
+                                    {rem.is_active ? "Active" : "Paused"}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleToggleReminder(rem.id)}
+                                    disabled={actionLoading[rem.id]}
+                                    className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden ${
+                                      rem.is_active ? "bg-indigo-600" : "bg-muted-foreground/30"
+                                    }`}
+                                  >
+                                    <span
+                                      className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
+                                        rem.is_active ? "translate-x-4" : "translate-x-0"
+                                      }`}
+                                    />
+                                  </button>
+                                </div>
+
+                                <Badge
+                                  className={`text-[9px] font-bold uppercase rounded-full ${
+                                    isCompleted
+                                      ? "bg-emerald-500/10 text-emerald-600 border border-emerald-500/20"
+                                      : !rem.is_active
+                                      ? "bg-muted text-muted-foreground"
+                                      : isDue
+                                      ? "bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30"
+                                      : "bg-indigo-500/15 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20"
+                                  }`}
+                                >
+                                  {isCompleted
+                                    ? "Completed"
+                                    : !rem.is_active
+                                    ? "OFF"
+                                    : isDue
+                                    ? "Due Alert"
+                                    : "Scheduled"}
+                                </Badge>
+                              </div>
+                            </div>
+
+                            {/* Action Toolbar */}
+                            <div className="flex flex-wrap items-center justify-between gap-2 pt-3 mt-3 border-t border-border/40">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <Button
+                                  size="sm"
+                                  onClick={() => handleSendWhatsApp(rem)}
+                                  className="h-7 px-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-xs flex items-center gap-1"
+                                >
+                                  <MessageCircle className="w-3 h-3" /> WhatsApp Reminder
+                                </Button>
+
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => {
+                                    setDetailsOpen(false);
+                                    navigate("/purchases", {
+                                      state: {
+                                        openNew: true,
+                                        restockItems: rem.items || [],
+                                      },
+                                    });
+                                  }}
+                                  className="h-7 px-2.5 border-orange-500/30 text-orange-600 dark:text-orange-400 hover:bg-orange-500/10 font-bold text-xs rounded-xl flex items-center gap-1"
+                                >
+                                  <Package className="w-3 h-3" /> Purchase Now
+                                </Button>
+
+                                {!isCompleted && (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => handleCompleteReminder(rem.id)}
+                                    disabled={actionLoading[rem.id]}
+                                    className="h-7 px-2.5 border-emerald-500/30 text-emerald-600 hover:bg-emerald-500/10 font-bold text-xs rounded-xl"
+                                  >
+                                    <CheckCircle2 className="w-3 h-3 mr-1" /> Mark Done
+                                  </Button>
+                                )}
+                              </div>
 
                               <Button
                                 size="sm"
-                                className="btn-primary h-8 font-bold text-xs"
-                                onClick={() => handlePayBill(bill)}
+                                variant="ghost"
+                                onClick={() => handleDeleteReminder(rem.id)}
+                                disabled={actionLoading[rem.id]}
+                                className="h-7 w-7 p-0 text-destructive/70 hover:text-destructive hover:bg-destructive/10 rounded-lg"
+                                title="Delete reminder"
                               >
-                                Mark Paid
+                                <Trash2 className="w-3.5 h-3.5" />
                               </Button>
-                            </>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               )}
 
-              {/* Purchase History */}
-              <div className="space-y-3">
-                <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                  <Receipt className="w-4 h-4" /> Purchase History
-                </h4>
-                {customerBills.length === 0 ? (
-                  <div className="text-center py-8 rounded-xl bg-muted/10 border border-dashed border-border/60">
-                    <Receipt className="w-8 h-8 mx-auto mb-2 opacity-30 text-muted-foreground" />
-                    <p className="text-xs font-semibold text-muted-foreground">No purchase history found</p>
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    {customerBills.map((bill) => (
-                      <div
-                        key={bill.id}
-                        className="flex items-center justify-between p-3 rounded-xl bg-muted/20 border border-border/40 hover:border-primary/20 transition-all"
-                      >
-                        <div>
-                          <p className="font-mono text-xs font-bold text-foreground">{bill.bill_no}</p>
-                          <p className="text-[10px] text-muted-foreground font-semibold">
-                            {new Date(bill.created_at).toLocaleDateString()}
-                          </p>
-                        </div>
-                        <div className="text-right">
-                          <p className="font-mono font-bold text-primary text-sm">
-                            ₹{bill.grand_total?.toFixed(2)}
-                          </p>
-                           <div className="flex items-center gap-1 mt-0.5 justify-end">
-                            {bill.is_paid ? (
-                              <Badge className="bg-primary/10 text-primary border border-primary/20 text-[9px] font-bold uppercase tracking-wider rounded-full">
-                                Paid
-                              </Badge>
-                            ) : (
-                              <Badge className="bg-yellow-500/10 text-yellow-500 border border-yellow-500/20 text-[9px] font-bold uppercase tracking-wider rounded-full">
-                                Unpaid
-                              </Badge>
-                            )}
-                            {bill.is_advance_paid && (
-                              <Badge className="bg-blue-500/10 text-blue-500 border border-blue-500/20 text-[9px] font-bold uppercase tracking-wider rounded-full">
-                                Advance
-                              </Badge>
-                            )}
+              {/* TAB 2: PURCHASE HISTORY */}
+              {activeDetailTab === "purchases" && (
+                <div className="space-y-3 animate-in fade-in duration-200">
+                  {customerBills.length === 0 ? (
+                    <div className="text-center py-8 rounded-xl bg-muted/10 border border-dashed border-border/60">
+                      <Receipt className="w-8 h-8 mx-auto mb-2 opacity-30 text-muted-foreground" />
+                      <p className="text-xs font-semibold text-muted-foreground">No purchase history found</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {customerBills.map((bill) => (
+                        <div
+                          key={bill.id}
+                          className="flex items-center justify-between p-3 rounded-xl bg-muted/20 border border-border/40 hover:border-primary/20 transition-all"
+                        >
+                          <div>
+                            <p className="font-mono text-xs font-bold text-foreground">{bill.bill_no}</p>
+                            <p className="text-[10px] text-muted-foreground font-semibold">
+                              {new Date(bill.created_at).toLocaleDateString()}
+                            </p>
+                          </div>
+                          <div className="text-right">
+                            <p className="font-mono font-bold text-primary text-sm">
+                              ₹{bill.grand_total?.toFixed(2)}
+                            </p>
+                            <div className="flex items-center gap-1 mt-0.5 justify-end">
+                              {bill.is_paid ? (
+                                <Badge className="bg-primary/10 text-primary border border-primary/20 text-[9px] font-bold uppercase tracking-wider rounded-full">
+                                  Paid
+                                </Badge>
+                              ) : (
+                                <Badge className="bg-yellow-500/10 text-yellow-500 border border-yellow-500/20 text-[9px] font-bold uppercase tracking-wider rounded-full">
+                                  Unpaid
+                                </Badge>
+                              )}
+                              {bill.is_advance_paid && (
+                                <Badge className="bg-blue-500/10 text-blue-500 border border-blue-500/20 text-[9px] font-bold uppercase tracking-wider rounded-full">
+                                  Advance
+                                </Badge>
+                              )}
+                            </div>
                           </div>
                         </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* TAB 3: UNPAID BILLS */}
+              {activeDetailTab === "unpaid" && unpaidBills.length > 0 && (
+                <div className="space-y-2 animate-in fade-in duration-200">
+                  {unpaidBills.map((bill) => (
+                    <div
+                      key={bill.id}
+                      className="flex items-center justify-between p-3.5 rounded-xl bg-yellow-500/5 border border-yellow-500/10 hover:border-yellow-500/20 transition-all shadow-xs"
+                    >
+                      <div>
+                        <p className="font-mono text-sm font-bold text-foreground">{bill.bill_no}</p>
+                        <p className="text-xs text-muted-foreground font-semibold mt-0.5">
+                          {new Date(bill.billing_date || bill.created_at).toLocaleDateString()}
+                        </p>
                       </div>
-                    ))}
-                  </div>
-                )}
-              </div>
+
+                      <div className="flex items-center gap-3 flex-wrap">
+                        {bill.is_advance_paid ? (() => {
+                          const currentPaid = bill.total_paid !== undefined ? bill.total_paid : (bill.is_paid ? (bill.grand_total || bill.total_amount || 0) : (bill.advance_amount || 0));
+                          const remainingUnpaid = Math.max(0, (bill.grand_total || bill.total_amount || 0) - currentPaid);
+                          return (
+                            <div className="flex items-center gap-2">
+                              <Badge className={`font-bold rounded-full py-0.5 px-2 text-[10px] uppercase ${
+                                bill.delivery_status === "Delivered" 
+                                  ? "bg-emerald-500/10 text-emerald-500 border border-emerald-500/20" 
+                                  : (bill.delivery_status === "Partially Delivered" ? "bg-blue-500/10 text-blue-500 border border-blue-500/20" : "bg-yellow-500/10 text-yellow-600 border border-yellow-500/20 animate-pulse")
+                              }`}>
+                                {bill.delivery_status}
+                              </Badge>
+                              {remainingUnpaid > 0 ? (
+                                <div className="flex items-center gap-2">
+                                  <span className="font-mono text-red-500 font-bold text-xs">
+                                    Unpaid: ₹{remainingUnpaid.toFixed(2)}
+                                  </span>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="border-primary/50 text-primary hover:bg-primary/5 h-8 font-bold text-xs"
+                                    onClick={() => {
+                                      setDetailsOpen(false);
+                                      navigate(`/billing?highlightId=${bill.id}`);
+                                    }}
+                                  >
+                                    Pay
+                                  </Button>
+                                </div>
+                              ) : (
+                                <span className="font-mono text-emerald-500 font-bold text-xs">
+                                  Paid
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })() : (
+                          <>
+                            <span className="font-mono text-yellow-500 font-black text-sm">
+                              ₹{(bill.grand_total || bill.total_amount || 0).toFixed(2)}
+                            </span>
+                            <Button
+                              size="sm"
+                              className="btn-primary h-8 font-bold text-xs"
+                              onClick={() => handlePayBill(bill)}
+                            >
+                              Mark Paid
+                            </Button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Add Custom Refill Reminder Modal */}
+      <Dialog
+        open={addReminderDialog.open}
+        onOpenChange={(open) => setAddReminderDialog((prev) => ({ ...prev, open }))}
+      >
+        <DialogContent className="max-w-md p-6 border border-border/70 bg-background/95 backdrop-blur-xl rounded-2xl shadow-2xl">
+          <DialogHeader className="pb-3 border-b border-border/40">
+            <DialogTitle className="text-base font-bold flex items-center gap-2">
+              <RotateCcw className="w-4 h-4 text-indigo-500" /> Add Refill Reminder
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4 pt-2">
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-foreground">Medicine Name *</label>
+              <Input
+                placeholder="e.g., Telmisartan 40mg"
+                value={addReminderDialog.medicineName}
+                onChange={(e) =>
+                  setAddReminderDialog((prev) => ({ ...prev, medicineName: e.target.value }))
+                }
+                className="h-9 text-xs font-semibold rounded-xl"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-foreground">Quantity / Packs</label>
+                <Input
+                  type="number"
+                  min="1"
+                  value={addReminderDialog.quantity}
+                  onChange={(e) =>
+                    setAddReminderDialog((prev) => ({ ...prev, quantity: e.target.value }))
+                  }
+                  className="h-9 text-xs font-semibold rounded-xl"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-foreground">Days Supply</label>
+                <Input
+                  type="number"
+                  min="1"
+                  value={addReminderDialog.daysSupply}
+                  onChange={(e) => {
+                    const days = parseInt(e.target.value) || 30;
+                    const dates = computeReminderDates(days, addReminderDialog.remindBefore);
+                    setAddReminderDialog((prev) => ({
+                      ...prev,
+                      daysSupply: days,
+                      refillTargetDate: dates.targetDate,
+                      reminderDate: dates.reminderDate,
+                    }));
+                  }}
+                  className="h-9 text-xs font-semibold rounded-xl"
+                />
+              </div>
+            </div>
+
+            {/* Quick Presets */}
+            <div className="space-y-1.5">
+              <label className="text-[11px] font-bold text-muted-foreground flex items-center gap-1">
+                <Clock className="w-3 h-3 text-indigo-500" /> Quick Duration Presets:
+              </label>
+              <div className="flex flex-wrap gap-1.5">
+                {[
+                  { days: 15, remindBefore: 3, label: "15 Days" },
+                  { days: 30, remindBefore: 5, label: "30 Days (1 Mo)" },
+                  { days: 45, remindBefore: 5, label: "45 Days" },
+                  { days: 60, remindBefore: 7, label: "60 Days (2 Mo)" },
+                  { days: 90, remindBefore: 10, label: "90 Days (3 Mo)" },
+                ].map((preset) => {
+                  const isSelected =
+                    addReminderDialog.daysSupply === preset.days &&
+                    addReminderDialog.remindBefore === preset.remindBefore;
+                  return (
+                    <Button
+                      key={preset.days}
+                      type="button"
+                      size="sm"
+                      variant={isSelected ? "default" : "outline"}
+                      onClick={() => {
+                        const dates = computeReminderDates(preset.days, preset.remindBefore);
+                        setAddReminderDialog((prev) => ({
+                          ...prev,
+                          daysSupply: preset.days,
+                          remindBefore: preset.remindBefore,
+                          refillTargetDate: dates.targetDate,
+                          reminderDate: dates.reminderDate,
+                        }));
+                      }}
+                      className={`h-6 px-2 text-[10px] font-bold rounded-lg transition-all ${
+                        isSelected
+                          ? "bg-indigo-600 hover:bg-indigo-700 text-white shadow-xs"
+                          : "border-border/70 hover:bg-indigo-500/10 hover:text-indigo-600"
+                      }`}
+                    >
+                      {preset.label}
+                    </Button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-foreground">Expected Refill Date</label>
+                <Input
+                  type="date"
+                  value={addReminderDialog.refillTargetDate}
+                  onChange={(e) => {
+                    const target = e.target.value;
+                    const d = new Date(target);
+                    d.setDate(d.getDate() - (parseInt(addReminderDialog.remindBefore) || 5));
+                    setAddReminderDialog((prev) => ({
+                      ...prev,
+                      refillTargetDate: target,
+                      reminderDate: !isNaN(d.getTime()) ? d.toISOString().slice(0, 10) : prev.reminderDate,
+                    }));
+                  }}
+                  className="h-9 text-xs font-semibold rounded-xl"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-indigo-600 dark:text-indigo-400">Alert Reminder Date *</label>
+                <Input
+                  type="date"
+                  value={addReminderDialog.reminderDate}
+                  onChange={(e) =>
+                    setAddReminderDialog((prev) => ({ ...prev, reminderDate: e.target.value }))
+                  }
+                  className="h-9 text-xs font-semibold rounded-xl border-indigo-500/40"
+                />
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-foreground">Notes / Dosage</label>
+              <Input
+                placeholder="e.g. 1 tablet daily after breakfast"
+                value={addReminderDialog.notes}
+                onChange={(e) =>
+                  setAddReminderDialog((prev) => ({ ...prev, notes: e.target.value }))
+                }
+                className="h-9 text-xs font-semibold rounded-xl"
+              />
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-border/40">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setAddReminderDialog((prev) => ({ ...prev, open: false }))}
+                className="text-xs font-bold"
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                onClick={handleCreateCustomReminder}
+                className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-xs"
+              >
+                <Save className="w-3.5 h-3.5 mr-1" /> Save Reminder
+              </Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
 

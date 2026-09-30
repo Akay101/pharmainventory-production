@@ -159,7 +159,9 @@ export default function ProductSearchDropdown({
           }
         }}
         onKeyDown={handleKeyDown}
-        className="w-full h-10 px-3 flex items-center justify-between gap-2 bg-background border border-border/80 hover:border-border rounded-xl text-xs text-foreground font-semibold shadow-xs transition-colors cursor-pointer"
+        className={`w-full h-9 px-2 flex items-center justify-between gap-2 bg-transparent border-0 border-b border-[#515151] light:border-slate-300 rounded-none text-xs text-foreground font-semibold shadow-none transition-colors cursor-pointer focus:outline-none focus:border-b-orange-500 ${
+          open ? "border-b-orange-500 shadow-[0_1px_0_#ff751f]" : ""
+        }`}
       >
         <span className="truncate text-left flex-1">
           {selectedProduct ? (
@@ -172,7 +174,7 @@ export default function ProductSearchDropdown({
         </span>
         <ChevronDown
           className={`w-4 h-4 text-muted-foreground transition-transform duration-200 ${
-            open ? "rotate-180" : ""
+            open ? "rotate-180 text-orange-500" : ""
           }`}
         />
       </button>

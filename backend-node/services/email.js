@@ -1,7 +1,17 @@
 const fs = require("fs");
 const path = require("path");
 const SibApiV3Sdk = require("sib-api-v3-sdk");
-const { SESClient, SendEmailCommand } = require("@aws-sdk/client-ses");
+const {
+  SESClient,
+  SendEmailCommand,
+} = require("@aws-sdk/client-ses");
+const {
+  S3Client,
+  GetObjectCommand,
+  PutObjectCommand,
+  HeadObjectCommand,
+} = require("@aws-sdk/client-s3");
+const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
 
 // Initialize Brevo SDK
 const defaultClient = SibApiV3Sdk.ApiClient.instance;
@@ -21,48 +31,107 @@ if (process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
   });
 }
 
+// Initialize Amazon S3 SDK for Email Media Assets
+let s3Client = null;
+if (process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
+  s3Client = new S3Client({
+    region: process.env.AWS_REGION || "ap-south-1",
+    credentials: {
+      accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+      secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+    },
+  });
+}
+
+const S3_BUCKET = process.env.AWS_S3_BUCKET || "pharmalogy-media-bucket";
+const S3_REGION = process.env.AWS_REGION || "ap-south-1";
+
 const SENDER_EMAIL = process.env.MAIL_USER || "team@davadesk.in";
 const SENDER_NAME = "DavaDesk";
 
-// Load DavaDesk Brand Logo as Base64 Data URI
-let BRAND_LOGO_URI = "";
-try {
-  const possiblePaths = [
-    path.join(__dirname, "../assets/logoBrand/logoOnly.png"),
-    path.join(
-      __dirname,
-      "../../frontend/public/assets/svgs/logoBrand/logoOnly.png"
-    ),
-  ];
-  for (const p of possiblePaths) {
-    if (fs.existsSync(p)) {
-      const b64 = fs.readFileSync(p).toString("base64");
-      BRAND_LOGO_URI = `data:image/png;base64,${b64}`;
-      break;
-    }
+// In-Memory Cache for Presigned Image URLs (Valid for 6 days before auto-refresh)
+let presignedCache = {
+  logo: `https://${S3_BUCKET}.s3.${S3_REGION}.amazonaws.com/email-assets/logoOnly.png`,
+  youtube: `https://${S3_BUCKET}.s3.${S3_REGION}.amazonaws.com/email-assets/youtube.png`,
+  linkedin: `https://${S3_BUCKET}.s3.${S3_REGION}.amazonaws.com/email-assets/linkedin.png`,
+  website: `https://${S3_BUCKET}.s3.${S3_REGION}.amazonaws.com/email-assets/website.png`,
+  expiresAt: 0,
+};
+
+/**
+ * Fetch or generate fresh 7-day presigned URLs for email images
+ */
+async function getAssetUrls() {
+  const now = Date.now();
+  // Return cached if still valid for > 1 day
+  if (
+    presignedCache.expiresAt &&
+    presignedCache.expiresAt - now > 86400000 &&
+    presignedCache.logo.includes("X-Amz-Signature")
+  ) {
+    return presignedCache;
   }
-} catch (e) {
-  console.error("Failed to load local brand logo:", e);
+
+  if (!s3Client) {
+    return presignedCache;
+  }
+
+  try {
+    const expiresIn = 604800; // 7 days in seconds (AWS SigV4 maximum)
+    const [logoUrl, youtubeUrl, linkedinUrl, websiteUrl] = await Promise.all([
+      getSignedUrl(
+        s3Client,
+        new GetObjectCommand({
+          Bucket: S3_BUCKET,
+          Key: "email-assets/logoOnly.png",
+        }),
+        { expiresIn }
+      ),
+      getSignedUrl(
+        s3Client,
+        new GetObjectCommand({
+          Bucket: S3_BUCKET,
+          Key: "email-assets/youtube.png",
+        }),
+        { expiresIn }
+      ),
+      getSignedUrl(
+        s3Client,
+        new GetObjectCommand({
+          Bucket: S3_BUCKET,
+          Key: "email-assets/linkedin.png",
+        }),
+        { expiresIn }
+      ),
+      getSignedUrl(
+        s3Client,
+        new GetObjectCommand({
+          Bucket: S3_BUCKET,
+          Key: "email-assets/website.png",
+        }),
+        { expiresIn }
+      ),
+    ]);
+
+    presignedCache = {
+      logo: logoUrl,
+      youtube: youtubeUrl,
+      linkedin: linkedinUrl,
+      website: websiteUrl,
+      expiresAt: now + expiresIn * 1000,
+    };
+  } catch (err) {
+    console.error(
+      "[DavaDesk Email] Warning: Could not generate presigned asset URLs:",
+      err.message
+    );
+  }
+
+  return presignedCache;
 }
 
-// Social Media Icons (Vector SVG Data URIs for universal, razor-sharp rendering)
-const SOCIAL_ICONS = {
-  youtube:
-    "data:image/svg+xml;base64," +
-    Buffer.from(
-      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="16" height="16"><path fill="#FF0000" d="M23.5 6.2a3 3 0 0 0-2.1-2.1C19.5 3.5 12 3.5 12 3.5s-7.5 0-9.4.6A3 3 0 0 0 .5 6.2 31.8 31.8 0 0 0 0 12a31.8 31.8 0 0 0 .5 5.8 3 3 0 0 0 2.1 2.1c1.9.6 9.4.6 9.4.6s7.5 0 9.4-.6a3 3 0 0 0 2.1-2.1 31.8 31.8 0 0 0 .5-5.8 31.8 31.8 0 0 0-.5-5.8z"/><polygon fill="#FFFFFF" points="9.6,15.6 15.8,12 9.6,8.4"/></svg>`
-    ).toString("base64"),
-  linkedin:
-    "data:image/svg+xml;base64," +
-    Buffer.from(
-      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="16" height="16"><rect width="24" height="24" rx="4" fill="#0A66C2"/><path fill="#FFFFFF" d="M19 19h-3v-4.7c0-1.1-.4-1.9-1.4-1.9-.8 0-1.2.5-1.4 1-.1.2-.1.5-.1.8V19h-3s.04-8.3 0-9.1h3v1.3c.4-.6 1.1-1.5 2.7-1.5 2 0 3.5 1.3 3.5 4.1V19zM6.9 8.7C5.9 8.7 5 7.9 5 6.9s.9-1.9 1.9-1.9 1.9.9 1.9 1.9-.9 1.8-1.9 1.8zM5.4 19h3V9.9h-3V19z"/></svg>`
-    ).toString("base64"),
-  website:
-    "data:image/svg+xml;base64," +
-    Buffer.from(
-      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="16" height="16"><circle cx="12" cy="12" r="11" fill="#FF751F"/><circle cx="12" cy="12" r="9" fill="none" stroke="#FFFFFF" stroke-width="1.5"/><path d="M3 12h18M12 3a13 13 0 0 1 3.5 9 13 13 0 0 1-3.5 9 13 13 0 0 1-3.5-9 13 13 0 0 1 3.5-9z" fill="none" stroke="#FFFFFF" stroke-width="1.5"/></svg>`
-    ).toString("base64"),
-};
+// Immediately trigger pre-warming of presigned URLs on server startup
+getAssetUrls().catch(() => {});
 
 // Brand Configuration
 const BRAND_CONFIG = {
@@ -82,31 +151,11 @@ const BRAND_CONFIG = {
     bgOuter: "#f8fafc",
     bgCard: "#ffffff",
   },
-  socials: [
-    {
-      name: "YouTube",
-      url: "https://youtube.com/@davadesk",
-      iconUri: SOCIAL_ICONS.youtube,
-      textColor: "#0f172a",
-    },
-    {
-      name: "Website",
-      url: "https://davadesk.com",
-      iconUri: SOCIAL_ICONS.website,
-      textColor: "#0f172a",
-    },
-    {
-      name: "LinkedIn",
-      url: "https://linkedin.com/company/davadesk",
-      iconUri: SOCIAL_ICONS.linkedin,
-      textColor: "#0f172a",
-    },
-  ],
 };
 
 /**
  * Centralized Base Email Layout Generator
- * Wraps content with fixed brand header, real logo, theme colors, and interactive footer with social icons.
+ * Wraps content with fixed brand header, S3 presigned brand logo, theme colors, and interactive footer with social icons.
  */
 const renderBaseLayout = ({
   previewText = "",
@@ -117,9 +166,33 @@ const renderBaseLayout = ({
   contentHtml = "",
   footerNote = "",
   showSocials = true,
+  assetUrls = null,
 }) => {
-  const { colors, socials, name, tagline, copyrightYear, supportEmail } =
+  const { colors, name, tagline, copyrightYear, supportEmail, websiteUrl } =
     BRAND_CONFIG;
+
+  const currentAssets = assetUrls || presignedCache;
+
+  const socials = [
+    {
+      name: "YouTube",
+      url: "https://youtube.com/@davadesk",
+      iconUri: currentAssets.youtube,
+      textColor: "#0f172a",
+    },
+    {
+      name: "Website",
+      url: "https://davadesk.in",
+      iconUri: currentAssets.website,
+      textColor: "#0f172a",
+    },
+    {
+      name: "LinkedIn",
+      url: "https://linkedin.com/company/davadesk",
+      iconUri: currentAssets.linkedin,
+      textColor: "#0f172a",
+    },
+  ];
 
   const socialLinksHtml = showSocials
     ? `
@@ -137,7 +210,7 @@ const renderBaseLayout = ({
                   <table border="0" cellpadding="0" cellspacing="0">
                     <tr>
                       <td valign="middle" style="padding-right: 6px;">
-                        <img src="${s.iconUri}" width="16" height="16" alt="${s.name}" style="display: block; width: 16px; height: 16px; border: 0;" />
+                        <img src="${s.iconUri}" width="18" height="18" alt="${s.name}" style="display: block; width: 18px; height: 18px; border: 0;" />
                       </td>
                       <td valign="middle" style="font-size: 12px; font-weight: 700; color: ${s.textColor}; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
                         ${s.name}
@@ -155,8 +228,8 @@ const renderBaseLayout = ({
     `
     : "";
 
-  const logoImgTag = BRAND_LOGO_URI
-    ? `<img src="${BRAND_LOGO_URI}" width="42" height="42" alt="${name}" style="display: block; width: 42px; height: 42px; object-fit: contain; border: 0;" />`
+  const logoImgTag = currentAssets.logo
+    ? `<img src="${currentAssets.logo}" width="42" height="42" alt="${name}" style="display: block; width: 42px; height: 42px; object-fit: contain; border: 0;" />`
     : `<div style="width: 42px; height: 42px; border-radius: 10px; background: linear-gradient(135deg, #ff751f 0%, #ea580c 100%); text-align: center; line-height: 42px; color: #ffffff; font-weight: 900; font-size: 22px;">✛</div>`;
 
   return `
@@ -228,7 +301,7 @@ const renderBaseLayout = ({
             <td style="height: 5px; background: linear-gradient(90deg, #ff751f 0%, #ea580c 50%, #f59e0b 100%); font-size: 0; line-height: 0;">&nbsp;</td>
           </tr>
 
-          <!-- Header Section with Real Brand Logo -->
+          <!-- Header Section with S3 Presigned Brand Logo -->
           <tr>
             <td class="header-padding" style="padding: 26px 36px 20px 36px; border-bottom: 1px solid #f1f5f9;">
               <table border="0" cellpadding="0" cellspacing="0" width="100%">
@@ -296,7 +369,7 @@ const renderBaseLayout = ({
           <tr>
             <td style="background-color: #f8fafc; padding: 24px 36px; border-top: 1px solid #f1f5f9;">
               
-              <!-- Social Media Links -->
+              <!-- Social Media Links with S3 Presigned Icons -->
               ${socialLinksHtml}
 
               <!-- Help & Support Line -->
@@ -427,10 +500,14 @@ const EmailComponents = {
  */
 const sendViaSES = async ({ toEmail, toName, subject, htmlContent }) => {
   if (!sesClient) {
-    throw new Error("AWS SES client is not configured (missing credentials/region)");
+    throw new Error(
+      "AWS SES client is not configured (missing credentials/region)"
+    );
   }
 
-  const formattedFrom = SENDER_NAME ? `${SENDER_NAME} <${SENDER_EMAIL}>` : SENDER_EMAIL;
+  const formattedFrom = SENDER_NAME
+    ? `${SENDER_NAME} <${SENDER_EMAIL}>`
+    : SENDER_EMAIL;
   const formattedTo = toName ? `${toName} <${toEmail}>` : toEmail;
 
   const params = {
@@ -478,7 +555,9 @@ const sendEmail = async ({ toEmail, toName, subject, htmlContent }) => {
   // 1. Primary Attempt: Amazon SES
   try {
     await sendViaSES({ toEmail, toName, subject, htmlContent });
-    console.log(`[DavaDesk Email] Sent "${subject}" to ${toEmail} via Amazon SES ✅`);
+    console.log(
+      `[DavaDesk Email] Sent "${subject}" to ${toEmail} via Amazon SES ✅`
+    );
     return true;
   } catch (sesError) {
     console.warn(
@@ -489,7 +568,9 @@ const sendEmail = async ({ toEmail, toName, subject, htmlContent }) => {
   // 2. Fallback Attempt: Brevo
   try {
     await sendViaBrevo({ toEmail, toName, subject, htmlContent });
-    console.log(`[DavaDesk Email] Sent "${subject}" to ${toEmail} via Brevo Fallback ✅`);
+    console.log(
+      `[DavaDesk Email] Sent "${subject}" to ${toEmail} via Brevo Fallback ✅`
+    );
     return true;
   } catch (brevoError) {
     console.error(
@@ -502,9 +583,10 @@ const sendEmail = async ({ toEmail, toName, subject, htmlContent }) => {
 
 /**
  * SCENARIO 1: Centralized OTP Verification Email
- * Supports: 'signup', 'forgot_password', 'settings', 'user_invite', 'general'
  */
 const sendOTPEmail = async (toEmail, toName, otp, scenario = "general") => {
+  const assetUrls = await getAssetUrls();
+
   let subject = "DavaDesk - Your Verification Code";
   let badge = "Security Verification";
   let title = "Verify Your Account";
@@ -540,7 +622,10 @@ const sendOTPEmail = async (toEmail, toName, otp, scenario = "general") => {
   const contentHtml = `
     <p style="margin: 0 0 16px 0; color: #334155;">${description}</p>
     ${EmailComponents.otpBox(otp, 10)}
-    ${EmailComponents.alertBox("⚠️ <strong>Security Notice:</strong> DavaDesk will never ask for your OTP over phone or email. If you did not initiate this request, please ignore this email or contact support immediately.", "warning")}
+    ${EmailComponents.alertBox(
+      "⚠️ <strong>Security Notice:</strong> DavaDesk will never ask for your OTP over phone or email. If you did not initiate this request, please ignore this email or contact support immediately.",
+      "warning"
+    )}
   `;
 
   const htmlContent = renderBaseLayout({
@@ -550,6 +635,7 @@ const sendOTPEmail = async (toEmail, toName, otp, scenario = "general") => {
     greeting: `Hello ${toName || "there"},`,
     contentHtml,
     footerNote: "This code expires in 10 minutes for your account security.",
+    assetUrls,
   });
 
   return sendEmail({ toEmail, toName, subject, htmlContent });
@@ -566,6 +652,7 @@ const sendBillEmail = async (
   amount,
   options = {}
 ) => {
+  const assetUrls = await getAssetUrls();
   const pharmacyName = options.pharmacyName || "Pharmacy Store";
   const formattedAmount = Number(amount || 0).toLocaleString("en-IN", {
     minimumFractionDigits: 2,
@@ -607,10 +694,17 @@ const sendBillEmail = async (
     </p>
 
     <div style="text-align: center;">
-      ${EmailComponents.button("Download Tax Invoice (PDF)", pdfUrl, "#ff751f")}
+      ${EmailComponents.button(
+        "Download Tax Invoice (PDF)",
+        pdfUrl,
+        "#ff751f"
+      )}
     </div>
 
-    ${EmailComponents.alertBox("💡 <strong>Tip:</strong> Keep this digital invoice for your medical records and prescription warranty claims.", "info")}
+    ${EmailComponents.alertBox(
+      "💡 <strong>Tip:</strong> Keep this digital invoice for your medical records and prescription warranty claims.",
+      "info"
+    )}
   `;
 
   const htmlContent = renderBaseLayout({
@@ -620,6 +714,7 @@ const sendBillEmail = async (
     greeting: `Hello ${toName || "Valued Customer"},`,
     contentHtml,
     footerNote: `Invoice generated powered by DavaDesk Pharmacy Intelligence.`,
+    assetUrls,
   });
 
   return sendEmail({ toEmail, toName, subject, htmlContent });
@@ -644,6 +739,7 @@ const sendCustomEmail = async ({
   footerNote,
   showSocials = true,
 }) => {
+  const assetUrls = await getAssetUrls();
   let combinedContent = bodyHtml || "";
 
   if (infoCard) {
@@ -669,6 +765,7 @@ const sendCustomEmail = async ({
     contentHtml: combinedContent,
     footerNote,
     showSocials,
+    assetUrls,
   });
 
   return sendEmail({ toEmail, toName, subject, htmlContent });
@@ -678,13 +775,16 @@ const sendCustomEmail = async ({
  * SCENARIO 4: Welcome Email on Account Creation
  */
 const sendWelcomeEmail = async (toEmail, toName, pharmacyName) => {
+  const assetUrls = await getAssetUrls();
   const subject = `Welcome to DavaDesk, ${toName}! 🚀`;
   const badge = "Welcome Onboard";
   const title = "Welcome to DavaDesk Pharmacy OS";
 
   const contentHtml = `
     <p style="margin: 0 0 16px 0; color: #334155;">
-      Congratulations on setting up <strong>${pharmacyName || "your pharmacy"}</strong> on DavaDesk! You now have access to next-gen AI OCR bill extraction, smart batch expiry tracking, and real-time ledger accounting.
+      Congratulations on setting up <strong>${
+        pharmacyName || "your pharmacy"
+      }</strong> on DavaDesk! You now have access to next-gen AI OCR bill extraction, smart batch expiry tracking, and real-time ledger accounting.
     </p>
 
     ${EmailComponents.infoCard("Your Workspace Details", [
@@ -698,7 +798,11 @@ const sendWelcomeEmail = async (toEmail, toName, pharmacyName) => {
     ])}
 
     <div style="text-align: center;">
-      ${EmailComponents.button("Go to DavaDesk Dashboard", BRAND_CONFIG.websiteUrl, "#ff751f")}
+      ${EmailComponents.button(
+        "Go to DavaDesk Dashboard",
+        BRAND_CONFIG.websiteUrl,
+        "#ff751f"
+      )}
     </div>
   `;
 
@@ -708,6 +812,7 @@ const sendWelcomeEmail = async (toEmail, toName, pharmacyName) => {
     title,
     greeting: `Hello ${toName},`,
     contentHtml,
+    assetUrls,
   });
 
   return sendEmail({ toEmail, toName, subject, htmlContent });
@@ -719,6 +824,7 @@ module.exports = {
   sendCustomEmail,
   sendWelcomeEmail,
   renderBaseLayout,
+  getAssetUrls,
   EmailComponents,
   BRAND_CONFIG,
 };

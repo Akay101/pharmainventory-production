@@ -43,6 +43,7 @@ import RecentActivitySidebar from "./RecentActivitySidebar";
 import { useKeyboardShortcut, formatShortcut } from "../hooks/useKeyboard";
 import AgentWidget from "./Agent/AgentWidget";
 import PlanBadge from "./PlanBadge";
+import NotificationCenter from "./NotificationCenter";
 
 const navItems = [
   { path: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -378,16 +379,8 @@ export default function DashboardLayout() {
                 )}
               </Button>
 
-              {/* Notification Button */}
-              <Button
-                variant="ghost"
-                size="icon"
-                className="relative hover:bg-muted/80 rounded-xl border border-border/60 dark:border-border/40 h-9 w-9"
-                data-testid="notifications-btn"
-              >
-                <Bell className="w-4.5 h-4.5 text-foreground" />
-                <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-destructive rounded-full shadow shadow-destructive/50 animate-pulse"></span>
-              </Button>
+              {/* Notification Center */}
+              <NotificationCenter />
 
               {/* Recent Activity Panel Toggle */}
               <Button

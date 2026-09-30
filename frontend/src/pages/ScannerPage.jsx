@@ -1290,11 +1290,11 @@ export default function ScannerPage() {
                       Select Supplier *
                     </Label>
                     <div
-                      className={`w-full h-10 rounded-xl border ${
+                      className={`w-full h-9 border-0 border-b border-[#515151] light:border-slate-300 rounded-none bg-transparent px-2 flex items-center justify-between cursor-pointer transition-all ${
                         isSupplierDropdownOpen
-                          ? "border-orange-500 ring-2 ring-orange-500/20"
-                          : "border-border"
-                      } bg-background px-3 flex items-center justify-between cursor-pointer transition-all`}
+                          ? "border-b-orange-500 shadow-[0_1px_0_#ff751f,0_0_8px_rgba(255,117,31,0.4)]"
+                          : "hover:border-b-orange-400"
+                      }`}
                       onClick={() => {
                         setIsSupplierDropdownOpen(!isSupplierDropdownOpen);
                         if (!isSupplierDropdownOpen && suppliers.length === 0) {
@@ -1326,7 +1326,7 @@ export default function ScannerPage() {
                       </span>
                       <ChevronDown
                         className={`w-4 h-4 text-muted-foreground transition-transform duration-200 ${
-                          isSupplierDropdownOpen ? "rotate-180" : ""
+                          isSupplierDropdownOpen ? "rotate-180 text-orange-500" : ""
                         }`}
                       />
                     </div>

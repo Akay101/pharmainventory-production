@@ -84,6 +84,9 @@ import {
   SlidersHorizontal,
   Filter,
   Calendar,
+  Bell,
+  AlertTriangle,
+  Sparkles,
 } from "lucide-react";
 import { toast } from "sonner";
 import PlanBadge from "../components/PlanBadge";
@@ -187,6 +190,36 @@ export default function BillingPage() {
     paymentMode: "Cash"
   });
   const [activeCustomerSuggestionIndex, setActiveCustomerSuggestionIndex] = useState(-1);
+
+  // Patient Restock / Refill Reminder State
+  const [refillReminder, setRefillReminder] = useState({
+    enabled: false,
+    days_supply: 30,
+    remind_before_days: 5,
+    refill_target_date: "",
+    reminder_date: "",
+    notes: "",
+    selected_items: [],
+  });
+
+  const calculateReminderDates = useCallback((bDate, daysSupply = 30, remindBefore = 5) => {
+    try {
+      const base = bDate ? new Date(bDate) : new Date();
+      if (isNaN(base.getTime())) return { targetDate: "", reminderDate: "" };
+
+      const target = new Date(base);
+      target.setDate(target.getDate() + parseInt(daysSupply || 30));
+      const targetDate = target.toISOString().slice(0, 10);
+
+      const reminder = new Date(target);
+      reminder.setDate(reminder.getDate() - parseInt(remindBefore || 5));
+      const reminderDate = reminder.toISOString().slice(0, 10);
+
+      return { targetDate, reminderDate };
+    } catch (e) {
+      return { targetDate: "", reminderDate: "" };
+    }
+  }, []);
   
   // Customer Profile Modal state
   const [showCustomerProfileModal, setShowCustomerProfileModal] = useState(false);
@@ -1862,6 +1895,29 @@ export default function BillingPage() {
         is_advance_paid: isAdvancePaid,
         advance_amount: isAdvancePaid ? (parseFloat(advanceAmount) || 0) : 0,
         draft_id: pendingDraftId || null,
+        refill_reminder: refillReminder.enabled ? {
+          enabled: true,
+          days_supply: refillReminder.days_supply,
+          remind_before_days: refillReminder.remind_before_days,
+          refill_target_date: refillReminder.refill_target_date || calculateReminderDates(billingDate, refillReminder.days_supply, refillReminder.remind_before_days).targetDate,
+          reminder_date: refillReminder.reminder_date || calculateReminderDates(billingDate, refillReminder.days_supply, refillReminder.remind_before_days).reminderDate,
+          notes: refillReminder.notes || `Refill reminder for ${customerInfo.customer_name}`,
+          items: refillReminder.selected_items && refillReminder.selected_items.length > 0
+            ? refillReminder.selected_items.map(i => ({
+                product_name: i.product_name,
+                batch_no: i.batch_no || null,
+                quantity: i.quantity,
+                unit_price: i.unit_price,
+                days_supply: refillReminder.days_supply
+              }))
+            : validItems.map(i => ({
+                product_name: i.product_name,
+                batch_no: i.batch_no || null,
+                quantity: i.quantity,
+                unit_price: i.unit_price,
+                days_supply: refillReminder.days_supply
+              }))
+        } : null,
       });
 
       toast.success(`Bill ${response.data.bill?.bill_no || response.data.bill_no} created successfully`);
@@ -3831,8 +3887,9 @@ export default function BillingPage() {
             </div>
 
             {/* Tip */}
-            <p className="text-xs text-muted-foreground bg-muted/45 p-3 rounded-xl border border-border/50 backdrop-blur-sm">
-              💡 <strong>Tip:</strong> Search by product name or salt composition. All fields are editable. Use Alt+A to quickly add a new row.
+            <p className="text-xs text-muted-foreground bg-muted/45 p-3 rounded-xl border border-border/50 backdrop-blur-sm flex items-center gap-1.5">
+              <Sparkles className="w-4 h-4 text-primary shrink-0" />
+              <span><strong>Tip:</strong> Search by product name or salt composition. All fields are editable. Use Alt+A to quickly add a new row.</span>
             </p>
 
             {/* Totals & Actions */}
@@ -3954,13 +4011,213 @@ export default function BillingPage() {
                 {negativeBilledQty > 0 && (
                   <div className="p-3.5 bg-amber-500/10 border border-amber-500/25 rounded-xl text-sm animate-in fade-in duration-200">
                     <p className="text-amber-700 font-bold flex items-center gap-1.5">
-                      ⚠️ Negative Billing Alert:
+                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                      Negative Billing Alert:
                     </p>
                     <p className="text-amber-600/90 mt-1 font-medium text-xs leading-relaxed">
                       {inventoryBilledQty} units from inventory, {negativeBilledQty} units negatively billed.
                     </p>
                   </div>
                 )}
+
+                {/* Patient Restock / Refill Reminder Card */}
+                <div className={`p-3.5 rounded-2xl border transition-all duration-200 ${
+                  refillReminder.enabled 
+                    ? "bg-gradient-to-br from-indigo-500/10 via-purple-500/5 to-primary/5 border-indigo-500/30 shadow-sm" 
+                    : "bg-muted/15 border-border/60 hover:border-border"
+                }`}>
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <div className={`w-8 h-8 rounded-xl flex items-center justify-center transition-colors ${
+                        refillReminder.enabled ? "bg-indigo-500 text-white shadow-xs" : "bg-muted text-muted-foreground"
+                      }`}>
+                        <RotateCcw className={`w-4 h-4 ${refillReminder.enabled ? "text-white" : ""}`} />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <Label htmlFor="enable-refill-reminder" className="text-xs font-bold text-foreground cursor-pointer select-none">
+                            Patient Refill / Restock Reminder
+                          </Label>
+                          <Badge className={refillReminder.enabled ? "bg-indigo-500/15 text-indigo-500 border border-indigo-500/30 text-[9px] font-bold" : "bg-muted text-muted-foreground text-[9px]"}>
+                            {refillReminder.enabled ? "Active" : "Optional"}
+                          </Badge>
+                        </div>
+                        <p className="text-[11px] text-muted-foreground font-medium">
+                          Alert pharmacy when customer's medicine supply runs low
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <Checkbox
+                        id="enable-refill-reminder"
+                        checked={refillReminder.enabled}
+                        onCheckedChange={(val) => {
+                          const isEnabled = !!val;
+                          const { targetDate, reminderDate } = calculateReminderDates(billingDate, refillReminder.days_supply, refillReminder.remind_before_days);
+                          setRefillReminder((prev) => ({
+                            ...prev,
+                            enabled: isEnabled,
+                            refill_target_date: targetDate,
+                            reminder_date: reminderDate,
+                            selected_items: isEnabled && prev.selected_items.length === 0 ? validItems : prev.selected_items,
+                          }));
+                        }}
+                        className="data-[state=checked]:bg-indigo-600 data-[state=checked]:border-indigo-600"
+                      />
+                      <Label htmlFor="enable-refill-reminder" className="text-xs font-semibold text-foreground/80 cursor-pointer select-none">
+                        {refillReminder.enabled ? "Enabled" : "Enable Reminder"}
+                      </Label>
+                    </div>
+                  </div>
+
+                  {refillReminder.enabled && (
+                    <div className="mt-3 pt-3 border-t border-indigo-500/20 space-y-3 animate-in fade-in slide-in-from-top-2 duration-200">
+                      {/* Quick Presets */}
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="text-[11px] font-bold text-muted-foreground mr-1 flex items-center gap-1">
+                          <Clock className="w-3 h-3 text-indigo-500" /> Presets:
+                        </span>
+                        {[
+                          { days: 15, remindBefore: 3, label: "15 Days" },
+                          { days: 30, remindBefore: 5, label: "30 Days (Standard)" },
+                          { days: 45, remindBefore: 5, label: "45 Days" },
+                          { days: 60, remindBefore: 7, label: "60 Days" },
+                          { days: 90, remindBefore: 10, label: "90 Days" },
+                        ].map((preset) => {
+                          const isSelected = refillReminder.days_supply === preset.days && refillReminder.remind_before_days === preset.remindBefore;
+                          return (
+                            <Button
+                              key={preset.days}
+                              type="button"
+                              size="sm"
+                              variant={isSelected ? "default" : "outline"}
+                              onClick={() => {
+                                const { targetDate, reminderDate } = calculateReminderDates(billingDate, preset.days, preset.remindBefore);
+                                setRefillReminder((prev) => ({
+                                  ...prev,
+                                  days_supply: preset.days,
+                                  remind_before_days: preset.remindBefore,
+                                  refill_target_date: targetDate,
+                                  reminder_date: reminderDate,
+                                }));
+                              }}
+                              className={`h-6 px-2 text-[10px] font-bold rounded-lg transition-all ${
+                                isSelected 
+                                  ? "bg-indigo-600 hover:bg-indigo-700 text-white shadow-xs" 
+                                  : "border-border/70 hover:bg-indigo-500/10 hover:text-indigo-600"
+                              }`}
+                            >
+                              {preset.label}
+                            </Button>
+                          );
+                        })}
+                      </div>
+
+                      {/* Date Pickers */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5">
+                        <div className="space-y-1">
+                          <Label className="text-[10px] font-bold text-foreground/80 flex items-center gap-1">
+                            <Calendar className="w-3 h-3 text-indigo-500" /> Expected Refill Date
+                          </Label>
+                          <Input
+                            type="date"
+                            value={refillReminder.refill_target_date}
+                            onChange={(e) => {
+                              const newTarget = e.target.value;
+                              const d = new Date(newTarget);
+                              d.setDate(d.getDate() - parseInt(refillReminder.remind_before_days || 5));
+                              setRefillReminder((prev) => ({
+                                ...prev,
+                                refill_target_date: newTarget,
+                                reminder_date: !isNaN(d.getTime()) ? d.toISOString().slice(0, 10) : prev.reminder_date,
+                              }));
+                            }}
+                            className="h-8 text-xs font-semibold rounded-xl border-border bg-background/80"
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <Label className="text-[10px] font-bold text-foreground/80 flex items-center gap-1 text-indigo-600 dark:text-indigo-400">
+                            <Bell className="w-3 h-3 text-indigo-500" /> Reminder Alert Date *
+                          </Label>
+                          <Input
+                            type="date"
+                            value={refillReminder.reminder_date}
+                            onChange={(e) =>
+                              setRefillReminder((prev) => ({
+                                ...prev,
+                                reminder_date: e.target.value,
+                              }))
+                            }
+                            className="h-8 text-xs font-semibold rounded-xl border-indigo-500/40 bg-background/80 focus-visible:ring-indigo-500"
+                          />
+                        </div>
+
+                        <div className="space-y-1 sm:col-span-2 md:col-span-1">
+                          <Label className="text-[10px] font-bold text-foreground/80">
+                            Notes / Dosage
+                          </Label>
+                          <Input
+                            type="text"
+                            placeholder="e.g., Monthly BP & Sugar meds"
+                            value={refillReminder.notes}
+                            onChange={(e) =>
+                              setRefillReminder((prev) => ({
+                                ...prev,
+                                notes: e.target.value,
+                              }))
+                            }
+                            className="h-8 text-xs font-semibold rounded-xl border-border bg-background/80"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Medicines Selection for Reminder */}
+                      {validItems.length > 0 && (
+                        <div className="pt-2 border-t border-indigo-500/10">
+                          <div className="flex items-center justify-between mb-1.5">
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                              Medicines for refill reminder:
+                            </span>
+                            <span className="text-[10px] font-bold text-indigo-500">
+                              {refillReminder.selected_items.length === 0 ? validItems.length : refillReminder.selected_items.length} of {validItems.length} selected
+                            </span>
+                          </div>
+                          <div className="flex flex-wrap gap-1.5">
+                            {validItems.map((item, idx) => {
+                              const isSelected = refillReminder.selected_items.length === 0 || refillReminder.selected_items.some((i) => i.product_name === item.product_name);
+                              return (
+                                <button
+                                  key={idx}
+                                  type="button"
+                                  onClick={() => {
+                                    setRefillReminder((prev) => {
+                                      const currentSelected = prev.selected_items.length === 0 ? [...validItems] : [...prev.selected_items];
+                                      const exists = currentSelected.some((i) => i.product_name === item.product_name);
+                                      const updated = exists
+                                        ? currentSelected.filter((i) => i.product_name !== item.product_name)
+                                        : [...currentSelected, item];
+                                      return { ...prev, selected_items: updated };
+                                    });
+                                  }}
+                                  className={`px-2 py-0.5 rounded-lg text-[11px] font-bold border flex items-center gap-1 transition-all ${
+                                    isSelected
+                                      ? "bg-indigo-500/15 text-indigo-600 dark:text-indigo-400 border-indigo-500/30"
+                                      : "bg-muted/40 text-muted-foreground border-border/50 line-through opacity-60"
+                                  }`}
+                                >
+                                  <Check className={`w-3 h-3 ${isSelected ? "text-indigo-500" : "opacity-0"}`} />
+                                  {item.product_name}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
 
               <div className="space-y-3.5">
@@ -5968,7 +6225,7 @@ export default function BillingPage() {
                                      {(bill.negative_billed_qty > 0 ||
                                        bill.items?.some((i) => i.is_manual)) && (
                                       <span className="text-amber-600 dark:text-amber-400 text-xs font-semibold flex items-center gap-1">
-                                        ⚠️{" "}
+                                        <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0 inline" />{" "}
                                         {bill.inventory_billed_qty ||
                                           bill.items
                                             ?.filter((i) => !i.is_manual)

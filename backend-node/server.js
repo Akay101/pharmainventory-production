@@ -72,6 +72,8 @@ app.use("/api/activities", activityRoutes);
 app.use("/api/settings", settingsRoutes);
 app.use("/api/expiry", require("./routes/expiry"));
 app.use("/api/returns", require("./routes/returns"));
+app.use("/api/reminders", require("./routes/reminders"));
+app.use("/api/notifications", require("./routes/notifications"));
 
 app.use("/api/payments", require("./routes/payments"));
 app.use("/api/webhook", require("./routes/webhook"));
