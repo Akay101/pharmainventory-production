@@ -14,6 +14,11 @@ const { uploadToR2 } = require("../services/r2");
 const { sendBillEmail } = require("../services/email");
 const { logActivity } = require("../utils/activityLogger");
 const { requireSubscription } = require("../middleware/subscription");
+const {
+  getGlobalDoctorsCollection,
+  getCached,
+  setCached,
+} = require("../utils/globalDb");
 
 const escapeRegex = (str) => {
   if (!str) return "";
@@ -233,19 +238,192 @@ router.get("/insights", auth, requireSubscription(), async (req, res, next) => {
 router.get("/doctors", auth, requireSubscription(), async (req, res, next) => {
   try {
     const db = mongoose.connection.db;
-    const { search } = req.query;
-    const query = { pharmacy_id: req.user.pharmacy_id };
-    if (search) {
-      query.name = { $regex: search, $options: "i" };
+    const { search, page = 1, limit = 20 } = req.query;
+    const pharmacyId = req.user.pharmacy_id;
+
+    const pageNum = Math.max(1, parseInt(page) || 1);
+    const limitNum = Math.max(1, parseInt(limit) || 20);
+    const skip = (pageNum - 1) * limitNum;
+
+    const trimmedSearch = (search || "").trim();
+    const cacheKey = `docs:${pharmacyId}:${trimmedSearch.toLowerCase()}:${pageNum}:${limitNum}`;
+    const cached = getCached(cacheKey);
+    if (cached) return res.json(cached);
+
+    const localQuery = { pharmacy_id: pharmacyId };
+    if (trimmedSearch) {
+      localQuery.name = { $regex: escapeRegex(trimmedSearch), $options: "i" };
     }
-    const doctors = await db
-      .collection("doctors")
-      .find(query, { projection: { _id: 0 } })
-      .sort({ name: 1 })
-      .toArray();
-    res.json({ doctors });
+
+    const [localData, rawGlobal] = await Promise.all([
+      (async () => {
+        const [localCount, localDocs] = await Promise.all([
+          db.collection("doctors").countDocuments(localQuery).catch(() => 0),
+          db.collection("doctors")
+            .find(localQuery, { projection: { _id: 0 } })
+            .sort({ name: 1 })
+            .skip(skip)
+            .limit(limitNum)
+            .toArray()
+            .catch(() => [])
+        ]);
+        return {
+          localCount,
+          localDoctors: localDocs.map((d) => ({ ...d, source: "local" }))
+        };
+      })(),
+
+      (async () => {
+        try {
+          const globalDocCol = await getGlobalDoctorsCollection();
+          if (!globalDocCol) return [];
+          if (trimmedSearch) {
+            const escapedSearch = escapeRegex(trimmedSearch);
+            const isMultiWord = trimmedSearch.includes(" ");
+            let results = [];
+
+            if (isMultiWord) {
+              results = await globalDocCol
+                .find({ $text: { $search: trimmedSearch } }, { score: { $meta: "textScore" } })
+                .sort({ score: { $meta: "textScore" } })
+                .limit(limitNum)
+                .toArray()
+                .catch(() => []);
+            }
+
+            if (results.length < limitNum) {
+              const prefixMatches = await globalDocCol
+                .find(
+                  { full_name: { $regex: `^${escapedSearch}`, $options: "i" } }
+                )
+                .limit(limitNum - results.length)
+                .toArray()
+                .catch(() => []);
+
+              const seenIds = new Set(results.map(r => String(r._id)));
+              for (const pm of prefixMatches) {
+                if (!seenIds.has(String(pm._id))) {
+                  seenIds.add(String(pm._id));
+                  results.push(pm);
+                }
+              }
+            }
+
+            if (results.length < limitNum) {
+              const subMatches = await globalDocCol
+                .find({
+                  $or: [
+                    { full_name: { $regex: escapedSearch, $options: "i" } },
+                    { clinic_hospital: { $regex: escapedSearch, $options: "i" } },
+                  ]
+                })
+                .limit(limitNum - results.length)
+                .toArray()
+                .catch(() => []);
+
+              const seenIds = new Set(results.map(r => String(r._id)));
+              for (const sm of subMatches) {
+                if (!seenIds.has(String(sm._id))) {
+                  seenIds.add(String(sm._id));
+                  results.push(sm);
+                }
+              }
+            }
+            return results;
+          } else {
+            return await globalDocCol
+              .find({})
+              .sort({ practitioner_id: 1 })
+              .skip(skip)
+              .limit(limitNum)
+              .toArray()
+              .catch(() => []);
+          }
+        } catch (err) {
+          console.warn("Global doctors search error:", err.message);
+          return [];
+        }
+      })()
+    ]);
+
+    const { localCount, localDoctors } = localData;
+    const seenNames = new Set(localDoctors.map((d) => (d.name || "").toLowerCase()));
+
+    const globalDoctors = (rawGlobal || [])
+      .filter((gd) => !seenNames.has((gd.full_name || gd.name || "").toLowerCase()))
+      .map((gd) => ({
+        id: gd.practitioner_code || (gd.practitioner_id ? `DOC-${gd.practitioner_id}` : (gd.id || String(gd._id))),
+        global_id: gd.practitioner_code || (gd.practitioner_id ? `DOC-${gd.practitioner_id}` : (gd.id || String(gd._id))),
+        name: gd.full_name || gd.name,
+        full_name: gd.full_name || gd.name,
+        license_number: gd.medical_registration_no || gd.license_number || "",
+        registration_no: gd.medical_registration_no || gd.registration_no || "",
+        clinic: gd.clinic_hospital || gd.clinic || "",
+        locality: gd.locality || "",
+        city: gd.city || "",
+        state: gd.state || "",
+        source: "global",
+      }));
+
+    const combinedDoctors = [...localDoctors, ...globalDoctors];
+    const hasMore = combinedDoctors.length >= limitNum;
+    const totalCount = localCount + (hasMore ? skip + limitNum + 10 : combinedDoctors.length);
+
+    const responseData = {
+      doctors: combinedDoctors,
+      pagination: {
+        page: pageNum,
+        limit: limitNum,
+        total: totalCount,
+        total_pages: Math.ceil(totalCount / limitNum) || 1,
+        has_more: hasMore,
+      },
+    };
+
+    if (combinedDoctors.length > 0) {
+      setCached(cacheKey, responseData);
+    }
+    res.json(responseData);
   } catch (error) {
     next(error);
+  }
+});
+
+// POST /api/bills/doctors/ensure-global
+router.post("/doctors/ensure-global", auth, requireSubscription(), async (req, res, next) => {
+  try {
+    const { name, license_number, registration_no, clinic, city, state } = req.body;
+    const db = mongoose.connection.db;
+    const pharmacyId = req.user.pharmacy_id;
+
+    if (!name || !name.trim()) {
+      return res.status(400).json({ detail: "Doctor name required" });
+    }
+
+    const cleanName = name.trim();
+    let localDoc = await db.collection("doctors").findOne({
+      pharmacy_id: pharmacyId,
+      name: { $regex: new RegExp(`^${escapeRegex(cleanName)}$`, "i") },
+    });
+
+    if (localDoc) {
+      return res.json({ doctor: localDoc, existed: true });
+    }
+
+    const newDoc = {
+      id: uuidv4(),
+      pharmacy_id: pharmacyId,
+      name: cleanName,
+      license_number: license_number || registration_no || "",
+      clinic: clinic || "",
+      city: city || "",
+      state: state || "",
+      created_at: new Date().toISOString(),
+    };
+    await db.collection("doctors").insertOne(newDoc);
+    res.status(201).json({ doctor: newDoc, existed: false });
+  } catch (err) {
+    next(err);
   }
 });
 
@@ -1116,7 +1294,7 @@ router.delete(
       // Restore inventory if requested
       if (restore_inventory === "true") {
         for (const item of bill.items) {
-          if (item.inventory_id && !item.inventory_id.startsWith("negative-")) {
+          if (item.inventory_id && !String(item.inventory_id).startsWith("negative-")) {
             await db
               .collection("inventory")
               .updateOne(

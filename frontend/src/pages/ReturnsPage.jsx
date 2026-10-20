@@ -61,6 +61,7 @@ import {
 import { Textarea } from "../components/ui/textarea";
 import { Label } from "../components/ui/label";
 import Loader from "../components/Loader";
+import { formatExpiry } from "./utils";
 
 const STATUS_CONFIG = {
   Draft: {
@@ -1182,7 +1183,7 @@ export default function ReturnsPage() {
                           {b.batch_no}
                         </TableCell>
                         <TableCell className="font-mono text-xs font-bold text-muted-foreground">
-                          {b.expiry_date || "-"}
+                          {formatExpiry(b.expiry_date)}
                         </TableCell>
                         <TableCell>
                           <span className="text-xs font-semibold text-muted-foreground">
@@ -1381,7 +1382,7 @@ export default function ReturnsPage() {
                           <div className="truncate">
                             <p className="font-bold text-foreground truncate">{b.product_name}</p>
                             <p className="text-[10px] font-mono text-muted-foreground mt-0.5">
-                              Batch: {b.batch_no} • Exp: {b.expiry_date || "-"} • {b.available_quantity || 0}u
+                              Batch: {b.batch_no} • Exp: {formatExpiry(b.expiry_date)} • {b.available_quantity || 0}u
                             </p>
                           </div>
                           <div className="shrink-0 text-right">
@@ -1433,7 +1434,7 @@ export default function ReturnsPage() {
                         <TableRow key={idx} className="text-xs">
                           <TableCell className="font-bold">{item.product_name}</TableCell>
                           <TableCell className="font-mono">{item.batch_no}</TableCell>
-                          <TableCell className="font-mono">{item.expiry_date || "-"}</TableCell>
+                          <TableCell className="font-mono">{formatExpiry(item.expiry_date)}</TableCell>
                           <TableCell className="text-right">
                             <Input
                               type="number"
@@ -1509,7 +1510,7 @@ export default function ReturnsPage() {
             </div>
           </div>
 
-          <DialogFooter className="gap-2 sm:gap-0">
+          <DialogFooter className="gap-2 flex-wrap sm:justify-end">
             <Button
               variant="outline"
               onClick={() => setCreateModalOpen(false)}
@@ -1613,7 +1614,7 @@ export default function ReturnsPage() {
                         <TableRow key={idx} className="text-xs">
                           <TableCell className="font-bold">{it.product_name}</TableCell>
                           <TableCell className="font-mono">{it.batch_no}</TableCell>
-                          <TableCell className="font-mono">{it.expiry_date || "-"}</TableCell>
+                          <TableCell className="font-mono">{formatExpiry(it.expiry_date)}</TableCell>
                           <TableCell className="text-right font-mono font-bold">{it.quantity_units}</TableCell>
                           <TableCell className="text-right font-mono">₹{Number(it.purchase_price || 0).toFixed(2)}</TableCell>
                           <TableCell className="text-right font-mono font-bold text-orange-500">
@@ -1804,7 +1805,7 @@ export default function ReturnsPage() {
             </div>
           </div>
 
-          <DialogFooter className="gap-2 sm:gap-0">
+          <DialogFooter className="gap-2 flex-wrap sm:justify-end">
             <Button
               variant="outline"
               onClick={() => setPaymentModalOpen(false)}
@@ -1835,7 +1836,7 @@ export default function ReturnsPage() {
               Are you sure you want to delete <strong>{bundleToDelete?.bundle_no}</strong>? The bundled batches will be restored back to active inventory.
             </DialogDescription>
           </DialogHeader>
-          <DialogFooter className="gap-2 sm:gap-0">
+          <DialogFooter className="gap-2 flex-wrap sm:justify-end">
             <Button
               variant="outline"
               onClick={() => setDeleteConfirmOpen(false)}

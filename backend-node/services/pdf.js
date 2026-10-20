@@ -89,8 +89,14 @@ const generateBillPDF = async (bill, pharmacy) => {
 
       const formatExpiry = (exp) => {
         if (!exp || exp === "-") return "-";
-        if (/^\d{2}\/\d{2}$/.test(exp) || /^\d{2}\/\d{4}$/.test(exp))
-          return exp;
+        if (/^\d{1,2}\/\d{2}$/.test(exp)) {
+          const [m, y] = exp.split("/");
+          return `${m.padStart(2, "0")}/${y}`;
+        }
+        if (/^\d{1,2}\/\d{4}$/.test(exp)) {
+          const [m, y] = exp.split("/");
+          return `${m.padStart(2, "0")}/${y.slice(-2)}`;
+        }
         const d = new Date(exp);
         if (isNaN(d.getTime())) return exp;
         const mm = String(d.getMonth() + 1).padStart(2, "0");
@@ -649,8 +655,14 @@ const generatePurchasePDF = async (purchase, pharmacy) => {
 
       const formatExpiry = (exp) => {
         if (!exp || exp === "-") return "-";
-        if (/^\d{2}\/\d{2}$/.test(exp) || /^\d{2}\/\d{4}$/.test(exp))
-          return exp;
+        if (/^\d{1,2}\/\d{2}$/.test(exp)) {
+          const [m, y] = exp.split("/");
+          return `${m.padStart(2, "0")}/${y}`;
+        }
+        if (/^\d{1,2}\/\d{4}$/.test(exp)) {
+          const [m, y] = exp.split("/");
+          return `${m.padStart(2, "0")}/${y.slice(-2)}`;
+        }
         const d = new Date(exp);
         if (isNaN(d.getTime())) return exp;
         const mm = String(d.getMonth() + 1).padStart(2, "0");

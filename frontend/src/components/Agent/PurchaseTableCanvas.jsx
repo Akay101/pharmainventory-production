@@ -12,6 +12,7 @@ import {
   DollarSign,
   Sparkles,
 } from "lucide-react";
+import { formatExpiry } from "../../pages/utils";
 
 const PurchaseTableCanvas = memo(({ purchasesData }) => {
   if (!purchasesData || !purchasesData.purchases) return null;
@@ -235,7 +236,7 @@ const PurchaseTableCanvas = memo(({ purchasesData }) => {
                                         {item.batch_no || "—"}
                                       </td>
                                       <td className="p-2 text-slate-400">
-                                        {item.expiry_date || "—"}
+                                        {formatExpiry(item.expiry_date)}
                                       </td>
                                       <td className="p-2">
                                         {item.pack_quantity ||

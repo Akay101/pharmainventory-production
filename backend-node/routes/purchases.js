@@ -9,11 +9,15 @@ const fs = require("fs");
 const path = require("path");
 const rateLimit = require("express-rate-limit");
 const { auth } = require("../middleware/auth");
-const { normalizeName } = require("../utils/helpers");
+const { normalizeName, normalizeExpiryDate } = require("../utils/helpers");
 const { generatePurchasePDF } = require("../services/pdf");
 const { uploadToR2, deleteFromR2 } = require("../services/r2");
 const { logActivity } = require("../utils/activityLogger");
 const { requireSubscription } = require("../middleware/subscription");
+const {
+  getGlobalDistributorsCollection,
+  clearCachePattern,
+} = require("../utils/globalDb");
 
 const escapeRegex = (str) => {
   if (!str) return "";
@@ -606,7 +610,7 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
   session.startTransaction();
 
   try {
-    const { supplier_id, supplier_name, invoice_no, purchase_date, items, payment_status, amount_paid, payment_mode } =
+    const { supplier_id, supplier_name, supplier_data, invoice_no, purchase_date, items, payment_status, amount_paid, payment_mode } =
       req.body;
     const db = mongoose.connection.db;
 
@@ -637,11 +641,96 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
       return res.status(400).json({ detail: "At least one item is required" });
     }
 
+    // Resolve or Auto-Create Supplier into local suppliers collection upon purchase creation
+    let resolvedSupplierId = supplier_id;
+    let resolvedSupplierName = supplier_name || "Unknown";
+
+    let localSup = null;
+    if (supplier_id) {
+      localSup = await db.collection("suppliers").findOne({
+        pharmacy_id: req.user.pharmacy_id,
+        $or: [{ id: supplier_id }, { global_code: supplier_id }]
+      }, { session });
+    }
+
+    if (!localSup && supplier_data?.gst_no) {
+      localSup = await db.collection("suppliers").findOne({
+        pharmacy_id: req.user.pharmacy_id,
+        $or: [{ gst_no: supplier_data.gst_no }, { gstin: supplier_data.gst_no }]
+      }, { session });
+    }
+
+    if (!localSup && supplier_name && supplier_name !== "Unknown") {
+      localSup = await db.collection("suppliers").findOne({
+        pharmacy_id: req.user.pharmacy_id,
+        name: { $regex: new RegExp(`^${escapeRegex(supplier_name.trim())}$`, "i") }
+      }, { session });
+    }
+
+    let createdSupplier = null;
+    if (localSup) {
+      resolvedSupplierId = localSup.id;
+      resolvedSupplierName = localSup.name;
+    } else if (supplier_id || (supplier_data && supplier_data.name)) {
+      // Distributor selected from global catalog or newly provided supplier:
+      // Insert into local suppliers collection now that purchase is actually being created
+      let distDetails = supplier_data || {};
+      if (!distDetails.name && supplier_id) {
+        try {
+          const globalDistCol = await getGlobalDistributorsCollection();
+          if (globalDistCol) {
+            const rawId = typeof supplier_id === "string" && supplier_id.startsWith("DST-") ? parseInt(supplier_id.replace("DST-", "")) : supplier_id;
+            const foundDist = await globalDistCol.findOne({
+              $or: [{ supplier_code: supplier_id }, { supplier_id: rawId }]
+            });
+            if (foundDist) {
+              distDetails = {
+                name: foundDist.agency_name,
+                phone: foundDist.contact_number,
+                gst_no: foundDist.gst_number,
+                address: [foundDist.locality, foundDist.city, foundDist.state].filter(Boolean).join(", "),
+                city: foundDist.city,
+                state: foundDist.state,
+                global_id: foundDist.supplier_code || `DST-${foundDist.supplier_id}`,
+              };
+            }
+          }
+        } catch (e) {
+          console.warn("Global dist lookup fallback during purchase creation:", e.message);
+        }
+      }
+
+      const finalName = distDetails.name || supplier_name || "Unknown Supplier";
+      const newLocalSupId = uuidv4();
+      const newLocalSup = {
+        id: newLocalSupId,
+        pharmacy_id: req.user.pharmacy_id,
+        name: finalName.trim(),
+        contact: (distDetails.phone || distDetails.contact || "").trim() || null,
+        phone: (distDetails.phone || distDetails.contact || "").trim() || null,
+        email: distDetails.email || null,
+        address: distDetails.address || [distDetails.city, distDetails.state].filter(Boolean).join(", ") || null,
+        city: distDetails.city || null,
+        state: distDetails.state || null,
+        gst_no: (distDetails.gst_no || distDetails.gstin || "").trim() || null,
+        gstin: (distDetails.gst_no || distDetails.gstin || "").trim() || null,
+        global_code: distDetails.global_id || supplier_id || null,
+        created_at: new Date().toISOString(),
+      };
+
+      await db.collection("suppliers").insertOne(newLocalSup, { session });
+      resolvedSupplierId = newLocalSupId;
+      resolvedSupplierName = newLocalSup.name;
+      createdSupplier = newLocalSup;
+
+      clearCachePattern(`sups:${req.user.pharmacy_id}`);
+    }
+
     // [Issue #11] Idempotency Check
     if (invoice_no) {
       const existingPurchase = await db.collection("purchases").findOne({
         pharmacy_id: req.user.pharmacy_id,
-        supplier_id,
+        supplier_id: resolvedSupplierId,
         invoice_no,
         created_at: { $gt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString() }
       }, { session });
@@ -663,10 +752,13 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
       let matchedProduct = null;
 
       const pId = item.selected_product_id || item.product_id;
-      if (pId && !pId.startsWith("scanned_")) {
+      const strPid = pId !== undefined && pId !== null ? String(pId).trim() : "";
+      const isScanned = strPid.startsWith("scanned_");
+
+      if (pId && !isScanned) {
         matchedProduct = await db.collection("products").findOne({
           pharmacy_id: req.user.pharmacy_id,
-          id: pId,
+          $or: [{ id: pId }, { id: strPid }, { product_id: pId }, { product_id: strPid }]
         }, { session });
       }
 
@@ -681,13 +773,32 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
       if (matchedProduct) {
         resolvedProductId = matchedProduct.id;
       } else {
-        resolvedProductId = (pId && !pId.startsWith("scanned_")) ? pId : uuidv4();
+        resolvedProductId = (pId && !isScanned) ? pId : uuidv4();
         await db.collection("products").insertOne({
           id: resolvedProductId,
+          product_id: resolvedProductId,
           pharmacy_id: req.user.pharmacy_id,
           name: normalizedName,
-          low_stock_threshold: 10,
+          product_name: normalizedName,
+          category: item.category || "medicine",
+          dosage_form: item.dosage_form || item.pack_type || "tablet",
+          manufacturer: item.manufacturer || "",
+          salt_composition: item.salt_composition || "",
+          pack_type: item.pack_type || "Strip",
+          units_per_pack: item.units_per_pack || item.units || 1,
+          hsn_no: item.hsn_no || "",
+          tax_rate: (parseFloat(item.cgst) || 0) + (parseFloat(item.sgst) || 0),
+          cgst: parseFloat(item.cgst) || 0,
+          sgst: parseFloat(item.sgst) || 0,
+          mrp: (item.mrp_per_unit || item.mrp_unit || 0) * (item.units_per_pack || item.units || 1),
+          trade_price: item.pack_price || item.rate_pack || 0,
+          purchase_price: item.pack_price || item.rate_pack || 0,
+          source: "catalog",
+          is_custom_catalog: true,
+          low_stock_threshold: item.low_stock_threshold !== undefined && item.low_stock_threshold !== "" && item.low_stock_threshold !== null ? Number(item.low_stock_threshold) : 10,
+          shortage_threshold: item.shortage_threshold !== undefined && item.shortage_threshold !== "" && item.shortage_threshold !== null ? Number(item.shortage_threshold) : 10,
           created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
         }, { session });
       }
 
@@ -695,6 +806,9 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
       let unitsPerPack = item.units_per_pack || item.units || 1;
       let packPrice = item.pack_price || item.rate_pack || 0;
       let mrpPerUnit = item.mrp_per_unit || item.mrp_unit || 0;
+      if (mrpPerUnit) {
+        mrpPerUnit = Math.round(Number(mrpPerUnit) * 100) / 100;
+      }
       const discount = parseFloat(item.discount) || 0;
       const scheme = parseFloat(item.scheme) || 0;
 
@@ -708,18 +822,23 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
       const totalUnits = totalPacks * unitsPerPack;
       
       const netBasePrice = packQty * packPrice * (1 - discount / 100);
-      const pricePerUnit = unitsPerPack > 0 ? (packPrice * (1 - discount / 100)) / unitsPerPack : 0;
-
       const cgst = parseFloat(item.cgst) || 0;
       const sgst = parseFloat(item.sgst) || 0;
       const itemTotal = netBasePrice * (1 + (cgst + sgst) / 100);
       totalAmount += itemTotal;
 
+      // True Net Landing Cost per unit (inclusive of GST and net of discounts/scheme)
+      const pricePerUnit = totalUnits > 0
+        ? itemTotal / totalUnits
+        : (unitsPerPack > 0 ? (packPrice * (1 - discount / 100) * (1 + (cgst + sgst) / 100)) / unitsPerPack : 0);
+
+      const normalizedExpiry = normalizeExpiryDate(item.expiry_date);
+
       const processedItem = {
         product_id: resolvedProductId,
         product_name: item.product_name,
         batch_no: item.batch_no,
-        expiry_date: item.expiry_date,
+        expiry_date: normalizedExpiry,
         manufacturer: item.manufacturer || null,
         salt_composition: item.salt_composition || null,
         pack_type: item.pack_type || "Strip",
@@ -728,9 +847,10 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
         scheme: scheme,
         units_per_pack: unitsPerPack,
         total_units: totalUnits,
-        purchase_price: Math.round(pricePerUnit * 100) / 100,
+        purchase_price: Math.round(pricePerUnit * 10000) / 10000,
         pack_price: packPrice,
-        price_per_unit: Math.round(pricePerUnit * 100) / 100,
+        price_per_unit: Math.round(pricePerUnit * 10000) / 10000,
+        cost_per_unit: Math.round(pricePerUnit * 10000) / 10000,
         mrp: mrpPerUnit,
         mrp_per_unit: mrpPerUnit,
         mrp_pack: mrpPerUnit
@@ -766,7 +886,7 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
               salt_composition: item.salt_composition,
               pack_price: packPrice,
               mrp_pack: mrpPerUnit ? mrpPerUnit * unitsPerPack : null,
-              expiry_date: item.expiry_date,
+              expiry_date: normalizedExpiry,
               cgst: cgst,
               sgst: sgst,
               discount: discount,
@@ -785,7 +905,7 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
           product_name: item.product_name,
           batch_no: item.batch_no,
           hsn_no: item.hsn_no || null,
-          expiry_date: item.expiry_date,
+          expiry_date: normalizedExpiry,
           manufacturer: item.manufacturer || null,
           salt_composition: item.salt_composition || null,
           pack_type: item.pack_type || "Strip",
@@ -828,8 +948,8 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
     const purchaseData = {
       id: purchaseId,
       pharmacy_id: req.user.pharmacy_id,
-      supplier_id,
-      supplier_name,
+      supplier_id: resolvedSupplierId,
+      supplier_name: resolvedSupplierName,
       invoice_no: invoice_no || null,
       purchase_date: purchase_date || new Date().toISOString().slice(0, 10),
       items: processedItems,
@@ -859,7 +979,7 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
 
     await session.commitTransaction();
     session.endSession();
-    res.status(201).json({ message: "Purchase recorded", purchase: purchaseData });
+    res.status(201).json({ message: "Purchase recorded", purchase: purchaseData, created_supplier: createdSupplier });
   } catch (error) {
     await session.abortTransaction();
     session.endSession();
@@ -1037,12 +1157,15 @@ router.put(
         const totalUnits = totalPacks * unitsPerPack;
         
         const netBasePrice = packQty * packPrice * (1 - discount / 100);
-        const pricePerUnit = unitsPerPack > 0 ? (packPrice * (1 - discount / 100)) / unitsPerPack : 0;
-
         const cgst = parseFloat(item.cgst) || 0;
         const sgst = parseFloat(item.sgst) || 0;
         const itemTotal = netBasePrice * (1 + (cgst + sgst) / 100);
         totalAmount += itemTotal;
+
+        // True Net Landing Cost per unit (inclusive of GST and net of discounts/scheme)
+        const pricePerUnit = totalUnits > 0
+          ? itemTotal / totalUnits
+          : (unitsPerPack > 0 ? (packPrice * (1 - discount / 100) * (1 + (cgst + sgst) / 100)) / unitsPerPack : 0);
 
         processedItems.push({
           ...item,
@@ -1053,7 +1176,9 @@ router.put(
           pack_price: packPrice,
           mrp_per_unit: mrpPerUnit,
           total_units: totalUnits,
-          price_per_unit: pricePerUnit,
+          price_per_unit: Math.round(pricePerUnit * 10000) / 10000,
+          purchase_price: Math.round(pricePerUnit * 10000) / 10000,
+          cost_per_unit: Math.round(pricePerUnit * 10000) / 10000,
           item_total: itemTotal,
           cgst: cgst,
           sgst: sgst,
@@ -1748,10 +1873,13 @@ router.post(
 
         const totalPacks = packQty + scheme;
         const totalUnits = totalPacks * unitsPerPack;
-        const pricePerUnit = unitsPerPack > 0 ? (packPrice * (1 - discount / 100)) / unitsPerPack : packPrice;
-        const mrpPerUnit = unitsPerPack > 0 ? mrpPack / unitsPerPack : mrpPack;
-        const itemTotal = packQty * packPrice * (1 - discount / 100);
+        const cgst = parseFloat(item.cgst) || 0;
+        const sgst = parseFloat(item.sgst) || 0;
+        const netBasePrice = packQty * packPrice * (1 - discount / 100);
+        const itemTotal = netBasePrice * (1 + (cgst + sgst) / 100);
         totalAmount += itemTotal;
+        const pricePerUnit = totalUnits > 0 ? (itemTotal / totalUnits) : (unitsPerPack > 0 ? (packPrice * (1 - discount / 100) * (1 + (cgst + sgst) / 100)) / unitsPerPack : packPrice);
+        const mrpPerUnit = unitsPerPack > 0 ? mrpPack / unitsPerPack : mrpPack;
 
         const processedItem = {
           product_id: item.product_id || `csv-${uuidv4().slice(0, 8)}`,
@@ -1761,13 +1889,15 @@ router.post(
           pack_type: item.pack_type || "Strip",
           batch_no: item.batch_no || `BATCH-${Date.now()}`,
           hsn_no: item.hsn_no || null,
-          expiry_date: item.expiry_date || new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
+          expiry_date: normalizeExpiryDate(item.expiry_date) || new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
           pack_quantity: packQty,
           scheme: scheme,
           units_per_pack: unitsPerPack,
           total_units: totalUnits,
           pack_price: packPrice,
-          price_per_unit: pricePerUnit,
+          price_per_unit: Math.round(pricePerUnit * 10000) / 10000,
+          purchase_price: Math.round(pricePerUnit * 10000) / 10000,
+          cost_per_unit: Math.round(pricePerUnit * 10000) / 10000,
           mrp_pack: mrpPack,
           mrp_per_unit: mrpPerUnit,
           item_total: itemTotal,

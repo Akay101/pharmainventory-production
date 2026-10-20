@@ -147,17 +147,17 @@ export default function NotificationCenter() {
           setIsOpen(!isOpen);
           if (!isOpen) fetchNotifications();
         }}
-        className={`relative rounded-xl border border-border/60 dark:border-border/40 h-9 w-9 transition-all duration-200 ${
+        className={`group relative rounded-xl border border-border/60 dark:border-border/40 h-9 w-9 transition-all duration-200 hover:scale-105 active:scale-95 cursor-pointer ${
           isOpen
-            ? "bg-orange-500/15 text-orange-500 border-orange-500/40"
+            ? "bg-orange-500/15 text-orange-500 border-orange-500/40 shadow-xs"
             : "hover:bg-muted/80"
         }`}
         data-testid="notifications-btn"
         title="Notifications & Refill Reminders"
       >
-        <Bell className="w-4.5 h-4.5 text-foreground" />
+        <Bell className={`w-4.5 h-4.5 text-foreground transition-transform duration-200 ${unreadCount > 0 ? "animate-bell-wiggle" : "group-hover:rotate-12"}`} />
         {unreadCount > 0 && (
-          <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] bg-orange-500 text-white text-[10px] font-black rounded-full flex items-center justify-center px-1 shadow-md shadow-orange-500/30 animate-in zoom-in duration-200">
+          <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] bg-orange-500 text-white text-[10px] font-black rounded-full flex items-center justify-center px-1 shadow-md shadow-orange-500/30 animate-in zoom-in-50 duration-200">
             {unreadCount > 99 ? "99+" : unreadCount}
           </span>
         )}
@@ -165,7 +165,7 @@ export default function NotificationCenter() {
 
       {/* Floating Notifications Dropdown Panel */}
       {isOpen && (
-        <div className="absolute right-0 top-12 w-[360px] sm:w-[420px] max-h-[540px] bg-card border border-border/90 dark:border-border/60 rounded-2xl shadow-2xl z-50 flex flex-col overflow-hidden backdrop-blur-2xl animate-in fade-in slide-in-from-top-2 duration-200">
+        <div className="absolute right-0 top-12 w-[360px] sm:w-[420px] max-h-[540px] bg-card border border-border/90 dark:border-border/60 rounded-2xl shadow-2xl z-50 flex flex-col overflow-hidden backdrop-blur-2xl animate-in fade-in-0 zoom-in-95 slide-in-from-top-2 duration-200 origin-top-right">
           {/* Header */}
           <div className="p-4 border-b border-border/70 flex items-center justify-between bg-muted/30">
             <div className="flex items-center gap-2">

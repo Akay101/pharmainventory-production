@@ -54,6 +54,7 @@ import {
 } from "recharts";
 import { toast } from "sonner";
 import Loader from "../components/Loader";
+import { formatExpiry } from "./utils";
 
 const COLORS = ["#10B981", "#8B5CF6", "#3B82F6", "#F59E0B", "#EF4444"];
 
@@ -692,7 +693,7 @@ export default function ReportsPage() {
                               <p className="font-semibold text-foreground">{item.product_name}</p>
                               <div className="flex gap-3 text-xs text-muted-foreground font-mono">
                                 <span>Batch: {item.batch_no}</span>
-                                <span>Expired: {item.expiry_date}</span>
+                                <span>Expired: {formatExpiry(item.expiry_date)}</span>
                               </div>
                             </div>
                             <div className="text-right">
@@ -732,7 +733,7 @@ export default function ReportsPage() {
                               <p className="font-semibold text-foreground">{item.product_name}</p>
                               <div className="flex gap-3 text-xs text-muted-foreground font-mono">
                                 <span>Batch: {item.batch_no}</span>
-                                <span>Expires: {item.expiry_date}</span>
+                                <span>Expires: {formatExpiry(item.expiry_date)}</span>
                               </div>
                             </div>
                             <div className="text-right">
@@ -944,7 +945,7 @@ export default function ReportsPage() {
                                       : "text-muted-foreground"
                                   }`}
                                 >
-                                  Exp: {med.expiry_date}
+                                  Exp: {formatExpiry(med.expiry_date)}
                                   {new Date(med.expiry_date) < new Date() && " ⚠️ Expired"}
                                 </span>
                               )}

@@ -44,6 +44,8 @@ import { toast } from "sonner";
 import Loader from "../components/Loader";
 import RightSidebarDrawer from "../components/RightSidebarDrawer";
 import ProductSearchDropdown from "../components/ProductSearchDropdown";
+import ProductCatalogModal from "../components/ProductCatalogModal";
+import { formatExpiry } from "./utils";
 
 export default function InventoryPage() {
   const navigate = useNavigate();
@@ -76,6 +78,8 @@ export default function InventoryPage() {
   // Merge States
   const [selectedItemIds, setSelectedItemIds] = useState([]);
   const [mergeDialogOpen, setMergeDialogOpen] = useState(false);
+  const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
   const [mergeFormData, setMergeFormData] = useState({
     merged_name: "",
     merged_manufacturer: "",
@@ -153,9 +157,18 @@ export default function InventoryPage() {
   };
 
   const handleOpenProductDetails = async (productGroup, autoOpenMerge = false) => {
+    const rawBatches = Array.isArray(productGroup.batches)
+      ? productGroup.batches
+      : (productGroup.batch_count === 0 || productGroup.is_catalog_only ? [] : [productGroup]);
+    const batchCount = productGroup.batch_count !== undefined
+      ? Number(productGroup.batch_count)
+      : rawBatches.length;
+
     setDetailProduct({
-      id: productGroup.product_id || productGroup.id,
+      id: productGroup.product_id || productGroup.id || productGroup._id,
+      product_id: productGroup.product_id || productGroup.id || productGroup._id,
       name: productGroup.product_name || productGroup.name,
+      product_name: productGroup.product_name || productGroup.name,
       manufacturer: productGroup.manufacturer,
       salt_composition: productGroup.salt_composition,
       hsn_no: productGroup.hsn_no,
@@ -164,9 +177,11 @@ export default function InventoryPage() {
       shortage_threshold: productGroup.shortage_threshold,
       total_available_stock: productGroup.total_available_stock !== undefined ? productGroup.total_available_stock : productGroup.available_quantity,
       total_stock_value: productGroup.total_stock_value,
-      batch_count: productGroup.batch_count || (productGroup.batches ? productGroup.batches.length : 1)
+      batch_count: batchCount,
+      batches: rawBatches,
+      is_catalog_only: productGroup.is_catalog_only || batchCount === 0
     });
-    setDetailBatches(productGroup.batches || [productGroup]);
+    setDetailBatches(rawBatches);
     if (autoOpenMerge) {
       setShowAddMergeForm(true);
     }
@@ -388,6 +403,11 @@ export default function InventoryPage() {
       toast.success("Inventory item deleted successfully");
       setDeleteDialog({ open: false, item: null, type: null });
       await fetchInventory(pagination.page);
+      if (detailProduct?.name) {
+        const res = await axios.get(`${API}/inventory?grouped=true&search=${encodeURIComponent(detailProduct.name)}`);
+        const matched = (res.data.inventory || []).find(g => (g.product_name || g.name) === detailProduct.name);
+        if (matched?.batches) setDetailBatches(matched.batches);
+      }
     } catch (error) {
       toast.error(error.response?.data?.detail || "Failed to delete inventory item");
     }
@@ -405,6 +425,11 @@ export default function InventoryPage() {
       toast.success("Stock increased successfully");
       setAddStockDialog({ open: false, item: null, quantityToAdd: "" });
       await fetchInventory(pagination.page);
+      if (detailProduct?.name) {
+        const res = await axios.get(`${API}/inventory?grouped=true&search=${encodeURIComponent(detailProduct.name)}`);
+        const matched = (res.data.inventory || []).find(g => (g.product_name || g.name) === detailProduct.name);
+        if (matched?.batches) setDetailBatches(matched.batches);
+      }
     } catch (error) {
       toast.error(error.response?.data?.detail || "Failed to update stock");
     }
@@ -413,17 +438,47 @@ export default function InventoryPage() {
   const handleDeleteProduct = async (deleteInventory = false) => {
     if (!deleteDialog.item) return;
     try {
+      const targetId = deleteDialog.item.product_id || deleteDialog.item.id || deleteDialog.item._id;
+      const targetName = deleteDialog.item.product_name || deleteDialog.item.name || "";
+      const queryParams = new URLSearchParams();
+      queryParams.append("delete_inventory", String(deleteInventory));
+      if (targetName) {
+        queryParams.append("product_name", targetName);
+      }
       const response = await axios.delete(
-        `${API}/products/${deleteDialog.item.id}?delete_inventory=${deleteInventory}`
+        `${API}/products/${encodeURIComponent(targetId || targetName)}?${queryParams.toString()}`
       );
-      toast.success(response.data.message);
+      toast.success(response.data.message || "Product catalog deleted successfully");
       if (deleteInventory && response.data.deleted_inventory_items > 0) {
         toast.info(`${response.data.deleted_inventory_items} inventory items also deleted`);
       }
       setDeleteDialog({ open: false, item: null, type: null });
+      if (detailProduct && ((targetId && detailProduct.id === targetId) || (targetName && detailProduct.name === targetName))) {
+        setDetailProduct(null);
+        setDetailBatches([]);
+      }
       await fetchData();
     } catch (error) {
       toast.error(error.response?.data?.detail || "Failed to delete product");
+    }
+  };
+
+  const handleBulkDelete = async (deleteInventory = true) => {
+    if (selectedItemIds.length === 0) return;
+    setBulkDeleting(true);
+    try {
+      const response = await axios.post(`${API}/products/bulk-delete`, {
+        product_ids: selectedItemIds,
+        delete_inventory: deleteInventory,
+      });
+      toast.success(response.data.message || "Selected products deleted successfully");
+      setSelectedItemIds([]);
+      setBulkDeleteDialogOpen(false);
+      await fetchData();
+    } catch (error) {
+      toast.error(error.response?.data?.detail || "Failed to delete selected products");
+    } finally {
+      setBulkDeleting(false);
     }
   };
 
@@ -461,6 +516,18 @@ export default function InventoryPage() {
         </div>
 
         <div className="flex items-center gap-2">
+          {selectedItemIds.length > 0 && (
+            <Button
+              onClick={() => setBulkDeleteDialogOpen(true)}
+              variant="outline"
+              className="border-rose-500/30 text-rose-500 hover:bg-rose-500/10 hover:text-rose-400 h-9 text-xs font-extrabold shadow-sm rounded-xl px-3 flex items-center gap-1.5 cursor-pointer"
+              data-testid="bulk-delete-btn"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              Delete Selected ({selectedItemIds.length})
+            </Button>
+          )}
+
           {selectedItemIds.length >= 2 && (
             <Button
               onClick={handleOpenMergeDialog}
@@ -471,96 +538,20 @@ export default function InventoryPage() {
             </Button>
           )}
 
-          <Dialog open={productDialog} onOpenChange={setProductDialog}>
-            <DialogTrigger asChild>
-              <Button className="h-9 px-3.5 text-xs font-extrabold bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white rounded-xl shadow-xs border-none flex items-center gap-1.5 cursor-pointer" data-testid="add-product-btn">
-                <Plus className="w-3.5 h-3.5 stroke-[3]" />
-                Add Product
-              </Button>
-            </DialogTrigger>
-          <DialogContent className="rounded-2xl border border-border/40 shadow-2xl max-w-md p-6">
-            <DialogHeader className="border-b border-border/40 pb-4">
-              <DialogTitle className="font-extrabold text-base tracking-tight text-foreground flex items-center gap-2">
-                <Plus className="w-5 h-5 text-primary" />
-                Add New Product
-              </DialogTitle>
-            </DialogHeader>
-            <div className="space-y-4 pt-4">
-              <div className="space-y-2">
-                <Label className="text-xs font-bold text-muted-foreground/80">Product Name *</Label>
-                <Input
-                  placeholder="Paracetamol 500mg"
-                  value={newProduct.name}
-                  onChange={(e) => setNewProduct({ ...newProduct, name: e.target.value })}
-                  data-testid="product-name-input"
-                  className="h-10 text-sm font-bold border-border/80 focus:border-primary bg-card/25"
-                />
-              </div>
+          <Button
+            onClick={() => setProductDialog(true)}
+            className="h-9 px-3.5 text-xs font-extrabold bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white rounded-xl shadow-xs border-none flex items-center gap-1.5 cursor-pointer"
+            data-testid="add-product-btn"
+          >
+            <Plus className="w-3.5 h-3.5 stroke-[3]" />
+            Add Product
+          </Button>
 
-              <div className="space-y-2">
-                <Label className="text-xs font-bold text-muted-foreground/80">Category</Label>
-                <Select
-                  value={newProduct.category}
-                  onValueChange={(v) => setNewProduct({ ...newProduct, category: v })}
-                >
-                  <SelectTrigger data-testid="product-category-select" className="h-10 text-sm border-border/80 bg-card/25">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent className="border border-border/40 shadow-xl rounded-xl">
-                    <SelectItem value="medicine" className="font-medium">Medicine</SelectItem>
-                    <SelectItem value="cosmetic" className="font-medium">Cosmetic</SelectItem>
-                    <SelectItem value="consumable" className="font-medium">Consumable</SelectItem>
-                    <SelectItem value="equipment" className="font-medium">Equipment</SelectItem>
-                    <SelectItem value="other" className="font-medium">Other</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="space-y-2">
-                <Label className="text-xs font-bold text-muted-foreground/80">HSN Number</Label>
-                <Input
-                  placeholder="30049099"
-                  value={newProduct.hsn_no}
-                  onChange={(e) => setNewProduct({ ...newProduct, hsn_no: e.target.value })}
-                  data-testid="product-hsn-input"
-                  className="h-10 text-sm font-bold border-border/80 focus:border-primary bg-card/25"
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label className="text-xs font-bold text-muted-foreground/80">Low Stock Threshold</Label>
-                <Input
-                  type="number"
-                  placeholder="10"
-                  value={newProduct.low_stock_threshold}
-                  onChange={(e) =>
-                    setNewProduct({ ...newProduct, low_stock_threshold: parseInt(e.target.value) || 10 })
-                  }
-                  data-testid="product-threshold-input"
-                  className="h-10 text-sm font-bold border-border/80 focus:border-primary bg-card/25"
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label className="text-xs font-bold text-muted-foreground/80">Shortage List Threshold</Label>
-                <Input
-                  type="number"
-                  placeholder="10"
-                  value={newProduct.shortage_threshold}
-                  onChange={(e) =>
-                    setNewProduct({ ...newProduct, shortage_threshold: parseInt(e.target.value) || 10 })
-                  }
-                  data-testid="product-shortage-threshold-input"
-                  className="h-10 text-sm font-bold border-border/80 focus:border-primary bg-card/25"
-                />
-              </div>
-
-              <Button onClick={handleCreateProduct} className="w-full bg-primary hover:bg-primary/95 text-primary-foreground h-10 text-xs font-bold shadow-md shadow-primary/10 rounded-xl mt-2" data-testid="save-product-btn">
-                Create Product
-              </Button>
-            </div>
-          </DialogContent>
-        </Dialog>
+          <ProductCatalogModal
+            isOpen={productDialog}
+            onClose={() => setProductDialog(false)}
+            onSuccess={() => fetchData()}
+          />
         </div>
       </div>
 
@@ -816,7 +807,7 @@ export default function InventoryPage() {
                         </Badge>
                       </TableCell>
                       <TableCell className="py-2 text-xs font-semibold text-muted-foreground">{packType}</TableCell>
-                      <TableCell className="py-2 font-mono text-xs font-semibold text-muted-foreground">{earliestExpiry}</TableCell>
+                      <TableCell className="py-2 font-mono text-xs font-semibold text-muted-foreground">{formatExpiry(earliestExpiry)}</TableCell>
                       <TableCell className="py-2 text-right">
                         <div className="font-mono text-xs font-extrabold text-orange-500">{stockDisplay}</div>
                         <div className="text-[10px] font-semibold text-muted-foreground font-mono">({availableUnits} total units)</div>
@@ -850,6 +841,16 @@ export default function InventoryPage() {
                             data-testid={`view-details-${itemId}`}
                           >
                             <Package className="w-3.5 h-3.5" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="text-rose-500 hover:text-rose-400 hover:bg-rose-500/15 rounded-lg h-7 w-7 shrink-0 cursor-pointer"
+                            onClick={() => setDeleteDialog({ open: true, item, type: "product" })}
+                            title="Delete Whole Catalog"
+                            data-testid={`delete-catalog-${itemId}`}
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
                           </Button>
                         </div>
                       </TableCell>
@@ -923,55 +924,138 @@ export default function InventoryPage() {
 
       {/* Delete Confirmation Dialog */}
       <AlertDialog open={deleteDialog.open} onOpenChange={(open) => setDeleteDialog({ ...deleteDialog, open })}>
-        <AlertDialogContent className="rounded-2xl border border-border/40 shadow-2xl max-w-md">
+        <AlertDialogContent className="rounded-2xl border border-border/40 shadow-2xl max-w-lg">
           <AlertDialogHeader className="space-y-2">
             <AlertDialogTitle className="font-extrabold text-base tracking-tight text-foreground flex items-center gap-2">
               <Trash2 className="w-5 h-5 text-destructive" />
-              {deleteDialog.type === "inventory" ? "Delete Inventory Item" : "Delete Product"}
+              {deleteDialog.type === "inventory" ? "Delete Inventory Batch" : "Delete Product Catalog"}
             </AlertDialogTitle>
             <AlertDialogDescription className="text-xs leading-relaxed text-muted-foreground font-medium">
               {deleteDialog.type === "inventory" ? (
                 <>
-                  Are you sure you want to delete <strong className="text-foreground">{deleteDialog.item?.product_name}</strong> (Batch: {deleteDialog.item?.batch_no})?
+                  Are you sure you want to delete <strong className="text-foreground">{deleteDialog.item?.product_name || deleteDialog.item?.name}</strong> (Batch: {deleteDialog.item?.batch_no})?
                   <br /><br />
                   This will remove <span className="font-bold text-foreground">{deleteDialog.item?.available_quantity}</span> units from inventory.
                 </>
               ) : (
-                <>
-                  Are you sure you want to delete the product <strong className="text-foreground">{deleteDialog.item?.name}</strong>?
-                  <br /><br />
-                  This may affect related inventory items.
-                </>
+                (() => {
+                  const prodName = deleteDialog.item?.product_name || deleteDialog.item?.name || "this product";
+                  const batchCount = deleteDialog.item?.batch_count !== undefined
+                    ? Number(deleteDialog.item.batch_count)
+                    : (deleteDialog.item?.batches ? deleteDialog.item.batches.length : 0);
+                  const hasBatches = batchCount > 0;
+
+                  if (!hasBatches) {
+                    return (
+                      <>
+                        Are you sure you want to delete <strong className="text-foreground">{prodName}</strong> from your product catalog?
+                        <br /><br />
+                        This product currently has <strong className="text-foreground">0 batches</strong> in stock. It will be completely removed from your catalog.
+                      </>
+                    );
+                  }
+
+                  return (
+                    <>
+                      Are you sure you want to delete the product catalog <strong className="text-foreground">{prodName}</strong>?
+                      <br /><br />
+                      This catalog has <strong className="text-foreground">{batchCount} active batch(es)</strong> in inventory.
+                    </>
+                  );
+                })()
               )}
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <AlertDialogFooter className="mt-4 gap-2 flex-col sm:flex-row">
-            <AlertDialogCancel className="h-10 text-xs font-bold border-border/80 hover:bg-muted rounded-xl">
+          <AlertDialogFooter className="mt-4 gap-2 flex-col sm:flex-row flex-wrap sm:justify-end">
+            <AlertDialogCancel className="h-10 text-xs font-bold border-border/80 hover:bg-muted rounded-xl cursor-pointer">
               Cancel
             </AlertDialogCancel>
             {deleteDialog.type === "inventory" ? (
               <AlertDialogAction
                 onClick={handleDeleteInventoryItem}
-                className="bg-destructive hover:bg-destructive/95 text-destructive-foreground h-10 text-xs font-bold shadow-md rounded-xl"
+                className="bg-destructive hover:bg-destructive/95 text-destructive-foreground h-10 text-xs font-bold shadow-md rounded-xl cursor-pointer"
               >
-                Delete Item
+                Delete Batch
               </AlertDialogAction>
             ) : (
-              <div className="flex flex-col sm:flex-row gap-2">
-                <AlertDialogAction
-                  onClick={() => handleDeleteProduct(false)}
-                  className="bg-destructive/80 hover:bg-destructive/90 text-destructive-foreground h-10 text-xs font-bold shadow-md rounded-xl"
-                >
-                  Delete Product Only
-                </AlertDialogAction>
-                <AlertDialogAction
-                  onClick={() => handleDeleteProduct(true)}
-                  className="bg-destructive hover:bg-destructive/95 text-destructive-foreground h-10 text-xs font-bold shadow-md rounded-xl"
-                >
-                  Delete with Inventory
-                </AlertDialogAction>
-              </div>
+              (() => {
+                const batchCount = deleteDialog.item?.batch_count !== undefined
+                  ? Number(deleteDialog.item.batch_count)
+                  : (deleteDialog.item?.batches ? deleteDialog.item.batches.length : 0);
+                const hasBatches = batchCount > 0;
+
+                if (!hasBatches) {
+                  return (
+                    <AlertDialogAction
+                      onClick={() => handleDeleteProduct(false)}
+                      className="bg-destructive hover:bg-destructive/95 text-destructive-foreground h-10 text-xs font-bold shadow-md rounded-xl cursor-pointer"
+                    >
+                      Delete Catalog
+                    </AlertDialogAction>
+                  );
+                }
+
+                return (
+                  <>
+                    <AlertDialogAction
+                      onClick={() => handleDeleteProduct(false)}
+                      className="bg-destructive/80 hover:bg-destructive/90 text-destructive-foreground h-10 text-xs font-bold shadow-md rounded-xl cursor-pointer"
+                    >
+                      Delete Catalog Only
+                    </AlertDialogAction>
+                    <AlertDialogAction
+                      onClick={() => handleDeleteProduct(true)}
+                      className="bg-destructive hover:bg-destructive/95 text-destructive-foreground h-10 text-xs font-bold shadow-md rounded-xl cursor-pointer"
+                    >
+                      Delete Catalog & All Batches
+                    </AlertDialogAction>
+                  </>
+                );
+              })()
             )}
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Bulk Delete Dialog */}
+      <AlertDialog open={bulkDeleteDialogOpen} onOpenChange={setBulkDeleteDialogOpen}>
+        <AlertDialogContent className="rounded-2xl border border-border/40 shadow-2xl max-w-lg">
+          <AlertDialogHeader className="space-y-2">
+            <AlertDialogTitle className="font-extrabold text-base tracking-tight text-foreground flex items-center gap-2">
+              <Trash2 className="w-5 h-5 text-destructive" />
+              Delete {selectedItemIds.length} Selected Catalog Products
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-xs leading-relaxed text-muted-foreground font-medium">
+              Are you sure you want to delete the <strong className="text-foreground">{selectedItemIds.length}</strong> selected product catalog(s)?
+              <br /><br />
+              Choose whether to delete only the catalog definitions or delete the catalogs along with all associated inventory batches.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="mt-4 gap-2 flex-col sm:flex-row flex-wrap sm:justify-end">
+            <AlertDialogCancel className="h-10 text-xs font-bold border-border/80 hover:bg-muted rounded-xl cursor-pointer">
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => handleBulkDelete(false)}
+              disabled={bulkDeleting}
+              className="bg-destructive/80 hover:bg-destructive/90 text-destructive-foreground h-10 text-xs font-bold shadow-md rounded-xl cursor-pointer"
+            >
+              Delete Catalogs Only
+            </AlertDialogAction>
+            <AlertDialogAction
+              onClick={() => handleBulkDelete(true)}
+              disabled={bulkDeleting}
+              className="bg-destructive hover:bg-destructive/95 text-destructive-foreground h-10 text-xs font-bold shadow-md rounded-xl cursor-pointer"
+            >
+              {bulkDeleting ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />
+                  Deleting...
+                </>
+              ) : (
+                "Delete Catalogs & Batches"
+              )}
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -1110,6 +1194,20 @@ export default function InventoryPage() {
         title={detailProduct?.name || "Product Details"}
         subtitle="Inventory Batches & Product Details"
         icon={Package}
+        headerAction={
+          detailProduct ? (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 px-2.5 text-xs font-bold text-rose-500 border-rose-500/30 hover:bg-rose-500/10 rounded-lg flex items-center gap-1.5 cursor-pointer"
+              onClick={() => setDeleteDialog({ open: true, item: detailProduct, type: "product" })}
+              title="Delete this whole catalog"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Delete Catalog</span>
+            </Button>
+          ) : null
+        }
         tabs={[
           { id: "batches", label: "All Batches", icon: Package, badge: detailBatches.length },
           { id: "info", label: "Product Info", icon: Info },
@@ -1134,8 +1232,19 @@ export default function InventoryPage() {
 
                 <div className="space-y-2.5">
                   {detailBatches.length === 0 ? (
-                    <div className="p-8 text-center border border-border/40 rounded-xl bg-card/25 text-muted-foreground text-xs font-semibold">
-                      No active batches found in inventory for this product.
+                    <div className="p-8 text-center border border-border/40 rounded-xl bg-card/25 space-y-3">
+                      <p className="text-muted-foreground text-xs font-semibold">
+                        No active batches found in inventory for this catalog product.
+                      </p>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="text-rose-500 border-rose-500/30 hover:bg-rose-500/10 text-xs font-bold rounded-lg cursor-pointer inline-flex items-center"
+                        onClick={() => setDeleteDialog({ open: true, item: detailProduct, type: "product" })}
+                      >
+                        <Trash2 className="w-3.5 h-3.5 mr-1.5" />
+                        Delete Catalog Entry
+                      </Button>
                     </div>
                   ) : (
                     detailBatches.map((batch) => {
@@ -1194,7 +1303,7 @@ export default function InventoryPage() {
                             <div>
                               <p className="text-[10px] font-bold text-muted-foreground uppercase">Expiry</p>
                               <p className={`font-mono font-bold text-xs mt-0.5 ${isExpired ? "text-rose-500" : "text-foreground"}`}>
-                                {batch.expiry_date || "-"}
+                                {formatExpiry(batch.expiry_date)}
                               </p>
                             </div>
                             <div>
@@ -1203,7 +1312,7 @@ export default function InventoryPage() {
                             </div>
                             <div>
                               <p className="text-[10px] font-bold text-muted-foreground uppercase">Cost / MRP</p>
-                              <p className="font-mono font-bold text-foreground text-xs mt-0.5">₹{batch.purchase_price} / ₹{batch.mrp}</p>
+                              <p className="font-mono font-bold text-foreground text-xs mt-0.5">₹{Number(batch.purchase_price || 0).toFixed(2)} / ₹{Number(batch.mrp || 0).toFixed(2)}</p>
                             </div>
                           </div>
 
@@ -1323,6 +1432,26 @@ export default function InventoryPage() {
                 <div>
                   <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">HSN Number</p>
                   <p className="text-xs font-mono font-semibold text-foreground mt-0.5">{detailProduct?.hsn_no || detailBatches[0]?.hsn_no || "-"}</p>
+                </div>
+
+                <div className="col-span-2 pt-3 border-t border-border/30">
+                  <div className="border border-rose-500/20 bg-rose-500/5 rounded-xl p-3 flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-black text-rose-500">Delete Product Catalog</p>
+                      <p className="text-[11px] text-muted-foreground mt-0.5">
+                        Permanently delete this catalog product from your database.
+                      </p>
+                    </div>
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      className="bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold h-8 px-3 rounded-lg shrink-0 cursor-pointer shadow-xs"
+                      onClick={() => setDeleteDialog({ open: true, item: detailProduct, type: "product" })}
+                    >
+                      <Trash2 className="w-3.5 h-3.5 mr-1.5" />
+                      Delete Catalog
+                    </Button>
+                  </div>
                 </div>
               </div>
             )}

@@ -68,6 +68,7 @@ import {
   User,
   ShoppingCart,
   Package,
+  Globe,
   CreditCard,
   RotateCcw,
   History,
@@ -92,7 +93,7 @@ import { toast } from "sonner";
 import PlanBadge from "../components/PlanBadge";
 import Loader from "../components/Loader";
 import BillingScannerModal from "../components/BillingScannerModal";
-import { formatDate } from "./utils";
+import { formatDate, formatExpiry, formatExpiryInput, expiryToIso } from "./utils";
 import { getOS } from "../hooks/useKeyboard";
 
 const LOCAL_STORAGE_KEY_BILL = "pharmalogy_bill_draft";
@@ -235,6 +236,9 @@ export default function BillingPage() {
   const [doctorSearch, setDoctorSearch] = useState("");
   const [doctorSuggestions, setDoctorSuggestions] = useState([]);
   const [showDoctorSuggestions, setShowDoctorSuggestions] = useState(false);
+  const [doctorPage, setDoctorPage] = useState(1);
+  const [hasMoreDoctors, setHasMoreDoctors] = useState(false);
+  const [loadingDoctors, setLoadingDoctors] = useState(false);
 
   // Customer suggestions pagination state
   const [customerSuggestions, setCustomerSuggestions] = useState([]);
@@ -280,6 +284,16 @@ export default function BillingPage() {
   // Delete dialog
   const [deleteDialog, setDeleteDialog] = useState({ open: false, bill: null });
 
+  // High-performance search cache & abort controllers
+  const invSearchCacheRef = useRef(new Map());
+  const invAbortRef = useRef(null);
+  const editingInvSearchCacheRef = useRef(new Map());
+  const editingInvAbortRef = useRef(null);
+  const docSearchCacheRef = useRef(new Map());
+  const docAbortRef = useRef(null);
+  const custSearchCacheRef = useRef(new Map());
+  const custAbortRef = useRef(null);
+
   // Expanded bill rows
   const [expandedBills, setExpandedBills] = useState({});
   const [pendingBillNo, setPendingBillNo] = useState("");
@@ -309,7 +323,7 @@ export default function BillingPage() {
       return {
         batchCount,
         batchLabel: invItem?.batch_no || "-",
-        expiryLabel: invItem?.expiry_date || "-",
+        expiryLabel: formatExpiry(invItem?.expiry_date),
         isMultiple: false
       };
     }
@@ -346,7 +360,7 @@ export default function BillingPage() {
     return {
       batchCount,
       batchLabel: batches.length > 1 ? `${batches.length} Batches` : (batches[0]?.batch_no || invItem.batch_no || "-"),
-      expiryLabel: nearestExp,
+      expiryLabel: formatExpiry(nearestExp),
       isMultiple: batches.length > 1
     };
   };
@@ -1111,127 +1125,256 @@ export default function BillingPage() {
   const [loadingInventorySuggestions, setLoadingInventorySuggestions] = useState(false);
   const [loadingEditingInventorySuggestions, setLoadingEditingInventorySuggestions] = useState(false);
 
-  // Server-side inventory search for new bills
+  // Server-side inventory search for new bills with instant cache & 120ms debounce
   useEffect(() => {
+    const trimmed = (inventorySearch || "").trim();
+    if (trimmed.length < 2) {
+      if (invAbortRef.current) {
+        invAbortRef.current.abort();
+      }
+      setInventorySuggestions([]);
+      setShowInventorySuggestions(false);
+      setLoadingInventorySuggestions(false);
+      return;
+    }
+
+    const cacheKey = trimmed.toLowerCase();
+    // ⚡ Instant Cache Hit (0ms)
+    if (invSearchCacheRef.current.has(cacheKey)) {
+      setInventorySuggestions(invSearchCacheRef.current.get(cacheKey));
+      setShowInventorySuggestions(true);
+    }
+
     const searchInventory = async () => {
-      if (inventorySearch.length >= 2) {
+      if (invAbortRef.current) {
+        invAbortRef.current.abort();
+      }
+      const controller = new AbortController();
+      invAbortRef.current = controller;
+
+      if (!invSearchCacheRef.current.has(cacheKey)) {
         setLoadingInventorySuggestions(true);
-        try {
-          const response = await axios.get(
-            `${API}/inventory/search?q=${encodeURIComponent(inventorySearch)}&limit=15`
-          );
-          setInventorySuggestions(response.data.inventory);
-          setShowInventorySuggestions(true);
-        } catch (error) {
+      }
+
+      try {
+        const response = await axios.get(
+          `${API}/inventory/search?q=${encodeURIComponent(trimmed)}&limit=30`,
+          { signal: controller.signal }
+        );
+        const data = response.data.inventory || response.data.medicines || [];
+        invSearchCacheRef.current.set(cacheKey, data);
+        setInventorySuggestions(data);
+        setShowInventorySuggestions(true);
+      } catch (error) {
+        if (!axios.isCancel(error)) {
           console.error("Inventory search error:", error);
-          // Fallback to paginated endpoint
-          try {
-            const response = await axios.get(
-              `${API}/inventory?search=${encodeURIComponent(inventorySearch)}&limit=15`
-            );
-            setInventorySuggestions(response.data.inventory);
-            setShowInventorySuggestions(true);
-          } catch (e) {
-            console.error("Fallback search error:", e);
-          }
-        } finally {
+        }
+      } finally {
+        if (invAbortRef.current === controller) {
           setLoadingInventorySuggestions(false);
         }
-      } else {
-        setInventorySuggestions([]);
-        setShowInventorySuggestions(false);
-        setLoadingInventorySuggestions(false);
       }
     };
 
-    const debounce = setTimeout(searchInventory, 200);
+    const debounce = setTimeout(searchInventory, 120);
     return () => clearTimeout(debounce);
   }, [inventorySearch]);
 
-  // Server-side inventory search for editing bills
+  // Server-side inventory search for editing bills with instant cache
   useEffect(() => {
+    const trimmed = (editingInventorySearch || "").trim();
+    if (trimmed.length < 2) {
+      if (editingInvAbortRef.current) {
+        editingInvAbortRef.current.abort();
+      }
+      setEditingInventorySuggestions([]);
+      setShowEditingInventorySuggestions(false);
+      setLoadingEditingInventorySuggestions(false);
+      return;
+    }
+
+    const cacheKey = trimmed.toLowerCase();
+    // ⚡ Instant Cache Hit (0ms)
+    if (editingInvSearchCacheRef.current.has(cacheKey)) {
+      setEditingInventorySuggestions(editingInvSearchCacheRef.current.get(cacheKey));
+      setShowEditingInventorySuggestions(true);
+    }
+
     const searchInventory = async () => {
-      if (editingInventorySearch.length >= 2) {
+      if (editingInvAbortRef.current) {
+        editingInvAbortRef.current.abort();
+      }
+      const controller = new AbortController();
+      editingInvAbortRef.current = controller;
+
+      if (!editingInvSearchCacheRef.current.has(cacheKey)) {
         setLoadingEditingInventorySuggestions(true);
-        try {
-          const response = await axios.get(
-            `${API}/inventory/search?q=${encodeURIComponent(editingInventorySearch)}&limit=15`
-          );
-          setEditingInventorySuggestions(response.data.inventory);
-          setShowEditingInventorySuggestions(true);
-        } catch (error) {
+      }
+
+      try {
+        const response = await axios.get(
+          `${API}/inventory/search?q=${encodeURIComponent(trimmed)}&limit=30`,
+          { signal: controller.signal }
+        );
+        const data = response.data.inventory || response.data.medicines || [];
+        editingInvSearchCacheRef.current.set(cacheKey, data);
+        setEditingInventorySuggestions(data);
+        setShowEditingInventorySuggestions(true);
+      } catch (error) {
+        if (!axios.isCancel(error)) {
           console.error("Inventory search error:", error);
-          try {
-            const response = await axios.get(
-              `${API}/inventory?search=${encodeURIComponent(editingInventorySearch)}&limit=15`
-            );
-            setEditingInventorySuggestions(response.data.inventory);
-            setShowEditingInventorySuggestions(true);
-          } catch (e) {
-            console.error("Fallback search error:", e);
-          }
-        } finally {
+        }
+      } finally {
+        if (editingInvAbortRef.current === controller) {
           setLoadingEditingInventorySuggestions(false);
         }
-      } else {
-        setEditingInventorySuggestions([]);
-        setShowEditingInventorySuggestions(false);
-        setLoadingEditingInventorySuggestions(false);
       }
     };
 
-    const debounce = setTimeout(searchInventory, 200);
+    const debounce = setTimeout(searchInventory, 120);
     return () => clearTimeout(debounce);
   }, [editingInventorySearch]);
 
-  // Server-side doctor search
-  useEffect(() => {
-    const searchDoctors = async () => {
-      if (doctorSearch.length >= 1) {
-        try {
-          const response = await axios.get(
-            `${API}/bills/doctors?search=${encodeURIComponent(doctorSearch)}`
-          );
-          setDoctorSuggestions(response.data.doctors || []);
-        } catch (error) {
-          console.error("Doctor search error:", error);
-        }
-      } else {
-        setDoctorSuggestions([]);
-      }
-    };
+  // Server-side doctor search with instant cache & infinite scroll
+  const fetchDoctors = async (page = 1, search = "", append = false) => {
+    const trimmed = (search || "").trim();
+    const cacheKey = `${page}:${trimmed.toLowerCase()}`;
 
-    const debounce = setTimeout(searchDoctors, 200);
+    if (!append && docSearchCacheRef.current.has(cacheKey)) {
+      const cached = docSearchCacheRef.current.get(cacheKey);
+      setDoctorSuggestions(cached.doctors || []);
+      setHasMoreDoctors(cached.has_more ?? false);
+      setDoctorPage(page);
+    }
+
+    if (docAbortRef.current) {
+      docAbortRef.current.abort();
+    }
+    const controller = new AbortController();
+    docAbortRef.current = controller;
+
+    if (!append && !docSearchCacheRef.current.has(cacheKey)) {
+      setLoadingDoctors(true);
+    }
+
+    try {
+      const response = await axios.get(
+        `${API}/bills/doctors?search=${encodeURIComponent(trimmed)}&page=${page}&limit=20`,
+        { signal: controller.signal }
+      );
+      const data = response.data.doctors || [];
+      const hasMoreData = response.data.pagination?.has_more ?? data.length === 20;
+
+      docSearchCacheRef.current.set(cacheKey, { doctors: data, has_more: hasMoreData });
+      setDoctorSuggestions((prev) => (append ? [...prev, ...data] : data));
+      setHasMoreDoctors(hasMoreData);
+      setDoctorPage(page);
+    } catch (error) {
+      if (!axios.isCancel(error)) {
+        console.error("Doctor search error:", error);
+      }
+    } finally {
+      if (docAbortRef.current === controller) {
+        setLoadingDoctors(false);
+      }
+    }
+  };
+
+  const loadMoreDoctors = () => {
+    if (loadingDoctors || !hasMoreDoctors) return;
+    fetchDoctors(doctorPage + 1, doctorSearch, true);
+  };
+
+  const handleSelectDoctor = async (doc) => {
+    if (!doc) return;
+    setDoctorName(doc.name);
+    setDoctorSearch("");
+    setShowDoctorSuggestions(false);
+    if (doc.source === "global") {
+      try {
+        await axios.post(`${API}/bills/doctors/ensure-global`, doc);
+      } catch (e) {}
+    }
+  };
+
+  const handleSelectEditingDoctor = async (doc) => {
+    if (!doc) return;
+    setEditingBillData((prev) => ({
+      ...prev,
+      doctor: doc.name,
+    }));
+    setDoctorSearch("");
+    setShowDoctorSuggestions(false);
+    if (doc.source === "global") {
+      try {
+        await axios.post(`${API}/bills/doctors/ensure-global`, doc);
+      } catch (e) {}
+    }
+  };
+
+  useEffect(() => {
+    const debounce = setTimeout(() => {
+      fetchDoctors(1, doctorSearch, false);
+    }, 120);
     return () => clearTimeout(debounce);
   }, [doctorSearch]);
 
-  // Server-side customer search with infinite scroll
+  // Server-side customer search with instant cache & infinite scroll
   useEffect(() => {
+    const trimmed = (customerSearch || "").trim();
+    if (trimmed.length < 1) {
+      if (custAbortRef.current) {
+        custAbortRef.current.abort();
+      }
+      setCustomerSuggestions([]);
+      setHasMoreCustomerSuggestions(false);
+      setCustomerSuggestionPage(1);
+      return;
+    }
+
+    const cacheKey = trimmed.toLowerCase();
+    // ⚡ Instant Cache Hit (0ms)
+    if (custSearchCacheRef.current.has(cacheKey)) {
+      const cached = custSearchCacheRef.current.get(cacheKey);
+      setCustomerSuggestions(cached.customers || []);
+      setHasMoreCustomerSuggestions(cached.has_more ?? false);
+    }
+
     const searchCustomers = async () => {
-      if (customerSearch.trim().length >= 1) {
+      if (custAbortRef.current) {
+        custAbortRef.current.abort();
+      }
+      const controller = new AbortController();
+      custAbortRef.current = controller;
+
+      if (!custSearchCacheRef.current.has(cacheKey)) {
         setLoadingCustomerSuggestions(true);
-        try {
-          const response = await axios.get(
-            `${API}/customers?search=${encodeURIComponent(customerSearch)}&page=1&limit=15`
-          );
-          setCustomerSuggestions(response.data.customers || []);
-          setHasMoreCustomerSuggestions(
-            response.data.pagination?.page < response.data.pagination?.total_pages
-          );
-          setCustomerSuggestionPage(1);
-        } catch (error) {
+      }
+
+      try {
+        const response = await axios.get(
+          `${API}/customers?search=${encodeURIComponent(trimmed)}&page=1&limit=15`,
+          { signal: controller.signal }
+        );
+        const data = response.data.customers || [];
+        const hasMore = response.data.pagination?.page < response.data.pagination?.total_pages;
+
+        custSearchCacheRef.current.set(cacheKey, { customers: data, has_more: hasMore });
+        setCustomerSuggestions(data);
+        setHasMoreCustomerSuggestions(hasMore);
+        setCustomerSuggestionPage(1);
+      } catch (error) {
+        if (!axios.isCancel(error)) {
           console.error("Customer search error:", error);
-        } finally {
+        }
+      } finally {
+        if (custAbortRef.current === controller) {
           setLoadingCustomerSuggestions(false);
         }
-      } else {
-        setCustomerSuggestions([]);
-        setHasMoreCustomerSuggestions(false);
-        setCustomerSuggestionPage(1);
       }
     };
 
-    const debounce = setTimeout(searchCustomers, 300);
+    const debounce = setTimeout(searchCustomers, 120);
     return () => clearTimeout(debounce);
   }, [customerSearch]);
 
@@ -1474,12 +1617,19 @@ export default function BillingPage() {
 
   // Handle selecting inventory item for a specific row
   const handleSelectInventoryForRow = (itemId, inventoryItem) => {
-    let availableBatches = (inventoryItem.batches || []).filter(b => (b.available_quantity || 0) > 0);
+    const isGlobalOrEmpty =
+      inventoryItem.source === "global" ||
+      !inventoryItem.batches ||
+      inventoryItem.batches.length === 0;
+
+    let availableBatches = (inventoryItem.batches || []).filter(
+      (b) => (b.available_quantity || 0) > 0
+    );
     if (availableBatches.length === 0) {
       availableBatches = inventoryItem.batches || [];
     }
 
-    if (nearExpiryBatchFilter) {
+    if (nearExpiryBatchFilter && availableBatches.length > 0) {
       availableBatches.sort((a, b) => {
         if (!a.expiry_date) return 1;
         if (!b.expiry_date) return -1;
@@ -1494,32 +1644,50 @@ export default function BillingPage() {
         if (item.id !== itemId) return item;
 
         const qty = parseInt(item.quantity) || 1;
-        const unitPrice = defaultBatch.mrp_per_unit || defaultBatch.mrp || 0;
+        const unitPrice =
+          defaultBatch.mrp_per_unit ||
+          defaultBatch.mrp ||
+          inventoryItem.mrp_per_unit ||
+          inventoryItem.mrp ||
+          0;
         const purchasePrice =
-          defaultBatch.cost_per_unit || defaultBatch.purchase_price || 0;
-        const cgstVal = defaultBatch.cgst !== undefined ? Math.max(0, parseFloat(defaultBatch.cgst) || 0) : 0;
-        const sgstVal = defaultBatch.sgst !== undefined ? Math.max(0, parseFloat(defaultBatch.sgst) || 0) : 0;
+          defaultBatch.cost_per_unit ||
+          defaultBatch.purchase_price ||
+          inventoryItem.purchase_price ||
+          0;
+        const cgstVal =
+          defaultBatch.cgst !== undefined
+            ? Math.max(0, parseFloat(defaultBatch.cgst) || 0)
+            : 0;
+        const sgstVal =
+          defaultBatch.sgst !== undefined
+            ? Math.max(0, parseFloat(defaultBatch.sgst) || 0)
+            : 0;
         const exclPrice = unitPrice / (1 + (cgstVal + sgstVal) / 100);
-        const itemDiscount = (qty * exclPrice) * ((parseFloat(item.discount_percent) || 0) / 100);
-        const netTotal = (qty * exclPrice - itemDiscount) * (1 + (cgstVal + sgstVal) / 100);
+        const itemDiscount =
+          qty * exclPrice * ((parseFloat(item.discount_percent) || 0) / 100);
+        const netTotal =
+          (qty * exclPrice - itemDiscount) * (1 + (cgstVal + sgstVal) / 100);
 
         return {
           ...item,
-          inventory_id: defaultBatch.id,
-          product_name: inventoryItem.product_name,
+          inventory_id: isGlobalOrEmpty ? null : defaultBatch.id,
+          product_name: inventoryItem.product_name || inventoryItem.name,
           salt_composition: inventoryItem.salt_composition || "",
-          batch_no: defaultBatch.batch_no,
-          expiry_date: defaultBatch.expiry_date || "",
+          batch_no: isGlobalOrEmpty ? "" : defaultBatch.batch_no || "",
+          expiry_date: isGlobalOrEmpty ? "" : defaultBatch.expiry_date || "",
           unit_price: unitPrice,
           exclusive_price: exclPrice,
           net_total: netTotal,
           purchase_price: purchasePrice,
-          available:
-            defaultBatch.available_quantity ||
-            defaultBatch.available_units ||
-            0,
+          available: isGlobalOrEmpty
+            ? 0
+            : defaultBatch.available_quantity ||
+              defaultBatch.available_units ||
+              0,
           units_per_pack: inventoryItem.units_per_pack || 1,
-          is_manual: false,
+          is_manual: isGlobalOrEmpty,
+          source: inventoryItem.source || "inventory",
           cgst: defaultBatch.cgst !== undefined ? defaultBatch.cgst : "",
           sgst: defaultBatch.sgst !== undefined ? defaultBatch.sgst : "",
           available_batches: availableBatches,
@@ -1759,10 +1927,26 @@ export default function BillingPage() {
       prevItems.map((item) => {
         if (item.id !== itemId) return item;
 
+        const newQty = checked ? (parseInt(item.units_per_pack) || 1) : (parseInt(item.previousQuantity) || 1);
+        const cgstVal = Math.max(0, parseFloat(item.cgst) || 0);
+        const sgstVal = Math.max(0, parseFloat(item.sgst) || 0);
+        const unitPrice = parseFloat(item.unit_price) || 0;
+        const purchasePrice = parseFloat(item.purchase_price) || 0;
+        const discPercent = parseFloat(item.discount_percent) || 0;
+        const exclPrice = parseFloat(item.exclusive_price) || (unitPrice / (1 + (cgstVal + sgstVal) / 100));
+        const itemTotal = newQty * exclPrice;
+        const itemDiscount = itemTotal * (discPercent / 100);
+        const taxableValue = itemTotal - itemDiscount;
+        const netTotal = taxableValue * (1 + (cgstVal + sgstVal) / 100);
+        const profit = (unitPrice - purchasePrice) * newQty - (newQty * unitPrice * (discPercent / 100));
+
         return {
           ...item,
-          quantity: checked ? item.units_per_pack : item.previousQuantity || 1,
+          quantity: newQty,
           previousQuantity: checked ? item.quantity : undefined,
+          exclusive_price: exclPrice,
+          net_total: netTotal,
+          profit: profit,
         };
       })
     );
@@ -1879,7 +2063,7 @@ export default function BillingPage() {
             product_name: item.product_name,
             batch_no: item.batch_no,
             hsn_no: item.hsn_no || null,
-            expiry_date: item.expiry_date,
+            expiry_date: item.expiry_date ? expiryToIso(item.expiry_date) || item.expiry_date : null,
             quantity: parseInt(item.quantity) || 1,
             unit_price: parseFloat(item.unit_price) || 0,
             purchase_price: parseFloat(item.purchase_price) || 0,
@@ -2076,12 +2260,19 @@ export default function BillingPage() {
 
   // Handle selecting inventory for editing items
   const handleSelectInventoryForEditRow = (itemId, inventoryItem) => {
-    let availableBatches = (inventoryItem.batches || []).filter(b => (b.available_quantity || 0) > 0);
+    const isGlobalOrEmpty =
+      inventoryItem.source === "global" ||
+      !inventoryItem.batches ||
+      inventoryItem.batches.length === 0;
+
+    let availableBatches = (inventoryItem.batches || []).filter(
+      (b) => (b.available_quantity || 0) > 0
+    );
     if (availableBatches.length === 0) {
       availableBatches = inventoryItem.batches || [];
     }
 
-    if (nearExpiryBatchFilter) {
+    if (nearExpiryBatchFilter && availableBatches.length > 0) {
       availableBatches.sort((a, b) => {
         if (!a.expiry_date) return 1;
         if (!b.expiry_date) return -1;
@@ -2096,32 +2287,50 @@ export default function BillingPage() {
         if (item.id !== itemId) return item;
 
         const qty = parseInt(item.quantity) || 1;
-        const unitPrice = defaultBatch.mrp_per_unit || defaultBatch.mrp || 0;
+        const unitPrice =
+          defaultBatch.mrp_per_unit ||
+          defaultBatch.mrp ||
+          inventoryItem.mrp_per_unit ||
+          inventoryItem.mrp ||
+          0;
         const purchasePrice =
-          defaultBatch.cost_per_unit || defaultBatch.purchase_price || 0;
-        const cgstVal = defaultBatch.cgst !== undefined ? Math.max(0, parseFloat(defaultBatch.cgst) || 0) : 0;
-        const sgstVal = defaultBatch.sgst !== undefined ? Math.max(0, parseFloat(defaultBatch.sgst) || 0) : 0;
+          defaultBatch.cost_per_unit ||
+          defaultBatch.purchase_price ||
+          inventoryItem.purchase_price ||
+          0;
+        const cgstVal =
+          defaultBatch.cgst !== undefined
+            ? Math.max(0, parseFloat(defaultBatch.cgst) || 0)
+            : 0;
+        const sgstVal =
+          defaultBatch.sgst !== undefined
+            ? Math.max(0, parseFloat(defaultBatch.sgst) || 0)
+            : 0;
         const exclPrice = unitPrice / (1 + (cgstVal + sgstVal) / 100);
-        const itemDiscount = (qty * exclPrice) * ((parseFloat(item.discount_percent) || 0) / 100);
-        const netTotal = (qty * exclPrice - itemDiscount) * (1 + (cgstVal + sgstVal) / 100);
+        const itemDiscount =
+          qty * exclPrice * ((parseFloat(item.discount_percent) || 0) / 100);
+        const netTotal =
+          (qty * exclPrice - itemDiscount) * (1 + (cgstVal + sgstVal) / 100);
 
         return {
           ...item,
-          inventory_id: defaultBatch.id,
-          product_name: inventoryItem.product_name,
+          inventory_id: isGlobalOrEmpty ? null : defaultBatch.id,
+          product_name: inventoryItem.product_name || inventoryItem.name,
           salt_composition: inventoryItem.salt_composition || "",
-          batch_no: defaultBatch.batch_no,
-          expiry_date: defaultBatch.expiry_date || "",
+          batch_no: isGlobalOrEmpty ? "" : defaultBatch.batch_no || "",
+          expiry_date: isGlobalOrEmpty ? "" : defaultBatch.expiry_date || "",
           unit_price: unitPrice,
           exclusive_price: exclPrice,
           net_total: netTotal,
           purchase_price: purchasePrice,
-          available:
-            defaultBatch.available_quantity ||
-            defaultBatch.available_units ||
-            0,
+          available: isGlobalOrEmpty
+            ? 0
+            : defaultBatch.available_quantity ||
+              defaultBatch.available_units ||
+              0,
           units_per_pack: inventoryItem.units_per_pack || 1,
-          is_manual: false,
+          is_manual: isGlobalOrEmpty,
+          source: inventoryItem.source || "inventory",
           cgst: defaultBatch.cgst !== undefined ? defaultBatch.cgst : "",
           sgst: defaultBatch.sgst !== undefined ? defaultBatch.sgst : "",
           available_batches: availableBatches,
@@ -2248,7 +2457,7 @@ export default function BillingPage() {
             inventory_id: item.inventory_id || null,
             product_name: item.product_name,
             batch_no: item.batch_no,
-            expiry_date: item.expiry_date,
+            expiry_date: item.expiry_date ? expiryToIso(item.expiry_date) || item.expiry_date : null,
             quantity: parseInt(item.quantity) || 1,
             unit_price: parseFloat(item.unit_price) || 0,
             purchase_price: parseFloat(item.purchase_price) || 0,
@@ -3076,31 +3285,75 @@ export default function BillingPage() {
                     setDoctorSearch(e.target.value);
                     setShowDoctorSuggestions(true);
                   }}
-                  onFocus={() => setShowDoctorSuggestions(true)}
+                  onFocus={() => {
+                    setShowDoctorSuggestions(true);
+                    if (doctorSuggestions.length === 0) {
+                      fetchDoctors(1, doctorSearch, false);
+                    }
+                  }}
                   onBlur={() =>
-                    setTimeout(() => setShowDoctorSuggestions(false), 200)
+                    setTimeout(() => setShowDoctorSuggestions(false), 250)
                   }
                   className="h-9 text-xs font-semibold rounded-xl border-border bg-background text-foreground shadow-2xs focus-visible:ring-2 focus-visible:ring-primary/30 focus-visible:border-primary"
                   data-testid="doctor-search"
                 />
-                {showDoctorSuggestions &&
-                  doctorSuggestions.length > 0 && (
-                    <div className="absolute z-[100] w-full mt-1 bg-card/95 backdrop-blur-md border border-border shadow-xl rounded-xl max-h-48 overflow-y-auto top-full overflow-x-hidden transition-all duration-150 animate-in fade-in slide-in-from-top-2">
-                      {doctorSuggestions.map((doc, idx) => (
-                        <div
-                          key={idx}
-                          className="p-2.5 hover:bg-primary/10 cursor-pointer border-b border-border/50 last:border-0 transition-colors duration-150"
-                          onMouseDown={() => {
-                            setDoctorName(doc.name);
-                            setDoctorSearch("");
-                            setShowDoctorSuggestions(false);
-                          }}
-                        >
-                          <p className="font-semibold text-sm">{doc.name}</p>
+                {showDoctorSuggestions && (
+                  <div
+                    className="absolute z-[100] w-[320px] -left-36 sm:left-0 mt-1 bg-card/95 backdrop-blur-md border border-border shadow-2xl rounded-xl max-h-60 overflow-y-auto top-full custom-scrollbar transition-all duration-150 animate-in fade-in slide-in-from-top-2"
+                    onScroll={(e) => {
+                      const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
+                      if (scrollHeight - scrollTop <= clientHeight + 40 && hasMoreDoctors && !loadingDoctors) {
+                        loadMoreDoctors();
+                      }
+                    }}
+                  >
+                    {doctorSuggestions.map((doc, idx) => (
+                      <div
+                        key={`${doc.id || doc.name}-${idx}`}
+                        className="p-2.5 hover:bg-primary/10 cursor-pointer border-b border-border/40 last:border-0 transition-colors duration-150"
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          handleSelectDoctor(doc);
+                        }}
+                      >
+                        <div className="flex items-center justify-between gap-1.5 mb-0.5">
+                          <p className="font-semibold text-xs text-foreground truncate">
+                            {doc.name}
+                          </p>
+                          {doc.source === "global" ? (
+                            <span className="text-[9px] px-1.5 py-0.2 rounded-full font-bold bg-amber-500/10 text-amber-500 border border-amber-500/20 shrink-0">
+                              Verified
+                            </span>
+                          ) : (
+                            <span className="text-[9px] px-1.5 py-0.2 rounded-full font-bold bg-blue-500/10 text-blue-400 border border-blue-500/20 shrink-0">
+                              My Doctor
+                            </span>
+                          )}
                         </div>
-                      ))}
-                    </div>
-                  )}
+                        <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground truncate font-mono">
+                          {doc.license_number || doc.registration_no ? (
+                            <span>Reg: {doc.license_number || doc.registration_no}</span>
+                          ) : null}
+                          {doc.clinic ? <span>• {doc.clinic}</span> : null}
+                          {doc.city || doc.state ? (
+                            <span>• {[doc.city, doc.state].filter(Boolean).join(", ")}</span>
+                          ) : null}
+                        </div>
+                      </div>
+                    ))}
+                    {loadingDoctors && (
+                      <div className="py-2.5 text-center flex items-center justify-center gap-1.5 text-xs text-muted-foreground">
+                        <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+                        <span>Loading doctors...</span>
+                      </div>
+                    )}
+                    {!loadingDoctors && doctorSuggestions.length === 0 && (
+                      <div className="p-3 text-center text-xs text-muted-foreground italic">
+                        No doctors match "{doctorSearch}"
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
 
@@ -3390,6 +3643,15 @@ export default function BillingPage() {
                                             <span className="text-[10px] px-2 py-0.5 bg-emerald-500/10 text-emerald-500 dark:text-emerald-400 border border-emerald-500/20 rounded-full font-bold">
                                               In Stock: {invItem.available_quantity || invItem.available_units} units
                                             </span>
+                                          ) : invItem.source === "global" ? (
+                                            <span className="text-[10px] px-2 py-0.5 bg-blue-500/10 text-blue-500 dark:text-blue-400 border border-blue-500/20 rounded-full font-bold flex items-center gap-1">
+                                              <Globe className="w-2.5 h-2.5" />
+                                              Global Medicine
+                                            </span>
+                                          ) : invItem.is_custom_catalog || invItem.source === "catalog" ? (
+                                            <span className="text-[10px] px-2 py-0.5 bg-purple-500/10 text-purple-400 border border-purple-500/20 rounded-full font-bold">
+                                              My Catalog
+                                            </span>
                                           ) : (
                                             <span className="text-[10px] px-2 py-0.5 bg-rose-500/10 text-rose-500 border border-rose-500/20 rounded-full font-bold">
                                               Out of Stock
@@ -3423,6 +3685,30 @@ export default function BillingPage() {
 
                                       {/* Row 3: Footer details - Rate, MRP, Batch & Expiry */}
                                       {(() => {
+                                        if (invItem.source === "global") {
+                                          return (
+                                            <div className="mt-1.5 flex items-center justify-between text-xs text-muted-foreground/90 flex-wrap pt-1 border-t border-border/40 font-mono">
+                                              <div className="flex items-center gap-3">
+                                                {invItem.purchase_price !== undefined && Number(invItem.purchase_price) > 0 && (
+                                                  <span className="text-emerald-500 font-bold">
+                                                    PTR: ₹{Number(invItem.purchase_price || 0).toFixed(2)}
+                                                  </span>
+                                                )}
+                                                <span className="text-orange-500 font-bold">
+                                                  MRP: ₹{Number(invItem.mrp_per_unit || invItem.mrp || 0).toFixed(2)}
+                                                </span>
+                                                {invItem.pack_type && (
+                                                  <span className="text-[10px] font-sans px-2 py-0.5 bg-muted rounded border border-border">
+                                                    {invItem.pack_type} ({invItem.units_per_pack || 1}u)
+                                                  </span>
+                                                )}
+                                              </div>
+                                              <span className="text-[10px] text-blue-400 font-sans font-bold bg-blue-500/10 px-2 py-0.5 rounded border border-blue-500/20">
+                                                Negative Billing Available
+                                              </span>
+                                            </div>
+                                          );
+                                        }
                                         const expInfo = getNearestExpiryInfo(invItem);
                                         return (
                                           <div className="mt-1.5 flex items-center justify-between text-xs text-muted-foreground/90 flex-wrap pt-1 border-t border-border/40 font-mono">
@@ -3603,7 +3889,7 @@ export default function BillingPage() {
                                           </span>
                                         </div>
                                         <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground font-mono pt-0.5">
-                                          <span>Exp: <strong className="text-foreground font-bold">{b.expiry_date || "N/A"}</strong></span>
+                                          <span>Exp: <strong className="text-foreground font-bold">{b.expiry_date ? formatExpiry(b.expiry_date) : "N/A"}</strong></span>
                                           {b.supplier_name ? (
                                             <span className="text-muted-foreground font-semibold truncate max-w-[210px]" title={b.supplier_name}>
                                               Supp: <strong className="text-foreground/90">{b.supplier_name}</strong>
@@ -4507,33 +4793,74 @@ export default function BillingPage() {
                     setDoctorSearch(e.target.value);
                     setShowDoctorSuggestions(true);
                   }}
-                  onFocus={() => setShowDoctorSuggestions(true)}
+                  onFocus={() => {
+                    setShowDoctorSuggestions(true);
+                    if (doctorSuggestions.length === 0) {
+                      fetchDoctors(1, doctorSearch, false);
+                    }
+                  }}
                   onBlur={() =>
-                    setTimeout(() => setShowDoctorSuggestions(false), 200)
+                    setTimeout(() => setShowDoctorSuggestions(false), 250)
                   }
                   className="h-9 text-xs font-semibold rounded-xl border-border bg-background text-foreground shadow-2xs focus-visible:ring-2 focus-visible:ring-amber-500/30 focus-visible:border-amber-500"
                 />
-                {showDoctorSuggestions &&
-                  doctorSuggestions.length > 0 && (
-                    <div className="absolute z-[100] w-full mt-1 bg-card/95 backdrop-blur-md border border-border shadow-xl rounded-xl max-h-48 overflow-y-auto top-full overflow-x-hidden transition-all duration-150 animate-in fade-in slide-in-from-top-2">
-                      {doctorSuggestions.map((doc, idx) => (
-                        <div
-                          key={idx}
-                          className="p-2.5 hover:bg-amber-500/10 cursor-pointer border-b border-border/50 last:border-0 transition-colors duration-150"
-                          onMouseDown={() => {
-                            setEditingBillData({
-                              ...editingBillData,
-                              doctor: doc.name,
-                            });
-                            setDoctorSearch("");
-                            setShowDoctorSuggestions(false);
-                          }}
-                        >
-                          <p className="font-semibold text-sm">{doc.name}</p>
+                {showDoctorSuggestions && (
+                  <div
+                    className="absolute z-[100] w-[320px] -left-36 sm:left-0 mt-1 bg-card/95 backdrop-blur-md border border-border shadow-2xl rounded-xl max-h-60 overflow-y-auto top-full custom-scrollbar transition-all duration-150 animate-in fade-in slide-in-from-top-2"
+                    onScroll={(e) => {
+                      const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
+                      if (scrollHeight - scrollTop <= clientHeight + 40 && hasMoreDoctors && !loadingDoctors) {
+                        loadMoreDoctors();
+                      }
+                    }}
+                  >
+                    {doctorSuggestions.map((doc, idx) => (
+                      <div
+                        key={`${doc.id || doc.name}-${idx}`}
+                        className="p-2.5 hover:bg-amber-500/10 cursor-pointer border-b border-border/40 last:border-0 transition-colors duration-150"
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          handleSelectEditingDoctor(doc);
+                        }}
+                      >
+                        <div className="flex items-center justify-between gap-1.5 mb-0.5">
+                          <p className="font-semibold text-xs text-foreground truncate">
+                            {doc.name}
+                          </p>
+                          {doc.source === "global" ? (
+                            <span className="text-[9px] px-1.5 py-0.2 rounded-full font-bold bg-amber-500/10 text-amber-500 border border-amber-500/20 shrink-0">
+                              Verified
+                            </span>
+                          ) : (
+                            <span className="text-[9px] px-1.5 py-0.2 rounded-full font-bold bg-blue-500/10 text-blue-400 border border-blue-500/20 shrink-0">
+                              My Doctor
+                            </span>
+                          )}
                         </div>
-                      ))}
-                    </div>
-                  )}
+                        <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground truncate font-mono">
+                          {doc.license_number || doc.registration_no ? (
+                            <span>Reg: {doc.license_number || doc.registration_no}</span>
+                          ) : null}
+                          {doc.clinic ? <span>• {doc.clinic}</span> : null}
+                          {doc.city || doc.state ? (
+                            <span>• {[doc.city, doc.state].filter(Boolean).join(", ")}</span>
+                          ) : null}
+                        </div>
+                      </div>
+                    ))}
+                    {loadingDoctors && (
+                      <div className="py-2.5 text-center flex items-center justify-center gap-1.5 text-xs text-muted-foreground">
+                        <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-500" />
+                        <span>Loading doctors...</span>
+                      </div>
+                    )}
+                    {!loadingDoctors && doctorSuggestions.length === 0 && (
+                      <div className="p-3 text-center text-xs text-muted-foreground italic">
+                        No doctors match "{doctorSearch}"
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
 
@@ -4816,6 +5143,15 @@ export default function BillingPage() {
                                                 <span className="text-[10px] px-2 py-0.5 bg-emerald-500/10 text-emerald-500 dark:text-emerald-400 border border-emerald-500/20 rounded-full font-bold">
                                                   In Stock: {invItem.available_quantity || invItem.available_units} units
                                                 </span>
+                                              ) : invItem.source === "global" ? (
+                                                <span className="text-[10px] px-2 py-0.5 bg-blue-500/10 text-blue-500 dark:text-blue-400 border border-blue-500/20 rounded-full font-bold flex items-center gap-1">
+                                                  <Globe className="w-2.5 h-2.5" />
+                                                  Global Medicine
+                                                </span>
+                                              ) : invItem.is_custom_catalog || invItem.source === "catalog" ? (
+                                                <span className="text-[10px] px-2 py-0.5 bg-purple-500/10 text-purple-400 border border-purple-500/20 rounded-full font-bold">
+                                                  My Catalog
+                                                </span>
                                               ) : (
                                                 <span className="text-[10px] px-2 py-0.5 bg-rose-500/10 text-rose-500 border border-rose-500/20 rounded-full font-bold">
                                                   Out of Stock
@@ -4849,6 +5185,30 @@ export default function BillingPage() {
 
                                           {/* Row 3: Footer details - Rate, MRP, Batch & Expiry */}
                                           {(() => {
+                                            if (invItem.source === "global") {
+                                              return (
+                                                <div className="mt-1.5 flex items-center justify-between text-xs text-muted-foreground/90 flex-wrap pt-1 border-t border-border/40 font-mono">
+                                                  <div className="flex items-center gap-3">
+                                                    {invItem.purchase_price !== undefined && Number(invItem.purchase_price) > 0 && (
+                                                      <span className="text-emerald-500 font-bold">
+                                                        PTR: ₹{Number(invItem.purchase_price || 0).toFixed(2)}
+                                                      </span>
+                                                    )}
+                                                    <span className="text-orange-500 font-bold">
+                                                      MRP: ₹{Number(invItem.mrp_per_unit || invItem.mrp || 0).toFixed(2)}
+                                                    </span>
+                                                    {invItem.pack_type && (
+                                                      <span className="text-[10px] font-sans px-2 py-0.5 bg-muted rounded border border-border">
+                                                        {invItem.pack_type} ({invItem.units_per_pack || 1}u)
+                                                      </span>
+                                                    )}
+                                                  </div>
+                                                  <span className="text-[10px] text-blue-400 font-sans font-bold bg-blue-500/10 px-2 py-0.5 rounded border border-blue-500/20">
+                                                    Negative Billing Available
+                                                  </span>
+                                                </div>
+                                              );
+                                            }
                                             const expInfo = getNearestExpiryInfo(invItem);
                                             return (
                                               <div className="mt-1.5 flex items-center justify-between text-xs text-muted-foreground/90 flex-wrap pt-1 border-t border-border/40 font-mono">
@@ -5010,7 +5370,7 @@ export default function BillingPage() {
                                           </span>
                                         </div>
                                         <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground font-mono pt-0.5">
-                                          <span>Exp: <strong className="text-foreground font-bold">{b.expiry_date || "N/A"}</strong></span>
+                                          <span>Exp: <strong className="text-foreground font-bold">{b.expiry_date ? formatExpiry(b.expiry_date) : "N/A"}</strong></span>
                                           {b.supplier_name ? (
                                             <span className="text-muted-foreground font-semibold truncate max-w-[210px]" title={b.supplier_name}>
                                               Supp: <strong className="text-foreground/90">{b.supplier_name}</strong>
@@ -5072,16 +5432,19 @@ export default function BillingPage() {
                         </TableCell>
                         <TableCell>
                           <Input
-                            type="date"
-                            value={item.expiry_date || ""}
+                            type="text"
+                            inputMode="numeric"
+                            placeholder="MM/YY"
+                            maxLength={5}
+                            value={formatExpiryInput(item.expiry_date || "")}
                             onChange={(e) =>
                               handleEditItemFieldChange(
                                 item.id,
                                 "expiry_date",
-                                e.target.value
+                                formatExpiryInput(e.target.value)
                               )
                             }
-                            className="h-8 text-xs text-center border-border/80 focus-visible:ring-1 focus-visible:ring-amber-500 focus-visible:border-amber-500 rounded-lg transition-all duration-200 w-28"
+                            className="h-8 text-xs text-center border-border/80 focus-visible:ring-1 focus-visible:ring-amber-500 focus-visible:border-amber-500 rounded-lg transition-all duration-200 w-24"
                           />
                         </TableCell>
                         <TableCell>
@@ -6516,7 +6879,7 @@ export default function BillingPage() {
               Are you sure you want to delete bill <span className="font-mono font-bold text-foreground">{deleteDialog.bill?.bill_no}</span>? This action is permanent.
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <AlertDialogFooter className="flex-col sm:flex-row gap-2 mt-4">
+          <AlertDialogFooter className="flex-col sm:flex-row flex-wrap sm:justify-end gap-2 mt-4">
             <AlertDialogCancel className="rounded-xl border-border/80 hover:bg-muted/80 h-10 px-4 transition-all">
               Cancel
             </AlertDialogCancel>

@@ -32,6 +32,7 @@ import DashboardLayout from "./components/DashboardLayout";
 import UpgradePage from "./pages/UpgradePage";
 import PaymentSuccessPage from "./pages/PaymentSuccessPage";
 import Loader from "./components/Loader";
+import { getPageTitle } from "./hooks/useDocumentTitle";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 export const API = `${BACKEND_URL}/api`;
@@ -66,6 +67,16 @@ const NavigationHandler = () => {
   useEffect(() => {
     navigateGlobal = navigate;
   }, [navigate]);
+
+  return null;
+};
+
+const PageTitleHandler = () => {
+  const location = useLocation();
+
+  useEffect(() => {
+    document.title = getPageTitle(location.pathname);
+  }, [location.pathname]);
 
   return null;
 };
@@ -421,6 +432,7 @@ function App() {
       </div> */}
       <BrowserRouter>
         <NavigationHandler />
+        <PageTitleHandler />
         <Routes>
           {/* Public Routes */}
           <Route path="/login" element={<LoginPage />} />

@@ -265,13 +265,13 @@ export default function DashboardLayout() {
                             key={item.path}
                             to={item.path}
                             onClick={() => setMobileOpen(false)}
-                            className={`flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold transition-all ${
+                            className={`group flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold transition-all ${
                               isItemActive
                                 ? "bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-md shadow-orange-500/25"
                                 : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
                             }`}
                           >
-                            <item.icon className="w-5 h-5 shrink-0" />
+                            <item.icon className={`w-5 h-5 shrink-0 transition-transform duration-300 ease-out ${isItemActive ? "" : "group-hover:-rotate-12 group-hover:scale-110"}`} />
                             <span>{item.label}</span>
                           </NavLink>
                         );
@@ -329,7 +329,7 @@ export default function DashboardLayout() {
             </div>
 
             {/* Center Top Horizontal Navigation Bar (Desktop / Large Screens) */}
-            <nav className="hidden lg:flex items-center gap-1 bg-muted/40 dark:bg-muted/20 p-1.5 rounded-2xl border border-border/60 dark:border-border/40 shadow-xs max-w-full overflow-x-auto scrollbar-none">
+            <nav className="hidden lg:flex items-center gap-1 bg-muted/40 dark:bg-muted/20 p-1.5 rounded-2xl border border-border/60 dark:border-border/40 shadow-xs">
               {filteredItems.map((item) => {
                 const isItemActive = checkIsActive(item.path);
                 return (
@@ -337,21 +337,21 @@ export default function DashboardLayout() {
                     <TooltipTrigger asChild>
                       <NavLink
                         to={item.path}
-                        className={`relative flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all duration-300 ease-out active:scale-95 whitespace-nowrap ${
+                        className={`group relative flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all duration-300 ease-out active:scale-95 whitespace-nowrap ${
                           isItemActive
                             ? "bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-md shadow-orange-500/25 scale-[1.02]"
                             : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
                         }`}
                         data-testid={`nav-${item.path.slice(1)}`}
                       >
-                        <item.icon className="w-4 h-4 shrink-0 transition-transform duration-300" />
+                        <item.icon className={`w-4 h-4 shrink-0 transition-transform duration-300 ease-out ${isItemActive ? "" : "group-hover:-rotate-12 group-hover:scale-110"}`} />
                         <span>{item.label}</span>
                       </NavLink>
                     </TooltipTrigger>
                     {item.shortcut && (
                       <TooltipContent
                         side="bottom"
-                        className="font-mono text-[10px] font-bold"
+                        className="font-mono text-[10px] font-bold shadow-md"
                       >
                         Shortcut: {formatShortcut(item.shortcut)}
                       </TooltipContent>
@@ -369,13 +369,13 @@ export default function DashboardLayout() {
                 size="icon"
                 onClick={toggleTheme}
                 data-testid="theme-toggle-btn"
-                className="relative hover:bg-muted/80 rounded-xl transition-all active:scale-95 border border-border/60 dark:border-border/40 h-9 w-9"
+                className="group relative hover:bg-muted/80 rounded-xl transition-all duration-200 hover:scale-105 active:scale-90 border border-border/60 dark:border-border/40 h-9 w-9 cursor-pointer"
                 title={isDark ? "Switch to Light Mode" : "Switch to Dark Mode"}
               >
                 {isDark ? (
-                  <Sun className="w-4.5 h-4.5 text-amber-400 drop-shadow-[0_0_8px_rgba(251,191,36,0.4)]" />
+                  <Sun className="w-4.5 h-4.5 text-amber-400 drop-shadow-[0_0_8px_rgba(251,191,36,0.4)] transition-transform duration-300 group-hover:rotate-45" />
                 ) : (
-                  <Moon className="w-4.5 h-4.5 text-orange-600 drop-shadow-[0_0_8px_rgba(234,88,12,0.3)]" />
+                  <Moon className="w-4.5 h-4.5 text-orange-600 drop-shadow-[0_0_8px_rgba(234,88,12,0.3)] transition-transform duration-300 group-hover:-rotate-12" />
                 )}
               </Button>
 
@@ -387,14 +387,14 @@ export default function DashboardLayout() {
                 variant="ghost"
                 size="icon"
                 onClick={toggleActivity}
-                className={`relative rounded-xl border border-border/60 dark:border-border/40 h-9 w-9 transition-all duration-200 ${
+                className={`group relative rounded-xl border border-border/60 dark:border-border/40 h-9 w-9 transition-all duration-200 hover:scale-105 active:scale-95 cursor-pointer ${
                   activityOpen
-                    ? "bg-orange-500/15 text-orange-500 border-orange-500/40"
-                    : "hover:bg-muted/80"
+                    ? "bg-orange-500/15 text-orange-500 border-orange-500/40 shadow-xs"
+                    : "hover:bg-muted/80 text-foreground"
                 }`}
                 title="Recent Activity (Alt + A)"
               >
-                <Activity className="w-4.5 h-4.5" />
+                <Activity className="w-4.5 h-4.5 text-foreground dark:text-foreground transition-transform duration-200 group-hover:scale-110" />
               </Button>
 
               {/* User Avatar & Dropdown Menu */}
@@ -402,10 +402,10 @@ export default function DashboardLayout() {
                 <DropdownMenuTrigger asChild>
                   <Button
                     variant="ghost"
-                    className="flex items-center gap-2 hover:bg-muted/80 px-2.5 py-1.5 rounded-xl border border-border/60 dark:border-border/40 transition-all h-9"
+                    className="flex items-center gap-2 hover:bg-muted/80 text-foreground px-2.5 py-1.5 rounded-xl border border-border/60 dark:border-border/40 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98] h-9 cursor-pointer"
                     data-testid="user-menu-btn"
                   >
-                    <Avatar className="w-7 h-7 ring-1 ring-border/60 shadow-xs shrink-0">
+                    <Avatar className="w-7 h-7 ring-1 ring-border/60 shadow-xs shrink-0 transition-transform duration-200 group-hover:scale-105">
                       <AvatarImage src={user?.image_url} />
                       <AvatarFallback className="bg-orange-500/20 text-orange-600 dark:text-orange-400 text-xs font-black">
                         {user?.name?.charAt(0)?.toUpperCase()}
@@ -419,23 +419,23 @@ export default function DashboardLayout() {
                 </DropdownMenuTrigger>
                 <DropdownMenuContent
                   align="end"
-                  className="w-52 mt-1 border border-border/80 dark:border-border/50 shadow-xl rounded-2xl p-1.5 bg-background/95 backdrop-blur-xl"
+                  className="w-52 mt-1 border border-border/80 dark:border-border/50 shadow-xl rounded-2xl p-1.5 bg-background/95 backdrop-blur-xl animate-in fade-in-0 zoom-in-95 duration-200"
                 >
                   <DropdownMenuItem
                     onClick={() => navigate("/settings")}
                     data-testid="settings-dropdown"
-                    className="cursor-pointer font-bold py-2 px-3 rounded-xl group hover:bg-orange-500/10 focus:bg-orange-500/10 focus:text-orange-600 dark:focus:text-orange-400"
+                    className="cursor-pointer font-bold py-2 px-3 rounded-xl group hover:bg-orange-500/10 focus:bg-orange-500/10 text-foreground hover:text-orange-600 focus:text-orange-600 dark:hover:text-orange-400 dark:focus:text-orange-400 transition-colors"
                   >
-                    <Settings className="w-4 h-4 mr-2.5 text-orange-500 group-hover:rotate-45 transition-transform" />
+                    <Settings className="w-4 h-4 mr-2.5 text-orange-500 group-hover:rotate-45 transition-transform duration-200" />
                     Settings
                   </DropdownMenuItem>
                   <DropdownMenuSeparator className="bg-border/50 my-1" />
                   <DropdownMenuItem
                     onClick={handleLogout}
                     data-testid="logout-btn"
-                    className="text-destructive focus:text-destructive-foreground focus:bg-destructive cursor-pointer font-bold py-2 px-3 rounded-xl group"
+                    className="text-destructive hover:bg-destructive/10 focus:bg-destructive/10 focus:text-destructive hover:text-destructive cursor-pointer font-bold py-2 px-3 rounded-xl group transition-colors"
                   >
-                    <LogOut className="w-4 h-4 mr-2.5 text-destructive group-focus:text-white transition-colors" />
+                    <LogOut className="w-4 h-4 mr-2.5 text-destructive transition-transform group-hover:translate-x-0.5" />
                     Logout
                   </DropdownMenuItem>
                 </DropdownMenuContent>
@@ -446,10 +446,20 @@ export default function DashboardLayout() {
 
         {/* Full-Width Seamless Page Content Area */}
         <div className="flex-1 min-h-0 relative flex overflow-hidden w-full">
-          <main className="flex-1 h-full overflow-y-auto p-2 sm:p-3 lg:p-3 w-full flex flex-col">
+          <main
+            className={`flex-1 h-full overflow-y-auto w-full flex flex-col ${
+              location.pathname.startsWith("/purchases") || location.pathname.startsWith("/billing")
+                ? "p-2.5 sm:p-3.5 lg:px-4 lg:py-3"
+                : "p-4 sm:p-6 lg:p-7"
+            }`}
+          >
             <div
               key={location.pathname}
-              className="flex-1 w-full flex flex-col animate-in fade-in duration-300 ease-out"
+              className={`flex-1 w-full flex flex-col animate-in fade-in-0 slide-in-from-bottom-2 duration-300 ease-out ${
+                location.pathname.startsWith("/purchases") || location.pathname.startsWith("/billing")
+                  ? "max-w-none"
+                  : "max-w-[1650px] mx-auto"
+              }`}
             >
               <Outlet />
             </div>

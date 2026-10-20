@@ -102,11 +102,11 @@ export default function LoginPage() {
 
         <div className="w-full max-w-md space-y-8 relative z-10 my-auto">
           {/* Brand Logo & Header */}
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 animate-stagger-1">
             <img
               src="/assets/svgs/logoBrand/logoOnlyWithoutBackground.svg"
               alt="DavaDesk"
-              className="w-12 h-12 object-contain shrink-0 drop-shadow-sm"
+              className="w-12 h-12 object-contain shrink-0 drop-shadow-sm hover:scale-105 transition-transform duration-300"
             />
             <div className="flex flex-col">
               <span className="font-extrabold text-2xl tracking-tight text-foreground leading-tight">
@@ -119,7 +119,7 @@ export default function LoginPage() {
           </div>
 
           {/* Form Header */}
-          <div className="space-y-1.5 pt-1">
+          <div className="space-y-1.5 pt-1 animate-stagger-2">
             <h2 className="text-3xl font-extrabold tracking-tight text-foreground">
               Sign In
             </h2>
@@ -129,7 +129,7 @@ export default function LoginPage() {
           </div>
 
           {/* Form Container */}
-          <form onSubmit={handleSubmit} className="space-y-6" noValidate>
+          <form onSubmit={handleSubmit} className="space-y-6 animate-stagger-3" noValidate>
             {/* Wave Animated Floating Email Input */}
             <WaveInput
               id="email"
@@ -182,7 +182,7 @@ export default function LoginPage() {
 
             <Button
               type="submit"
-              className="w-full h-12 font-bold text-sm bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white shadow-lg shadow-orange-500/25 transition-all duration-200 hover:-translate-y-0.5 active:translate-y-0 rounded-xl border-none mt-4"
+              className="w-full h-12 font-bold text-sm bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white shadow-lg shadow-orange-500/25 transition-all duration-200 hover:-translate-y-0.5 active:translate-y-0 rounded-xl border-none mt-4 btn-shine group"
               disabled={loading}
               data-testid="login-submit-btn"
             >
@@ -194,7 +194,7 @@ export default function LoginPage() {
               ) : (
                 <span className="flex items-center justify-center gap-2">
                   Sign In
-                  <ArrowRight className="w-4 h-4" />
+                  <ArrowRight className="w-4 h-4 transition-transform duration-200 group-hover:translate-x-1" />
                 </span>
               )}
             </Button>

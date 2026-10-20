@@ -45,7 +45,10 @@ import {
   FileSpreadsheet,
   Settings2,
   Save,
-  CheckCircle2
+  CheckCircle2,
+  Globe,
+  Building2,
+  Check
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatDate } from "./utils";
@@ -68,6 +71,21 @@ export default function SuppliersPage() {
     address: "",
     gst_no: "",
   });
+
+  // Global Distributors Catalog State
+  const [activeTab, setActiveTab] = useState("my_suppliers"); // "my_suppliers" | "global_catalog"
+  const [globalDistributors, setGlobalDistributors] = useState([]);
+  const [globalLoading, setGlobalLoading] = useState(false);
+  const [globalSearch, setGlobalSearch] = useState("");
+  const [globalPagination, setGlobalPagination] = useState({ page: 1, limit: 30, total: 87739, total_pages: 1 });
+  const [addingGlobalId, setAddingGlobalId] = useState(null);
+
+  // In Add Supplier Dialog Autocomplete State
+  const [globalSearchQuery, setGlobalSearchQuery] = useState("");
+  const [globalSearchResults, setGlobalSearchResults] = useState([]);
+  const [globalSearchLoading, setGlobalSearchLoading] = useState(false);
+  const globalSearchCacheRef = useRef(new Map());
+  const globalSearchAbortRef = useRef(null);
 
   // Pagination State
   const [pagination, setPagination] = useState({ page: 1, limit: 30, total: 0, total_pages: 1 });
@@ -257,6 +275,134 @@ export default function SuppliersPage() {
     }, 300);
     return () => clearTimeout(debounce);
   }, [search]);
+
+  // Global Distributors Fetch Function
+  const fetchGlobalDistributors = useCallback(async (page = 1, searchQuery = "") => {
+    setGlobalLoading(true);
+    try {
+      const params = new URLSearchParams();
+      params.append("page", page);
+      params.append("limit", 30);
+      params.append("include_global", "true");
+      if (searchQuery.trim()) params.append("search", searchQuery.trim());
+
+      const response = await axios.get(`${API}/suppliers?${params.toString()}`);
+      setGlobalDistributors(response.data.suppliers || []);
+      if (response.data.pagination) {
+        setGlobalPagination(response.data.pagination);
+      }
+    } catch (err) {
+      console.error("Failed to fetch global distributors", err);
+      toast.error("Failed to load global distributors");
+    } finally {
+      setGlobalLoading(false);
+    }
+  }, []);
+
+  // Effect to load global distributors when switching to global tab or searching
+  useEffect(() => {
+    if (activeTab === "global_catalog") {
+      const debounce = setTimeout(() => {
+        fetchGlobalDistributors(1, globalSearch);
+      }, 120);
+      return () => clearTimeout(debounce);
+    }
+  }, [activeTab, globalSearch, fetchGlobalDistributors]);
+
+  // Autocomplete inside Add Supplier Modal with instant cache & 120ms debounce
+  useEffect(() => {
+    const trimmed = (globalSearchQuery || "").trim();
+    if (!dialogOpen || !trimmed) {
+      if (globalSearchAbortRef.current) {
+        globalSearchAbortRef.current.abort();
+      }
+      setGlobalSearchResults([]);
+      setGlobalSearchLoading(false);
+      return;
+    }
+
+    const cacheKey = trimmed.toLowerCase();
+    // ⚡ Instant Cache Hit (0ms)
+    if (globalSearchCacheRef.current.has(cacheKey)) {
+      setGlobalSearchResults(globalSearchCacheRef.current.get(cacheKey));
+    }
+
+    const delay = setTimeout(async () => {
+      if (globalSearchAbortRef.current) {
+        globalSearchAbortRef.current.abort();
+      }
+      const controller = new AbortController();
+      globalSearchAbortRef.current = controller;
+
+      if (!globalSearchCacheRef.current.has(cacheKey)) {
+        setGlobalSearchLoading(true);
+      }
+
+      try {
+        const res = await axios.get(
+          `${API}/suppliers?page=1&limit=8&include_global=true&search=${encodeURIComponent(trimmed)}`,
+          { signal: controller.signal }
+        );
+        const data = res.data.suppliers || [];
+        globalSearchCacheRef.current.set(cacheKey, data);
+        setGlobalSearchResults(data);
+      } catch (e) {
+        if (!axios.isCancel(e)) {
+          console.warn("Global distributor autocomplete error:", e.message);
+        }
+      } finally {
+        if (globalSearchAbortRef.current === controller) {
+          setGlobalSearchLoading(false);
+        }
+      }
+    }, 120);
+    return () => clearTimeout(delay);
+  }, [dialogOpen, globalSearchQuery]);
+
+  // Add global distributor directly to My Suppliers
+  const handleAddGlobalSupplier = async (dist) => {
+    const targetId = dist.id || dist.global_id;
+    setAddingGlobalId(targetId);
+    try {
+      const res = await axios.post(`${API}/suppliers/ensure-global`, {
+        global_id: dist.id || dist.global_id,
+        name: dist.name,
+        phone: dist.phone || dist.contact,
+        gstin: dist.gstin || dist.gst_no,
+        address: dist.address,
+        city: dist.city,
+        state: dist.state,
+      });
+      const savedSupplier = res.data.supplier || dist;
+      toast.success(`Distributor "${dist.name}" added to your suppliers!`);
+      setGlobalDistributors((prev) =>
+        prev.map((item) =>
+          (item.id === dist.id || item.global_id === dist.global_id)
+            ? { ...item, is_local: true, badge: "Your Supplier", id: savedSupplier.id }
+            : item
+        )
+      );
+      fetchSuppliers(1);
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Failed to add distributor");
+    } finally {
+      setAddingGlobalId(null);
+    }
+  };
+
+  // Populate Add Supplier Modal with selected Global Distributor
+  const handleSelectGlobalDistributor = (dist) => {
+    setFormData({
+      name: dist.name || "",
+      phone: dist.phone || dist.contact || "",
+      email: dist.email || "",
+      address: dist.address || [dist.city, dist.state].filter(Boolean).join(", ") || "",
+      gst_no: dist.gst_no || dist.gstin || "",
+    });
+    setGlobalSearchQuery("");
+    setGlobalSearchResults([]);
+    toast.info(`Selected "${dist.name}". Form details filled.`);
+  };
 
   const handleSubmit = async () => {
     if (!formData.name) {
@@ -641,6 +787,76 @@ export default function SuppliersPage() {
               </DialogHeader>
 
               <div className="space-y-4 pt-4">
+                {!editingSupplier && (
+                  <div className="space-y-2 p-3 bg-primary/5 border border-primary/20 rounded-xl relative">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-[11px] font-bold text-primary flex items-center gap-1.5 uppercase">
+                        <Search className="w-3.5 h-3.5" /> Quick Fill from 87k+ Global Distributors
+                      </Label>
+                      {globalSearchLoading && <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />}
+                    </div>
+                    <div className="relative">
+                      <Input
+                        placeholder="Search distributor name, city, or GSTIN..."
+                        value={globalSearchQuery}
+                        onChange={(e) => setGlobalSearchQuery(e.target.value)}
+                        className="h-9 text-xs bg-background border-border/70 rounded-lg pr-7"
+                      />
+                      {globalSearchQuery && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setGlobalSearchQuery("");
+                            setGlobalSearchResults([]);
+                          }}
+                          className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground/60 hover:text-foreground text-xs"
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </div>
+                    {globalSearchResults.length > 0 && (
+                      <div className="max-h-48 overflow-y-auto border border-border/80 bg-popover rounded-lg shadow-xl divide-y divide-border/30 mt-1">
+                        {globalSearchResults.map((dist) => (
+                          <div
+                            key={dist.id || dist.global_id}
+                            onClick={() => handleSelectGlobalDistributor(dist)}
+                            className="p-2 hover:bg-muted/60 cursor-pointer flex items-center justify-between gap-2 text-xs transition-colors"
+                          >
+                            <div className="min-w-0 flex-1">
+                              <div className="font-bold truncate text-foreground flex items-center gap-1.5">
+                                {dist.name}
+                                {dist.is_local && (
+                                  <span className="text-[9px] px-1.5 py-0.2 rounded-full font-bold bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
+                                    Your Supplier
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-[10px] text-muted-foreground truncate flex items-center gap-2 mt-0.5">
+                                {dist.gst_no && <span>GST: {dist.gst_no}</span>}
+                                {dist.city && <span>{dist.city}, {dist.state}</span>}
+                                {dist.phone && <span>📞 {dist.phone}</span>}
+                              </div>
+                            </div>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              className="h-7 text-[11px] px-2 font-bold shrink-0"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleSelectGlobalDistributor(dist);
+                              }}
+                            >
+                              Select
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 <div className="space-y-2">
                   <Label className="text-xs font-bold text-muted-foreground uppercase">Supplier Name *</Label>
                   <Input
@@ -1016,7 +1232,7 @@ export default function SuppliersPage() {
               Are you sure you want to delete this supplier? This action is permanent and cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <AlertDialogFooter className="mt-4 flex gap-2">
+          <AlertDialogFooter className="mt-4 flex flex-wrap sm:justify-end gap-2">
             <AlertDialogCancel className="h-10 rounded-xl border border-border hover:bg-muted font-semibold">Cancel</AlertDialogCancel>
             <AlertDialogAction 
               onClick={confirmDelete} 
@@ -1029,14 +1245,14 @@ export default function SuppliersPage() {
       </AlertDialog>
 
       <AlertDialog open={clearDuesConfirm.open} onOpenChange={(open) => setClearDuesConfirm({ ...clearDuesConfirm, open })}>
-        <AlertDialogContent className="rounded-2xl max-w-sm border border-border bg-background p-6 shadow-2xl">
+        <AlertDialogContent className="rounded-2xl max-w-sm sm:max-w-md border border-border bg-background p-6 shadow-2xl">
           <AlertDialogHeader>
             <AlertDialogTitle className="text-lg font-bold">Clear All Dues</AlertDialogTitle>
             <AlertDialogDescription className="text-sm text-muted-foreground">
               Are you sure you want to clear all outstanding dues for this supplier? This will mark all unpaid purchase invoices as fully paid.
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <AlertDialogFooter className="mt-4 flex gap-2">
+          <AlertDialogFooter className="mt-4 flex flex-wrap sm:justify-end gap-2">
             <AlertDialogCancel className="h-10 rounded-xl border border-border hover:bg-muted font-semibold">Cancel</AlertDialogCancel>
             <AlertDialogAction 
               onClick={confirmClearAllDues} 
@@ -1048,219 +1264,454 @@ export default function SuppliersPage() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Search */}
-      <Card className="glass bg-card/45 border border-border/70 shadow-md rounded-2xl overflow-hidden">
-        <CardContent className="p-4">
-          <div className="flex gap-4">
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4.5 h-4.5 text-muted-foreground/60" />
-              <Input
-                placeholder="Search suppliers by name, phone, email or GST..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="pl-10 h-11 bg-background/30 border-border/60 focus-visible:ring-primary focus-visible:ring-offset-0 rounded-xl transition-all"
-                data-testid="supplier-search"
-              />
-            </div>
-            {search && (
-              <Button 
-                variant="outline" 
-                onClick={() => setSearch("")}
-                className="h-11 px-4 border-border/80 rounded-xl hover:bg-muted font-semibold transition-all"
-              >
-                Clear
-              </Button>
-            )}
-          </div>
-        </CardContent>
-      </Card>
+      {/* Directory Tab Switcher */}
+      <div className="flex items-center gap-3">
+        <Button
+          type="button"
+          variant={activeTab === "my_suppliers" ? "default" : "outline"}
+          onClick={() => setActiveTab("my_suppliers")}
+          className={`h-11 px-5 rounded-2xl font-bold text-xs flex items-center gap-2 transition-all ${
+            activeTab === "my_suppliers"
+              ? "bg-primary text-primary-foreground shadow-lg shadow-primary/20"
+              : "border-border/80 text-muted-foreground hover:text-foreground hover:bg-muted"
+          }`}
+        >
+          <Truck className="w-4 h-4" />
+          <span>My Suppliers</span>
+          <span className="ml-1 px-2 py-0.5 rounded-full text-[10px] bg-background/20 font-mono">
+            {pagination.total || suppliers.length}
+          </span>
+        </Button>
 
-      {/* Suppliers Grid */}
-      {suppliers.length === 0 ? (
-        <Card className="glass bg-card/45 border border-border/70 shadow-md rounded-2xl">
-          <CardContent className="py-16 text-center">
-            <div className="w-16 h-16 rounded-full bg-muted/50 text-muted-foreground flex items-center justify-center mx-auto mb-4 border border-border/50">
-              <Truck className="w-8 h-8 opacity-60" />
-            </div>
-            <h3 className="text-lg font-bold text-foreground">No suppliers found</h3>
-            <p className="text-sm text-muted-foreground mt-1 max-w-xs mx-auto">
-              Try modifying your search keywords or register a new supplier to get started.
-            </p>
-          </CardContent>
-        </Card>
-      ) : (
+        <Button
+          type="button"
+          variant={activeTab === "global_catalog" ? "default" : "outline"}
+          onClick={() => setActiveTab("global_catalog")}
+          className={`h-11 px-5 rounded-2xl font-bold text-xs flex items-center gap-2 transition-all ${
+            activeTab === "global_catalog"
+              ? "bg-primary text-primary-foreground shadow-lg shadow-primary/20"
+              : "border-border/80 text-muted-foreground hover:text-foreground hover:bg-muted"
+          }`}
+        >
+          <Globe className="w-4 h-4 text-sky-400" />
+          <span>Global Distributors Catalog</span>
+          <span className="ml-1 px-2 py-0.5 rounded-full text-[10px] bg-sky-500/10 text-sky-400 border border-sky-500/20 font-mono">
+            87,000+
+          </span>
+        </Button>
+      </div>
+
+      {activeTab === "my_suppliers" ? (
         <>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {suppliers.map((supplier) => {
-              const initial = supplier.name ? supplier.name.charAt(0).toUpperCase() : "?";
-              return (
-                <Card
-                  key={supplier.id}
-                  id={`record-${supplier.id}`}
-                  className="glass bg-card/45 border-border/70 shadow-md hover:shadow-lg rounded-2xl hover:border-primary/30 transition-all duration-300 relative overflow-hidden group p-5"
-                  data-testid={`supplier-card-${supplier.id}`}
-                >
-                  <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-primary/30 to-accent/30 opacity-0 group-hover:opacity-100 transition-opacity"></div>
-                  
-                  <div className="flex items-start justify-between mb-4 gap-2">
-                    <div className="flex items-center gap-3 min-w-0">
+          {/* Search */}
+          <Card className="glass bg-card/45 border border-border/70 shadow-md rounded-2xl overflow-hidden">
+            <CardContent className="p-4">
+              <div className="flex gap-4">
+                <div className="relative flex-1">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4.5 h-4.5 text-muted-foreground/60" />
+                  <Input
+                    placeholder="Search suppliers by name, phone, email or GST..."
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    className="pl-10 h-11 bg-background/30 border-border/60 focus-visible:ring-primary focus-visible:ring-offset-0 rounded-xl transition-all"
+                    data-testid="supplier-search"
+                  />
+                </div>
+                {search && (
+                  <Button 
+                    variant="outline" 
+                    onClick={() => setSearch("")}
+                    className="h-11 px-4 border-border/80 rounded-xl hover:bg-muted font-semibold transition-all"
+                  >
+                    Clear
+                  </Button>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Suppliers Grid */}
+          {suppliers.length === 0 ? (
+            <Card className="glass bg-card/45 border border-border/70 shadow-md rounded-2xl">
+              <CardContent className="py-16 text-center">
+                <div className="w-16 h-16 rounded-full bg-muted/50 text-muted-foreground flex items-center justify-center mx-auto mb-4 border border-border/50">
+                  <Truck className="w-8 h-8 opacity-60" />
+                </div>
+                <h3 className="text-lg font-bold text-foreground">No suppliers found</h3>
+                <p className="text-sm text-muted-foreground mt-1 max-w-xs mx-auto">
+                  Try modifying your search keywords or register a new supplier to get started.
+                </p>
+                {search && (
+                  <Button
+                    onClick={() => {
+                      setActiveTab("global_catalog");
+                      setGlobalSearch(search);
+                    }}
+                    className="mt-4 btn-primary rounded-xl font-bold text-xs flex items-center gap-1.5 mx-auto"
+                  >
+                    <Search className="w-3.5 h-3.5" />
+                    Search "{search}" in 87,000+ Global Distributors
+                  </Button>
+                )}
+              </CardContent>
+            </Card>
+          ) : (
+            <>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {suppliers.map((supplier) => {
+                  const initial = supplier.name ? supplier.name.charAt(0).toUpperCase() : "?";
+                  return (
+                    <Card
+                      key={supplier.id}
+                      id={`record-${supplier.id}`}
+                      className="glass bg-card/45 border-border/70 shadow-md hover:shadow-lg rounded-2xl hover:border-primary/30 transition-all duration-300 relative overflow-hidden group p-5"
+                      data-testid={`supplier-card-${supplier.id}`}
+                    >
+                      <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-primary/30 to-accent/30 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                      
+                      <div className="flex items-start justify-between mb-4 gap-2">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div 
+                            className="w-12 h-12 rounded-xl bg-gradient-to-br from-primary/10 to-accent/10 border border-primary/20 flex items-center justify-center text-primary font-bold text-lg cursor-pointer hover:scale-105 transition-transform shrink-0" 
+                            onClick={() => handleViewDetails(supplier.id)}
+                          >
+                            {initial}
+                          </div>
+                          <div className="cursor-pointer min-w-0 flex-1" onClick={() => handleViewDetails(supplier.id)}>
+                            <h3 className="font-bold text-foreground group-hover:text-primary transition-colors flex items-center gap-1.5 text-base truncate">
+                              {supplier.name} 
+                              <ExternalLink className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 text-muted-foreground" />
+                            </h3>
+                            {supplier.gst_no ? (
+                              <p className="inline-block mt-1 font-mono text-[10px] font-bold text-primary/80 bg-primary/5 px-2 py-0.5 rounded border border-primary/10">
+                                GST: {supplier.gst_no}
+                              </p>
+                            ) : (
+                              <p className="inline-block mt-1 font-mono text-[10px] font-medium text-muted-foreground/60 bg-muted/20 px-2 py-0.5 rounded border border-border/50">
+                                NO GST
+                              </p>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="flex gap-0.5 bg-muted/20 p-0.5 rounded-lg border border-border/50 shrink-0">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => openCsvTemplateModal(supplier)}
+                            className={`w-8 h-8 rounded-md transition-all ${
+                              supplier.csv_template
+                                ? "text-emerald-500 hover:bg-emerald-500/10"
+                                : "text-muted-foreground hover:text-primary hover:bg-primary/10"
+                            }`}
+                            title={supplier.csv_template ? "Saved CSV Template Active" : "Configure CSV Template"}
+                          >
+                            <FileSpreadsheet className="w-3.5 h-3.5" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => handleEdit(supplier)}
+                            className="w-8 h-8 rounded-md text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all"
+                            data-testid={`edit-supplier-${supplier.id}`}
+                            title="Edit Supplier"
+                          >
+                            <Edit2 className="w-3.5 h-3.5" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => handleDelete(supplier.id)}
+                            className="w-8 h-8 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-all"
+                            data-testid={`delete-supplier-${supplier.id}`}
+                            title="Delete Supplier"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </Button>
+                        </div>
+                      </div>
+
+                      {/* Outstanding Balance Banner */}
                       <div 
-                        className="w-12 h-12 rounded-xl bg-gradient-to-br from-primary/10 to-accent/10 border border-primary/20 flex items-center justify-center text-primary font-bold text-lg cursor-pointer hover:scale-105 transition-transform shrink-0" 
+                        className={`-mx-5 px-5 py-2.5 mt-2 mb-4 flex justify-between items-center border-y cursor-pointer hover:bg-muted/40 transition-colors ${
+                          supplier.total_amount_owed > 0 
+                            ? "bg-red-500/5 border-red-500/10 hover:border-red-500/20" 
+                            : "bg-green-500/5 border-green-500/10 hover:border-green-500/20"
+                        }`} 
                         onClick={() => handleViewDetails(supplier.id)}
                       >
-                        {initial}
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Outstanding</span>
+                        <span className={`font-mono font-bold text-sm ${supplier.total_amount_owed > 0 ? "text-red-500" : "text-green-500"}`}>
+                          ₹{(supplier.total_amount_owed || 0).toFixed(2)}
+                        </span>
                       </div>
-                      <div className="cursor-pointer min-w-0 flex-1" onClick={() => handleViewDetails(supplier.id)}>
-                        <h3 className="font-bold text-foreground group-hover:text-primary transition-colors flex items-center gap-1.5 text-base truncate">
-                          {supplier.name} 
-                          <ExternalLink className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 text-muted-foreground" />
-                        </h3>
-                        {supplier.gst_no ? (
-                          <p className="inline-block mt-1 font-mono text-[10px] font-bold text-primary/80 bg-primary/5 px-2 py-0.5 rounded border border-primary/10">
-                            GST: {supplier.gst_no}
-                          </p>
-                        ) : (
-                          <p className="inline-block mt-1 font-mono text-[10px] font-medium text-muted-foreground/60 bg-muted/20 px-2 py-0.5 rounded border border-border/50">
-                            NO GST
-                          </p>
+
+                      <div className="space-y-2 text-xs">
+                        {supplier.phone && (
+                          <div className="flex items-center gap-2.5 text-muted-foreground/80 hover:text-foreground transition-colors">
+                            <Phone className="w-4 h-4 text-primary/70 shrink-0" />
+                            <span className="font-medium truncate">{supplier.phone}</span>
+                          </div>
+                        )}
+                        {supplier.email && (
+                          <div className="flex items-center gap-2.5 text-muted-foreground/80 hover:text-foreground transition-colors">
+                            <Mail className="w-4 h-4 text-primary/70 shrink-0" />
+                            <span className="font-medium truncate" title={supplier.email}>{supplier.email}</span>
+                          </div>
+                        )}
+                        {supplier.address && (
+                          <div className="flex items-center gap-2.5 text-muted-foreground/80 hover:text-foreground transition-colors">
+                            <MapPin className="w-4 h-4 text-primary/70 shrink-0" />
+                            <span className="font-medium truncate" title={supplier.address}>{supplier.address}</span>
+                          </div>
                         )}
                       </div>
-                    </div>
-
-                    <div className="flex gap-0.5 bg-muted/20 p-0.5 rounded-lg border border-border/50 shrink-0">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => openCsvTemplateModal(supplier)}
-                        className={`w-8 h-8 rounded-md transition-all ${
-                          supplier.csv_template
-                            ? "text-emerald-500 hover:bg-emerald-500/10"
-                            : "text-muted-foreground hover:text-primary hover:bg-primary/10"
-                        }`}
-                        title={supplier.csv_template ? "Saved CSV Template Active" : "Configure CSV Template"}
-                      >
-                        <FileSpreadsheet className="w-3.5 h-3.5" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => handleEdit(supplier)}
-                        className="w-8 h-8 rounded-md text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all"
-                        data-testid={`edit-supplier-${supplier.id}`}
-                        title="Edit Supplier"
-                      >
-                        <Edit2 className="w-3.5 h-3.5" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => handleDelete(supplier.id)}
-                        className="w-8 h-8 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-all"
-                        data-testid={`delete-supplier-${supplier.id}`}
-                        title="Delete Supplier"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </Button>
-                    </div>
-                  </div>
-
-                  {/* Outstanding Balance Banner */}
-                  <div 
-                    className={`-mx-5 px-5 py-2.5 mt-2 mb-4 flex justify-between items-center border-y cursor-pointer hover:bg-muted/40 transition-colors ${
-                      supplier.total_amount_owed > 0 
-                        ? "bg-red-500/5 border-red-500/10 hover:border-red-500/20" 
-                        : "bg-green-500/5 border-green-500/10 hover:border-green-500/20"
-                    }`} 
-                    onClick={() => handleViewDetails(supplier.id)}
-                  >
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Outstanding</span>
-                    <span className={`font-mono font-bold text-sm ${supplier.total_amount_owed > 0 ? "text-red-500" : "text-green-500"}`}>
-                      ₹{(supplier.total_amount_owed || 0).toFixed(2)}
-                    </span>
-                  </div>
-
-                  <div className="space-y-2 text-xs">
-                    {supplier.phone && (
-                      <div className="flex items-center gap-2.5 text-muted-foreground/80 hover:text-foreground transition-colors">
-                        <Phone className="w-4 h-4 text-primary/70 shrink-0" />
-                        <span className="font-medium truncate">{supplier.phone}</span>
-                      </div>
-                    )}
-                    {supplier.email && (
-                      <div className="flex items-center gap-2.5 text-muted-foreground/80 hover:text-foreground transition-colors">
-                        <Mail className="w-4 h-4 text-primary/70 shrink-0" />
-                        <span className="font-medium truncate" title={supplier.email}>{supplier.email}</span>
-                      </div>
-                    )}
-                    {supplier.address && (
-                      <div className="flex items-center gap-2.5 text-muted-foreground/80 hover:text-foreground transition-colors">
-                        <MapPin className="w-4 h-4 text-primary/70 shrink-0" />
-                        <span className="font-medium truncate" title={supplier.address}>{supplier.address}</span>
-                      </div>
-                    )}
-                  </div>
-                </Card>
-              );
-            })}
-          </div>
-
-          {/* Pagination */}
-          {pagination.total_pages > 1 && (
-            <div className="flex flex-col sm:flex-row items-center justify-between px-6 py-4 border border-border/40 bg-muted/5 rounded-2xl gap-4 mt-6">
-              <div className="text-xs font-bold text-muted-foreground/80 sm:w-1/3 text-left">
-                Showing {((pagination.page - 1) * pagination.limit) + 1} to {Math.min(pagination.page * pagination.limit, pagination.total)} of {pagination.total} suppliers
+                    </Card>
+                  );
+                })}
               </div>
-              
-              <div className="flex items-center justify-center gap-2 sm:w-1/3">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => fetchSuppliers(pagination.page - 1)}
-                  disabled={pagination.page <= 1}
-                  className="h-8 text-xs font-bold border-border/80 hover:bg-muted rounded-lg"
-                >
-                  <ChevronLeft className="h-3.5 w-3.5 mr-1 text-primary" />
-                  Previous
-                </Button>
-                
-                <div className="flex items-center gap-1">
-                  {Array.from({ length: Math.min(5, pagination.total_pages) }, (_, i) => {
-                    const pageNum = Math.max(1, Math.min(pagination.total_pages - 4, pagination.page - 2)) + i;
-                    if (pageNum > pagination.total_pages) return null;
-                    return (
-                      <Button
-                        key={pageNum}
-                        variant={pageNum === pagination.page ? "default" : "outline"}
-                        size="sm"
-                        onClick={() => fetchSuppliers(pageNum)}
-                        className={`w-8 h-8 p-0 text-xs font-bold rounded-lg border ${
-                          pageNum === pagination.page
-                            ? "bg-primary text-primary-foreground shadow-md shadow-primary/10 border-primary"
-                            : "border-border/80 hover:bg-muted"
-                        }`}
-                      >
-                        {pageNum}
-                      </Button>
-                    );
-                  })}
+
+              {/* Pagination */}
+              {pagination.total_pages > 1 && (
+                <div className="flex flex-col sm:flex-row items-center justify-between px-6 py-4 border border-border/40 bg-muted/5 rounded-2xl gap-4 mt-6">
+                  <div className="text-xs font-bold text-muted-foreground/80 sm:w-1/3 text-left">
+                    Showing {((pagination.page - 1) * pagination.limit) + 1} to {Math.min(pagination.page * pagination.limit, pagination.total)} of {pagination.total} suppliers
+                  </div>
+                  
+                  <div className="flex items-center justify-center gap-2 sm:w-1/3">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => fetchSuppliers(pagination.page - 1)}
+                      disabled={pagination.page <= 1}
+                      className="h-8 text-xs font-bold border-border/80 hover:bg-muted rounded-lg"
+                    >
+                      <ChevronLeft className="h-3.5 w-3.5 mr-1 text-primary" />
+                      Previous
+                    </Button>
+                    
+                    <div className="flex items-center gap-1">
+                      {Array.from({ length: Math.min(5, pagination.total_pages) }, (_, i) => {
+                        const pageNum = Math.max(1, Math.min(pagination.total_pages - 4, pagination.page - 2)) + i;
+                        if (pageNum > pagination.total_pages) return null;
+                        return (
+                          <Button
+                            key={pageNum}
+                            variant={pageNum === pagination.page ? "default" : "outline"}
+                            size="sm"
+                            onClick={() => fetchSuppliers(pageNum)}
+                            className={`w-8 h-8 p-0 text-xs font-bold rounded-lg border ${
+                              pageNum === pagination.page
+                                ? "bg-primary text-primary-foreground shadow-md shadow-primary/10 border-primary"
+                                : "border-border/80 hover:bg-muted"
+                            }`}
+                          >
+                            {pageNum}
+                          </Button>
+                        );
+                      })}
+                    </div>
+                    
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => fetchSuppliers(pagination.page + 1)}
+                      disabled={pagination.page >= pagination.total_pages}
+                      className="h-8 text-xs font-bold border-border/80 hover:bg-muted rounded-lg"
+                    >
+                      Next
+                      <ChevronRight className="h-3.5 w-3.5 ml-1 text-primary" />
+                    </Button>
+                  </div>
+
+                  <div className="hidden sm:block sm:w-1/3 text-right text-xs font-bold text-muted-foreground/60">
+                    Page {pagination.page} of {pagination.total_pages}
+                  </div>
                 </div>
-                
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => fetchSuppliers(pagination.page + 1)}
-                  disabled={pagination.page >= pagination.total_pages}
-                  className="h-8 text-xs font-bold border-border/80 hover:bg-muted rounded-lg"
-                >
-                  Next
-                  <ChevronRight className="h-3.5 w-3.5 ml-1 text-primary" />
-                </Button>
+              )}
+            </>
+          )}
+        </>
+      ) : (
+        /* Global Distributors Catalog Tab View */
+        <>
+          {/* Global Search Bar */}
+          <Card className="glass bg-card/45 border border-border/70 shadow-md rounded-2xl overflow-hidden">
+            <CardContent className="p-4">
+              <div className="flex gap-4">
+                <div className="relative flex-1">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4.5 h-4.5 text-muted-foreground/60" />
+                  <Input
+                    placeholder="Search 87,000+ distributors across India by agency name, city, state, or GSTIN..."
+                    value={globalSearch}
+                    onChange={(e) => setGlobalSearch(e.target.value)}
+                    className="pl-10 h-11 bg-background/30 border-border/60 focus-visible:ring-primary focus-visible:ring-offset-0 rounded-xl transition-all"
+                  />
+                </div>
+                {globalSearch && (
+                  <Button 
+                    variant="outline" 
+                    onClick={() => setGlobalSearch("")}
+                    className="h-11 px-4 border-border/80 rounded-xl hover:bg-muted font-semibold transition-all"
+                  >
+                    Clear
+                  </Button>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Global Distributors Grid */}
+          {globalLoading ? (
+            <div className="py-24 text-center flex flex-col items-center justify-center gap-3">
+              <Loader2 className="w-8 h-8 animate-spin text-primary" />
+              <span className="text-sm font-semibold text-muted-foreground">Searching 87,000+ Global Distributors...</span>
+            </div>
+          ) : globalDistributors.length === 0 ? (
+            <Card className="glass bg-card/45 border border-border/70 shadow-md rounded-2xl">
+              <CardContent className="py-16 text-center">
+                <div className="w-16 h-16 rounded-full bg-muted/50 text-muted-foreground flex items-center justify-center mx-auto mb-4 border border-border/50">
+                  <Globe className="w-8 h-8 opacity-60" />
+                </div>
+                <h3 className="text-lg font-bold text-foreground">No global distributors match "{globalSearch}"</h3>
+                <p className="text-sm text-muted-foreground mt-1 max-w-xs mx-auto">
+                  Try searching with broader terms like city, state, or company name.
+                </p>
+              </CardContent>
+            </Card>
+          ) : (
+            <>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {globalDistributors.map((dist) => {
+                  const isLocal = dist.is_local || dist.source === "local";
+                  const targetId = dist.id || dist.global_id;
+                  const isAdding = addingGlobalId === targetId;
+
+                  return (
+                    <Card
+                      key={targetId}
+                      className="glass bg-card/45 border-border/70 shadow-md hover:shadow-lg rounded-2xl hover:border-primary/30 transition-all duration-300 relative overflow-hidden group p-5 flex flex-col justify-between"
+                    >
+                      <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-sky-400 to-primary/40 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                      
+                      <div>
+                        <div className="flex items-start justify-between mb-3 gap-2">
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-sky-500/10 to-primary/10 border border-sky-500/20 flex items-center justify-center text-sky-400 font-bold shrink-0">
+                              <Building2 className="w-5 h-5" />
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <h3 className="font-bold text-foreground group-hover:text-primary transition-colors text-sm truncate" title={dist.name}>
+                                {dist.name}
+                              </h3>
+                              {dist.gst_no || dist.gstin ? (
+                                <p className="inline-block mt-0.5 font-mono text-[10px] font-bold text-primary/80 bg-primary/5 px-2 py-0.5 rounded border border-primary/10">
+                                  GST: {dist.gst_no || dist.gstin}
+                                </p>
+                              ) : (
+                                <p className="inline-block mt-0.5 font-mono text-[10px] font-medium text-muted-foreground/60 bg-muted/20 px-2 py-0.5 rounded border border-border/50">
+                                  NO GST
+                                </p>
+                              )}
+                            </div>
+                          </div>
+
+                          {isLocal ? (
+                            <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 shrink-0 flex items-center gap-1">
+                              <Check className="w-2.5 h-2.5" />
+                              Your Supplier
+                            </span>
+                          ) : (
+                            <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-sky-500/10 text-sky-400 border border-sky-500/20 shrink-0">
+                              Global
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="space-y-1.5 text-xs text-muted-foreground pt-1">
+                          {(dist.address || dist.city || dist.state) && (
+                            <div className="flex items-center gap-1.5 truncate text-[11px]">
+                              <MapPin className="w-3.5 h-3.5 text-muted-foreground/60 shrink-0" />
+                              <span className="truncate">{dist.address || [dist.city, dist.state].filter(Boolean).join(", ")}</span>
+                            </div>
+                          )}
+                          {(dist.phone || dist.contact) && (
+                            <div className="flex items-center gap-1.5 truncate text-[11px] font-mono">
+                              <Phone className="w-3.5 h-3.5 text-muted-foreground/60 shrink-0" />
+                              <span>{dist.phone || dist.contact}</span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="pt-4 mt-3 border-t border-border/40 flex items-center justify-between">
+                        <span className="text-[10px] font-mono text-muted-foreground/60 uppercase">
+                          {dist.global_id || dist.id}
+                        </span>
+                        {isLocal ? (
+                          <span className="text-xs font-bold text-emerald-500 flex items-center gap-1">
+                            <CheckCircle2 className="w-3.5 h-3.5" /> Added
+                          </span>
+                        ) : (
+                          <Button
+                            size="sm"
+                            onClick={() => handleAddGlobalSupplier(dist)}
+                            disabled={isAdding}
+                            className="btn-primary h-8 px-3 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm"
+                          >
+                            {isAdding ? (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                              <Plus className="w-3.5 h-3.5" />
+                            )}
+                            Add to My Suppliers
+                          </Button>
+                        )}
+                      </div>
+                    </Card>
+                  );
+                })}
               </div>
 
-              <div className="hidden sm:block sm:w-1/3 text-right text-xs font-bold text-muted-foreground/60">
-                Page {pagination.page} of {pagination.total_pages}
-              </div>
-            </div>
+              {/* Global Pagination */}
+              {globalPagination.total_pages > 1 && (
+                <div className="flex flex-col sm:flex-row items-center justify-between px-6 py-4 border border-border/40 bg-muted/5 rounded-2xl gap-4 mt-6">
+                  <div className="text-xs font-bold text-muted-foreground/80 sm:w-1/3 text-left">
+                    Showing {((globalPagination.page - 1) * globalPagination.limit) + 1} to {Math.min(globalPagination.page * globalPagination.limit, globalPagination.total)} of {globalPagination.total.toLocaleString()} distributors
+                  </div>
+
+                  <div className="flex items-center justify-center gap-2 sm:w-1/3">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => fetchGlobalDistributors(globalPagination.page - 1, globalSearch)}
+                      disabled={globalPagination.page <= 1 || globalLoading}
+                      className="h-8 text-xs font-bold border-border/80 hover:bg-muted rounded-lg"
+                    >
+                      <ChevronLeft className="h-3.5 w-3.5 mr-1 text-primary" />
+                      Previous
+                    </Button>
+                    <div className="text-xs font-bold font-mono px-3 py-1 bg-primary/10 text-primary rounded-lg border border-primary/20">
+                      Page {globalPagination.page} of {globalPagination.total_pages}
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => fetchGlobalDistributors(globalPagination.page + 1, globalSearch)}
+                      disabled={globalPagination.page >= globalPagination.total_pages || globalLoading}
+                      className="h-8 text-xs font-bold border-border/80 hover:bg-muted rounded-lg"
+                    >
+                      Next
+                      <ChevronRight className="h-3.5 w-3.5 ml-1 text-primary" />
+                    </Button>
+                  </div>
+
+                  <div className="hidden sm:block sm:w-1/3 text-right text-xs font-bold text-muted-foreground/60">
+                    87,000+ Catalog
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </>
       )}

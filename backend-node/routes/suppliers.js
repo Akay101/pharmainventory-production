@@ -6,6 +6,12 @@ const { auth } = require("../middleware/auth");
 const { logActivity } = require("../utils/activityLogger");
 
 const { requireSubscription } = require("../middleware/subscription");
+const {
+  getGlobalDistributorsCollection,
+  getCached,
+  setCached,
+  clearCachePattern,
+} = require("../utils/globalDb");
 
 const escapeRegex = (str) => {
   if (!str) return "";
@@ -16,19 +22,34 @@ const escapeRegex = (str) => {
 router.get("/", auth, requireSubscription(), async (req, res, next) => {
   try {
     const db = mongoose.connection.db;
-    const { search, page = 1, limit = 50, highlight_id } = req.query;
+    const { search, page = 1, limit = 50, highlight_id, include_global } = req.query;
+    const pharmacyId = req.user.pharmacy_id;
 
-    const query = { pharmacy_id: req.user.pharmacy_id };
-    if (search) {
-      const escapedSearch = escapeRegex(search);
+    const pageNum = Math.max(1, parseInt(page) || 1);
+    const limitNum = Math.max(1, parseInt(limit) || 20);
+    const skip = (pageNum - 1) * limitNum;
+    const shouldIncludeGlobal = include_global === "true" || include_global === "1";
+
+    const trimmedSearch = (search || "").trim();
+    const cacheKey = `sups:${pharmacyId}:${trimmedSearch.toLowerCase()}:${pageNum}:${limitNum}:${shouldIncludeGlobal}`;
+    if (shouldIncludeGlobal) {
+      const cached = getCached(cacheKey);
+      if (cached) return res.json(cached);
+    }
+
+    const query = { pharmacy_id: pharmacyId };
+    if (trimmedSearch) {
+      const escapedSearch = escapeRegex(trimmedSearch);
       query.$or = [
         { name: { $regex: escapedSearch, $options: "i" } },
         { contact: { $regex: escapedSearch, $options: "i" } },
+        { phone: { $regex: escapedSearch, $options: "i" } },
+        { gstin: { $regex: escapedSearch, $options: "i" } },
+        { gst_no: { $regex: escapedSearch, $options: "i" } },
       ];
     }
 
-    let pageNum = parseInt(page);
-    if (highlight_id) {
+    if (highlight_id && !shouldIncludeGlobal) {
       const allSups = await db
         .collection("suppliers")
         .find(query)
@@ -36,50 +57,328 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
         .toArray();
       const targetIndex = allSups.findIndex((s) => s.id === highlight_id);
       if (targetIndex !== -1) {
-        pageNum = Math.floor(targetIndex / parseInt(limit)) + 1;
+        pageNum = Math.floor(targetIndex / limitNum) + 1;
       }
     }
 
-    const skip = (parseInt(pageNum) - 1) * parseInt(limit);
-    const suppliers = await db
-      .collection("suppliers")
-      .find(query, { projection: { _id: 0 } })
-      .skip(skip)
-      .limit(parseInt(limit))
-      .toArray();
+    const localCount = await db.collection("suppliers").countDocuments(query);
 
-    // Augment with total owed
-    const supplierIds = suppliers.map((s) => s.id);
-    const purchases = await db
-      .collection("purchases")
-      .find({ supplier_id: { $in: supplierIds }, payment_status: { $ne: "Paid" } })
-      .project({ _id: 0, supplier_id: 1, total_amount: 1, amount_paid: 1, payment_status: 1 })
-      .toArray();
+    let localSuppliers = [];
+    if (skip < localCount) {
+      localSuppliers = await db
+        .collection("suppliers")
+        .find(query, { projection: { _id: 0 } })
+        .sort({ created_at: -1 })
+        .skip(skip)
+        .limit(limitNum)
+        .toArray();
+    }
 
-    const owedBySupplier = {};
-    purchases.forEach((p) => {
-      const remaining = (p.total_amount || 0) - (p.amount_paid || 0);
-      if (remaining > 0) {
-        owedBySupplier[p.supplier_id] = (owedBySupplier[p.supplier_id] || 0) + remaining;
+    // Augment local suppliers with total owed
+    if (localSuppliers.length > 0) {
+      const supplierIds = localSuppliers.map((s) => s.id);
+      const purchases = await db
+        .collection("purchases")
+        .find({ supplier_id: { $in: supplierIds }, payment_status: { $ne: "Paid" } })
+        .project({ _id: 0, supplier_id: 1, total_amount: 1, amount_paid: 1, payment_status: 1 })
+        .toArray();
+
+      const owedBySupplier = {};
+      purchases.forEach((p) => {
+        const remaining = (p.total_amount || 0) - (p.amount_paid || 0);
+        if (remaining > 0) {
+          owedBySupplier[p.supplier_id] = (owedBySupplier[p.supplier_id] || 0) + remaining;
+        }
+      });
+
+      localSuppliers = localSuppliers.map((s) => ({
+        ...s,
+        source: "local",
+        is_local: true,
+        badge: "Your Supplier",
+        total_amount_owed: owedBySupplier[s.id] || 0,
+      }));
+    } else {
+      localSuppliers = localSuppliers.map((s) => ({
+        ...s,
+        source: "local",
+        is_local: true,
+        badge: "Your Supplier",
+        total_amount_owed: 0,
+      }));
+    }
+
+    let globalSuppliers = [];
+    let globalCount = 0;
+
+    if (shouldIncludeGlobal) {
+      try {
+        const globalDistCol = await getGlobalDistributorsCollection();
+        if (globalDistCol) {
+          // Pre-fetch all local suppliers for this pharmacy to accurately cross-reference and badge
+          const allLocalSups = await db
+            .collection("suppliers")
+            .find({ pharmacy_id: pharmacyId }, { projection: { id: 1, name: 1, gst_no: 1, gstin: 1, global_code: 1 } })
+            .toArray();
+
+          const localCodeMap = new Map();
+          const localGstMap = new Map();
+          const localNameMap = new Map();
+
+          for (const ls of allLocalSups) {
+            if (ls.global_code) localCodeMap.set(String(ls.global_code).trim().toLowerCase(), ls);
+            if (ls.id) localCodeMap.set(String(ls.id).trim().toLowerCase(), ls);
+            const gst = (ls.gst_no || ls.gstin || "").trim().toUpperCase();
+            if (gst) localGstMap.set(gst, ls);
+            const nm = (ls.name || "").trim().toLowerCase();
+            if (nm) localNameMap.set(nm, ls);
+          }
+
+          const slotsNeeded = limitNum - localSuppliers.length;
+          const globalSkip = Math.max(0, skip - localCount);
+
+          if (trimmedSearch) {
+            const escapedSearch = escapeRegex(trimmedSearch);
+            const isMultiWord = trimmedSearch.includes(" ");
+
+            if (slotsNeeded > 0) {
+              let rawGlobal = [];
+
+              if (isMultiWord) {
+                try {
+                  rawGlobal = await globalDistCol
+                    .find(
+                      { $text: { $search: trimmedSearch } },
+                      { score: { $meta: "textScore" } }
+                    )
+                    .sort({ score: { $meta: "textScore" } })
+                    .limit(slotsNeeded)
+                    .toArray();
+                } catch (e) {}
+              }
+
+              if (rawGlobal.length < slotsNeeded) {
+                try {
+                  const seenIds = new Set(rawGlobal.map((r) => String(r._id)));
+                  const prefixMatches = await globalDistCol
+                    .find(
+                      { agency_name: { $regex: `^${escapedSearch}`, $options: "i" } }
+                    )
+                    .limit(slotsNeeded - rawGlobal.length)
+                    .toArray();
+                  for (const pm of prefixMatches) {
+                    if (!seenIds.has(String(pm._id))) {
+                      seenIds.add(String(pm._id));
+                      rawGlobal.push(pm);
+                    }
+                  }
+                } catch (e) {}
+              }
+
+              if (rawGlobal.length < slotsNeeded) {
+                try {
+                  const seenIds = new Set(rawGlobal.map((r) => String(r._id)));
+                  const subMatches = await globalDistCol
+                    .find({
+                      $or: [
+                        { agency_name: { $regex: escapedSearch, $options: "i" } },
+                        { gst_number: { $regex: escapedSearch, $options: "i" } },
+                        { city: { $regex: escapedSearch, $options: "i" } },
+                      ],
+                      _id: { $nin: Array.from(seenIds).map((id) => new mongoose.Types.ObjectId(id)) },
+                    })
+                    .limit(slotsNeeded - rawGlobal.length)
+                    .toArray();
+                  rawGlobal.push(...subMatches);
+                } catch (e) {}
+              }
+
+              globalSuppliers = rawGlobal;
+            }
+
+            const hasMoreGlobal = globalSuppliers.length >= slotsNeeded;
+            globalCount = hasMoreGlobal ? globalSkip + slotsNeeded + 10 : globalSuppliers.length;
+          } else {
+            // Empty search: browse top global distributors
+            if (slotsNeeded > 0) {
+              globalSuppliers = await globalDistCol
+                .find({})
+                .sort({ supplier_id: 1 })
+                .skip(globalSkip)
+                .limit(slotsNeeded)
+                .toArray();
+            }
+            try {
+              globalCount = await globalDistCol.estimatedDocumentCount();
+            } catch (e) {
+              globalCount = 87739;
+            }
+          }
+
+          // Map global distributors to supplier contract with accurate badging
+          globalSuppliers = globalSuppliers.map((gd) => {
+            const loc = [gd.locality, gd.city, gd.state].filter(Boolean).join(", ");
+            const code = (gd.supplier_code || `DST-${gd.supplier_id}`).trim().toLowerCase();
+            const gst = (gd.gst_number || "").trim().toUpperCase();
+            const nm = (gd.agency_name || "").trim().toLowerCase();
+
+            const matchedLocal = localCodeMap.get(code) || (gst && localGstMap.get(gst)) || (nm && localNameMap.get(nm));
+
+            if (matchedLocal) {
+              return {
+                id: matchedLocal.id,
+                global_id: gd.supplier_code || `DST-${gd.supplier_id}`,
+                name: matchedLocal.name || gd.agency_name,
+                contact: gd.contact_number || "",
+                phone: gd.contact_number || "",
+                gstin: gd.gst_number || "",
+                gst_no: gd.gst_number || "",
+                pan_number: gd.pan_number || "",
+                locality: gd.locality || "",
+                city: gd.city || "",
+                state: gd.state || "",
+                address: loc,
+                source: "local",
+                is_local: true,
+                badge: "Your Supplier",
+                total_amount_owed: 0,
+              };
+            }
+
+            return {
+              id: gd.supplier_code || `DST-${gd.supplier_id}`,
+              global_id: gd.supplier_code || `DST-${gd.supplier_id}`,
+              name: gd.agency_name,
+              contact: gd.contact_number || "",
+              phone: gd.contact_number || "",
+              gstin: gd.gst_number || "",
+              gst_no: gd.gst_number || "",
+              pan_number: gd.pan_number || "",
+              locality: gd.locality || "",
+              city: gd.city || "",
+              state: gd.state || "",
+              address: loc,
+              source: "global",
+              is_local: false,
+              badge: "Global Distributor",
+              total_amount_owed: 0,
+            };
+          });
+        }
+      } catch (err) {
+        console.warn("Global distributors fetch error:", err.message);
       }
-    });
+    }
 
-    const augmentedSuppliers = suppliers.map((s) => ({
-      ...s,
-      total_amount_owed: owedBySupplier[s.id] || 0,
-    }));
+    // Deduplicate so local records and global records don't produce duplicate items
+    const seenSupplierKeys = new Set();
+    const combinedSuppliers = [];
+    for (const s of [...localSuppliers, ...globalSuppliers]) {
+      const key = s.is_local ? `local_${s.id}` : `global_${s.global_id || s.id}`;
+      if (!seenSupplierKeys.has(key)) {
+        seenSupplierKeys.add(key);
+        combinedSuppliers.push(s);
+      }
+    }
 
-    const total = await db.collection("suppliers").countDocuments(query);
+    const totalCount = localCount + globalCount;
 
-    res.json({
-      suppliers: augmentedSuppliers,
+    const responseData = {
+      suppliers: combinedSuppliers,
       pagination: {
         page: pageNum,
-        limit: parseInt(limit),
-        total,
-        total_pages: Math.ceil(total / parseInt(limit)) || 1,
+        limit: limitNum,
+        total: totalCount,
+        total_pages: Math.ceil(totalCount / limitNum) || 1,
+        has_more: skip + limitNum < totalCount,
       },
-    });
+    };
+
+    if (shouldIncludeGlobal && combinedSuppliers.length > 0) {
+      setCached(cacheKey, responseData);
+    }
+
+    res.json(responseData);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// POST /api/suppliers/ensure-global
+// Seamlessly syncs / links a selected global distributor into the pharmacy's local suppliers
+router.post("/ensure-global", auth, requireSubscription(), async (req, res, next) => {
+  try {
+    const { global_id, name, phone, contact, gstin, gst_no, address, city, state } = req.body;
+    const db = mongoose.connection.db;
+    const pharmacyId = req.user.pharmacy_id;
+
+    if (!name || !name.trim()) {
+      return res.status(400).json({ detail: "Supplier name is required" });
+    }
+
+    const trimmedName = name.trim();
+    const cleanGst = (gstin || gst_no || "").trim();
+
+    // 1. Check if already exists in local suppliers (by global_code, GSTIN, or Name)
+    let localSupplier = null;
+    if (global_id) {
+      localSupplier = await db.collection("suppliers").findOne({
+        pharmacy_id: pharmacyId,
+        global_code: global_id,
+      });
+    }
+    if (!localSupplier && cleanGst) {
+      localSupplier = await db.collection("suppliers").findOne({
+        pharmacy_id: pharmacyId,
+        $or: [{ gst_no: cleanGst }, { gstin: cleanGst }],
+      });
+    }
+    if (!localSupplier) {
+      localSupplier = await db.collection("suppliers").findOne({
+        pharmacy_id: pharmacyId,
+        name: { $regex: new RegExp(`^${escapeRegex(trimmedName)}$`, "i") },
+      });
+    }
+
+    if (localSupplier) {
+      const { _id, ...sup } = localSupplier;
+      return res.json({ supplier: sup, existed: true });
+    }
+
+    // 2. Insert new local supplier record linked to global distributor
+    const supplierId = uuidv4();
+    const newSupplier = {
+      id: supplierId,
+      pharmacy_id: pharmacyId,
+      name: trimmedName,
+      contact: (phone || contact || "").trim() || null,
+      phone: (phone || contact || "").trim() || null,
+      email: null,
+      address: address || [city, state].filter(Boolean).join(", ") || null,
+      city: city || null,
+      state: state || null,
+      gst_no: cleanGst || null,
+      gstin: cleanGst || null,
+      global_code: global_id || null,
+      created_at: new Date().toISOString(),
+    };
+
+    await db.collection("suppliers").insertOne(newSupplier);
+    await logActivity(
+      db,
+      pharmacyId,
+      req.user.id,
+      req.user.name,
+      "CREATE",
+      "SUPPLIERS",
+      supplierId,
+      `Linked Global Distributor ${newSupplier.name}`,
+      `/suppliers`
+    );
+
+    clearCachePattern(`sups:${pharmacyId}`);
+
+    res.status(201).json({ supplier: newSupplier, existed: false });
   } catch (error) {
     next(error);
   }
@@ -107,6 +406,8 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
     await db.collection("suppliers").insertOne(supplierData);
     const { _id, ...supplier } = supplierData;
     await logActivity(db, req.user.pharmacy_id, req.user.id, req.user.name, "CREATE", "SUPPLIERS", supplierId, `Added Supplier ${name}`, `/suppliers`);
+
+    clearCachePattern(`sups:${req.user.pharmacy_id}`);
 
     res.status(201).json({ message: "Supplier created", supplier });
   } catch (error) {
@@ -181,6 +482,8 @@ router.put(
       
       await logActivity(db, req.user.pharmacy_id, req.user.id, req.user.name, "UPDATE", "SUPPLIERS", req.params.supplier_id, `Updated Supplier ${name}`, `/suppliers`);
 
+      clearCachePattern(`sups:${req.user.pharmacy_id}`);
+
       const supplier = await db
         .collection("suppliers")
         .findOne({ id: req.params.supplier_id }, { projection: { _id: 0 } });
@@ -210,6 +513,8 @@ router.delete(
       }
       
       await logActivity(db, req.user.pharmacy_id, req.user.id, req.user.name, "DELETE", "SUPPLIERS", req.params.supplier_id, `Deleted Supplier`, `/suppliers`);
+
+      clearCachePattern(`sups:${req.user.pharmacy_id}`);
 
       res.json({ message: "Supplier deleted" });
     } catch (error) {

@@ -5,6 +5,19 @@ const { v4: uuidv4 } = require("uuid");
 const { auth } = require("../middleware/auth");
 const { requireSubscription } = require("../middleware/subscription");
 const { logActivity } = require("../utils/activityLogger");
+const { getCached, setCached, getGlobalMedicinesCollection } = require("../utils/globalDb");
+
+// Medicine normalization for deduplicating inventory vs global products
+const normalizeMedKey = (str) => {
+  if (!str) return "";
+  return String(str)
+    .toLowerCase()
+    .replace(/\b(tablet|tablets|tab|capsule|capsules|cap|syrup|syr|suspension|susp|injection|inj|drops|drop|ointment|gel|cream)\b/g, "")
+    .replace(/(\d+)\s*(mg|ml|gm|g|mcg|iu)\b/g, "$1")
+    .replace(/[^\w\s]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+};
 
 const escapeRegex = (str) => {
   if (!str) return "";
@@ -206,6 +219,51 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
         .collection("inventory")
         .aggregate(pipeline)
         .toArray();
+
+      // Merge products from products catalog that don't have inventory batches yet
+      const existingProductNames = new Set(
+        allGrouped.map((g) => (g.product_name || g._id || "").toLowerCase())
+      );
+      const productQuery = { pharmacy_id: req.user.pharmacy_id };
+      if (search) {
+        productQuery.$or = [
+          { name: { $regex: escapeRegex(search), $options: "i" } },
+          { product_name: { $regex: escapeRegex(search), $options: "i" } },
+          { salt_composition: { $regex: escapeRegex(search), $options: "i" } },
+        ];
+      }
+      const allCatalog = await db
+        .collection("products")
+        .find(productQuery)
+        .toArray();
+
+      for (const cp of allCatalog) {
+        const pName = (cp.name || cp.product_name || "").trim();
+        if (!pName || existingProductNames.has(pName.toLowerCase())) continue;
+        existingProductNames.add(pName.toLowerCase());
+
+        allGrouped.push({
+          _id: pName,
+          product_name: pName,
+          product_id: cp.id,
+          manufacturer: cp.manufacturer || "",
+          salt_composition: cp.salt_composition || "",
+          hsn_no: cp.hsn_no || "",
+          pack_type: cp.pack_type || "Strip",
+          units_per_pack: cp.units_per_pack || 1,
+          purchase_price: cp.trade_price || cp.purchase_price || 0,
+          mrp: cp.mrp || 0,
+          total_available_stock: 0,
+          total_stock_value: 0,
+          earliest_expiry: null,
+          latest_created: cp.created_at || new Date().toISOString(),
+          shortage_threshold: cp.shortage_threshold || 10,
+          batch_count: 0,
+          batches: [],
+          is_catalog_only: true,
+        });
+      }
+
       total = allGrouped.length;
       const skip = (pageNum - 1) * parsedLimit;
       const paginatedGrouped =
@@ -213,8 +271,33 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
           ? allGrouped.slice(skip, skip + parsedLimit)
           : allGrouped;
 
+      const sanitizedGrouped = paginatedGrouped.map((item) => ({
+        ...item,
+        purchase_price:
+          item.purchase_price !== undefined && item.purchase_price !== null
+            ? Math.round(Number(item.purchase_price) * 100) / 100
+            : item.purchase_price,
+        mrp:
+          item.mrp !== undefined && item.mrp !== null
+            ? Math.round(Number(item.mrp) * 100) / 100
+            : item.mrp,
+        batches: Array.isArray(item.batches)
+          ? item.batches.map((b) => ({
+              ...b,
+              purchase_price:
+                b.purchase_price !== undefined && b.purchase_price !== null
+                  ? Math.round(Number(b.purchase_price) * 100) / 100
+                  : b.purchase_price,
+              mrp:
+                b.mrp !== undefined && b.mrp !== null
+                  ? Math.round(Number(b.mrp) * 100) / 100
+                  : b.mrp,
+            }))
+          : item.batches,
+      }));
+
       return res.json({
-        inventory: paginatedGrouped,
+        inventory: sanitizedGrouped,
         shortage_count: shortageCount,
         pagination: {
           page: pageNum,
@@ -278,8 +361,20 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
       ])
       .toArray();
 
+    const sanitizedInventory = inventory.map((b) => ({
+      ...b,
+      purchase_price:
+        b.purchase_price !== undefined && b.purchase_price !== null
+          ? Math.round(Number(b.purchase_price) * 100) / 100
+          : b.purchase_price,
+      mrp:
+        b.mrp !== undefined && b.mrp !== null
+          ? Math.round(Number(b.mrp) * 100) / 100
+          : b.mrp,
+    }));
+
     res.json({
-      inventory,
+      inventory: sanitizedInventory,
       shortage_count: shortageCount,
       pagination: {
         page: pageNum,
@@ -301,13 +396,24 @@ router.get(
   async (req, res, next) => {
     try {
       const db = mongoose.connection.db;
-      const { product_name } = req.query;
+      const { product_name, product_id } = req.query;
 
-      if (!product_name) {
-        return res.status(400).json({ detail: "product_name is required" });
+      if (!product_name && !product_id) {
+        return res.status(400).json({ detail: "product_name or product_id is required" });
       }
 
-      const normalizedInput = (product_name || "").trim().toLowerCase();
+      const orConditions = [];
+      if (product_id) {
+        orConditions.push({ product_id });
+      }
+      if (product_name) {
+        const normalizedInput = (product_name || "").trim().toLowerCase();
+        const escaped = normalizedInput.replace(/[-\/\\^$*+?.()|[\]{}]/g, "\\$&");
+        orConditions.push(
+          { product_name: { $regex: new RegExp("^" + escaped + "$", "i") } },
+          { product_name: { $regex: escaped, $options: "i" } }
+        );
+      }
 
       const batches = await db
         .collection("inventory")
@@ -315,30 +421,7 @@ router.get(
           {
             $match: {
               pharmacy_id: req.user.pharmacy_id,
-              $or: [
-                {
-                  product_name: {
-                    $regex: new RegExp(
-                      "^" +
-                        normalizedInput.replace(
-                          /[-\/\\^$*+?.()|[\]{}]/g,
-                          "\\$&"
-                        ) +
-                        "$",
-                      "i"
-                    ),
-                  },
-                },
-                {
-                  product_name: {
-                    $regex: normalizedInput.replace(
-                      /[-\/\\^$*+?.()|[\]{}]/g,
-                      "\\$&"
-                    ),
-                    $options: "i",
-                  },
-                },
-              ],
+              $or: orConditions,
             },
           },
           {
@@ -370,10 +453,22 @@ router.get(
         ])
         .toArray();
 
+      const formattedBatches = batches.map((b) => ({
+        ...b,
+        purchase_price:
+          b.purchase_price !== undefined && b.purchase_price !== null
+            ? Math.round(Number(b.purchase_price) * 100) / 100
+            : b.purchase_price,
+        mrp:
+          b.mrp !== undefined && b.mrp !== null
+            ? Math.round(Number(b.mrp) * 100) / 100
+            : b.mrp,
+      }));
+
       res.json({
         product_name,
-        count: batches.length,
-        batches,
+        count: formattedBatches.length,
+        batches: formattedBatches,
       });
     } catch (error) {
       next(error);
@@ -384,7 +479,8 @@ router.get(
 // GET /api/inventory/search
 router.get("/search", auth, requireSubscription(), async (req, res, next) => {
   try {
-    const { q, page = 1, limit = 15 } = req.query;
+    const q = (req.query.q || req.query.query || "").trim();
+    const { page = 1, limit = 15 } = req.query;
     const db = mongoose.connection.db;
 
     if (!q || q.length < 1) {
@@ -393,11 +489,15 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
 
     const parsedLimit = parseInt(limit);
     const parsedPage = parseInt(page);
+    const trimmedQ = q;
+    const cacheKey = `inv_search:${req.user.pharmacy_id}:${trimmedQ.toLowerCase()}:${parsedPage}:${parsedLimit}`;
+    const cached = getCached(cacheKey);
+    if (cached) return res.json(cached);
+
     const escapedQ = escapeRegex(q);
 
     const query = {
       pharmacy_id: req.user.pharmacy_id,
-      available_quantity: { $gt: 0 },
       status: { $nin: ["Returned", "Expired & Returned"] },
       $or: [
         { product_name: { $regex: escapedQ, $options: "i" } },
@@ -405,21 +505,6 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
         { salt_composition: { $regex: escapedQ, $options: "i" } },
       ],
     };
-
-    // To get the total count for pagination, group by product name first
-    const allGrouped = await db
-      .collection("inventory")
-      .aggregate([
-        { $match: query },
-        {
-          $group: {
-            _id: "$product_name",
-          },
-        },
-      ])
-      .toArray();
-
-    const total = allGrouped.length;
 
     let inventory = await db
       .collection("inventory")
@@ -496,6 +581,7 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
         {
           $addFields: {
             supplier_name: "$supplier.name",
+            source: "inventory",
           },
         },
         {
@@ -507,36 +593,416 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
       ])
       .toArray();
 
-    // 🔎 Keep your ranking logic unchanged
-    const searchLower = q.toLowerCase();
-    inventory.sort((a, b) => {
-      const aName = (a.product_name || "").toLowerCase();
-      const bName = (b.product_name || "").toLowerCase();
-      const aSalt = (a.salt_composition || "").toLowerCase();
-      const bSalt = (b.salt_composition || "").toLowerCase();
+    // 1. Process inventory items & register for deduplication
+    const seenNormKeys = new Set();
+    const seenExactNames = new Set();
+    const seenProductIds = new Set();
 
-      if (aName === searchLower) return -1;
-      if (bName === searchLower) return 1;
+    const processedInventory = inventory.map((inv) => {
+      const pName = (inv.product_name || "").trim();
+      const exactLower = pName.toLowerCase();
+      const normKey = normalizeMedKey(pName);
 
-      if (aName.startsWith(searchLower) && !bName.startsWith(searchLower))
-        return -1;
-      if (!aName.startsWith(searchLower) && bName.startsWith(searchLower))
-        return 1;
+      seenExactNames.add(exactLower);
+      if (normKey) seenNormKeys.add(normKey);
+      if (inv.id) seenProductIds.add(String(inv.id));
+      if (inv.product_id) seenProductIds.add(String(inv.product_id));
 
-      if (aSalt.startsWith(searchLower) && !bSalt.startsWith(searchLower))
-        return -1;
-      if (!aSalt.startsWith(searchLower) && bSalt.startsWith(searchLower))
-        return 1;
+      const uPack = inv.units_per_pack || 1;
+      const uMrp =
+        inv.mrp_per_unit ||
+        (inv.mrp && uPack > 0
+          ? parseFloat((inv.mrp / uPack).toFixed(2))
+          : inv.mrp || 0);
 
-      return 0;
+      return {
+        ...inv,
+        source: "inventory",
+        stock_status:
+          (inv.available_quantity || 0) > 0 ? "In Stock" : "Out of Stock",
+        available_units: inv.available_quantity || 0,
+        mrp_per_unit: uMrp,
+      };
     });
 
-    const paginatedInventory = inventory.slice(
+    // 2. Search custom catalog (products collection)
+    let customCatalog = [];
+    try {
+      const catMatches = await db
+        .collection("products")
+        .find({
+          pharmacy_id: req.user.pharmacy_id,
+          $or: [
+            { name: { $regex: escapedQ, $options: "i" } },
+            { product_name: { $regex: escapedQ, $options: "i" } },
+            { salt_composition: { $regex: escapedQ, $options: "i" } },
+          ],
+        })
+        .limit(20)
+        .toArray();
+
+      for (const cp of catMatches) {
+        const cpName = (cp.name || cp.product_name || "").trim();
+        if (!cpName) continue;
+        const exactLower = cpName.toLowerCase();
+        const normKey = normalizeMedKey(cpName);
+
+        if (seenExactNames.has(exactLower) || seenNormKeys.has(normKey))
+          continue;
+        if (cp.id && seenProductIds.has(String(cp.id))) continue;
+
+        seenExactNames.add(exactLower);
+        if (normKey) seenNormKeys.add(normKey);
+        if (cp.id) seenProductIds.add(String(cp.id));
+
+        const uPack = cp.units_per_pack || 1;
+        const pMrp = cp.mrp || 0;
+        const uMrp =
+          cp.unit_mrp ||
+          (pMrp > 0 && uPack > 0
+            ? parseFloat((pMrp / uPack).toFixed(2))
+            : pMrp);
+
+        customCatalog.push({
+          id: cp.id || uuidv4(),
+          product_id: cp.id,
+          product_name: cpName,
+          manufacturer: cp.manufacturer || "",
+          salt_composition: cp.salt_composition || "",
+          hsn_no: cp.hsn_no || cp.hsn_code || "300490",
+          available_quantity: 0,
+          available_units: 0,
+          quantity: 0,
+          units_per_pack: uPack,
+          pack_type: cp.pack_type || cp.dosage_form || "Strip",
+          purchase_price: cp.trade_price || cp.purchase_price || 0,
+          mrp: pMrp,
+          mrp_per_unit: uMrp,
+          cgst:
+            cp.cgst !== undefined
+              ? cp.cgst
+              : cp.tax_rate
+                ? cp.tax_rate / 2
+                : 2.5,
+          sgst:
+            cp.sgst !== undefined
+              ? cp.sgst
+              : cp.tax_rate
+                ? cp.tax_rate / 2
+                : 2.5,
+          source: "catalog",
+          is_custom_catalog: true,
+          stock_status: "My Catalog",
+          batches: [],
+        });
+      }
+    } catch (catErr) {
+      console.warn("Catalog search warning in inventory/search:", catErr.message);
+    }
+
+    // 3. Search Centralized Global Medicines (4.09L+ Records)
+    let globalMedicines = [];
+    try {
+      const globalCol = await getGlobalMedicinesCollection();
+      const isMultiWord = trimmedQ.includes(" ");
+      const globalProjection = {
+        _id: 1,
+        id: 1,
+        product_id: 1,
+        name: 1,
+        product_name: 1,
+        brand: 1,
+        manufacturer: 1,
+        manufacturer_name: 1,
+        dosage_form: 1,
+        packaging_label: 1,
+        package_details: 1,
+        pack_size_label: 1,
+        pack_size: 1,
+        pack_type: 1,
+        units_per_pack: 1,
+        mrp: 1,
+        "price(₹)": 1,
+        unit_mrp: 1,
+        trade_price: 1,
+        purchase_price: 1,
+        tax_rate: 1,
+        gst_percentage: 1,
+        hsn_code: 1,
+        hsn_no: 1,
+        salt_composition: 1,
+        short_composition1: 1,
+        short_composition2: 1,
+        active_ingredients: 1,
+        search_keyword: 1,
+      };
+
+      let rawGlobal = [];
+      if (isMultiWord) {
+        try {
+          rawGlobal = await globalCol
+            .find(
+              { $text: { $search: q } },
+              { score: { $meta: "textScore" }, projection: globalProjection }
+            )
+            .sort({ score: { $meta: "textScore" } })
+            .limit(40)
+            .toArray();
+        } catch (e) {}
+
+        if (rawGlobal.length < 15) {
+          const firstWord = trimmedQ.split(/\s+/)[0];
+          if (firstWord.length >= 2) {
+            const extra = await globalCol
+              .find(
+                {
+                  $or: [
+                    {
+                      product_name: {
+                        $regex: `^${escapeRegex(firstWord)}`,
+                        $options: "i",
+                      },
+                    },
+                    {
+                      search_keyword: {
+                        $regex: `^${escapeRegex(firstWord)}`,
+                        $options: "i",
+                      },
+                    },
+                    {
+                      brand: {
+                        $regex: `^${escapeRegex(firstWord)}`,
+                        $options: "i",
+                      },
+                    },
+                    {
+                      name: {
+                        $regex: `^${escapeRegex(firstWord)}`,
+                        $options: "i",
+                      },
+                    },
+                  ],
+                },
+                { projection: globalProjection }
+              )
+              .limit(40 - rawGlobal.length)
+              .toArray()
+              .catch(() => []);
+            const seenGIds = new Set(rawGlobal.map((r) => String(r._id)));
+            for (const g of extra) {
+              if (!seenGIds.has(String(g._id))) {
+                seenGIds.add(String(g._id));
+                rawGlobal.push(g);
+              }
+            }
+          }
+        }
+      } else {
+        const [prefixRes, textRes] = await Promise.all([
+          globalCol
+            .find(
+              {
+                $or: [
+                  { product_name: { $regex: `^${escapedQ}`, $options: "i" } },
+                  { search_keyword: { $regex: `^${escapedQ}`, $options: "i" } },
+                  { brand: { $regex: `^${escapedQ}`, $options: "i" } },
+                  { name: { $regex: `^${escapedQ}`, $options: "i" } },
+                ],
+              },
+              { projection: globalProjection }
+            )
+            .limit(40)
+            .toArray()
+            .catch(() => []),
+          globalCol
+            .find(
+              { $text: { $search: q } },
+              { score: { $meta: "textScore" }, projection: globalProjection }
+            )
+            .sort({ score: { $meta: "textScore" } })
+            .limit(20)
+            .toArray()
+            .catch(() => []),
+        ]);
+
+        const seenGIds = new Set(prefixRes.map((r) => String(r._id)));
+        rawGlobal = [...prefixRes];
+        for (const tm of textRes) {
+          if (!seenGIds.has(String(tm._id))) {
+            seenGIds.add(String(tm._id));
+            rawGlobal.push(tm);
+          }
+        }
+
+        if (rawGlobal.length < 15 && q.length >= 3) {
+          const containsRes = await globalCol
+            .find(
+              {
+                $or: [
+                  { product_name: { $regex: escapedQ, $options: "i" } },
+                  { search_keyword: { $regex: escapedQ, $options: "i" } },
+                  { brand: { $regex: escapedQ, $options: "i" } },
+                  { name: { $regex: escapedQ, $options: "i" } },
+                ],
+              },
+              { projection: globalProjection }
+            )
+            .limit(40 - rawGlobal.length)
+            .toArray()
+            .catch(() => []);
+          for (const cm of containsRes) {
+            if (!seenGIds.has(String(cm._id))) {
+              seenGIds.add(String(cm._id));
+              rawGlobal.push(cm);
+            }
+          }
+        }
+      }
+
+      // DEDUPLICATION: Prevent duplicate suggestions for products already in inventory / catalog
+      for (const med of rawGlobal) {
+        const medName = (med.product_name || med.name || "").trim();
+        if (!medName) continue;
+        const exactLower = medName.toLowerCase();
+        const normKey = normalizeMedKey(medName);
+
+        // Strict Check: If this medicine is already in local inventory or catalog, SKIP IT!
+        if (seenExactNames.has(exactLower) || seenNormKeys.has(normKey))
+          continue;
+        if (med.product_id && seenProductIds.has(String(med.product_id)))
+          continue;
+        if (med.id && seenProductIds.has(String(med.id))) continue;
+
+        seenExactNames.add(exactLower);
+        if (normKey) seenNormKeys.add(normKey);
+        if (med.product_id) seenProductIds.add(String(med.product_id));
+        if (med.id) seenProductIds.add(String(med.id));
+
+        let medUnits =
+          typeof med.units_per_pack === "number" && med.units_per_pack > 0
+            ? med.units_per_pack
+            : 1;
+        const packLabel =
+          med.packaging_label ||
+          med.package_details ||
+          med.pack_size_label ||
+          med.pack_size ||
+          "";
+        if (medUnits <= 1 && packLabel) {
+          const matchNum = packLabel.match(/\d+/);
+          if (matchNum) {
+            const parsed = parseInt(matchNum[0]);
+            if (!isNaN(parsed) && parsed > 0 && parsed <= 500)
+              medUnits = parsed;
+          }
+        }
+
+        const medMrp =
+          typeof med.mrp === "number"
+            ? med.mrp
+            : parseFloat(med["price(₹)"]) || 0;
+        const medUnitMrp =
+          typeof med.unit_mrp === "number" && med.unit_mrp > 0
+            ? med.unit_mrp
+            : medUnits > 0 && medMrp > 0
+              ? parseFloat((medMrp / medUnits).toFixed(2))
+              : medMrp;
+        const medTrade =
+          typeof med.trade_price === "number" && med.trade_price > 0
+            ? med.trade_price
+            : typeof med.purchase_price === "number" && med.purchase_price > 0
+              ? med.purchase_price
+              : parseFloat((medMrp * 0.7).toFixed(2));
+        const medTax =
+          typeof med.tax_rate === "number"
+            ? med.tax_rate
+            : med.gst_percentage || 5;
+        const medMfg = med.manufacturer_name || med.manufacturer || "";
+        const medSalt =
+          med.active_ingredients ||
+          [med.short_composition1, med.short_composition2]
+            .map((s) => (s || "").trim())
+            .filter(Boolean)
+            .join(", ") ||
+          "";
+
+        globalMedicines.push({
+          id: `global-${med._id || med.id || uuidv4()}`,
+          product_id:
+            med.product_id || med.id || (med._id ? String(med._id) : undefined),
+          product_name: medName,
+          manufacturer: medMfg,
+          manufacturer_name: medMfg,
+          salt_composition: medSalt,
+          hsn_no: med.hsn_code || med.hsn_no || "300490",
+          available_quantity: 0,
+          available_units: 0,
+          quantity: 0,
+          units_per_pack: medUnits,
+          pack_type:
+            med.pack_type ||
+            (med.dosage_form === "syrup" ? "Bottle" : "Strip"),
+          purchase_price: medTrade,
+          cost_per_unit:
+            medUnits > 0
+              ? parseFloat((medTrade / medUnits).toFixed(2))
+              : medTrade,
+          mrp: medMrp,
+          mrp_per_unit: medUnitMrp,
+          cgst: medTax / 2,
+          sgst: medTax / 2,
+          source: "global",
+          stock_status: "Global Catalog",
+          is_manual: true,
+          batches: [],
+        });
+      }
+    } catch (gErr) {
+      console.warn("Global search warning in inventory/search:", gErr.message);
+    }
+
+    // 4. Priority Ranking:
+    // Tier 1: In-stock local inventory (available_quantity > 0) ALWAYS comes first!
+    // Tier 2: Out-of-stock local inventory & custom catalog comes second!
+    // Tier 3: Global medicines come third!
+    const searchLower = q.toLowerCase();
+    const scoreItem = (item) => {
+      const name = (item.product_name || "").toLowerCase();
+      const salt = (item.salt_composition || "").toLowerCase();
+      let matchScore = 0;
+      if (name === searchLower) matchScore = 100;
+      else if (name.startsWith(searchLower)) matchScore = 80;
+      else if (name.includes(searchLower)) matchScore = 60;
+      else if (salt.startsWith(searchLower)) matchScore = 50;
+      else if (salt.includes(searchLower)) matchScore = 40;
+      else matchScore = 10;
+
+      let sourceTier = 0;
+      if (item.source === "inventory" && (item.available_quantity || 0) > 0) {
+        sourceTier = 3000; // In-stock inventory
+      } else if (item.source === "inventory" || item.source === "catalog") {
+        sourceTier = 2000; // Local catalog / out-of-stock
+      } else {
+        sourceTier = 1000; // Global medicines
+      }
+
+      return sourceTier + matchScore;
+    };
+
+    const combined = [
+      ...processedInventory,
+      ...customCatalog,
+      ...globalMedicines,
+    ];
+    combined.sort((a, b) => scoreItem(b) - scoreItem(a));
+
+    const total = combined.length;
+    const paginatedInventory = combined.slice(
       (parsedPage - 1) * parsedLimit,
       parsedPage * parsedLimit
     );
 
-    res.json({
+    const responsePayload = {
       inventory: paginatedInventory,
       count: total,
       pagination: {
@@ -545,7 +1011,13 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
         total: total,
         total_pages: Math.ceil(total / parsedLimit) || 1,
       },
-    });
+    };
+
+    if (paginatedInventory.length > 0) {
+      setCached(cacheKey, responsePayload);
+    }
+
+    res.json(responsePayload);
   } catch (error) {
     next(error);
   }

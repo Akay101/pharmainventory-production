@@ -26,6 +26,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { toast } from "sonner";
+import { formatExpiry } from "../pages/utils";
 
 export default function BillingScannerModal({
   open,
@@ -180,7 +181,7 @@ export default function BillingScannerModal({
         purchase_price: m.purchase_price || 0,
         cgst: m.cgst || 0,
         sgst: m.sgst || 0,
-        expiry_date: m.expiry_date || "",
+        expiry_date: m.expiry_date ? formatExpiry(m.expiry_date) : "",
         is_negative_billed: !m.inventory_id,
       };
     });
@@ -464,7 +465,7 @@ export default function BillingScannerModal({
         </div>
 
         {/* Footer Actions */}
-        <DialogFooter className="px-5 py-3 border-t border-border/80 bg-muted/20 flex-row items-center justify-between sm:justify-between gap-3">
+        <DialogFooter className="px-5 py-3 border-t border-border/80 bg-muted/20 flex-row flex-wrap items-center justify-between sm:justify-between gap-3">
           <Button
             variant="ghost"
             onClick={() => onOpenChange(false)}

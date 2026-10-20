@@ -30,8 +30,8 @@ div[style*="Made with Emergent"] {
     --secondary-foreground: 0 0% 98%;
     --muted: 0 0% 13%;
     --muted-foreground: 240 5% 65%;
-    --accent: 32 100% 50%;
-    --accent-foreground: 0 0% 100%;
+    --accent: 0 0% 15%;
+    --accent-foreground: 0 0% 98%;
     --destructive: 0 84% 60%;
     --destructive-foreground: 0 0% 100%;
     --border: 0 0% 16%;
@@ -59,8 +59,8 @@ div[style*="Made with Emergent"] {
     --secondary-foreground: 222 47% 11%;
     --muted: 210 25% 94%;
     --muted-foreground: 215 16% 45%;
-    --accent: 32 95% 54%;
-    --accent-foreground: 0 0% 100%;
+    --accent: 210 25% 92%;
+    --accent-foreground: 222 47% 11%;
     --destructive: 0 84% 60%;
     --destructive-foreground: 0 0% 100%;
     --border: 214.3 31.8% 85%;
@@ -403,6 +403,134 @@ input[type="month"]::-webkit-calendar-picker-indicator {
 .currency {
   font-family: "JetBrains Mono", monospace;
   @apply tabular-nums;
+}
+
+/* ----------------------------------------------------
+   Silky 60fps/120fps GPU-Accelerated Micro-Animations
+   ---------------------------------------------------- */
+
+/* 1. Shimmer Wave Animation for Skeleton Loaders */
+@keyframes shimmerWave {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.shimmer-wave {
+  background: linear-gradient(
+    90deg,
+    hsl(var(--muted) / 0.5) 0%,
+    hsl(var(--primary) / 0.15) 35%,
+    hsl(var(--muted) / 0.8) 50%,
+    hsl(var(--primary) / 0.15) 65%,
+    hsl(var(--muted) / 0.5) 100%
+  ) !important;
+  background-size: 200% 100% !important;
+  animation: shimmerWave 2s cubic-bezier(0.4, 0, 0.2, 1) infinite !important;
+}
+
+/* 2. Micro-interactions & Physics-based Easings */
+.hover-lift {
+  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.25s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.25s ease !important;
+  will-change: transform;
+}
+
+.hover-lift:hover {
+  transform: translateY(-3px) !important;
+  box-shadow: 0 12px 28px -6px rgba(0, 0, 0, 0.18), 0 0 16px -2px hsl(var(--primary) / 0.12) !important;
+}
+
+.card-interactive {
+  transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.28s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.28s ease !important;
+  will-change: transform;
+}
+
+.card-interactive:hover {
+  transform: translateY(-2px) !important;
+  border-color: hsl(var(--primary) / 0.4) !important;
+  box-shadow: 0 10px 24px -6px rgba(0, 0, 0, 0.14), 0 0 12px -2px hsl(var(--primary) / 0.1) !important;
+}
+
+/* 3. Button Tactile Press Feedback */
+.btn-tactile {
+  transition: transform 0.15s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.15s ease, background-color 0.15s ease !important;
+}
+
+.btn-tactile:active {
+  transform: scale(0.96) !important;
+}
+
+/* 4. Attention-Grabbing Bell Wiggle */
+@keyframes bellWiggle {
+  0%, 100% { transform: rotate(0deg); }
+  15% { transform: rotate(14deg); }
+  30% { transform: rotate(-12deg); }
+  45% { transform: rotate(8deg); }
+  60% { transform: rotate(-6deg); }
+  75% { transform: rotate(3deg); }
+}
+
+.animate-bell-wiggle {
+  animation: bellWiggle 1.4s ease-in-out infinite;
+  transform-origin: top center;
+}
+
+/* 5. Button Light Sweep Sheen Effect */
+.btn-shine {
+  position: relative;
+  overflow: hidden;
+}
+
+.btn-shine::after {
+  content: "";
+  position: absolute;
+  top: -50%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  background: linear-gradient(
+    60deg,
+    transparent 40%,
+    rgba(255, 255, 255, 0.2) 50%,
+    transparent 60%
+  );
+  transform: translateX(-100%);
+  transition: transform 0.6s ease;
+}
+
+.btn-shine:hover::after {
+  transform: translateX(100%);
+}
+
+/* 6. Staggered Page Content Fade-Slide Entrances */
+@keyframes fadeInUpSubtle {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-stagger-1 {
+  animation: fadeInUpSubtle 0.35s cubic-bezier(0.16, 1, 0.3, 1) 0.05s both;
+}
+
+.animate-stagger-2 {
+  animation: fadeInUpSubtle 0.35s cubic-bezier(0.16, 1, 0.3, 1) 0.1s both;
+}
+
+.animate-stagger-3 {
+  animation: fadeInUpSubtle 0.35s cubic-bezier(0.16, 1, 0.3, 1) 0.15s both;
+}
+
+.animate-stagger-4 {
+  animation: fadeInUpSubtle 0.35s cubic-bezier(0.16, 1, 0.3, 1) 0.2s both;
 }
 
 /* Animations */

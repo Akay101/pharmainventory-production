@@ -1484,7 +1484,7 @@ export default function CustomersPage() {
             </AlertDialogDescription>
           </AlertDialogHeader>
 
-          <AlertDialogFooter className="mt-4 flex gap-2">
+          <AlertDialogFooter className="mt-4 flex flex-wrap sm:justify-end gap-2">
             <AlertDialogCancel className="h-10 rounded-xl border border-border hover:bg-muted font-semibold">Cancel</AlertDialogCancel>
             <AlertDialogAction
               onClick={confirmPayBill}
@@ -1503,14 +1503,14 @@ export default function CustomersPage() {
           setClearDebtDialog({ ...clearDebtDialog, open })
         }
       >
-        <AlertDialogContent className="rounded-2xl max-w-sm border border-border bg-background p-6 shadow-2xl">
+        <AlertDialogContent className="rounded-2xl max-w-sm sm:max-w-md border border-border bg-background p-6 shadow-2xl">
           <AlertDialogHeader>
             <AlertDialogTitle className="text-lg font-bold">Clear Debt</AlertDialogTitle>
             <AlertDialogDescription className="text-sm text-muted-foreground mt-2">
               Are you sure you want to clear {clearDebtDialog.amount ? `Rs. ${clearDebtDialog.amount.toFixed(2)}` : "all outstanding"} debt for this customer?
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <AlertDialogFooter className="mt-4 flex gap-2">
+          <AlertDialogFooter className="mt-4 flex flex-wrap sm:justify-end gap-2">
             <AlertDialogCancel className="h-10 rounded-xl border border-border hover:bg-muted font-semibold">Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={confirmClearDebt} className="h-10 rounded-xl btn-primary font-semibold shadow-md">
               Confirm
