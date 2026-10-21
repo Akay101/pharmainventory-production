@@ -4,6 +4,7 @@ const cors = require("cors");
 const mongoose = require("mongoose");
 
 const startCronJobs = require("./services/cron");
+const { ensureTenantIndexes } = require("./services/search/indexes");
 
 // Import routes
 const authRoutes = require("./routes/auth");
@@ -47,6 +48,10 @@ mongoose
   .connect(process.env.MONGO_URL)
   .then(() => {
     console.log("Connected to MongoDB");
+    // Idempotent; runs in the background so startup isn't blocked
+    ensureTenantIndexes(mongoose.connection.db).catch((err) =>
+      console.warn("[Indexes] ensureTenantIndexes failed:", err.message)
+    );
   })
   .catch((err) => {
     console.error("MongoDB connection error:", err);

@@ -5,7 +5,12 @@ const { v4: uuidv4 } = require("uuid");
 const { auth } = require("../middleware/auth");
 const { requireSubscription } = require("../middleware/subscription");
 const { logActivity } = require("../utils/activityLogger");
-const { getCached, setCached, getGlobalMedicinesCollection } = require("../utils/globalDb");
+const {
+  searchGlobalMedicines,
+  tenantTokenMatch,
+  scoreMatch,
+  batchMatchScore,
+} = require("../services/search/medicineSearch");
 
 // Medicine normalization for deduplicating inventory vs global products
 const normalizeMedKey = (str) => {
@@ -487,23 +492,17 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
       return res.status(400).json({ detail: "Search query required" });
     }
 
-    const parsedLimit = parseInt(limit);
-    const parsedPage = parseInt(page);
-    const trimmedQ = q;
-    const cacheKey = `inv_search:${req.user.pharmacy_id}:${trimmedQ.toLowerCase()}:${parsedPage}:${parsedLimit}`;
-    const cached = getCached(cacheKey);
-    if (cached) return res.json(cached);
-
-    const escapedQ = escapeRegex(q);
+    // Not cached: billing needs live stock. The global catalogue layer is
+    // cached inside searchGlobalMedicines.
+    const parsedLimit = Math.min(parseInt(limit) || 15, 100);
+    const parsedPage = Math.max(parseInt(page) || 1, 1);
 
     const query = {
       pharmacy_id: req.user.pharmacy_id,
       status: { $nin: ["Returned", "Expired & Returned"] },
-      $or: [
-        { product_name: { $regex: escapedQ, $options: "i" } },
-        { batch_no: { $regex: escapedQ, $options: "i" } },
-        { salt_composition: { $regex: escapedQ, $options: "i" } },
-      ],
+      ...tenantTokenMatch(q, ["product_name", "salt_composition"], {
+        wholeQueryFields: ["batch_no"],
+      }),
     };
 
     let inventory = await db
@@ -632,11 +631,7 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
         .collection("products")
         .find({
           pharmacy_id: req.user.pharmacy_id,
-          $or: [
-            { name: { $regex: escapedQ, $options: "i" } },
-            { product_name: { $regex: escapedQ, $options: "i" } },
-            { salt_composition: { $regex: escapedQ, $options: "i" } },
-          ],
+          ...tenantTokenMatch(q, ["name", "product_name", "salt_composition"]),
         })
         .limit(20)
         .toArray();
@@ -703,161 +698,8 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
     // 3. Search Centralized Global Medicines (4.09L+ Records)
     let globalMedicines = [];
     try {
-      const globalCol = await getGlobalMedicinesCollection();
-      const isMultiWord = trimmedQ.includes(" ");
-      const globalProjection = {
-        _id: 1,
-        id: 1,
-        product_id: 1,
-        name: 1,
-        product_name: 1,
-        brand: 1,
-        manufacturer: 1,
-        manufacturer_name: 1,
-        dosage_form: 1,
-        packaging_label: 1,
-        package_details: 1,
-        pack_size_label: 1,
-        pack_size: 1,
-        pack_type: 1,
-        units_per_pack: 1,
-        mrp: 1,
-        "price(₹)": 1,
-        unit_mrp: 1,
-        trade_price: 1,
-        purchase_price: 1,
-        tax_rate: 1,
-        gst_percentage: 1,
-        hsn_code: 1,
-        hsn_no: 1,
-        salt_composition: 1,
-        short_composition1: 1,
-        short_composition2: 1,
-        active_ingredients: 1,
-        search_keyword: 1,
-      };
-
-      let rawGlobal = [];
-      if (isMultiWord) {
-        try {
-          rawGlobal = await globalCol
-            .find(
-              { $text: { $search: q } },
-              { score: { $meta: "textScore" }, projection: globalProjection }
-            )
-            .sort({ score: { $meta: "textScore" } })
-            .limit(40)
-            .toArray();
-        } catch (e) {}
-
-        if (rawGlobal.length < 15) {
-          const firstWord = trimmedQ.split(/\s+/)[0];
-          if (firstWord.length >= 2) {
-            const extra = await globalCol
-              .find(
-                {
-                  $or: [
-                    {
-                      product_name: {
-                        $regex: `^${escapeRegex(firstWord)}`,
-                        $options: "i",
-                      },
-                    },
-                    {
-                      search_keyword: {
-                        $regex: `^${escapeRegex(firstWord)}`,
-                        $options: "i",
-                      },
-                    },
-                    {
-                      brand: {
-                        $regex: `^${escapeRegex(firstWord)}`,
-                        $options: "i",
-                      },
-                    },
-                    {
-                      name: {
-                        $regex: `^${escapeRegex(firstWord)}`,
-                        $options: "i",
-                      },
-                    },
-                  ],
-                },
-                { projection: globalProjection }
-              )
-              .limit(40 - rawGlobal.length)
-              .toArray()
-              .catch(() => []);
-            const seenGIds = new Set(rawGlobal.map((r) => String(r._id)));
-            for (const g of extra) {
-              if (!seenGIds.has(String(g._id))) {
-                seenGIds.add(String(g._id));
-                rawGlobal.push(g);
-              }
-            }
-          }
-        }
-      } else {
-        const [prefixRes, textRes] = await Promise.all([
-          globalCol
-            .find(
-              {
-                $or: [
-                  { product_name: { $regex: `^${escapedQ}`, $options: "i" } },
-                  { search_keyword: { $regex: `^${escapedQ}`, $options: "i" } },
-                  { brand: { $regex: `^${escapedQ}`, $options: "i" } },
-                  { name: { $regex: `^${escapedQ}`, $options: "i" } },
-                ],
-              },
-              { projection: globalProjection }
-            )
-            .limit(40)
-            .toArray()
-            .catch(() => []),
-          globalCol
-            .find(
-              { $text: { $search: q } },
-              { score: { $meta: "textScore" }, projection: globalProjection }
-            )
-            .sort({ score: { $meta: "textScore" } })
-            .limit(20)
-            .toArray()
-            .catch(() => []),
-        ]);
-
-        const seenGIds = new Set(prefixRes.map((r) => String(r._id)));
-        rawGlobal = [...prefixRes];
-        for (const tm of textRes) {
-          if (!seenGIds.has(String(tm._id))) {
-            seenGIds.add(String(tm._id));
-            rawGlobal.push(tm);
-          }
-        }
-
-        if (rawGlobal.length < 15 && q.length >= 3) {
-          const containsRes = await globalCol
-            .find(
-              {
-                $or: [
-                  { product_name: { $regex: escapedQ, $options: "i" } },
-                  { search_keyword: { $regex: escapedQ, $options: "i" } },
-                  { brand: { $regex: escapedQ, $options: "i" } },
-                  { name: { $regex: escapedQ, $options: "i" } },
-                ],
-              },
-              { projection: globalProjection }
-            )
-            .limit(40 - rawGlobal.length)
-            .toArray()
-            .catch(() => []);
-          for (const cm of containsRes) {
-            if (!seenGIds.has(String(cm._id))) {
-              seenGIds.add(String(cm._id));
-              rawGlobal.push(cm);
-            }
-          }
-        }
-      }
+      // Index-backed n-gram lookup, ranked and deduped by normalised name
+      const rawGlobal = await searchGlobalMedicines(q, { limit: 40 });
 
       // DEDUPLICATION: Prevent duplicate suggestions for products already in inventory / catalog
       for (const med of rawGlobal) {
@@ -965,17 +807,12 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
     // Tier 1: In-stock local inventory (available_quantity > 0) ALWAYS comes first!
     // Tier 2: Out-of-stock local inventory & custom catalog comes second!
     // Tier 3: Global medicines come third!
-    const searchLower = q.toLowerCase();
     const scoreItem = (item) => {
-      const name = (item.product_name || "").toLowerCase();
-      const salt = (item.salt_composition || "").toLowerCase();
-      let matchScore = 0;
-      if (name === searchLower) matchScore = 100;
-      else if (name.startsWith(searchLower)) matchScore = 80;
-      else if (name.includes(searchLower)) matchScore = 60;
-      else if (salt.startsWith(searchLower)) matchScore = 50;
-      else if (salt.includes(searchLower)) matchScore = 40;
-      else matchScore = 10;
+      const matchScore =
+        Math.max(
+          scoreMatch(q, item.product_name || "", item.salt_composition || ""),
+          batchMatchScore(q, item.batches)
+        ) || 10;
 
       let sourceTier = 0;
       if (item.source === "inventory" && (item.available_quantity || 0) > 0) {
@@ -1012,10 +849,6 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
         total_pages: Math.ceil(total / parsedLimit) || 1,
       },
     };
-
-    if (paginatedInventory.length > 0) {
-      setCached(cacheKey, responsePayload);
-    }
 
     res.json(responsePayload);
   } catch (error) {

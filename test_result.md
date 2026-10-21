@@ -148,6 +148,17 @@
 ##       - working: true
 ##         agent: "main"
 ##         comment: "Handles merging multiple inventory records, consolidating duplicate batches, updating purchases and bills tables nested records, rewriting deleted inventory IDs, and cleaning up unused products. Passed automated integration tests successfully."
+##   - task: "Indexed medicine search (global catalogue n-grams + tenant indexes)"
+##     implemented: true
+##     working: true
+##     file: "backend-node/services/search/medicineSearch.js, backend-node/routes/medicines.js, backend-node/routes/inventory.js"
+##     stuck_count: 0
+##     priority: "high"
+##     needs_retesting: true
+##     status_history:
+##       - working: true
+##         agent: "main"
+##         comment: "Replaced case-insensitive regex scans of global_medicines (~750ms, full index scan of 409K keys) with precomputed edge n-gram keys and {s_name_grams, rank_score} indexes (2-17ms). Tenant inventory/products searches are token-based and bounded by new pharmacy_id compound indexes, ensured at startup. Removed the 15-minute cache of tenant results so stock in search results is always live; only the static global layer is cached. Verified end to end on a copy of prod global_medicines: /api/medicines/search and /api/inventory/search, multi-word in any order, typos, batch-number lookup, stable pagination, text-index fallback when the catalogue is not backfilled."
 ## frontend:
 ##   - task: "Billing page batch selection dropdown"
 ##     implemented: true
@@ -233,6 +244,7 @@
 ##   run_ui: false
 ## test_plan:
 ##   current_focus:
+##     - "Indexed medicine search (global catalogue n-grams + tenant indexes)"
 ##     - "Product catalog lookup/creation in Purchases"
 ##     - "Grouped medicine search and suggestions"
 ##     - "Inventory Batch Merge API"
@@ -250,3 +262,5 @@
 ## agent_communication:
 ##   - agent: "main"
 ##     message: "Successfully implemented discount percentage and scheme quantity math calculations, revamped the purchases table layout into a clean 9-column format, fixed the missing JSX conditional closing tags syntax error, successfully verified build compile, and passed integration calculations unit test."
+##   - agent: "main"
+##     message: "Medicine search re-architected for speed: new services/search (normalize, medicineSearch, indexes). Global catalogue needs a one-time backfill per database: node backend-node/scripts/search/backfill_global_medicines.js. Response shapes of /medicines/search and /inventory/search are unchanged; please retest Purchases item search and Billing product search, including batch-number search and stock shown immediately after a sale."

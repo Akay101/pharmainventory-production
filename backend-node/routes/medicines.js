@@ -5,98 +5,17 @@ const { auth } = require("../middleware/auth");
 
 const { requireSubscription } = require("../middleware/subscription");
 
-// Centralized Global Collections Connection & In-Memory Fast Cache
 const {
-  getGlobalMedicinesCollection,
-  getCached,
-  setCached,
-} = require("../utils/globalDb");
+  searchGlobalMedicines,
+  tenantTokenMatch,
+  scoreMatch,
+  batchMatchScore,
+} = require("../services/search/medicineSearch");
 
 // Safe regex escaping helper
 const escapeRegex = (str) => {
   if (!str) return "";
   return String(str).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-};
-
-// Helper function to create fuzzy regex patterns
-const createFuzzyRegex = (query) => {
-  if (!query || query.length < 2) return [];
-
-  const clean = String(query).replace(/[.*+?^${}()|[\]\\]/g, "");
-  if (!clean || clean.length < 2) {
-    return [escapeRegex(query)];
-  }
-
-  const patterns = [escapeRegex(query)];
-
-  // Allow one character variation or missing letter
-  if (clean.length > 3) {
-    const chars = clean.split("");
-    for (let i = 0; i < chars.length; i++) {
-      const fuzzy = [...chars.slice(0, i), ".", ...chars.slice(i + 1)].map(c => c === "." ? "." : escapeRegex(c)).join("");
-      patterns.push(fuzzy);
-    }
-  }
-
-  // Allow adjacent character swap
-  if (clean.length > 4) {
-    const chars = clean.split("");
-    for (let i = 0; i < chars.length - 1; i++) {
-      const swapped = [...chars];
-      [swapped[i], swapped[i + 1]] = [swapped[i + 1], swapped[i]];
-      patterns.push(swapped.map(c => escapeRegex(c)).join(""));
-    }
-  }
-
-  return patterns;
-};
-
-// Helper to calculate Levenshtein distance for ranking
-const levenshteinDistance = (str1, str2) => {
-  const matrix = [];
-  for (let i = 0; i <= str2.length; i++) {
-    matrix[i] = [i];
-  }
-  for (let j = 0; j <= str1.length; j++) {
-    matrix[0][j] = j;
-  }
-  for (let i = 1; i <= str2.length; i++) {
-    for (let j = 1; j <= str1.length; j++) {
-      if (str2.charAt(i - 1) === str1.charAt(j - 1)) {
-        matrix[i][j] = matrix[i - 1][j - 1];
-      } else {
-        matrix[i][j] = Math.min(
-          matrix[i - 1][j - 1] + 1,
-          matrix[i][j - 1] + 1,
-          matrix[i - 1][j] + 1
-        );
-      }
-    }
-  }
-  return matrix[str2.length][str1.length];
-};
-
-// Calculate similarity score (0-100)
-const calculateSimilarity = (query, text) => {
-  if (!text) return 0;
-  const queryLower = query.toLowerCase();
-  const textLower = text.toLowerCase();
-
-  // Exact match
-  if (textLower === queryLower) return 100;
-
-  // Starts with
-  if (textLower.startsWith(queryLower)) return 90;
-
-  // Contains
-  if (textLower.includes(queryLower)) return 70;
-
-  // Fuzzy match using Levenshtein
-  const distance = levenshteinDistance(queryLower, textLower);
-  const maxLen = Math.max(queryLower.length, textLower.length);
-  const similarity = ((maxLen - distance) / maxLen) * 60;
-
-  return Math.max(0, similarity);
 };
 
 // Normalize medicine name for cross-collection deduplication
@@ -199,35 +118,18 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
         .json({ detail: "Search query must be at least 2 characters" });
     }
 
+    // Not cached: results carry live stock. The global catalogue layer is
+    // cached inside searchGlobalMedicines.
     const trimmedQ = String(q).trim();
-    const cacheKey = `med_search:${pharmacyId}:${trimmedQ.toLowerCase()}:${limit}:${page}:${fuzzy}`;
-    const cachedResult = getCached(cacheKey);
-    if (cachedResult) {
-      return res.json(cachedResult);
-    }
-
-    const searchLower = q.toLowerCase();
-    const parsedLimit = parseInt(limit);
-    const parsedPage = parseInt(page);
+    const searchLower = trimmedQ.toLowerCase();
+    const parsedLimit = Math.min(parseInt(limit) || 20, 100);
+    const parsedPage = Math.max(parseInt(page) || 1, 1);
     const skip = (parsedPage - 1) * parsedLimit;
-    // Increase internal search limit to ensure sorting works across pages for fuzzy search
-    const internalLimit = parsedLimit * parsedPage + 100;
+    // Fixed candidate pool so ranking (and therefore paging) is stable
+    const internalLimit = Math.max(200, parsedLimit * parsedPage);
     const enableFuzzy = fuzzy === "true";
 
-    const escapedQ = escapeRegex(q);
-    const searchRegex = { $regex: escapedQ, $options: "i" };
-
-    // Create fuzzy regex patterns if enabled
-    let fuzzyConditions = [];
-    if (enableFuzzy && q.length > 3) {
-      const fuzzyPatterns = createFuzzyRegex(q);
-      fuzzyConditions = fuzzyPatterns.map((pattern) => ({
-        $or: [
-          { product_name: { $regex: pattern, $options: "i" } },
-          { salt_composition: { $regex: pattern, $options: "i" } },
-        ],
-      }));
-    }
+    const escapedQ = escapeRegex(trimmedQ);
 
     // ========== 1. SEARCH USER'S CUSTOM PRODUCT CATALOG (products collection) ==========
     let processedCatalog = [];
@@ -237,12 +139,7 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
     try {
       const catalogQuery = {
         pharmacy_id: pharmacyId,
-        $or: [
-          { name: searchRegex },
-          { product_name: searchRegex },
-          { salt_composition: searchRegex },
-          { manufacturer: searchRegex },
-        ],
+        ...tenantTokenMatch(trimmedQ, ["name", "product_name", "salt_composition", "manufacturer"]),
       };
 
       const catalogMatches = await db
@@ -314,9 +211,8 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
         const pSgst = cp.sgst !== undefined ? cp.sgst : pTaxRate / 2;
         const pHsn = cp.hsn_no || cp.hsn_code || firstBatch?.hsn_no || "";
 
-        const nameSim = calculateSimilarity(q, pName);
-        const saltSim = calculateSimilarity(q, cp.salt_composition || "");
-        const bestSim = Math.max(nameSim, saltSim);
+        // Matched every query token in the DB filter, so floor the score
+        const bestSim = scoreMatch(trimmedQ, pName, cp.salt_composition || "") || 35;
 
         processedCatalog.push({
           _id: cp._id ? String(cp._id) : undefined,
@@ -378,12 +274,9 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
       ...(catalogProductNames.size > 0
         ? { product_name: { $nin: Array.from(catalogProductNames).map(n => new RegExp(`^${escapeRegex(n)}$`, "i")) } }
         : {}),
-      $or: [
-        { product_name: searchRegex },
-        { salt_composition: searchRegex },
-        { batch_no: searchRegex },
-        ...(enableFuzzy && fuzzyConditions.length > 0 ? fuzzyConditions : []),
-      ],
+      ...tenantTokenMatch(trimmedQ, ["product_name", "salt_composition"], {
+        wholeQueryFields: ["batch_no"],
+      }),
     };
 
     const inventoryPipeline = [
@@ -568,9 +461,11 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
     if (enableFuzzy) {
       processedInventory = inventoryResults
         .map((item) => {
-          const nameSim = calculateSimilarity(q, item.product_name);
-          const saltSim = calculateSimilarity(q, item.salt_composition);
-          const bestSim = Math.max(nameSim, saltSim);
+          const bestSim =
+            Math.max(
+              scoreMatch(trimmedQ, item.product_name, item.salt_composition || ""),
+              batchMatchScore(trimmedQ, item.batches)
+            ) || 35;
 
           // Boost score for in-stock items
           const stockBoost = item.stock_status === "In Stock" ? 10 : 0;
@@ -603,125 +498,8 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
     // ========== 3. SEARCH GLOBAL MEDICINES (Centralized Prod DB) ==========
     let processedGlobal = [];
     try {
-      const globalCol = await getGlobalMedicinesCollection();
-      const isMultiWord = trimmedQ.includes(" ");
-      const globalProjection = {
-        _id: 1, id: 1, product_id: 1, product_code: 1, product_slug: 1,
-        name: 1, product_name: 1, brand: 1, manufacturer: 1, manufacturer_name: 1,
-        dosage_form: 1, packaging_label: 1, package_details: 1, pack_size_label: 1, pack_size: 1,
-        pack_type: 1, units_per_pack: 1, mrp: 1, "price(₹)": 1, unit_mrp: 1, selling_price: 1,
-        trade_price: 1, purchase_price: 1, tax_rate: 1, gst_percentage: 1,
-        hsn_code: 1, hsn_no: 1, salt_composition: 1, short_composition1: 1, short_composition2: 1,
-        active_ingredients: 1, prescription_required: 1, image_url: 1, thumbnail_url: 1, rank_score: 1,
-        search_keyword: 1
-      };
-
-      let rawGlobal = [];
-
-      if (isMultiWord) {
-        // Multi-word queries ("dolo tablet", "paracetamol 500", "zandu nityam"):
-        try {
-          rawGlobal = await globalCol
-            .find(
-              { $text: { $search: q } },
-              { score: { $meta: "textScore" }, projection: globalProjection }
-            )
-            .sort({ score: { $meta: "textScore" } })
-            .limit(internalLimit)
-            .toArray();
-        } catch (textErr) {}
-
-        if (rawGlobal.length < 15) {
-          const firstWord = trimmedQ.split(/\s+/)[0];
-          if (firstWord.length >= 2) {
-            const seenIds = new Set(rawGlobal.map(r => String(r._id)));
-            const extra = await globalCol
-              .find(
-                {
-                  $or: [
-                    { product_name: { $regex: `^${escapeRegex(firstWord)}`, $options: "i" } },
-                    { search_keyword: { $regex: `^${escapeRegex(firstWord)}`, $options: "i" } },
-                    { brand: { $regex: `^${escapeRegex(firstWord)}`, $options: "i" } },
-                    { name: { $regex: `^${escapeRegex(firstWord)}`, $options: "i" } },
-                  ]
-                },
-                { projection: globalProjection }
-              )
-              .limit(internalLimit - rawGlobal.length)
-              .toArray()
-              .catch(() => []);
-            for (const m of extra) {
-              if (!seenIds.has(String(m._id))) {
-                seenIds.add(String(m._id));
-                rawGlobal.push(m);
-              }
-            }
-          }
-        }
-      } else {
-        // Single-word query ("nityam", "dolo", "crocin"): prefix, keyword, brand and text in parallel
-        const [prefixRes, textRes] = await Promise.all([
-          globalCol
-            .find(
-              {
-                $or: [
-                  { product_name: { $regex: `^${escapedQ}`, $options: "i" } },
-                  { search_keyword: { $regex: `^${escapedQ}`, $options: "i" } },
-                  { brand: { $regex: `^${escapedQ}`, $options: "i" } },
-                  { name: { $regex: `^${escapedQ}`, $options: "i" } },
-                ]
-              },
-              { projection: globalProjection }
-            )
-            .limit(internalLimit)
-            .toArray()
-            .catch(() => []),
-          globalCol
-            .find(
-              { $text: { $search: q } },
-              { score: { $meta: "textScore" }, projection: globalProjection }
-            )
-            .sort({ score: { $meta: "textScore" } })
-            .limit(30)
-            .toArray()
-            .catch(() => [])
-        ]);
-
-        const seenIds = new Set(prefixRes.map(r => String(r._id)));
-        rawGlobal = [...prefixRes];
-        for (const tm of textRes) {
-          if (!seenIds.has(String(tm._id))) {
-            seenIds.add(String(tm._id));
-            rawGlobal.push(tm);
-          }
-        }
-
-        // Fast fallback for contains search if prefix+text returned fewer than 15 items
-        if (rawGlobal.length < 15 && q.length >= 3) {
-          const containsRes = await globalCol
-            .find(
-              {
-                $or: [
-                  { product_name: { $regex: escapedQ, $options: "i" } },
-                  { search_keyword: { $regex: escapedQ, $options: "i" } },
-                  { brand: { $regex: escapedQ, $options: "i" } },
-                  { name: { $regex: escapedQ, $options: "i" } },
-                ]
-              },
-              { projection: globalProjection }
-            )
-            .limit(internalLimit - rawGlobal.length)
-            .toArray()
-            .catch(() => []);
-
-          for (const cm of containsRes) {
-            if (!seenIds.has(String(cm._id))) {
-              seenIds.add(String(cm._id));
-              rawGlobal.push(cm);
-            }
-          }
-        }
-      }
+      // Index-backed n-gram lookup, ranked and deduped by normalised name
+      const rawGlobal = await searchGlobalMedicines(trimmedQ, { limit: internalLimit });
 
       // Map raw documents into unified contract for frontend and DEDUPLICATE against local catalog/inventory!
       const deduplicatedGlobal = [];
@@ -778,10 +556,7 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
           else if (lowerPack.includes("drop")) medDosage = "drops";
         }
 
-        const nameSim = calculateSimilarity(q, medName);
-        const compSim = calculateSimilarity(q, medSalt);
-        const brandSim = calculateSimilarity(q, med.brand || "");
-        const bestSim = Math.max(nameSim, compSim, brandSim);
+        const bestSim = med._score || 0;
 
         deduplicatedGlobal.push({
           _id: med._id ? String(med._id) : undefined,
@@ -874,6 +649,11 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
       if (aIsLocal && !bIsLocal) return -1;
       if (!aIsLocal && bIsLocal) return 1;
 
+      // 5. Deterministic order for local ties so pages never overlap
+      // (global items keep their popularity order from the catalogue).
+      if (aIsLocal && bIsLocal) {
+        return (a.product_name || "").localeCompare(b.product_name || "");
+      }
       return 0;
     });
 
@@ -902,9 +682,6 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
       },
     };
 
-    if (paginatedResults.length > 0) {
-      setCached(cacheKey, responsePayload);
-    }
     res.json(responsePayload);
   } catch (error) {
     next(error);
@@ -927,27 +704,15 @@ router.get(
         return res.json({ suggestions: [] });
       }
 
-      const cacheKey = `med_sugg:${pharmacyId}:${q.toLowerCase().trim()}:${limit}`;
-      const cached = getCached(cacheKey);
-      if (cached) return res.json(cached);
+      const parsedLimit = Math.min(parseInt(limit) || 10, 50);
 
-      const parsedLimit = parseInt(limit);
-      const searchLower = q.toLowerCase();
-      const escapedQ = escapeRegex(q);
-      const isMultiWord = q.trim().includes(" ");
-
-      // Quick prefix search with fallback to fuzzy
       let inventoryResults = await db
         .collection("inventory")
         .aggregate([
           {
             $match: {
               pharmacy_id: pharmacyId,
-              $or: [
-                { product_name: { $regex: `^${escapedQ}`, $options: "i" } },
-                { product_name: { $regex: escapedQ, $options: "i" } },
-                { batch_no: { $regex: escapedQ, $options: "i" } },
-              ],
+              ...tenantTokenMatch(q, ["product_name"], { wholeQueryFields: ["batch_no"] }),
             }
           },
           {
@@ -969,45 +734,7 @@ router.get(
       // Global medicines suggestions with projection
       let globalResults = [];
       try {
-        const globalCol = await getGlobalMedicinesCollection();
-        const projection = {
-          _id: 0,
-          product_name: 1,
-          name: 1,
-          product_id: 1,
-          id: 1,
-          brand: 1,
-          manufacturer: 1,
-          manufacturer_name: 1,
-          mrp: 1,
-          search_keyword: 1,
-        };
-
-        if (isMultiWord) {
-          globalResults = await globalCol
-            .find(
-              { $text: { $search: q } },
-              { score: { $meta: "textScore" }, projection }
-            )
-            .sort({ score: { $meta: "textScore" } })
-            .limit(parsedLimit)
-            .toArray();
-        } else {
-          globalResults = await globalCol
-            .find(
-              {
-                $or: [
-                  { product_name: { $regex: `^${escapedQ}`, $options: "i" } },
-                  { search_keyword: { $regex: `^${escapedQ}`, $options: "i" } },
-                  { brand: { $regex: `^${escapedQ}`, $options: "i" } },
-                  { name: { $regex: `^${escapedQ}`, $options: "i" } }
-                ]
-              },
-              { projection }
-            )
-            .limit(parsedLimit)
-            .toArray();
-        }
+        globalResults = await searchGlobalMedicines(q, { limit: parsedLimit });
       } catch (err2) {
         console.warn("Global suggestions lookup failed:", err2.message);
       }
@@ -1040,9 +767,6 @@ router.get(
         query: q,
       };
 
-      if (combined.length > 0) {
-        setCached(cacheKey, resultPayload);
-      }
       res.json(resultPayload);
     } catch (error) {
       next(error);
