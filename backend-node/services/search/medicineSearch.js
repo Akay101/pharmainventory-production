@@ -8,7 +8,7 @@
 // indexes, so token regexes only scan that pharmacy's documents. Never cached,
 // because stock changes with every bill and purchase.
 
-const { getGlobalMedicinesCollection } = require("../../utils/globalDb");
+const { getGlobalMedicinesCollection, onGlobalConnect } = require("../../utils/globalDb");
 const {
   escapeRegex,
   normalizeText,
@@ -49,6 +49,12 @@ const cacheGet = (key) => {
   globalCache.set(key, hit);
   return hit.data;
 };
+// Results cached while on the fallback DB must not outlive a reconnect.
+onGlobalConnect(() => {
+  globalCache.clear();
+  warnedMissingIndex = false;
+});
+
 const cacheSet = (key, data) => {
   if (globalCache.size >= GLOBAL_CACHE_MAX) {
     globalCache.delete(globalCache.keys().next().value);
