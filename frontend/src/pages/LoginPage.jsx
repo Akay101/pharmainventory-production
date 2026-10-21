@@ -69,11 +69,13 @@ export default function LoginPage() {
     } catch (error) {
       console.error("Login error:", error);
       const errMsg =
-        error.response?.data?.detail || "Invalid email or password";
+        error.response?.data?.detail ||
+        error.response?.data?.message ||
+        "Invalid email or password";
       toast.error(errMsg);
       setErrors((prev) => ({
         ...prev,
-        password: "Authentication failed. Check credentials.",
+        password: errMsg || "Authentication failed. Check credentials.",
       }));
     } finally {
       setLoading(false);

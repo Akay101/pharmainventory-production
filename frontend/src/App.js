@@ -54,6 +54,14 @@ export const getToken = () => {
   return null;
 };
 
+export const getRefreshToken = () => {
+  const cookieTok = getCookie("pharmalogy_refresh_token");
+  if (cookieTok && cookieTok !== "null" && cookieTok !== "undefined") return cookieTok;
+  const localTok = localStorage.getItem("pharmalogy_refresh_token");
+  if (localTok && localTok !== "null" && localTok !== "undefined") return localTok;
+  return null;
+};
+
 export const deleteCookie = (name) => {
   document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;`;
   localStorage.removeItem(name);
@@ -100,7 +108,7 @@ const AuthProvider = ({ children }) => {
     };
 
     const handleLogoutEvent = () => {
-      logout();
+      logout(false);
     };
 
     window.addEventListener("auth-token-refreshed", handleTokenRefreshed);
@@ -170,6 +178,14 @@ const AuthProvider = ({ children }) => {
   };
 
   const fetchUser = async () => {
+    if (!getToken() && !getRefreshToken()) {
+      setUser(null);
+      setPharmacy(null);
+      setToken(null);
+      setLoading(false);
+      return;
+    }
+
     try {
       const response = await axios.get(`${API}/auth/me`);
       setUser(response.data.user);
@@ -197,6 +213,11 @@ const AuthProvider = ({ children }) => {
   };
 
   const login = async (email, password) => {
+    deleteCookie("pharmalogy_token");
+    deleteCookie("pharmalogy_refresh_token");
+    localStorage.removeItem("pharmalogy_token");
+    localStorage.removeItem("pharmalogy_refresh_token");
+
     const response = await axios.post(`${API}/auth/login`, { email, password });
     if (response.data.token) {
       localStorage.setItem("pharmalogy_token", response.data.token);
@@ -212,22 +233,23 @@ const AuthProvider = ({ children }) => {
     return userData;
   };
 
-  const logout = async () => {
-    try {
-      await axios.post(`${API}/auth/logout`);
-    } catch (error) {
-      console.error("Failed to logout on backend:", error);
-    } finally {
-      deleteCookie("pharmalogy_token");
-      deleteCookie("pharmalogy_refresh_token");
-      localStorage.removeItem("pharmalogy_token");
-      localStorage.removeItem("pharmalogy_refresh_token");
-      setToken(null);
-      setUser(null);
-      setPharmacy(null);
-      setSettings({});
-      setSettingsDefinitions([]);
+  const logout = async (notifyBackend = true) => {
+    if (notifyBackend && (getToken() || getRefreshToken())) {
+      try {
+        await axios.post(`${API}/auth/logout`);
+      } catch (error) {
+        console.error("Failed to logout on backend:", error);
+      }
     }
+    deleteCookie("pharmalogy_token");
+    deleteCookie("pharmalogy_refresh_token");
+    localStorage.removeItem("pharmalogy_token");
+    localStorage.removeItem("pharmalogy_refresh_token");
+    setToken(null);
+    setUser(null);
+    setPharmacy(null);
+    setSettings({});
+    setSettingsDefinitions([]);
   };
 
   const value = {
@@ -309,8 +331,22 @@ axios.interceptors.response.use(
     const status = error.response?.status;
     const code = error.response?.data?.code;
 
+    if (!originalRequest) {
+      return Promise.reject(error);
+    }
+
     // 🔐 Avoid infinite loop if refresh/logout request fails with 401
     if (originalRequest.url?.includes("/auth/logout")) {
+      return Promise.reject(error);
+    }
+
+    // 🔐 Do not intercept or attempt token refresh on auth endpoints
+    if (
+      originalRequest.url?.includes("/auth/login") ||
+      originalRequest.url?.includes("/auth/register") ||
+      originalRequest.url?.includes("/auth/verify-otp") ||
+      originalRequest.url?.includes("/auth/resend-otp")
+    ) {
       return Promise.reject(error);
     }
 
@@ -319,12 +355,22 @@ axios.interceptors.response.use(
       deleteCookie("pharmalogy_refresh_token");
       localStorage.removeItem("pharmalogy_token");
       localStorage.removeItem("pharmalogy_refresh_token");
-      window.dispatchEvent(new Event("auth-logout"));
       return Promise.reject(error);
     }
 
     // 🔐 Auth error
     if (status === 401 && !originalRequest._retry) {
+      const refreshToken = getRefreshToken();
+
+      // If no refresh token is present, we cannot refresh. Just clear tokens and reject with original error.
+      if (!refreshToken) {
+        deleteCookie("pharmalogy_token");
+        deleteCookie("pharmalogy_refresh_token");
+        localStorage.removeItem("pharmalogy_token");
+        localStorage.removeItem("pharmalogy_refresh_token");
+        return Promise.reject(error);
+      }
+
       if (isRefreshing) {
         return new Promise((resolve, reject) => {
           failedQueue.push({ resolve, reject });
@@ -343,7 +389,7 @@ axios.interceptors.response.use(
 
       try {
         const refreshRes = await axios.post(`${API}/auth/refresh`, {
-          refreshToken: localStorage.getItem("pharmalogy_refresh_token"),
+          refreshToken,
         });
 
         if (refreshRes.data?.token) {

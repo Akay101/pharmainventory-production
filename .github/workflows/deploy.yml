@@ -46,6 +46,16 @@ jobs:
             ./backend-node
 
       ####################################################
+      # BUILD ADMIN BACKEND IMAGE
+      ####################################################
+      - name: Build Admin Backend Docker Image
+        run: |
+          docker build \
+            -f ./admin-backend/Dockerfile \
+            -t pharmalogy/pharmalogy-admin-backend:latest \
+            ./admin-backend
+
+      ####################################################
       # PUSH BACKEND IMAGE
       ####################################################
       - name: Push Backend API Docker Image
@@ -56,6 +66,12 @@ jobs:
       ####################################################
       - name: Push Worker Docker Image
         run: docker push pharmalogy/pharmalogy-worker:latest
+
+      ####################################################
+      # PUSH ADMIN BACKEND IMAGE
+      ####################################################
+      - name: Push Admin Backend Docker Image
+        run: docker push pharmalogy/pharmalogy-admin-backend:latest
 
       ####################################################
       # DEPLOY TO LIGHTSAIL
