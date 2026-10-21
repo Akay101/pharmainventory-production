@@ -12,14 +12,25 @@ export const STORAGE_KEYS = {
 export const SESSION_MAX_DURATION_MS = 24 * 60 * 60 * 1000; // 24 Hours in milliseconds
 
 // Base API instance
-const getBaseUrl = () => {
-  if (import.meta.env.VITE_API_URL) return import.meta.env.VITE_API_URL;
+export const getBaseUrl = () => {
+  const envUrl =
+    import.meta.env.ADMIN_BASE_URL ||
+    import.meta.env.VITE_ADMIN_BASE_URL ||
+    (typeof process !== "undefined" && process.env?.ADMIN_BASE_URL) ||
+    import.meta.env.VITE_API_URL;
+
+  if (envUrl) {
+    return String(envUrl).trim().replace(/\/+$/, "");
+  }
+
+  // Fallback for local development if not configured
   if (
     typeof window !== "undefined" &&
     (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")
   ) {
     return "http://localhost:8002/api";
   }
+
   return "/api";
 };
 
