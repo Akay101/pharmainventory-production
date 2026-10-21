@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const { resolveDbEnv } = require("../db/connections");
 const { describe } = require("../services/billing/subscriptions");
+const { userJourney, pendingJourney } = require("../services/journey");
 
 router.use(resolveDbEnv);
 
@@ -12,10 +13,15 @@ router.get("/", async (req, res, next) => {
     const { search, filter = "ALL", role, page = 1, limit = 50 } = req.query;
     const now = new Date();
 
-    const [users, pharmacies, subscriptions] = await Promise.all([
-      db.collection("users").find({}).toArray(),
+    const [users, pharmacies, subscriptions, pending] = await Promise.all([
+      db.collection("users").find({}, { projection: { password_hash: 0, password: 0 } }).toArray(),
       db.collection("pharmacies").find({}).toArray(),
       db.collection("subscriptions").find({}).toArray(),
+      db
+        .collection("pending_registrations")
+        .find({}, { projection: { password_hash: 0 } })
+        .toArray()
+        .catch(() => []),
     ]);
 
     const pharmacyMap = new Map();
@@ -65,11 +71,40 @@ router.get("/", async (req, res, next) => {
         subscription_plan: sub ? sub.plan || "NONE" : u.subscription_plan || "NONE",
         subscription_expiry: sub ? sub.ends_at : u.subscription_expiry || null,
         subscription: sub || null,
+        days_left: sub ? sub.days_left : null,
         is_subscribed: isSubscribed,
         status,
+        kind: "USER",
+        last_login_at: u.last_login_at || null,
         created_at: u.created_at,
       };
     });
+
+    // Signups that never verified their email (no user/pharmacy yet)
+    const registeredEmails = new Set(users.map((u) => u.email));
+    for (const p of pending) {
+      if (registeredEmails.has(p.email)) continue;
+      mapped.push({
+        id: `pending:${p.id || p.email}`,
+        name: p.name || "Pending signup",
+        email: p.email,
+        mobile: p.mobile || "N/A",
+        role: "ADMIN",
+        is_primary_admin: true,
+        verified: false,
+        pharmacy_id: null,
+        pharmacy_name: p.pharmacy?.name || "Not created yet",
+        pharmacy_location: p.pharmacy?.location || "N/A",
+        subscription_plan: "NONE",
+        subscription_expiry: null,
+        subscription: null,
+        days_left: null,
+        is_subscribed: false,
+        status: "INCOMPLETE",
+        kind: "PENDING_SIGNUP",
+        created_at: p.created_at ? new Date(p.created_at).toISOString() : null,
+      });
+    }
 
     // Apply search filter
     if (search) {
@@ -90,6 +125,8 @@ router.get("/", async (req, res, next) => {
       mapped = mapped.filter((u) => u.status === "TRIAL");
     } else if (filter === "EXPIRED") {
       mapped = mapped.filter((u) => u.status === "EXPIRED");
+    } else if (filter === "INCOMPLETE") {
+      mapped = mapped.filter((u) => u.status === "INCOMPLETE");
     } else if (filter === "LEAD") {
       mapped = mapped.filter((u) => !u.is_subscribed);
     }
@@ -117,32 +154,49 @@ router.get("/", async (req, res, next) => {
   }
 });
 
-// GET /api/users/:id - Single user details with activity logs
+// GET /api/users/:id - Full journey: plan state, timeline, usage, payments.
+// "pending:<id>" addresses a signup that never verified its email.
 router.get("/:id", async (req, res, next) => {
   try {
     const db = req.db;
-    const userId = req.params.id;
+    const id = String(req.params.id);
 
-    const user = await db.collection("users").findOne({ id: userId });
-    if (!user) {
-      return res.status(404).json({ detail: "User not found" });
+    if (id.startsWith("pending:")) {
+      const key = id.slice("pending:".length);
+      const pending = await db
+        .collection("pending_registrations")
+        .findOne({ $or: [{ id: key }, { email: key }] }, { projection: { password_hash: 0 } });
+      if (!pending) return res.status(404).json({ error: "Signup not found (it may have been completed or expired)" });
+      return res.json({
+        env: req.dbEnv,
+        kind: "PENDING_SIGNUP",
+        user: {
+          id,
+          name: pending.name,
+          email: pending.email,
+          mobile: pending.mobile,
+          role: "ADMIN",
+          verified: false,
+          created_at: pending.created_at,
+        },
+        pharmacy: { id: null, name: pending.pharmacy?.name, location: pending.pharmacy?.location },
+        ...(await pendingJourney(db, pending)),
+      });
     }
 
-    const [pharmacy, subscriptions, activities] = await Promise.all([
-      user.pharmacy_id ? db.collection("pharmacies").findOne({ id: user.pharmacy_id }) : null,
-      db.collection("subscriptions").find({ user_id: userId }).toArray(),
-      db.collection("activities").find({ user_id: userId }).sort({ created_at: -1 }).limit(20).toArray().catch(() => []),
-    ]);
-
-    const now = new Date();
-    const isSubscribed =
-      (user.subscription_plan &&
-        user.subscription_expiry &&
-        new Date(user.subscription_expiry) > now) ||
-      subscriptions.some((s) => s.status === "ACTIVE" && new Date(s.end_date) > now);
+    const user = await db.collection("users").findOne({ id }, { projection: { password_hash: 0, password: 0 } });
+    if (!user) return res.status(404).json({ error: "User not found" });
+    const pharmacy = user.pharmacy_id
+      ? await db.collection("pharmacies").findOne({ id: user.pharmacy_id }, { projection: { _id: 0, id: 1, name: 1, location: 1, license_no: 1, contact: 1, created_at: 1 } })
+      : null;
+    const owner =
+      pharmacy && !user.is_primary_admin
+        ? await db.collection("users").findOne({ pharmacy_id: pharmacy.id, is_primary_admin: true }, { projection: { _id: 0, id: 1, name: 1, email: 1 } })
+        : null;
 
     res.json({
       env: req.dbEnv,
+      kind: "USER",
       user: {
         id: user.id,
         name: user.name,
@@ -150,23 +204,13 @@ router.get("/:id", async (req, res, next) => {
         mobile: user.mobile,
         role: user.role,
         is_primary_admin: !!user.is_primary_admin,
-        verified: !!user.verified,
+        verified: user.verified !== false,
         created_at: user.created_at,
-        subscription_plan: user.subscription_plan || "NONE",
-        subscription_expiry: user.subscription_expiry,
-        is_subscribed: isSubscribed,
+        last_login_at: user.last_login_at || null,
       },
-      pharmacy: pharmacy
-        ? {
-            id: pharmacy.id,
-            name: pharmacy.name || pharmacy.pharmacy_name,
-            location: pharmacy.location,
-            license_no: pharmacy.license_no,
-            contact: pharmacy.contact,
-          }
-        : null,
-      subscriptions,
-      activities,
+      pharmacy,
+      owner,
+      ...(await userJourney(db, user)),
     });
   } catch (error) {
     next(error);

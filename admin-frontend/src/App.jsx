@@ -11,6 +11,7 @@ import MobileBottomNav from "./components/MobileBottomNav";
 import LeadNotesModal from "./components/LeadNotesModal";
 import PharmacyDetailDrawer from "./components/PharmacyDetailDrawer";
 import PromoGeneratorModal from "./components/PromoGeneratorModal";
+import UserDetailDrawer from "./components/UserDetailDrawer";
 
 // Pages
 import LoginPage from "./pages/LoginPage";
@@ -51,6 +52,7 @@ function MainDashboard() {
   const [pharmacyModalOpen, setPharmacyModalOpen] = useState(false);
 
   const [promoModalOpen, setPromoModalOpen] = useState(false);
+  const [selectedUserId, setSelectedUserId] = useState(null);
 
   // Fetch connection status
   const checkStatus = useCallback(async () => {
@@ -332,6 +334,7 @@ function MainDashboard() {
               onSearchChange={setSearchQuery}
               onOpenLeadModal={openLeadModal}
               onOpenPharmacyModal={openPharmacyModal}
+              onOpenUser={setSelectedUserId}
             />
           )}
 
@@ -378,6 +381,15 @@ function MainDashboard() {
         }}
         pharmacyId={selectedPharmacyId}
       />
+
+      {selectedUserId && (
+        <UserDetailDrawer
+          key={`${activeEnv}:${selectedUserId}`}
+          userId={selectedUserId}
+          onClose={() => setSelectedUserId(null)}
+          onChanged={loadAllData}
+        />
+      )}
 
       <PromoGeneratorModal
         isOpen={promoModalOpen}

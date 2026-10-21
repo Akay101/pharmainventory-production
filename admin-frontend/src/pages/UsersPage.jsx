@@ -10,7 +10,82 @@ import {
   Calendar,
   Shield,
   Layers,
+  Clock,
+  Hourglass,
+  MailX,
+  ChevronRight,
 } from "lucide-react";
+
+// Older API responses only had is_subscribed; newer ones carry status.
+const statusOf = (u) => u.status || (u.is_subscribed ? "SUBSCRIBED" : "LEAD");
+
+const FILTERS = [
+  ["ALL", "All"],
+  ["SUBSCRIBED", "Paid"],
+  ["TRIAL", "On trial"],
+  ["EXPIRED", "Expired"],
+  ["LEAD", "Leads"],
+  ["INCOMPLETE", "Incomplete signup"],
+];
+
+function SubscriptionCell({ user }) {
+  const status = statusOf(user);
+  const sub = user.subscription;
+  if (status === "TRIAL") {
+    return (
+      <div>
+        <span className="status-pill bg-amber-50 text-amber-700 border border-amber-200">
+          <Clock className="w-3 h-3" />
+          On trial · {sub?.plan || user.subscription_plan}
+        </span>
+        <div className={`text-[10px] mt-0.5 font-semibold ${user.days_left <= 2 ? "text-rose-600" : "text-slate-500"}`}>
+          {user.days_left} day(s) left · ends {new Date(sub?.ends_at || user.subscription_expiry).toLocaleDateString()}
+        </div>
+      </div>
+    );
+  }
+  if (status === "SUBSCRIBED") {
+    return (
+      <div>
+        <span className="status-pill status-pill-active">
+          <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+          {sub?.plan || user.subscription_plan || "Active"}
+          {sub?.kind && sub.kind !== "PAID" ? " · free" : ""}
+        </span>
+        {(sub?.ends_at || user.subscription_expiry) && (
+          <div className="text-[10px] text-slate-400 mt-0.5">
+            {user.days_left != null ? `${user.days_left} day(s) left · ` : ""}Exp: {new Date(sub?.ends_at || user.subscription_expiry).toLocaleDateString()}
+          </div>
+        )}
+      </div>
+    );
+  }
+  if (status === "EXPIRED") {
+    return (
+      <div>
+        <span className="status-pill bg-rose-50 text-rose-700 border border-rose-200">
+          <Hourglass className="w-3 h-3" />
+          {sub?.kind === "TRIAL" ? "Trial ended" : "Plan expired"}
+        </span>
+        {sub?.ends_at && <div className="text-[10px] text-slate-400 mt-0.5">on {new Date(sub.ends_at).toLocaleDateString()}</div>}
+      </div>
+    );
+  }
+  if (status === "INCOMPLETE") {
+    return (
+      <span className="status-pill bg-slate-100 text-slate-600 border border-slate-200">
+        <MailX className="w-3 h-3" />
+        Didn't verify email
+      </span>
+    );
+  }
+  return (
+    <span className="status-pill status-pill-lead">
+      <Flame className="w-3 h-3 text-rose-600" />
+      Unpaid Lead
+    </span>
+  );
+}
 
 export default function UsersPage({
   users,
@@ -18,8 +93,9 @@ export default function UsersPage({
   onSearchChange,
   onOpenLeadModal,
   onOpenPharmacyModal,
+  onOpenUser,
 }) {
-  const [filterSub, setFilterSub] = useState("ALL"); // ALL, SUBSCRIBED, LEAD
+  const [filterSub, setFilterSub] = useState("ALL"); // ALL, SUBSCRIBED, TRIAL, EXPIRED, LEAD, INCOMPLETE
   const [filterRole, setFilterRole] = useState("ALL"); // ALL, ADMIN, STAFF
 
   const filtered = users.filter((u) => {
@@ -32,9 +108,10 @@ export default function UsersPage({
         u.pharmacy_name?.toLowerCase().includes(term);
       if (!match) return false;
     }
-    if (filterSub === "SUBSCRIBED" && !u.is_subscribed) return false;
     if (filterSub === "LEAD" && u.is_subscribed) return false;
-    if (filterRole !== "ALL" && u.role !== filterRole) return false;
+    if (["SUBSCRIBED", "TRIAL", "EXPIRED", "INCOMPLETE"].includes(filterSub) && statusOf(u) !== filterSub) return false;
+    if (filterRole === "ADMIN" && !u.is_primary_admin) return false;
+    if (filterRole === "STAFF" && u.is_primary_admin) return false;
     return true;
   });
 
@@ -67,7 +144,7 @@ export default function UsersPage({
         <div className="p-4 bg-slate-50/70 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex items-center bg-white border border-slate-200 rounded-xl p-0.5">
-              {["ALL", "SUBSCRIBED", "LEAD"].map((f) => (
+              {FILTERS.map(([f, label]) => (
                 <button
                   key={f}
                   onClick={() => setFilterSub(f)}
@@ -77,7 +154,12 @@ export default function UsersPage({
                       : "text-slate-600 hover:text-slate-900"
                   }`}
                 >
-                  {f === "ALL" ? "All" : f === "SUBSCRIBED" ? "Subscribed" : "Leads"}
+                  {label}
+                  {f !== "ALL" && (
+                    <span className="ml-1 opacity-60">
+                      {f === "LEAD" ? users.filter((u) => !u.is_subscribed).length : users.filter((u) => statusOf(u) === f).length}
+                    </span>
+                  )}
                 </button>
               ))}
             </div>
@@ -128,7 +210,11 @@ export default function UsersPage({
                 </tr>
               ) : (
                 filtered.map((user) => (
-                  <tr key={user.id} className="hover:bg-slate-50/80 transition-colors">
+                  <tr
+                    key={user.id}
+                    onClick={() => onOpenUser?.(user.id)}
+                    className="hover:bg-slate-50/80 transition-colors cursor-pointer"
+                  >
                     <td className="py-3.5 px-4">
                       <div className="flex items-center gap-2.5">
                         <div className="w-8 h-8 rounded-full bg-slate-200 text-slate-700 font-bold flex items-center justify-center text-xs shrink-0">
@@ -143,7 +229,10 @@ export default function UsersPage({
 
                     <td className="py-3.5 px-4">
                       <div
-                        onClick={() => user.pharmacy_id && onOpenPharmacyModal(user.pharmacy_id)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          user.pharmacy_id && onOpenPharmacyModal(user.pharmacy_id);
+                        }}
                         className="font-semibold text-brand-600 hover:underline cursor-pointer flex items-center gap-1"
                       >
                         <Building className="w-3 h-3 text-slate-400" />
@@ -165,32 +254,15 @@ export default function UsersPage({
                     </td>
 
                     <td className="py-3.5 px-4">
-                      {user.is_subscribed ? (
-                        <div>
-                          <span className="status-pill status-pill-active">
-                            <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                            {user.subscription_plan || "Active"}
-                          </span>
-                          {user.subscription_expiry && (
-                            <div className="text-[10px] text-slate-400 mt-0.5">
-                              Exp: {new Date(user.subscription_expiry).toLocaleDateString()}
-                            </div>
-                          )}
-                        </div>
-                      ) : (
-                        <span className="status-pill status-pill-lead">
-                          <Flame className="w-3 h-3 text-rose-600" />
-                          Unpaid Lead
-                        </span>
-                      )}
+                      <SubscriptionCell user={user} />
                     </td>
 
                     <td className="py-3.5 px-4 text-slate-500">
                       {user.created_at ? new Date(user.created_at).toLocaleDateString() : "N/A"}
                     </td>
 
-                    <td className="py-3.5 px-4 text-right">
-                      {!user.is_subscribed ? (
+                    <td className="py-3.5 px-4 text-right" onClick={(e) => e.stopPropagation()}>
+                      {!user.is_subscribed && statusOf(user) !== "INCOMPLETE" ? (
                         <button
                           onClick={() =>
                             onOpenLeadModal({
@@ -213,10 +285,11 @@ export default function UsersPage({
                         </button>
                       ) : (
                         <button
-                          onClick={() => user.pharmacy_id && onOpenPharmacyModal(user.pharmacy_id)}
+                          onClick={() => onOpenUser?.(user.id)}
                           className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors"
                         >
-                          <span>Store</span>
+                          <span>{statusOf(user) === "INCOMPLETE" ? "Details" : "Manage"}</span>
+                          <ChevronRight className="w-3 h-3" />
                         </button>
                       )}
                     </td>

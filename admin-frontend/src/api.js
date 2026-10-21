@@ -253,6 +253,7 @@ export const AdminAPI = {
   extendSubscription: (pharmacyId, data) => api.post(`/subscriptions/${pharmacyId}/extend`, data),
   endSubscription: (pharmacyId, data) => api.post(`/subscriptions/${pharmacyId}/end`, data),
   grantSubscription: (pharmacyId, data) => api.post(`/subscriptions/${pharmacyId}/grant`, data),
+  changePlan: (pharmacyId, data) => api.post(`/subscriptions/${pharmacyId}/change-plan`, data),
 
   // Analytics & Traffic
   getFunnel: () => api.get("/analytics/funnel"),

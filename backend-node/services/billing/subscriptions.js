@@ -193,6 +193,43 @@ async function endNow(db, { pharmacyId, actor = null, reason = "" }) {
   return describe(sub, now);
 }
 
+// Switch the plan of a live subscription without touching its end date
+// (admin upgrade/downgrade). A trial stays a trial.
+async function changePlan(db, { pharmacyId, planCode, actor = null, reason = "" }) {
+  const now = new Date();
+  const pharmacy = await db.collection("pharmacies").findOne({ id: pharmacyId });
+  const current = pharmacy?.subscription;
+  if (!isActive(current, now)) throw new Error("No active subscription to change");
+  if (current.plan === planCode) return describe(current, now);
+
+  const sub = { ...current, plan: planCode, updated_at: now };
+  await db.collection("pharmacies").updateOne({ id: pharmacyId }, { $set: { subscription: sub } });
+  const ref = `change-plan:${pharmacyId}:${now.getTime()}`;
+  await db.collection("subscriptions").insertOne({
+    id: crypto.randomUUID(),
+    source_ref: ref,
+    order_id: ref,
+    pharmacy_id: pharmacyId,
+    plan: planCode,
+    kind: "ADMIN",
+    status: "ADJUSTMENT",
+    start_date: now.toISOString(),
+    end_date: new Date(current.ends_at).toISOString(),
+    actor,
+    metadata: { action: "CHANGE_PLAN", from: current.plan, to: planCode, reason, applies_to: current.ledger_id || null },
+    created_at: now.toISOString(),
+    updated_at: now.toISOString(),
+  });
+  if (current.ledger_id) {
+    await db.collection("subscriptions").updateOne(
+      { id: current.ledger_id },
+      { $set: { plan: planCode, updated_at: now.toISOString() } }
+    );
+  }
+  await mirrorToUsers(db, pharmacyId, sub);
+  return describe(sub, now);
+}
+
 // Cron: flip lapsed subscriptions to EXPIRED and clear the user mirror.
 async function expireDue(db) {
   const now = new Date();
@@ -217,4 +254,4 @@ async function expireDue(db) {
   return due.length;
 }
 
-module.exports = { DAY_MS, isActive, describe, creditDays, activate, extend, endNow, expireDue, mirrorToUsers };
+module.exports = { DAY_MS, isActive, describe, creditDays, activate, extend, endNow, changePlan, expireDue, mirrorToUsers };

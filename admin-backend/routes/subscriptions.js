@@ -14,6 +14,7 @@ router.use(resolveDbEnv);
 const PLAN_CODES = ["BASIC", "ADVANCED", "AGENTIC"];
 const extendSchema = z.object({ days: z.number().int().min(1).max(3650), reason: z.string().trim().max(300).default("") });
 const endSchema = z.object({ reason: z.string().trim().max(300).default("") });
+const changePlanSchema = z.object({ plan: z.enum(PLAN_CODES), reason: z.string().trim().max(300).default("") });
 const grantSchema = z.object({
   plan: z.enum(PLAN_CODES),
   days: z.number().int().min(1).max(3650),
@@ -135,6 +136,26 @@ router.post("/:pharmacyId/end", async (req, res, next) => {
     const result = await subs.endNow(req.db, { pharmacyId: pharmacy.id, actor: actorOf(req), reason: d.reason });
     await audit(req, "SUBSCRIPTION_ENDED", pharmacy.id, { reason: d.reason, kind: pharmacy.subscription.kind });
     res.json({ message: "Subscription ended", subscription: result });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/subscriptions/:pharmacyId/change-plan { plan, reason }
+// Upgrade/downgrade the live plan; the end date stays the same.
+router.post("/:pharmacyId/change-plan", async (req, res, next) => {
+  try {
+    const d = parseBody(changePlanSchema, req, res);
+    if (!d) return;
+    const pharmacy = await withPharmacy(req, res);
+    if (!pharmacy) return;
+    if (!subs.isActive(pharmacy.subscription)) {
+      return res.status(400).json({ error: "No active plan or trial to change. Use Grant instead." });
+    }
+    const from = pharmacy.subscription.plan;
+    const result = await subs.changePlan(req.db, { pharmacyId: pharmacy.id, planCode: d.plan, actor: actorOf(req), reason: d.reason });
+    await audit(req, "SUBSCRIPTION_PLAN_CHANGED", pharmacy.id, { from, to: d.plan, reason: d.reason });
+    res.json({ message: `Plan changed from ${from} to ${d.plan}`, subscription: result });
   } catch (err) {
     next(err);
   }
