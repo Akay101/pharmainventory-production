@@ -9,10 +9,7 @@ const jwt = require("jsonwebtoken");
 
 const { requireSubscription } = require("../middleware/subscription");
 
-// Generate OTP
-const generateOTP = () => {
-  return Math.floor(100000 + Math.random() * 900000).toString();
-};
+const { checkStoredOtp, generateOTP } = require("../utils/otpGuard");
 
 const getCookieOptions = (req, isRefresh = false) => {
   const isSecure = req.secure || req.headers["x-forwarded-proto"] === "https";
@@ -88,7 +85,6 @@ router.post("/register", async (req, res, next) => {
       message: "Registration successful. Please verify your email.",
       email,
       email_sent: emailSent,
-      otp: emailSent ? null : otp, // Show OTP if email failed
     });
   } catch (error) {
     next(error);
@@ -112,12 +108,9 @@ router.post("/verify-otp", async (req, res, next) => {
       return res.status(400).json({ detail: "Email already verified" });
     }
 
-    if (user.otp !== otp) {
-      return res.status(400).json({ detail: "Invalid OTP" });
-    }
-
-    if (new Date(user.otp_expiry) < new Date()) {
-      return res.status(400).json({ detail: "OTP expired" });
+    const otpCheck = await checkStoredOtp(db, user, otp, { otpField: "otp", expiryField: "otp_expiry" });
+    if (!otpCheck.ok) {
+      return res.status(otpCheck.status).json({ detail: otpCheck.detail });
     }
 
     // Mark verified
@@ -183,14 +176,13 @@ router.post("/resend-otp", async (req, res, next) => {
 
     await db
       .collection("users")
-      .updateOne({ id: user.id }, { $set: { otp, otp_expiry: otpExpiry } });
+      .updateOne({ id: user.id }, { $set: { otp, otp_expiry: otpExpiry, otp_attempts: 0 } });
 
     const emailSent = await sendOTPEmail(email, user.name, otp, "verification");
 
     res.json({
       message: "OTP resent",
       email_sent: emailSent,
-      otp: emailSent ? null : otp,
     });
   } catch (error) {
     next(error);

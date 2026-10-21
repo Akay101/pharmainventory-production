@@ -13,9 +13,7 @@ const { logActivity } = require("../utils/activityLogger");
 
 const upload = multer({ storage: multer.memoryStorage() });
 
-// Generate OTP
-const generateOTP = () =>
-  Math.floor(100000 + Math.random() * 900000).toString();
+const { checkStoredOtp, generateOTP } = require("../utils/otpGuard");
 
 // GET /api/users/me - Get current user profile and pharmacy details
 router.get("/me", auth, async (req, res, next) => {
@@ -122,7 +120,6 @@ router.post(
         message: "User created. They need to verify their email.",
         user: { id: userId, name, email, mobile, role: userData.role },
         email_sent: emailSent,
-        otp: emailSent ? null : otp,
       });
     } catch (error) {
       next(error);
@@ -143,12 +140,13 @@ router.post("/verify", async (req, res, next) => {
       return res.status(404).json({ detail: "User not found" });
     }
 
-    if (user.otp !== otp) {
+    if (user.verified !== false) {
       return res.status(400).json({ detail: "Invalid OTP" });
     }
 
-    if (new Date(user.otp_expiry) < new Date()) {
-      return res.status(400).json({ detail: "OTP expired" });
+    const otpCheck = await checkStoredOtp(db, user, otp, { otpField: "otp", expiryField: "otp_expiry" });
+    if (!otpCheck.ok) {
+      return res.status(otpCheck.status).json({ detail: otpCheck.detail });
     }
 
     const updates = { verified: true, otp: null, otp_expiry: null };
@@ -276,7 +274,6 @@ router.post(
       res.json({
         message: "OTP sent to your email",
         email_sent: emailSent,
-        otp: emailSent ? null : otp,
       });
     } catch (error) {
       next(error);
@@ -296,12 +293,12 @@ router.post(
 
       const user = await db.collection("users").findOne({ id: req.user.id });
 
-      if (user.profile_update_otp !== otp) {
-        return res.status(400).json({ detail: "Invalid OTP" });
-      }
-
-      if (new Date(user.profile_update_otp_expiry) < new Date()) {
-        return res.status(400).json({ detail: "OTP expired" });
+      const otpCheck = await checkStoredOtp(db, user, otp, {
+        otpField: "profile_update_otp",
+        expiryField: "profile_update_otp_expiry",
+      });
+      if (!otpCheck.ok) {
+        return res.status(otpCheck.status).json({ detail: otpCheck.detail });
       }
 
       await db.collection("users").updateOne(

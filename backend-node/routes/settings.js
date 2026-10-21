@@ -3,6 +3,7 @@ const router = express.Router();
 const mongoose = require("mongoose");
 const { auth, adminOnly } = require("../middleware/auth");
 const { sendOTPEmail } = require("../services/email");
+const { checkStoredOtp, generateOTP } = require("../utils/otpGuard");
 
 /**
  * Registry of all available settings.
@@ -288,7 +289,7 @@ router.post("/request-lock-otp", auth, async (req, res, next) => {
     const userId = req.user.id;
 
     // Generate a 6-digit OTP
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const otp = generateOTP();
     const otpExpiry = new Date(Date.now() + 10 * 60 * 1000).toISOString();
 
     // Store OTP on user document
@@ -307,7 +308,6 @@ router.post("/request-lock-otp", auth, async (req, res, next) => {
     res.json({
       message: "OTP sent to your email",
       email_sent: emailSent,
-      otp: emailSent ? null : otp,
     });
   } catch (error) {
     next(error);
@@ -334,12 +334,12 @@ router.post("/verify-and-update-lock", auth, async (req, res, next) => {
       return res.status(404).json({ detail: "User not found" });
     }
 
-    if (user.lock_setting_otp !== otp) {
-      return res.status(400).json({ detail: "Invalid OTP" });
-    }
-
-    if (new Date(user.lock_setting_otp_expiry) < new Date()) {
-      return res.status(400).json({ detail: "OTP expired" });
+    const otpCheck = await checkStoredOtp(db, user, otp, {
+      otpField: "lock_setting_otp",
+      expiryField: "lock_setting_otp_expiry",
+    });
+    if (!otpCheck.ok) {
+      return res.status(otpCheck.status).json({ detail: otpCheck.detail });
     }
 
     // Update setting in user preferences

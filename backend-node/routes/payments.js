@@ -57,46 +57,6 @@ router.post("/create-order", auth, async (req, res, next) => {
   }
 });
 
-router.post("/create-promo", async (req, res, next) => {
-  try {
-    const db = mongoose.connection.db;
-    const { plan, duration_days } = req.body;
-
-    if (!["BASIC", "ADVANCED", "AGENTIC"].includes(plan)) {
-      return res.status(400).json({ detail: "Invalid plan. Choose BASIC, ADVANCED, or AGENTIC." });
-    }
-
-    const duration = parseInt(duration_days);
-    if (!duration || duration <= 0) {
-      return res.status(400).json({ detail: "Invalid duration_days." });
-    }
-
-    // Generate 8 character promo code
-    const code = Array.from({ length: 8 }, () =>
-      "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"[Math.floor(Math.random() * 36)]
-    ).join("");
-
-    await db.collection("promo_codes").insertOne({
-      code,
-      plan,
-      duration_days: duration,
-      is_active: true,
-      usage_limit: 1,
-      used_count: 0,
-      created_at: new Date().toISOString()
-    });
-
-    res.json({
-      message: "Promo code successfully generated",
-      code,
-      plan,
-      duration_days: duration
-    });
-  } catch (error) {
-    next(error);
-  }
-});
-
 router.post("/apply-code", auth, async (req, res, next) => {
   try {
     const db = mongoose.connection.db;
@@ -200,22 +160,20 @@ router.post("/verify", auth, async (req, res, next) => {
       return res.json({ status: "already_processed" });
     }
 
-    // 2. Fetch payments from Cashfree directly to ensure security
-    const verifyPayment = await cashfree.PGOrderFetchPayments("2023-08-01", order_id).catch(async () => {
-         return await cashfree.PGOrderFetchPayments(order_id);
-    });
-    
+    // 2. Fetch the order from Cashfree and make sure it belongs to the caller
+    const orderDetails = await cashfree.PGFetchOrder(order_id);
+    const data = orderDetails.data;
+    if (data?.customer_details?.customer_id !== req.user.id) {
+      return res.status(404).json({ detail: "Order not found" });
+    }
+
+    const verifyPayment = await cashfree.PGOrderFetchPayments(order_id);
+
     const paid = verifyPayment.data?.some((p) => p.payment_status === "SUCCESS");
     if (!paid) {
       return res.status(400).json({ detail: "Payment not successful or pending" });
     }
 
-    // 3. Fetch order details to get plan and amount
-    const orderDetails = await cashfree.PGFetchOrder("2023-08-01", order_id).catch(async () => {
-         return await cashfree.PGFetchOrder(order_id);
-    });
-
-    const data = orderDetails.data;
     const payment = verifyPayment.data.find(p => p.payment_status === "SUCCESS");
     
     // Calculate Plan

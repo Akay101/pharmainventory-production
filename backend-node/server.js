@@ -1,6 +1,7 @@
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
+const { rateLimit } = require("express-rate-limit");
 const mongoose = require("mongoose");
 
 const startCronJobs = require("./services/cron");
@@ -40,6 +41,9 @@ app.use(
     credentials: true,
   })
 );
+// Cashfree webhooks need the exact raw bytes for signature verification, so
+// this must be registered before the JSON parser.
+app.use("/api/webhook/cashfree", express.raw({ type: "*/*", limit: "1mb" }));
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 
@@ -58,7 +62,27 @@ mongoose
     process.exit(1);
   });
 
-app.use("/api/webhook/cashfree", express.raw({ type: "application/json" }));
+
+// Brute-force protection on credential and OTP endpoints (per client IP)
+const authLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 20,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  message: { detail: "Too many requests. Please wait a minute and try again." },
+});
+const otpLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 15,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  message: { detail: "Too many OTP attempts. Please try again later." },
+});
+app.use(["/api/auth/login", "/api/auth/register"], authLimiter);
+app.use(
+  ["/api/auth/verify-otp", "/api/auth/resend-otp", "/api/users/verify"],
+  otpLimiter
+);
 
 // API Routes - all prefixed with /api
 app.use("/api/auth", authRoutes);

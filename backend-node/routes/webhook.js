@@ -21,49 +21,51 @@ router.post("/cashfree", async (req, res, next) => {
   try {
     const db = mongoose.connection.db;
 
-    const rawBody = req.body.toString();
-    const body = JSON.parse(rawBody);
-    const data = body.data;
+    if (!Buffer.isBuffer(req.body)) {
+      return res.status(400).json({ detail: "Raw body required" });
+    }
+    const rawBody = req.body.toString("utf8");
 
-    if (!data || data.order_status !== "PAID") {
-      return res.json({ status: "ignored" });
+    // 🔐 1. VERIFY SIGNATURE before trusting anything in the payload
+    if (!verifySignature(rawBody, req.headers)) {
+      return res.status(401).json({ detail: "Invalid signature" });
     }
 
-    // 🔐 1. VERIFY SIGNATURE
-    const isValid = verifySignature(rawBody, req.headers);
-    if (!isValid) {
-      return res.status(401).json({ detail: "Invalid signature" });
+    let body;
+    try {
+      body = JSON.parse(rawBody);
+    } catch (e) {
+      return res.status(400).json({ detail: "Invalid JSON" });
+    }
+
+    const order_id = body?.data?.order?.order_id;
+    if (!order_id || body.type !== "PAYMENT_SUCCESS_WEBHOOK") {
+      return res.json({ status: "ignored" });
     }
 
     // 🧾 2. LOG EVERYTHING
     await db.collection("payment_logs").insertOne({
       id: uuidv4(),
-      order_id: data.order_id,
+      order_id,
+      type: body.type,
       raw_payload: body,
-      headers: req.headers,
       processed: false,
       created_at: new Date().toISOString(),
     });
 
-    const { order_id, order_amount, payment_id, customer_details } = data;
-
     // 🔁 3. IDEMPOTENCY CHECK
-    const existing = await db.collection("subscriptions").findOne({
-      order_id,
-    });
-
-    const Cashfree = require("../services/cashfree");
-
-    const verifyPayment = await cashfree.PGOrderFetchPayments(order_id);
-    const paid = verifyPayment.data.some((p) => p.payment_status === "SUCCESS");
-
-    if (!paid) {
-      return res.status(400).json({ detail: "Payment not verified" });
-    }
-
+    const existing = await db.collection("subscriptions").findOne({ order_id });
     if (existing) {
       return res.json({ status: "already_processed" });
     }
+
+    // Never trust the webhook body for amounts/customer: re-fetch from Cashfree
+    const { data } = await cashfree.PGFetchOrder(order_id);
+    if (data?.order_status !== "PAID") {
+      return res.json({ status: "not_paid" });
+    }
+    const { order_amount, customer_details } = data;
+    const payment_id = body?.data?.payment?.cf_payment_id || null;
 
     const user = await db.collection("users").findOne({
       id: customer_details.customer_id,
@@ -82,9 +84,6 @@ router.post("/cashfree", async (req, res, next) => {
 
     if (!plan) {
       return res.status(400).json({ detail: "Invalid plan mapping" });
-    }
-    if (!plan) {
-      return res.status(400).json({ detail: "Invalid amount mapping" });
     }
 
     // ⏳ 5. DATE CALCULATION
