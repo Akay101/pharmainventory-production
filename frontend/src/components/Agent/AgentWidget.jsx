@@ -8,7 +8,7 @@ import {
   History, Plus, Trash2, MessageSquarePlus, Clock, Search
 } from "lucide-react";
 import axios from "axios";
-import { API, getCookie } from "../../App";
+import { API } from "../../App";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Avatar, AvatarFallback } from "../ui/avatar";

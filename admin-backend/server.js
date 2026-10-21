@@ -70,6 +70,8 @@ app.use("/api/pharmacies", requireAdminAuth, pharmaciesRoutes);
 app.use("/api/users", requireAdminAuth, usersRoutes);
 app.use("/api/leads", requireAdminAuth, leadsRoutes);
 app.use("/api/promos", requireAdminAuth, promosRoutes);
+app.use("/api/pricing", requireAdminAuth, require("./routes/pricing"));
+app.use("/api/subscriptions", requireAdminAuth, require("./routes/subscriptions"));
 app.use("/api/analytics", requireAdminAuth, analyticsRoutes);
 
 

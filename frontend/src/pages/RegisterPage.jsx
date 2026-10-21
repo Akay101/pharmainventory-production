@@ -1,7 +1,7 @@
-import { useState } from "react";
-import { Link } from "react-router-dom";
+import { useState, useEffect } from "react";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import axios from "axios";
-import { API } from "../App";
+import { API, useAuth } from "../App";
 import { Button } from "../components/ui/button";
 import WaveInput from "../components/ui/WaveInput";
 import {
@@ -24,7 +24,6 @@ import {
   MapPin,
   FileText,
   Calendar,
-  AlertTriangle,
 } from "lucide-react";
 import ThemeToggle from "../components/ui/ThemeToggle";
 import FluidLinePattern from "../components/ui/FluidLinePattern";
@@ -32,15 +31,22 @@ import AuthLeftPanel from "../components/ui/AuthLeftPanel";
 
 const STEPS = ["Personal Info", "Pharmacy Details", "Verify Email"];
 
+const RESEND_COOLDOWN_S = 60;
+
 export default function RegisterPage() {
-  const [step, setStep] = useState(0);
+  const location = useLocation();
+  const navigate = useNavigate();
+  const { completeLogin } = useAuth();
+  // Arriving from login with an unverified account jumps straight to the code step
+  const verifyEmail = location.state?.verifyEmail || "";
+  const [step, setStep] = useState(verifyEmail ? 2 : 0);
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [otp, setOtp] = useState("");
-  const [fallbackOtp, setFallbackOtp] = useState("");
+  const [resendIn, setResendIn] = useState(verifyEmail ? RESEND_COOLDOWN_S : 0);
   const [formData, setFormData] = useState({
     name: "",
-    email: "",
+    email: verifyEmail,
     mobile: "",
     password: "",
     pharmacyName: "",
@@ -50,6 +56,12 @@ export default function RegisterPage() {
   });
 
   const [errors, setErrors] = useState({});
+
+  useEffect(() => {
+    if (resendIn <= 0) return undefined;
+    const t = setTimeout(() => setResendIn((s) => s - 1), 1000);
+    return () => clearTimeout(t);
+  }, [resendIn]);
 
   // Clean and format mobile input to strictly 10 digits
   const handleMobileChange = (e) => {
@@ -78,6 +90,9 @@ export default function RegisterPage() {
     } else if (trimmedName.length > 50) {
       newErrors.name = "Name cannot exceed 50 characters";
       valid = false;
+    } else if (/[<>]/.test(trimmedName)) {
+      newErrors.name = "Name cannot contain < or >";
+      valid = false;
     }
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -100,8 +115,11 @@ export default function RegisterPage() {
     if (!formData.password) {
       newErrors.password = "Password is required";
       valid = false;
-    } else if (formData.password.length < 6) {
-      newErrors.password = "Password must be at least 6 characters";
+    } else if (formData.password.length < 8) {
+      newErrors.password = "Password must be at least 8 characters";
+      valid = false;
+    } else if (!/[A-Za-z]/.test(formData.password) || !/\d/.test(formData.password)) {
+      newErrors.password = "Use at least one letter and one number";
       valid = false;
     }
 
@@ -122,6 +140,9 @@ export default function RegisterPage() {
       valid = false;
     } else if (trimmedPharm.length > 60) {
       newErrors.pharmacyName = "Pharmacy name cannot exceed 60 characters";
+      valid = false;
+    } else if (/[<>]/.test(trimmedPharm)) {
+      newErrors.pharmacyName = "Pharmacy name cannot contain < or >";
       valid = false;
     }
 
@@ -182,7 +203,7 @@ export default function RegisterPage() {
   const handleRegister = async () => {
     setLoading(true);
     try {
-      const response = await axios.post(`${API}/auth/register`, {
+      await axios.post(`${API}/auth/register`, {
         name: formData.name.trim(),
         email: formData.email.trim(),
         mobile: formData.mobile,
@@ -195,18 +216,24 @@ export default function RegisterPage() {
         },
       });
 
-      if (response.data.otp) {
-        setFallbackOtp(response.data.otp);
-        toast.warning("Email delivery failed. Your OTP is displayed below.");
-      } else {
-        toast.success("OTP sent to your email address!");
-      }
+      toast.success("We've sent a 6-digit code to your email.");
+      setOtp("");
+      setResendIn(RESEND_COOLDOWN_S);
       setStep(2);
     } catch (error) {
-      console.error("Registration error:", error);
-      const errMsg =
-        error.response?.data?.detail || "Registration failed. Please check inputs.";
-      toast.error(errMsg);
+      const data = error.response?.data || {};
+      if (data.code === "OTP_COOLDOWN") {
+        // A code was sent moments ago; go to the code step
+        setResendIn(data.retry_after || RESEND_COOLDOWN_S);
+        setStep(2);
+        return;
+      }
+      if (data.field) {
+        const key = { name: "name", email: "email", mobile: "mobile", password: "password", "pharmacy.name": "pharmacyName", "pharmacy.location": "location" }[data.field];
+        if (key) setErrors((prev) => ({ ...prev, [key]: data.detail }));
+        if (["name", "email", "mobile", "password"].includes(data.field)) setStep(0);
+      }
+      toast.error(data.detail || "Registration failed. Please check inputs.");
     } finally {
       setLoading(false);
     }
@@ -220,15 +247,22 @@ export default function RegisterPage() {
 
     setLoading(true);
     try {
-      await axios.post(`${API}/auth/verify-otp`, {
+      const response = await axios.post(`${API}/auth/verify-otp`, {
         email: formData.email.trim(),
         otp: otp,
       });
+      const user = completeLogin(response.data);
       toast.success("Account verified successfully! Welcome to DavaDesk.");
-      window.location.href = "/dashboard";
+      // New pharmacies pick a plan or start the free trial first
+      navigate(user?.subscription_plan ? "/dashboard" : "/upgrade", { replace: true });
     } catch (error) {
-      console.error("Verification error:", error);
-      toast.error(error.response?.data?.detail || "Invalid OTP entered");
+      const data = error.response?.data || {};
+      setOtp("");
+      toast.error(
+        data.attempts_left !== undefined
+          ? `${data.detail}. ${data.attempts_left} attempt(s) left.`
+          : data.detail || "Invalid code entered"
+      );
     } finally {
       setLoading(false);
     }
@@ -237,28 +271,14 @@ export default function RegisterPage() {
   const handleResendOTP = async () => {
     setLoading(true);
     try {
-      const response = await axios.post(
-        `${API}/auth/resend-otp`,
-        {
-          email: formData.email.trim(),
-        },
-        {
-          headers: {
-            "Content-Type": "application/json",
-          },
-        }
-      );
-
-      if (response.data.otp) {
-        setFallbackOtp(response.data.otp);
-        toast.warning("Email delivery failed. OTP displayed below.");
-      } else {
-        setFallbackOtp("");
-        toast.success("OTP resent successfully!");
-      }
+      await axios.post(`${API}/auth/resend-otp`, { email: formData.email.trim() });
+      setOtp("");
+      setResendIn(RESEND_COOLDOWN_S);
+      toast.success("A new code is on its way.");
     } catch (error) {
-      console.error("Resend OTP error:", error);
-      toast.error(error.response?.data?.detail || "Failed to resend OTP");
+      const data = error.response?.data || {};
+      if (data.retry_after) setResendIn(data.retry_after);
+      toast.error(data.detail || "Failed to resend code");
     } finally {
       setLoading(false);
     }
@@ -380,7 +400,8 @@ export default function RegisterPage() {
                 <WaveInput
                   id="password"
                   type={showPassword ? "text" : "password"}
-                  label="Password (Min 6 chars)"
+                  label="Password"
+                  helperText="At least 8 characters, with letters and numbers"
                   value={formData.password}
                   onChange={(e) => {
                     setFormData({ ...formData, password: e.target.value });
@@ -494,20 +515,6 @@ export default function RegisterPage() {
                     </span>
                   </p>
 
-                  {fallbackOtp && (
-                    <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/40 flex items-start gap-3 text-left animate-in fade-in duration-200">
-                      <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
-                      <div className="space-y-1">
-                        <p className="text-amber-500 font-bold text-xs uppercase tracking-wider">
-                          OTP Delivery Fallback
-                        </p>
-                        <p className="text-xl font-mono font-black text-amber-500 tracking-wider">
-                          {fallbackOtp}
-                        </p>
-                      </div>
-                    </div>
-                  )}
-
                   <div className="flex justify-center pt-2">
                     <InputOTP
                       maxLength={6}
@@ -530,11 +537,11 @@ export default function RegisterPage() {
                   <Button
                     variant="link"
                     onClick={handleResendOTP}
-                    disabled={loading}
+                    disabled={loading || resendIn > 0}
                     className="text-xs text-muted-foreground hover:text-orange-500 font-extrabold transition-colors mt-2"
                     data-testid="resend-otp-btn"
                   >
-                    Didn't receive? Resend OTP
+                    {resendIn > 0 ? `Resend code in ${resendIn}s` : "Didn't receive it? Resend code"}
                   </Button>
                 </div>
 

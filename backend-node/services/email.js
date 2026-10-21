@@ -419,6 +419,15 @@ const renderBaseLayout = ({
 /**
  * Reusable Components for Building Email Content
  */
+// Escape user-supplied text before it goes into email HTML.
+const escapeHtml = (v) =>
+  String(v ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
 const EmailComponents = {
   // Bold OTP Box with Expiry Timer
   otpBox: (otp, expiryMinutes = 10) => `
@@ -552,6 +561,15 @@ const sendViaBrevo = async ({ toEmail, toName, subject, htmlContent }) => {
  * 2. Fallback: Brevo
  */
 const sendEmail = async ({ toEmail, toName, subject, htmlContent }) => {
+  // Local/dev test transport: store instead of sending. Never in production.
+  if (process.env.EMAIL_TRANSPORT === "outbox" && process.env.NODE_ENV !== "production") {
+    const mongoose = require("mongoose");
+    await mongoose.connection.db
+      .collection("dev_outbox")
+      .insertOne({ to: toEmail, subject, html: htmlContent, created_at: new Date() });
+    return true;
+  }
+
   // 1. Primary Attempt: Amazon SES
   try {
     await sendViaSES({ toEmail, toName, subject, htmlContent });
@@ -632,7 +650,7 @@ const sendOTPEmail = async (toEmail, toName, otp, scenario = "general") => {
     previewText: `Your DavaDesk verification code is ${otp}. Valid for 10 minutes.`,
     badge,
     title,
-    greeting: `Hello ${toName || "there"},`,
+    greeting: `Hello ${escapeHtml(toName) || "there"},`,
     contentHtml,
     footerNote: "This code expires in 10 minutes for your account security.",
     assetUrls,
@@ -654,6 +672,8 @@ const sendBillEmail = async (
 ) => {
   const assetUrls = await getAssetUrls();
   const pharmacyName = options.pharmacyName || "Pharmacy Store";
+  const safePharmacy = escapeHtml(pharmacyName);
+  const safeBillNo = escapeHtml(billNo);
   const formattedAmount = Number(amount || 0).toLocaleString("en-IN", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
@@ -665,11 +685,11 @@ const sendBillEmail = async (
 
   const contentHtml = `
     <p style="margin: 0 0 16px 0; color: #334155;">
-      Your digital bill for purchase from <strong>${pharmacyName}</strong> has been generated successfully. Here is a summary of your invoice:
+      Your digital bill for purchase from <strong>${safePharmacy}</strong> has been generated successfully. Here is a summary of your invoice:
     </p>
 
     ${EmailComponents.infoCard("Invoice Details", [
-      { label: "Invoice Number", value: `#${billNo}` },
+      { label: "Invoice Number", value: `#${safeBillNo}` },
       {
         label: "Billing Date",
         value: new Date().toLocaleDateString("en-IN", {
@@ -678,7 +698,7 @@ const sendBillEmail = async (
           year: "numeric",
         }),
       },
-      { label: "Pharmacy Store", value: pharmacyName },
+      { label: "Pharmacy Store", value: safePharmacy },
       {
         label: "Total Paid Amount",
         value: `<span style="color: #ff751f; font-size: 15px; font-weight: 900;">₹${formattedAmount}</span>`,
@@ -708,10 +728,10 @@ const sendBillEmail = async (
   `;
 
   const htmlContent = renderBaseLayout({
-    previewText: `Your invoice #${billNo} for ₹${formattedAmount} is ready for download.`,
+    previewText: `Your invoice #${safeBillNo} for ₹${formattedAmount} is ready for download.`,
     badge,
     title,
-    greeting: `Hello ${toName || "Valued Customer"},`,
+    greeting: `Hello ${escapeHtml(toName) || "Valued Customer"},`,
     contentHtml,
     footerNote: `Invoice generated powered by DavaDesk Pharmacy Intelligence.`,
     assetUrls,
@@ -761,7 +781,7 @@ const sendCustomEmail = async ({
     badge,
     badgeColor,
     title,
-    greeting: greeting || (toName ? `Hello ${toName},` : "Hello,"),
+    greeting: greeting || (toName ? `Hello ${escapeHtml(toName)},` : "Hello,"),
     contentHtml: combinedContent,
     footerNote,
     showSocials,
@@ -783,14 +803,14 @@ const sendWelcomeEmail = async (toEmail, toName, pharmacyName) => {
   const contentHtml = `
     <p style="margin: 0 0 16px 0; color: #334155;">
       Congratulations on setting up <strong>${
-        pharmacyName || "your pharmacy"
+        escapeHtml(pharmacyName) || "your pharmacy"
       }</strong> on DavaDesk! You now have access to next-gen AI OCR bill extraction, smart batch expiry tracking, and real-time ledger accounting.
     </p>
 
     ${EmailComponents.infoCard("Your Workspace Details", [
-      { label: "Account Administrator", value: toName },
-      { label: "Registered Email", value: toEmail },
-      { label: "Pharmacy Store", value: pharmacyName || "Configured" },
+      { label: "Account Administrator", value: escapeHtml(toName) },
+      { label: "Registered Email", value: escapeHtml(toEmail) },
+      { label: "Pharmacy Store", value: escapeHtml(pharmacyName) || "Configured" },
       {
         label: "Platform Access",
         value: `<a href="${BRAND_CONFIG.websiteUrl}" style="color: #ff751f; font-weight: 700;">Launch Dashboard</a>`,
@@ -807,10 +827,10 @@ const sendWelcomeEmail = async (toEmail, toName, pharmacyName) => {
   `;
 
   const htmlContent = renderBaseLayout({
-    previewText: `Welcome to DavaDesk, ${toName}! Get started with your pharmacy workspace.`,
+    previewText: `Welcome to DavaDesk, ${escapeHtml(toName)}! Get started with your pharmacy workspace.`,
     badge,
     title,
-    greeting: `Hello ${toName},`,
+    greeting: `Hello ${escapeHtml(toName)},`,
     contentHtml,
     assetUrls,
   });
@@ -818,7 +838,64 @@ const sendWelcomeEmail = async (toEmail, toName, pharmacyName) => {
   return sendEmail({ toEmail, toName, subject, htmlContent });
 };
 
+/**
+ * SCENARIO 5: Free trial started (carries the trial code as a receipt)
+ */
+const sendTrialStartedEmail = async (toEmail, toName, { code, planName, days, endsAt }) => {
+  const assetUrls = await getAssetUrls();
+  const endDate = new Date(endsAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+  const contentHtml = `
+    <p style="margin: 0 0 16px 0; color: #334155;">
+      Your <strong>${days}-day free trial</strong> of the <strong>${escapeHtml(planName)}</strong> plan is now active. Every feature is unlocked until <strong>${endDate}</strong>.
+    </p>
+    ${EmailComponents.infoCard("Trial Details", [
+      { label: "Plan", value: escapeHtml(planName) },
+      { label: "Trial code", value: `<span style="font-family: monospace; font-weight: 800;">${escapeHtml(code)}</span>` },
+      { label: "Ends on", value: endDate },
+    ])}
+    <div style="text-align: center;">
+      ${EmailComponents.button("Open DavaDesk", BRAND_CONFIG.websiteUrl, "#ff751f")}
+    </div>
+    ${EmailComponents.alertBox("No card needed. When the trial ends you can choose a plan from the Upgrade page.", "info")}
+  `;
+  const htmlContent = renderBaseLayout({
+    previewText: `Your ${days}-day ${escapeHtml(planName)} trial is active until ${endDate}.`,
+    badge: "Free Trial",
+    title: "Your Free Trial Has Started",
+    greeting: `Hello ${escapeHtml(toName) || "there"},`,
+    contentHtml,
+    assetUrls,
+  });
+  return sendEmail({ toEmail, toName, subject: `Your ${days}-day DavaDesk trial is active`, htmlContent });
+};
+
+/**
+ * SCENARIO 6: Subscription lifecycle notices (payment received, trial ending)
+ */
+const sendSubscriptionEmail = async (toEmail, toName, { subject, title, badge, message, rows = [] }) => {
+  const assetUrls = await getAssetUrls();
+  const contentHtml = `
+    <p style="margin: 0 0 16px 0; color: #334155;">${escapeHtml(message)}</p>
+    ${rows.length ? EmailComponents.infoCard("Details", rows.map((r) => ({ label: r.label, value: escapeHtml(r.value) }))) : ""}
+    <div style="text-align: center;">
+      ${EmailComponents.button("Open DavaDesk", BRAND_CONFIG.websiteUrl, "#ff751f")}
+    </div>
+  `;
+  const htmlContent = renderBaseLayout({
+    previewText: message,
+    badge,
+    title,
+    greeting: `Hello ${escapeHtml(toName) || "there"},`,
+    contentHtml,
+    assetUrls,
+  });
+  return sendEmail({ toEmail, toName, subject, htmlContent });
+};
+
 module.exports = {
+  escapeHtml,
+  sendTrialStartedEmail,
+  sendSubscriptionEmail,
   sendOTPEmail,
   sendBillEmail,
   sendCustomEmail,

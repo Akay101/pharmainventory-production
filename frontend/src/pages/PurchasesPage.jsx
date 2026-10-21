@@ -3,7 +3,7 @@ import { useSearchParams, useLocation } from "react-router-dom";
 import { v4 as uuidv4 } from "uuid";
 import { createPortal } from "react-dom";
 import axios from "axios";
-import { API, useAuth, getCookie } from "../App";
+import { API, useAuth } from "../App";
 import {
   Card,
   CardContent,

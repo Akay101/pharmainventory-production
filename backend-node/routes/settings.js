@@ -3,7 +3,7 @@ const router = express.Router();
 const mongoose = require("mongoose");
 const { auth, adminOnly } = require("../middleware/auth");
 const { sendOTPEmail } = require("../services/email");
-const { checkStoredOtp, generateOTP } = require("../utils/otpGuard");
+const { issueOtp, verifyOtp, sendOtpError, OtpError } = require("../services/auth/otp");
 
 /**
  * Registry of all available settings.
@@ -286,31 +286,14 @@ router.post("/update", auth, async (req, res, next) => {
 router.post("/request-lock-otp", auth, async (req, res, next) => {
   try {
     const db = mongoose.connection.db;
-    const userId = req.user.id;
-
-    // Generate a 6-digit OTP
-    const otp = generateOTP();
-    const otpExpiry = new Date(Date.now() + 10 * 60 * 1000).toISOString();
-
-    // Store OTP on user document
-    await db.collection("users").updateOne(
-      { id: userId },
-      {
-        $set: {
-          lock_setting_otp: otp,
-          lock_setting_otp_expiry: otpExpiry
-        }
-      }
-    );
-
+    const otp = await issueOtp(db, { purpose: "settings-lock", subject: req.user.email });
     const emailSent = await sendOTPEmail(req.user.email, req.user.name, otp, "settings");
-
-    res.json({
-      message: "OTP sent to your email",
-      email_sent: emailSent,
-    });
+    if (!emailSent) {
+      throw new OtpError("EMAIL_FAILED", "We couldn't send the verification email. Please try again shortly.", 503);
+    }
+    res.json({ message: "OTP sent to your email", email_sent: true });
   } catch (error) {
-    next(error);
+    sendOtpError(res, error, next);
   }
 });
 
@@ -329,18 +312,11 @@ router.post("/verify-and-update-lock", auth, async (req, res, next) => {
       return res.status(400).json({ detail: "Setting value is required" });
     }
 
-    const user = await db.collection("users").findOne({ id: userId });
-    if (!user) {
-      return res.status(404).json({ detail: "User not found" });
+    if (typeof value !== "boolean") {
+      return res.status(400).json({ detail: "Setting value must be true or false" });
     }
 
-    const otpCheck = await checkStoredOtp(db, user, otp, {
-      otpField: "lock_setting_otp",
-      expiryField: "lock_setting_otp_expiry",
-    });
-    if (!otpCheck.ok) {
-      return res.status(otpCheck.status).json({ detail: otpCheck.detail });
-    }
+    await verifyOtp(db, { purpose: "settings-lock", subject: req.user.email, otp: typeof otp === "string" ? otp : "" });
 
     // Update setting in user preferences
     await db
@@ -355,20 +331,9 @@ router.post("/verify-and-update-lock", auth, async (req, res, next) => {
         { upsert: true }
       );
 
-    // Clear OTP
-    await db.collection("users").updateOne(
-      { id: userId },
-      {
-        $unset: {
-          lock_setting_otp: "",
-          lock_setting_otp_expiry: ""
-        }
-      }
-    );
-
     res.json({ message: "Setting updated successfully", key, value });
   } catch (error) {
-    next(error);
+    sendOtpError(res, error, next);
   }
 });
 

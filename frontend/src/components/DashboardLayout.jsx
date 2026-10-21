@@ -89,6 +89,14 @@ const navItems = [
   { path: "/settings", label: "Settings", icon: Settings },
 ];
 
+// "AGENTIC Plan", or "AGENTIC Trial · 3d left" while on the free trial
+const planLabel = (user) => {
+  const sub = user?.subscription;
+  if (sub?.status === "TRIAL") return `${sub.plan} Trial · ${sub.days_left}d left`;
+  if (user?.subscription_plan) return `${user.subscription_plan} Plan`;
+  return "No active plan";
+};
+
 export default function DashboardLayout() {
   const { user, pharmacy, logout, updateSetting, isAdmin } = useAuth();
   const navigate = useNavigate();
@@ -249,9 +257,7 @@ export default function DashboardLayout() {
                         </h2>
                         <span className="text-[10px] text-orange-600 dark:text-orange-400 font-extrabold flex items-center gap-1 mt-0.5">
                           <Sparkles className="w-2.5 h-2.5 text-orange-500" />
-                          {user?.subscription_plan
-                            ? `${user.subscription_plan} Plan`
-                            : "Agentic Plan"}
+                          {planLabel(user)}
                         </span>
                       </div>
                     </div>
@@ -320,9 +326,7 @@ export default function DashboardLayout() {
                   </span>
                   <span className="text-[10px] text-orange-600 dark:text-orange-400 font-extrabold flex items-center gap-1">
                     <Sparkles className="w-2.5 h-2.5 text-orange-500" />
-                    {user?.subscription_plan
-                      ? `${user.subscription_plan} Plan`
-                      : "Agentic Plan"}
+                    {planLabel(user)}
                   </span>
                 </div>
               </div>

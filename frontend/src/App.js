@@ -13,6 +13,7 @@ import { Toaster } from "./components/ui/sonner";
 // Pages
 import LoginPage from "./pages/LoginPage";
 import RegisterPage from "./pages/RegisterPage";
+import ForgotPasswordPage from "./pages/ForgotPasswordPage";
 import DashboardPage from "./pages/DashboardPage";
 import InventoryPage from "./pages/InventoryPage";
 import PurchasesPage from "./pages/PurchasesPage";
@@ -37,35 +38,69 @@ import { getPageTitle } from "./hooks/useDocumentTitle";
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 export const API = `${BACKEND_URL}/api`;
 
+// The refresh token lives in an httpOnly cookie scoped to /api/auth, so the
+// browser must send credentials on those calls.
 axios.defaults.withCredentials = true;
 
-export const getCookie = (name) => {
-  const value = `; ${document.cookie}`;
-  const parts = value.split(`; ${name}=`);
-  if (parts.length === 2) return parts.pop().split(';').shift();
-  return null;
+// ---------------------------------------------------------------------------
+// Session tokens
+//
+// The short-lived access token is kept in memory only (never localStorage or
+// a JS-readable cookie), so injected scripts can't lift a long-lived session.
+// On page load the session is restored by calling /auth/refresh, which reads
+// the httpOnly refresh cookie and rotates it.
+// ---------------------------------------------------------------------------
+let accessToken = null;
+let refreshTimer = null;
+let refreshPromise = null;
+
+const authChannel =
+  typeof BroadcastChannel !== "undefined" ? new BroadcastChannel("davadesk-auth") : null;
+
+const tokenExpiryMs = (token) => {
+  try {
+    const payload = JSON.parse(atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+    return payload.exp * 1000;
+  } catch {
+    return 0;
+  }
 };
 
-export const getToken = () => {
-  const cookieTok = getCookie("pharmalogy_token");
-  if (cookieTok && cookieTok !== "null" && cookieTok !== "undefined") return cookieTok;
-  const localTok = localStorage.getItem("pharmalogy_token");
-  if (localTok && localTok !== "null" && localTok !== "undefined") return localTok;
-  return null;
+export const getAccessToken = () => accessToken;
+
+const setAccessToken = (token) => {
+  accessToken = token || null;
+  clearTimeout(refreshTimer);
+  if (!accessToken) return;
+  // Renew a minute before expiry so requests rarely see a 401
+  const delay = Math.max(tokenExpiryMs(accessToken) - Date.now() - 60 * 1000, 5 * 1000);
+  refreshTimer = setTimeout(() => {
+    refreshSession().catch(() => {});
+  }, delay);
 };
 
-export const getRefreshToken = () => {
-  const cookieTok = getCookie("pharmalogy_refresh_token");
-  if (cookieTok && cookieTok !== "null" && cookieTok !== "undefined") return cookieTok;
-  const localTok = localStorage.getItem("pharmalogy_refresh_token");
-  if (localTok && localTok !== "null" && localTok !== "undefined") return localTok;
-  return null;
+// Single-flight refresh shared by every caller
+const refreshSession = () => {
+  if (!refreshPromise) {
+    refreshPromise = axios
+      .post(`${API}/auth/refresh`, null, { _skipAuthRetry: true })
+      .then((res) => {
+        setAccessToken(res.data.token);
+        return res.data.token;
+      })
+      .catch((err) => {
+        setAccessToken(null);
+        throw err;
+      })
+      .finally(() => {
+        refreshPromise = null;
+      });
+  }
+  return refreshPromise;
 };
 
-export const deleteCookie = (name) => {
-  document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;`;
-  localStorage.removeItem(name);
-};
+// Drop pre-redesign tokens that older builds kept in localStorage
+["pharmalogy_token", "pharmalogy_refresh_token"].forEach((k) => localStorage.removeItem(k));
 
 let navigateGlobal = null;
 
@@ -98,30 +133,36 @@ const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [pharmacy, setPharmacy] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [token, setToken] = useState(getToken());
   const [settings, setSettings] = useState({});
   const [settingsDefinitions, setSettingsDefinitions] = useState([]);
 
+  const clearSession = () => {
+    setAccessToken(null);
+    setUser(null);
+    setPharmacy(null);
+    setSettings({});
+    setSettingsDefinitions([]);
+  };
+
   useEffect(() => {
-    const handleTokenRefreshed = (e) => {
-      setToken(e.detail.token);
-    };
-
-    const handleLogoutEvent = () => {
-      logout(false);
-    };
-
-    window.addEventListener("auth-token-refreshed", handleTokenRefreshed);
+    const handleLogoutEvent = () => clearSession();
     window.addEventListener("auth-logout", handleLogoutEvent);
 
+    // Sign-out in another tab signs this tab out too
+    const onMessage = (e) => {
+      if (e.data === "logout") clearSession();
+      if (e.data === "login") restoreSession();
+    };
+    authChannel?.addEventListener("message", onMessage);
+
     return () => {
-      window.removeEventListener("auth-token-refreshed", handleTokenRefreshed);
       window.removeEventListener("auth-logout", handleLogoutEvent);
+      authChannel?.removeEventListener("message", onMessage);
     };
   }, []);
 
   useEffect(() => {
-    fetchUser();
+    restoreSession();
     const savedTheme = localStorage.getItem("theme");
     if (savedTheme === "light") {
       document.documentElement.classList.add("light");
@@ -177,33 +218,22 @@ const AuthProvider = ({ children }) => {
     }
   };
 
+  // Re-read the signed-in user (e.g. after a plan change)
   const fetchUser = async () => {
-    if (!getToken() && !getRefreshToken()) {
-      setUser(null);
-      setPharmacy(null);
-      setToken(null);
-      setLoading(false);
-      return;
-    }
+    const response = await axios.get(`${API}/auth/me`);
+    setUser(response.data.user);
+    setPharmacy(response.data.pharmacy);
+    return response.data.user;
+  };
 
+  const restoreSession = async () => {
     try {
-      const response = await axios.get(`${API}/auth/me`);
-      setUser(response.data.user);
-      setPharmacy(response.data.pharmacy);
-      setToken("present");
-      // Fetch settings after user is confirmed
+      if (!accessToken) await refreshSession();
+      await fetchUser();
       fetchSettings();
     } catch (error) {
-      const status = error.response?.status;
-
-      if (status === 401) {
-        deleteCookie("pharmalogy_token");
-        deleteCookie("pharmalogy_refresh_token");
-        localStorage.removeItem("pharmalogy_token");
-        localStorage.removeItem("pharmalogy_refresh_token");
-        setToken(null);
-        setUser(null);
-        setPharmacy(null);
+      if (error.response?.status === 401) {
+        clearSession();
       } else {
         console.error("Auth error:", error);
       }
@@ -212,53 +242,42 @@ const AuthProvider = ({ children }) => {
     }
   };
 
-  const login = async (email, password) => {
-    deleteCookie("pharmalogy_token");
-    deleteCookie("pharmalogy_refresh_token");
-    localStorage.removeItem("pharmalogy_token");
-    localStorage.removeItem("pharmalogy_refresh_token");
+  // Accepts a response from /auth/login or /auth/verify-otp
+  const completeLogin = (data) => {
+    setAccessToken(data.token);
+    setUser(data.user);
+    setPharmacy(data.pharmacy || null);
+    fetchSettings();
+    authChannel?.postMessage("login");
+    return data.user;
+  };
 
+  const login = async (email, password) => {
     const response = await axios.post(`${API}/auth/login`, { email, password });
-    if (response.data.token) {
-      localStorage.setItem("pharmalogy_token", response.data.token);
-    }
-    if (response.data.refreshToken) {
-      localStorage.setItem("pharmalogy_refresh_token", response.data.refreshToken);
-    }
-    const newToken = getToken() || "present";
-    const userData = response.data.user;
-    setToken(newToken);
-    setUser(userData);
-    await fetchUser();
-    return userData;
+    return completeLogin(response.data);
   };
 
   const logout = async (notifyBackend = true) => {
-    if (notifyBackend && (getToken() || getRefreshToken())) {
+    if (notifyBackend) {
       try {
-        await axios.post(`${API}/auth/logout`);
+        await axios.post(`${API}/auth/logout`, null, { _skipAuthRetry: true });
       } catch (error) {
         console.error("Failed to logout on backend:", error);
       }
     }
-    deleteCookie("pharmalogy_token");
-    deleteCookie("pharmalogy_refresh_token");
-    localStorage.removeItem("pharmalogy_token");
-    localStorage.removeItem("pharmalogy_refresh_token");
-    setToken(null);
-    setUser(null);
-    setPharmacy(null);
-    setSettings({});
-    setSettingsDefinitions([]);
+    clearSession();
+    authChannel?.postMessage("logout");
   };
 
   const value = {
     user,
     pharmacy,
-    token,
+    token: accessToken,
     loading,
     login,
+    completeLogin,
     logout,
+    fetchUser,
     setUser,
     setPharmacy,
     settings,
@@ -293,30 +312,18 @@ const ProtectedRoute = ({ children, adminOnly = false }) => {
 
 let isRedirecting = false;
 
+const isApiUrl = (url = "") => url.startsWith(API) || url.startsWith("/api");
+
 axios.interceptors.request.use(
   (config) => {
-    const token = getToken();
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
+    // Only ever attach the token to our own API
+    if (accessToken && isApiUrl(config.url)) {
+      config.headers.Authorization = `Bearer ${accessToken}`;
     }
     return config;
   },
   (error) => Promise.reject(error)
 );
-
-let isRefreshing = false;
-let failedQueue = [];
-
-const processQueue = (error, token = null) => {
-  failedQueue.forEach((prom) => {
-    if (error) {
-      prom.reject(error);
-    } else {
-      prom.resolve(token);
-    }
-  });
-  failedQueue = [];
-};
 
 axios.interceptors.response.use(
   (response) => {
@@ -335,93 +342,21 @@ axios.interceptors.response.use(
       return Promise.reject(error);
     }
 
-    // 🔐 Avoid infinite loop if refresh/logout request fails with 401
-    if (originalRequest.url?.includes("/auth/logout")) {
+    // 🔐 Never retry the auth endpoints themselves
+    if (originalRequest._skipAuthRetry || originalRequest.url?.includes("/auth/")) {
       return Promise.reject(error);
     }
 
-    // 🔐 Do not intercept or attempt token refresh on auth endpoints
-    if (
-      originalRequest.url?.includes("/auth/login") ||
-      originalRequest.url?.includes("/auth/register") ||
-      originalRequest.url?.includes("/auth/verify-otp") ||
-      originalRequest.url?.includes("/auth/resend-otp")
-    ) {
-      return Promise.reject(error);
-    }
-
-    if (originalRequest.url?.includes("/auth/refresh")) {
-      deleteCookie("pharmalogy_token");
-      deleteCookie("pharmalogy_refresh_token");
-      localStorage.removeItem("pharmalogy_token");
-      localStorage.removeItem("pharmalogy_refresh_token");
-      return Promise.reject(error);
-    }
-
-    // 🔐 Auth error
+    // 🔐 Expired access token: refresh once (shared) and replay
     if (status === 401 && !originalRequest._retry) {
-      const refreshToken = getRefreshToken();
-
-      // If no refresh token is present, we cannot refresh. Just clear tokens and reject with original error.
-      if (!refreshToken) {
-        deleteCookie("pharmalogy_token");
-        deleteCookie("pharmalogy_refresh_token");
-        localStorage.removeItem("pharmalogy_token");
-        localStorage.removeItem("pharmalogy_refresh_token");
-        return Promise.reject(error);
-      }
-
-      if (isRefreshing) {
-        return new Promise((resolve, reject) => {
-          failedQueue.push({ resolve, reject });
-        })
-          .then((token) => {
-            if (token && token !== "null" && token !== "undefined") {
-              originalRequest.headers.Authorization = `Bearer ${token}`;
-            }
-            return axios(originalRequest);
-          })
-          .catch((err) => Promise.reject(err));
-      }
-
       originalRequest._retry = true;
-      isRefreshing = true;
-
       try {
-        const refreshRes = await axios.post(`${API}/auth/refresh`, {
-          refreshToken,
-        });
-
-        if (refreshRes.data?.token) {
-          localStorage.setItem("pharmalogy_token", refreshRes.data.token);
-        }
-        if (refreshRes.data?.refreshToken) {
-          localStorage.setItem("pharmalogy_refresh_token", refreshRes.data.refreshToken);
-        }
-
-        const newToken = getToken();
-
-        window.dispatchEvent(
-          new CustomEvent("auth-token-refreshed", {
-            detail: { token: newToken },
-          })
-        );
-
-        if (newToken && newToken !== "null" && newToken !== "undefined") {
-          originalRequest.headers.Authorization = `Bearer ${newToken}`;
-        }
-        processQueue(null, newToken);
+        const newToken = await refreshSession();
+        originalRequest.headers.Authorization = `Bearer ${newToken}`;
         return axios(originalRequest);
       } catch (refreshErr) {
-        processQueue(refreshErr, null);
-        deleteCookie("pharmalogy_token");
-        deleteCookie("pharmalogy_refresh_token");
-        localStorage.removeItem("pharmalogy_token");
-        localStorage.removeItem("pharmalogy_refresh_token");
         window.dispatchEvent(new Event("auth-logout"));
-        return Promise.reject(refreshErr);
-      } finally {
-        isRefreshing = false;
+        return Promise.reject(error);
       }
     }
 
@@ -443,23 +378,12 @@ axios.interceptors.response.use(
         isRedirecting = false;
       }, 1000);
 
-      return;
+      return Promise.reject(error);
     }
 
     return Promise.reject(error);
   }
 );
-
-// axios.interceptors.response.use(
-//   (response) => response,
-//   (error) => {
-//     if (error.response?.status === 401) {
-//       localStorage.removeItem("pharmalogy_token");
-//       window.location.href = "/login";
-//     }
-//     return Promise.reject(error);
-//   }
-// );
 
 function App() {
   return (
@@ -483,6 +407,7 @@ function App() {
           {/* Public Routes */}
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
+          <Route path="/forgot-password" element={<ForgotPasswordPage />} />
           <Route path="/upgrade" element={<UpgradePage />} />
           <Route path="/payment-success" element={<PaymentSuccessPage />} />
 

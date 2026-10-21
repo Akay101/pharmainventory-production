@@ -26,7 +26,8 @@ export const getBaseUrl = () => {
   // Fallback for local development if not configured
   if (
     typeof window !== "undefined" &&
-    (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")
+    (window.location.hostname === "localhost" ||
+      window.location.hostname === "127.0.0.1")
   ) {
     return "http://localhost:8002/api";
   }
@@ -52,7 +53,8 @@ export const setActiveEnv = (env) => {
 
 // Token helpers
 export const getStoredToken = () => localStorage.getItem(STORAGE_KEYS.TOKEN);
-export const getStoredRefreshToken = () => localStorage.getItem(STORAGE_KEYS.REFRESH);
+export const getStoredRefreshToken = () =>
+  localStorage.getItem(STORAGE_KEYS.REFRESH);
 export const getStoredUser = () => {
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.USER);
@@ -130,11 +132,16 @@ api.interceptors.response.use(
     if (isSessionExpired() && getStoredToken()) {
       clearAuthSession();
       window.dispatchEvent(new CustomEvent("davadesk:session_expired"));
-      return Promise.reject(new Error("Your 24-hour session has expired. Please sign in again."));
+      return Promise.reject(
+        new Error("Your 24-hour session has expired. Please sign in again.")
+      );
     }
 
     // Don't intercept auth endpoints
-    if (originalRequest.url?.includes("/auth/login") || originalRequest.url?.includes("/auth/verify-otp")) {
+    if (
+      originalRequest.url?.includes("/auth/login") ||
+      originalRequest.url?.includes("/auth/verify-otp")
+    ) {
       return Promise.reject(error);
     }
 
@@ -162,7 +169,9 @@ api.interceptors.response.use(
       isRefreshing = true;
 
       try {
-        const res = await axios.post(`${getBaseUrl()}/auth/refresh`, { refreshToken });
+        const res = await axios.post(`${getBaseUrl()}/auth/refresh`, {
+          refreshToken,
+        });
         const { accessToken } = res.data;
         if (accessToken) {
           localStorage.setItem(STORAGE_KEYS.TOKEN, accessToken);
@@ -220,16 +229,36 @@ export const AdminAPI = {
   // Leads CRM
   getLeads: (params) => api.get("/leads", { params }),
   markConnected: (leadId) => api.patch(`/leads/${leadId}/connect`),
-  updateLeadStatus: (leadId, data) => api.patch(`/leads/${leadId}/status`, data),
-  addLeadNote: (leadId, noteData) => api.post(`/leads/${leadId}/note`, noteData),
+  updateLeadStatus: (leadId, data) =>
+    api.patch(`/leads/${leadId}/status`, data),
+  addLeadNote: (leadId, noteData) =>
+    api.post(`/leads/${leadId}/note`, noteData),
 
   // Promo Codes
   getPromos: (params) => api.get("/promos", { params }),
   generatePromo: (data) => api.post("/promos/generate", data),
   togglePromo: (code) => api.patch(`/promos/${code}/toggle`),
   deletePromo: (code) => api.delete(`/promos/${code}`),
+  getPromoRedemptions: (code) => api.get(`/promos/${code}/redemptions`),
+
+  // Pricing (plans, global offer, free trial)
+  getPricing: () => api.get("/pricing"),
+  updatePlan: (code, data) => api.put(`/pricing/plans/${code}`, data),
+  updateOffer: (data) => api.put("/pricing/offer", data),
+  updateTrial: (data) => api.put("/pricing/trial", data),
+
+  // Subscriptions
+  getSubscriptions: (params) => api.get("/subscriptions", { params }),
+  getSubscription: (pharmacyId) => api.get(`/subscriptions/${pharmacyId}`),
+  extendSubscription: (pharmacyId, data) => api.post(`/subscriptions/${pharmacyId}/extend`, data),
+  endSubscription: (pharmacyId, data) => api.post(`/subscriptions/${pharmacyId}/end`, data),
+  grantSubscription: (pharmacyId, data) => api.post(`/subscriptions/${pharmacyId}/grant`, data),
 
   // Analytics & Traffic
   getFunnel: () => api.get("/analytics/funnel"),
   getActivityFeed: () => api.get("/analytics/activity-feed"),
 };
+
+// Error text from either API style ({ error } or { detail })
+export const apiError = (err, fallback = "Something went wrong") =>
+  err?.response?.data?.error || err?.response?.data?.detail || fallback;

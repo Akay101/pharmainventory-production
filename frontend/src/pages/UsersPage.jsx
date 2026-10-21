@@ -96,7 +96,7 @@ export default function UsersPage() {
       setPendingId(response.data.pending_id);
       setDialogOpen(false);
       setVerifyDialog(true);
-      toast.success("OTP sent to primary admin for verification");
+      toast.success(response.data.message || `We've sent a code to ${formData.email}`);
     } catch (error) {
       toast.error(error.response?.data?.detail || "Failed to create user");
     } finally {
@@ -112,11 +112,7 @@ export default function UsersPage() {
 
     setSubmitting(true);
     try {
-      const formDataObj = new FormData();
-      formDataObj.append("pending_id", pendingId);
-      formDataObj.append("otp", otp);
-
-      await axios.post(`${API}/users/verify`, formDataObj);
+      await axios.post(`${API}/users/verify`, { pending_id: pendingId, otp });
       toast.success("User created successfully!");
       setVerifyDialog(false);
       setOtp("");
@@ -290,7 +286,7 @@ export default function UsersPage() {
 
             <div className="space-y-6 pt-4">
               <p className="text-muted-foreground text-center">
-                An OTP has been sent to the primary admin's email. Enter it below to complete user creation.
+                We've emailed a 6-digit code to {formData.email || "the new user"}. Ask them for it and enter it below to finish adding them.
               </p>
 
               <div className="flex justify-center">

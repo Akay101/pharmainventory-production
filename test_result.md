@@ -49,6 +49,8 @@
 ##
 ## test_plan:
 ##   current_focus:
+##     - "Auth hardening: staged signup, hashed OTPs, rotating refresh tokens, lockouts, forgot password"
+##     - "Pharmacy-level subscriptions, admin-managed pricing, promo/discount codes, free trial, Cashfree checkout"
 ##     - "Task name 1"
 ##     - "Task name 2"
 ##   stuck_tasks:
@@ -159,6 +161,39 @@
 ##       - working: true
 ##         agent: "main"
 ##         comment: "Replaced case-insensitive regex scans of global_medicines (~750ms, full index scan of 409K keys) with precomputed edge n-gram keys and {s_name_grams, rank_score} indexes (2-17ms). Tenant inventory/products searches are token-based and bounded by new pharmacy_id compound indexes, ensured at startup. Removed the 15-minute cache of tenant results so stock in search results is always live; only the static global layer is cached. Verified end to end on a copy of prod global_medicines: /api/medicines/search and /api/inventory/search, multi-word in any order, typos, batch-number lookup, stable pagination, text-index fallback when the catalogue is not backfilled."
+##   - task: "Auth hardening: staged signup, hashed OTPs, rotating refresh tokens, lockouts, forgot password"
+##     implemented: true
+##     working: true
+##     file: "backend-node/routes/auth.js, backend-node/services/auth/*, backend-node/middleware/auth.js, backend-node/routes/users.js, backend-node/routes/settings.js"
+##     stuck_count: 0
+##     priority: "high"
+##     needs_retesting: true
+##     status_history:
+##       - working: true
+##         agent: "main"
+##         comment: "Signup is staged in pending_registrations until the emailed OTP is verified. OTPs are HMAC-hashed, 5 attempts, 60s resend cooldown, 5/hour, never returned in responses. Access token 15m in memory; refresh token httpOnly cookie on /api/auth, rotated each use with reuse detection. Per-IP rate limits + per-account lockout (5 failures/15m). zod validation on every auth body (blocks NoSQL operator injection and markup). Forgot/reset password via OTP revokes all sessions. Staff invites fixed (were unverifiable) and IDOR on DELETE /users fixed. 48/48 local abuse tests pass."
+##   - task: "Pharmacy-level subscriptions, admin-managed pricing, promo/discount codes, free trial, Cashfree checkout"
+##     implemented: true
+##     working: true
+##     file: "backend-node/services/billing/*, backend-node/routes/billing.js, backend-node/routes/webhook.js, backend-node/services/cron.js, backend-node/scripts/migrations/2026_10_billing.js"
+##     stuck_count: 0
+##     priority: "high"
+##     needs_retesting: true
+##     status_history:
+##       - working: true
+##         agent: "main"
+##         comment: "Subscriptions live on pharmacies.subscription (staff inherit). Prices from the plans collection + global offer (admin panel); server-side quotes only. ACCESS and DISCOUNT promo codes with atomic reservation. 7-day trial once per pharmacy via internal trial code + email. Checkout -> payment_orders snapshot -> Cashfree order; webhook (raw body, verified signature), return-page confirm and 10-min reconcile all call one idempotent finalizeOrder. Upgrade credits unused paid days. Cron jobs use Mongo leases. Requires the migration script before deploy. Verified: 41 billing tests incl. real sandbox orders, 11 paid-path tests, 6-step real sandbox UPI payment (PENDING->PAID->activated)."
+##   - task: "Admin: pricing, offers, trial settings, promo types, subscription extend/end/grant"
+##     implemented: true
+##     working: true
+##     file: "admin-backend/routes/pricing.js, admin-backend/routes/subscriptions.js, admin-backend/routes/promos.js"
+##     stuck_count: 0
+##     priority: "high"
+##     needs_retesting: true
+##     status_history:
+##       - working: true
+##         agent: "main"
+##         comment: "Superadmin-only pricing writes; all subscription actions audited in admin_audit_log. 36/36 admin e2e tests on a migrated copy of dev data."
 ## frontend:
 ##   - task: "Billing page batch selection dropdown"
 ##     implemented: true
@@ -237,6 +272,28 @@
 ##       - working: true
 ##         agent: "main"
 ##         comment: "Added a sub-merge form toggle inside the details popup letting users select other catalog products, fetches their respective batch IDs, and merges all items in a single transaction under the target product."
+##   - task: "Auth pages, in-memory session, redesigned Upgrade + payment result pages"
+##     implemented: true
+##     working: true
+##     file: "frontend/src/App.js, frontend/src/pages/{LoginPage,RegisterPage,ForgotPasswordPage,UpgradePage,PaymentSuccessPage}.jsx"
+##     stuck_count: 0
+##     priority: "high"
+##     needs_retesting: true
+##     status_history:
+##       - working: true
+##         agent: "main"
+##         comment: "Verified in browser against local backend: register with validation, OTP step with cooldown, auto sign-in, upgrade page with admin-set offer/trial/prices, live discount re-pricing, order summary, Cashfree sandbox redirect, payment result polling -> dashboard, session restore from cookie, logout, forgot password."
+##   - task: "Admin Pricing & Subscriptions pages, promo generator types"
+##     implemented: true
+##     working: true
+##     file: "admin-frontend/src/pages/{PricingPage,SubscriptionsPage,PromoCodesPage}.jsx"
+##     stuck_count: 0
+##     priority: "medium"
+##     needs_retesting: true
+##     status_history:
+##       - working: true
+##         agent: "main"
+##         comment: "Rendered against migrated dev copy; builds pass."
 ## metadata:
 ##   created_by: "main_agent"
 ##   version: "1.4"
@@ -264,3 +321,5 @@
 ##     message: "Successfully implemented discount percentage and scheme quantity math calculations, revamped the purchases table layout into a clean 9-column format, fixed the missing JSX conditional closing tags syntax error, successfully verified build compile, and passed integration calculations unit test."
 ##   - agent: "main"
 ##     message: "Medicine search re-architected for speed: new services/search (normalize, medicineSearch, indexes). Global catalogue needs a one-time backfill per database: node backend-node/scripts/search/backfill_global_medicines.js. Response shapes of /medicines/search and /inventory/search are unchanged; please retest Purchases item search and Billing product search, including batch-number search and stock shown immediately after a sale."
+##   - agent: "main"
+##     message: "Auth + billing redesign. Run backend-node/scripts/migrations/2026_10_billing.js (--dry-run first) on each environment BEFORE deploying the new backend. Everyone is signed out once (new token format). Retest: signup/OTP/login/forgot password, free trial, staff invite + staff access, upgrade page with offers and codes, Cashfree checkout + return page, admin Pricing/Subscriptions/Promo pages."

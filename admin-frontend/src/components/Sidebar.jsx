@@ -11,6 +11,8 @@ import {
   LogOut,
   Clock,
   Shield,
+  CalendarClock,
+  IndianRupee,
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 
@@ -59,6 +61,18 @@ export default function Sidebar({
       icon: Ticket,
       badge: promoCount > 0 ? `${promoCount} active` : null,
       badgeColor: "bg-emerald-100 text-emerald-700",
+      section: "MARKETING & OFFERS",
+    },
+    {
+      id: "subscriptions",
+      label: "Subscriptions",
+      icon: CalendarClock,
+      section: "SALES & CRM",
+    },
+    {
+      id: "pricing",
+      label: "Pricing & Offers",
+      icon: IndianRupee,
       section: "MARKETING & OFFERS",
     },
     {

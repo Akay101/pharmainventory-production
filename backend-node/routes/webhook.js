@@ -1,32 +1,22 @@
+// Cashfree payment webhooks. Mounted with express.raw() in server.js so the
+// signature is verified over the exact bytes Cashfree sent.
 const express = require("express");
 const router = express.Router();
 const mongoose = require("mongoose");
 const { v4: uuidv4 } = require("uuid");
 const verifySignature = require("../utils/verifyCashfreeSignature");
-const cashfree = require("../services/cashfree");
+const orders = require("../services/billing/orders");
 
-const PLAN_BY_AMOUNT = {
-  [parseInt(process.env.PLAN_BASIC_PRICE) || 20]: "BASIC",
-  [parseInt(process.env.PLAN_ADV_PRICE) || 40]: "ADVANCED",
-  [parseInt(process.env.PLAN_AGENTIC_PRICE) || 80]: "AGENTIC",
-};
-
-const PLAN_DURATION = {
-  BASIC: 365,
-  ADVANCED: 365,
-  AGENTIC: 365,
-};
+const HANDLED = new Set(["PAYMENT_SUCCESS_WEBHOOK", "PAYMENT_FAILED_WEBHOOK", "PAYMENT_USER_DROPPED_WEBHOOK"]);
 
 router.post("/cashfree", async (req, res, next) => {
   try {
-    const db = mongoose.connection.db;
-
     if (!Buffer.isBuffer(req.body)) {
       return res.status(400).json({ detail: "Raw body required" });
     }
     const rawBody = req.body.toString("utf8");
 
-    // 🔐 1. VERIFY SIGNATURE before trusting anything in the payload
+    // 1. Signature first: nothing in the payload is trusted before this
     if (!verifySignature(rawBody, req.headers)) {
       return res.status(401).json({ detail: "Invalid signature" });
     }
@@ -38,119 +28,30 @@ router.post("/cashfree", async (req, res, next) => {
       return res.status(400).json({ detail: "Invalid JSON" });
     }
 
-    const order_id = body?.data?.order?.order_id;
-    if (!order_id || body.type !== "PAYMENT_SUCCESS_WEBHOOK") {
+    const db = mongoose.connection.db;
+    const orderId = body?.data?.order?.order_id;
+
+    await db.collection("payment_logs").insertOne({
+      id: uuidv4(),
+      order_id: orderId || null,
+      type: body?.type || null,
+      raw_payload: body,
+      received_at: new Date(),
+    });
+
+    if (!orderId || !HANDLED.has(body.type)) {
       return res.json({ status: "ignored" });
     }
 
-    // 🧾 2. LOG EVERYTHING
-    await db.collection("payment_logs").insertOne({
-      id: uuidv4(),
-      order_id,
-      type: body.type,
-      raw_payload: body,
-      processed: false,
-      created_at: new Date().toISOString(),
-    });
-
-    // 🔁 3. IDEMPOTENCY CHECK
-    const existing = await db.collection("subscriptions").findOne({ order_id });
-    if (existing) {
-      return res.json({ status: "already_processed" });
-    }
-
-    // Never trust the webhook body for amounts/customer: re-fetch from Cashfree
-    const { data } = await cashfree.PGFetchOrder(order_id);
-    if (data?.order_status !== "PAID") {
-      return res.json({ status: "not_paid" });
-    }
-    const { order_amount, customer_details } = data;
-    const payment_id = body?.data?.payment?.cf_payment_id || null;
-
-    const user = await db.collection("users").findOne({
-      id: customer_details.customer_id,
-    });
-
-    if (!user) {
-      return res.status(404).json({ detail: "User not found" });
-    }
-
-    // 🧠 4. PLAN RESOLUTION (STRICT)
-    let plan = data.order_meta?.plan;
-
-    if (!plan) {
-      plan = PLAN_BY_AMOUNT[order_amount];
-    }
-
-    if (!plan) {
-      return res.status(400).json({ detail: "Invalid plan mapping" });
-    }
-
-    // ⏳ 5. DATE CALCULATION
-    const startDate = new Date();
-    const endDate = new Date();
-    endDate.setDate(endDate.getDate() + PLAN_DURATION[plan]);
-
-    const subscriptionId = uuidv4();
-
-    // 🔄 6. DEACTIVATE OLD SUBSCRIPTIONS
-    await db.collection("subscriptions").updateMany(
-      {
-        user_id: user.id,
-        status: "ACTIVE",
-      },
-      {
-        $set: { status: "EXPIRED", updated_at: new Date().toISOString() },
-      }
+    // 2. The webhook only tells us *which* order changed; finalizeOrder
+    //    re-reads the truth from Cashfree and applies it idempotently.
+    const result = await orders.finalizeOrder(db, orderId, { source: `WEBHOOK:${body.type}` });
+    await db.collection("payment_logs").updateOne(
+      { order_id: orderId, type: body.type, processed_status: { $exists: false } },
+      { $set: { processed_status: result.status } }
     );
-
-    // 🧾 7. CREATE NEW SUBSCRIPTION
-    const subscription = {
-      id: subscriptionId,
-      user_id: user.id,
-      pharmacy_id: user.pharmacy_id,
-
-      plan,
-      status: "ACTIVE",
-
-      start_date: startDate.toISOString(),
-      end_date: endDate.toISOString(),
-
-      payment_id,
-      order_id,
-
-      metadata: { source: "CASHFREE" },
-
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
-
-    try {
-      await db.collection("subscriptions").insertOne(subscription);
-    } catch (err) {
-      if (err.code === 11000) {
-        return res.json({ status: "duplicate" });
-      }
-      throw err;
-    }
-    // ⚡ 8. UPDATE USER (FAST ACCESS)
-    await db.collection("users").updateOne(
-      { id: user.id },
-      {
-        $set: {
-          subscription_id: subscriptionId,
-          subscription_plan: plan,
-          subscription_expiry: endDate.toISOString(),
-        },
-      }
-    );
-
-    // ✅ 9. MARK LOG PROCESSED
-    await db
-      .collection("payment_logs")
-      .updateOne({ order_id }, { $set: { processed: true } });
-
-    res.json({ status: "success" });
+    // Unknown orders (e.g. pre-redesign) are acknowledged so Cashfree stops retrying
+    res.json({ status: result.status });
   } catch (err) {
     next(err);
   }

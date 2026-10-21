@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const { v4: uuidv4 } = require("uuid");
 const { resolveDbEnv } = require("../db/connections");
+const { describe } = require("../services/billing/subscriptions");
 
 router.use(resolveDbEnv);
 
@@ -26,6 +27,8 @@ router.get("/", async (req, res, next) => {
         name: p.name || p.pharmacy_name || "Unknown Pharmacy",
         location: p.location || "N/A",
         contact: p.contact || null,
+        // undefined = pharmacy not migrated to pharmacy-level subscriptions yet
+        subscription: p.subscription === undefined ? undefined : describe(p.subscription),
       });
     });
 
@@ -45,11 +48,13 @@ router.get("/", async (req, res, next) => {
 
     // 1. Unsubscribed registered users
     users.forEach((u) => {
-      const isSubscribed =
-        (u.subscription_plan &&
-          u.subscription_expiry &&
-          new Date(u.subscription_expiry) > now) ||
-        activeUserIds.has(u.id);
+      const pharmSub = pharmacyMap.get(u.pharmacy_id)?.subscription;
+      const isTrial = pharmSub?.status === "TRIAL";
+      // Paying customers are not leads; trial users are (hottest ones)
+      const isSubscribed = pharmSub
+        ? pharmSub.status === "ACTIVE"
+        : (u.subscription_plan && u.subscription_expiry && new Date(u.subscription_expiry) > now) ||
+          activeUserIds.has(u.id);
 
       if (!isSubscribed) {
         const crmData = crmMap.get(u.id) || {
@@ -81,7 +86,8 @@ router.get("/", async (req, res, next) => {
           is_primary_admin: !!u.is_primary_admin,
           verified: !!u.verified,
           created_at: u.created_at,
-          lead_category: isExpired ? "SUBSCRIPTION_EXPIRED" : "NEW_REGISTRATION_UNPAID",
+          lead_category: isTrial ? "ON_TRIAL" : isExpired ? "SUBSCRIPTION_EXPIRED" : "NEW_REGISTRATION_UNPAID",
+          trial_ends_at: isTrial ? pharmSub.ends_at : null,
           previous_plan: u.subscription_plan || null,
           subscription_expiry: u.subscription_expiry || null,
           is_connected: !!crmData.is_connected,

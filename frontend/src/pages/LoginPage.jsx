@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { useNavigate, Link } from "react-router-dom";
-import { useAuth } from "../App";
+import { useNavigate, useLocation, Link, Navigate } from "react-router-dom";
+import axios from "axios";
+import { API, useAuth } from "../App";
 import { Button } from "../components/ui/button";
 import WaveInput from "../components/ui/WaveInput";
 import { toast } from "sonner";
@@ -11,7 +12,11 @@ import AuthLeftPanel from "../components/ui/AuthLeftPanel";
 
 export default function LoginPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { login, user } = useAuth();
+  // Only same-app paths are allowed as a post-login destination
+  const fromPath = location.state?.from?.pathname;
+  const redirectTo = fromPath && fromPath.startsWith("/") && !fromPath.startsWith("//") ? fromPath : "/dashboard";
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [formData, setFormData] = useState({
@@ -25,8 +30,7 @@ export default function LoginPage() {
 
   // Redirect if already logged in
   if (user) {
-    navigate("/dashboard");
-    return null;
+    return <Navigate to={redirectTo} replace />;
   }
 
   const validateForm = () => {
@@ -45,9 +49,6 @@ export default function LoginPage() {
     if (!formData.password) {
       newErrors.password = "Password is required";
       valid = false;
-    } else if (formData.password.length < 6) {
-      newErrors.password = "Password must be at least 6 characters";
-      valid = false;
     }
 
     setErrors(newErrors);
@@ -65,18 +66,21 @@ export default function LoginPage() {
     try {
       await login(formData.email.trim(), formData.password);
       toast.success("Welcome back! Login successful.");
-      navigate("/dashboard");
+      navigate(redirectTo, { replace: true });
     } catch (error) {
-      console.error("Login error:", error);
-      const errMsg =
-        error.response?.data?.detail ||
-        error.response?.data?.message ||
-        "Invalid email or password";
+      const data = error.response?.data || {};
+      if (data.code === "EMAIL_NOT_VERIFIED") {
+        // Send a fresh code and continue on the verification step
+        await axios.post(`${API}/auth/resend-otp`, { email: formData.email.trim() }).catch(() => {});
+        toast.info("Please verify your email to continue. We've sent you a code.");
+        navigate("/register", { state: { verifyEmail: formData.email.trim() } });
+        return;
+      }
+      const errMsg = error.response
+        ? data.detail || "Invalid email or password"
+        : "Can't reach the server. Check your connection and try again.";
       toast.error(errMsg);
-      setErrors((prev) => ({
-        ...prev,
-        password: errMsg || "Authentication failed. Check credentials.",
-      }));
+      setErrors((prev) => ({ ...prev, password: errMsg }));
     } finally {
       setLoading(false);
     }
@@ -181,6 +185,17 @@ export default function LoginPage() {
                 </button>
               }
             />
+
+            <div className="flex justify-end -mt-3">
+              <Link
+                to="/forgot-password"
+                state={{ email: formData.email.trim() }}
+                className="text-xs font-bold text-orange-500 hover:text-orange-600 underline-offset-4 hover:underline"
+                data-testid="forgot-password-link"
+              >
+                Forgot password?
+              </Link>
+            </div>
 
             <Button
               type="submit"

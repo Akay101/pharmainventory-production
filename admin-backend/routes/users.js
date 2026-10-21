@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const { resolveDbEnv } = require("../db/connections");
+const { describe } = require("../services/billing/subscriptions");
 
 router.use(resolveDbEnv);
 
@@ -22,6 +23,7 @@ router.get("/", async (req, res, next) => {
       pharmacyMap.set(p.id, {
         name: p.name || p.pharmacy_name || "Unknown Pharmacy",
         location: p.location || "N/A",
+        subscription: p.subscription === undefined ? undefined : describe(p.subscription),
       });
     });
 
@@ -33,11 +35,16 @@ router.get("/", async (req, res, next) => {
     });
 
     let mapped = users.map((u) => {
-      const isSubscribed =
-        (u.subscription_plan &&
-          u.subscription_expiry &&
-          new Date(u.subscription_expiry) > now) ||
-        activeUserSubs.has(u.id);
+      const sub = pharmacyMap.get(u.pharmacy_id)?.subscription;
+      const isSubscribed = sub
+        ? sub.status === "ACTIVE" || sub.status === "TRIAL"
+        : (u.subscription_plan && u.subscription_expiry && new Date(u.subscription_expiry) > now) ||
+          activeUserSubs.has(u.id);
+      const status = sub
+        ? { ACTIVE: "SUBSCRIBED", TRIAL: "TRIAL", EXPIRED: "EXPIRED", NONE: "LEAD" }[sub.status]
+        : isSubscribed
+          ? "SUBSCRIBED"
+          : "LEAD";
 
       const pharmInfo = pharmacyMap.get(u.pharmacy_id) || {
         name: "Unassigned",
@@ -55,10 +62,11 @@ router.get("/", async (req, res, next) => {
         pharmacy_id: u.pharmacy_id,
         pharmacy_name: pharmInfo.name,
         pharmacy_location: pharmInfo.location,
-        subscription_plan: u.subscription_plan || "NONE",
-        subscription_expiry: u.subscription_expiry || null,
+        subscription_plan: sub ? sub.plan || "NONE" : u.subscription_plan || "NONE",
+        subscription_expiry: sub ? sub.ends_at : u.subscription_expiry || null,
+        subscription: sub || null,
         is_subscribed: isSubscribed,
-        status: isSubscribed ? "SUBSCRIBED" : "LEAD",
+        status,
         created_at: u.created_at,
       };
     });
@@ -77,7 +85,11 @@ router.get("/", async (req, res, next) => {
 
     // Filter by subscription status
     if (filter === "SUBSCRIBED") {
-      mapped = mapped.filter((u) => u.is_subscribed);
+      mapped = mapped.filter((u) => u.status === "SUBSCRIBED");
+    } else if (filter === "TRIAL") {
+      mapped = mapped.filter((u) => u.status === "TRIAL");
+    } else if (filter === "EXPIRED") {
+      mapped = mapped.filter((u) => u.status === "EXPIRED");
     } else if (filter === "LEAD") {
       mapped = mapped.filter((u) => !u.is_subscribed);
     }

@@ -26,7 +26,7 @@ export default function PromoCodesPage({
   onDeletePromo,
 }) {
   const [copiedCode, setCopiedCode] = useState(null);
-  const [filterPlan, setFilterPlan] = useState("ALL");
+  const [filterKind, setFilterKind] = useState("ALL");
 
   const filtered = promos.filter((p) => {
     if (searchQuery) {
@@ -36,7 +36,8 @@ export default function PromoCodesPage({
         p.used_by_pharmacy_name?.toLowerCase().includes(term);
       if (!match) return false;
     }
-    if (filterPlan !== "ALL" && p.plan !== filterPlan) return false;
+    if (filterKind === "TRIAL" && p.source !== "TRIAL") return false;
+    if ((filterKind === "ACCESS" || filterKind === "DISCOUNT") && (p.type !== filterKind || p.source === "TRIAL")) return false;
     return true;
   });
 
@@ -47,27 +48,31 @@ export default function PromoCodesPage({
     setTimeout(() => setCopiedCode(null), 2000);
   };
 
+  const uses = (promo) => `${promo.used_count}/${promo.usage_limit || "∞"}`;
+
   const getStatusBadge = (promo) => {
-    if (!promo.is_active) {
-      return (
-        <span className="status-pill status-pill-inactive">
-          Inactive
-        </span>
-      );
-    }
-    if (promo.used_count >= promo.usage_limit) {
-      return (
-        <span className="status-pill status-pill-inactive">
-          Exhausted ({promo.used_count}/{promo.usage_limit})
-        </span>
-      );
-    }
+    const label = {
+      INACTIVE: "Inactive",
+      EXHAUSTED: "Used up",
+      EXPIRED: "Expired",
+      SCHEDULED: "Scheduled",
+      ACTIVE: "Active",
+    }[promo.status] || promo.status;
     return (
-      <span className="status-pill status-pill-active">
-        <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-        Active ({promo.used_count}/{promo.usage_limit})
+      <span className={`status-pill ${promo.status === "ACTIVE" ? "status-pill-active" : "status-pill-inactive"}`}>
+        {promo.status === "ACTIVE" && <CheckCircle2 className="w-3 h-3 text-emerald-600" />}
+        {label} ({uses(promo)})
       </span>
     );
+  };
+
+  const benefit = (promo) => {
+    if (promo.type === "DISCOUNT" && promo.discount) {
+      const off = promo.discount.type === "PERCENT" ? `${promo.discount.value}% off` : `₹${promo.discount.value} off`;
+      const cap = promo.discount.max_discount_rupees ? ` (max ₹${promo.discount.max_discount_rupees})` : "";
+      return { title: off + cap, sub: promo.plans?.length ? promo.plans.join(", ") : "Any plan" };
+    }
+    return { title: `${promo.plan || "—"} access`, sub: `${promo.duration_days || "?"} days` };
   };
 
   return (
@@ -80,11 +85,11 @@ export default function PromoCodesPage({
               <Ticket className="w-4 h-4" />
             </div>
             <h2 className="text-xl font-black text-slate-900 tracking-tight">
-              Promo Codes & Complimentary Access
+              Promo, Discount & Trial Codes
             </h2>
           </div>
           <p className="text-xs text-slate-500 mt-1">
-            Generate promotional and trial codes for pharmacies to activate Basic, Advanced, or Agentic subscriptions.
+            Access codes activate a plan for a set number of days. Discount codes reduce the price at checkout. Free-trial codes are created automatically.
           </p>
         </div>
 
@@ -94,7 +99,7 @@ export default function PromoCodesPage({
           className="flex items-center gap-2 px-4 py-2.5 text-xs sm:text-sm font-extrabold text-white bg-brand-500 hover:bg-brand-600 rounded-xl shadow-md shadow-orange-500/20 active:scale-[0.98] transition-all"
         >
           <Plus className="w-4 h-4" />
-          <span>+ Generate Promo Code</span>
+          <span>Create code</span>
         </button>
       </div>
 
@@ -123,17 +128,22 @@ export default function PromoCodesPage({
         {/* Toolbar */}
         <div className="p-4 bg-slate-50/70 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-1.5 overflow-x-auto">
-            {["ALL", "AGENTIC", "ADVANCED", "BASIC"].map((plan) => (
+            {[
+              ["ALL", "All codes"],
+              ["ACCESS", "Access"],
+              ["DISCOUNT", "Discount"],
+              ["TRIAL", "Free trials"],
+            ].map(([kind, label]) => (
               <button
-                key={plan}
-                onClick={() => setFilterPlan(plan)}
+                key={kind}
+                onClick={() => setFilterKind(kind)}
                 className={`px-3 py-1.5 text-xs font-bold rounded-xl transition-all ${
-                  filterPlan === plan
+                  filterKind === kind
                     ? "bg-slate-900 text-white"
                     : "bg-white text-slate-600 hover:bg-slate-100 border border-slate-200"
                 }`}
               >
-                {plan === "ALL" ? "All Plans" : plan}
+                {label}
               </button>
             ))}
           </div>
@@ -156,8 +166,8 @@ export default function PromoCodesPage({
             <thead className="bg-slate-50 text-slate-500 text-[10px] uppercase font-bold tracking-wider border-b border-slate-200">
               <tr>
                 <th className="py-3 px-4 min-w-[150px] whitespace-nowrap">Promo Code</th>
-                <th className="py-3 px-4 min-w-[120px] whitespace-nowrap">Target Plan</th>
-                <th className="py-3 px-4 min-w-[110px] whitespace-nowrap">Duration</th>
+                <th className="py-3 px-4 min-w-[150px] whitespace-nowrap">Benefit</th>
+                <th className="py-3 px-4 min-w-[130px] whitespace-nowrap">Validity</th>
                 <th className="py-3 px-4 min-w-[150px] whitespace-nowrap">Status & Uses</th>
                 <th className="py-3 px-4 min-w-[200px]">Redemption Audit</th>
                 <th className="py-3 px-4 min-w-[120px] whitespace-nowrap">Created Date</th>
@@ -195,11 +205,21 @@ export default function PromoCodesPage({
                     </td>
 
                     <td className="py-3.5 px-4">
-                      <span className="font-bold text-slate-800">{promo.plan}</span>
+                      <div className="font-bold text-slate-800 flex items-center gap-1.5">
+                        {benefit(promo).title}
+                        {promo.source === "TRIAL" && (
+                          <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">TRIAL</span>
+                        )}
+                      </div>
+                      <div className="text-[10px] text-slate-400">{benefit(promo).sub}</div>
                     </td>
 
-                    <td className="py-3.5 px-4 font-semibold text-slate-700">
-                      {promo.duration_days} Days
+                    <td className="py-3.5 px-4 text-[11px] text-slate-600">
+                      {promo.valid_until
+                        ? `Until ${new Date(promo.valid_until).toLocaleDateString()}`
+                        : promo.valid_from
+                          ? `From ${new Date(promo.valid_from).toLocaleDateString()}`
+                          : "No expiry"}
                     </td>
 
                     <td className="py-3.5 px-4">{getStatusBadge(promo)}</td>

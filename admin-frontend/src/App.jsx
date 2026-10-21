@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { AdminAPI, getActiveEnv, setActiveEnv } from "./api";
+import { AdminAPI, getActiveEnv, setActiveEnv, apiError } from "./api";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import { Toaster, toast } from "sonner";
 import { ShieldCheck, RefreshCw } from "lucide-react";
@@ -21,6 +21,8 @@ import PromoCodesPage from "./pages/PromoCodesPage";
 import UsersPage from "./pages/UsersPage";
 import AnalyticsFunnelPage from "./pages/AnalyticsFunnelPage";
 import TeamManagementPage from "./pages/TeamManagementPage";
+import PricingPage from "./pages/PricingPage";
+import SubscriptionsPage from "./pages/SubscriptionsPage";
 
 function MainDashboard() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -204,7 +206,7 @@ function MainDashboard() {
       toast.success(res.data.message);
       loadAllData();
     } catch (err) {
-      toast.error("Failed to toggle promo code");
+      toast.error(apiError(err, "Failed to toggle promo code"));
     }
   };
 
@@ -215,7 +217,7 @@ function MainDashboard() {
       toast.success(`Promo code ${code} deleted`);
       loadAllData();
     } catch (err) {
-      toast.error("Failed to delete promo code");
+      toast.error(apiError(err, "Failed to delete promo code"));
     }
   };
 
@@ -338,6 +340,10 @@ function MainDashboard() {
           )}
 
           {activeTab === "team" && <TeamManagementPage />}
+
+          {activeTab === "subscriptions" && <SubscriptionsPage activeEnv={activeEnv} />}
+
+          {activeTab === "pricing" && <PricingPage activeEnv={activeEnv} />}
         </main>
       </div>
 

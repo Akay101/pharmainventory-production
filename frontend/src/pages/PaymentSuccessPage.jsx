@@ -1,118 +1,144 @@
-import { useEffect, useState } from "react";
-import { useLocation } from "react-router-dom";
-import { CheckCircle2, ArrowRight, XCircle, Loader2 } from "lucide-react";
-import { Card, CardContent } from "../components/ui/card";
+import { useEffect, useRef, useState } from "react";
+import { Navigate, useLocation, useNavigate } from "react-router-dom";
+import { CheckCircle2, ArrowRight, XCircle, Loader2, Clock } from "lucide-react";
 import { Button } from "../components/ui/button";
 import axios from "axios";
-import { API, getCookie } from "../App";
+import { API, useAuth } from "../App";
 import Loader from "../components/Loader";
+
+// Cashfree redirects here after checkout. The webhook is the source of truth;
+// this page asks the API to reconcile the order and polls briefly while the
+// payment settles.
+const POLL_DELAYS_MS = [0, 2000, 3000, 5000, 8000, 10000, 15000, 15000];
+
+const ORDER_ID_RE = /^[A-Za-z0-9_-]{3,64}$/;
 
 export default function PaymentSuccessPage() {
   const location = useLocation();
-  const [countdown, setCountdown] = useState(3);
-  const [status, setStatus] = useState("verifying"); // verifying | success | error
+  const navigate = useNavigate();
+  const { user, loading: authLoading, fetchUser } = useAuth();
+  const [state, setState] = useState({ status: "verifying" });
+  const [countdown, setCountdown] = useState(5);
+  const cancelled = useRef(false);
+
+  const orderId = new URLSearchParams(location.search).get("order_id") || "";
 
   useEffect(() => {
-    const searchParams = new URLSearchParams(location.search);
-    const order_id = searchParams.get("order_id");
-
-    if (!order_id) {
-      setStatus("error");
-      return;
+    if (authLoading || !user) return undefined;
+    cancelled.current = false;
+    if (!ORDER_ID_RE.test(orderId)) {
+      setState({ status: "error", message: "We couldn't find this payment." });
+      return undefined;
     }
 
-    const verifyPayment = async () => {
-      try {
-        const res = await axios.post(
-          `${API}/payments/verify`,
-          { order_id }
-        );
-        if (res.data.status === "already_processed" || res.data.status === "success") {
-          setStatus("success");
-        } else {
-          setStatus("error");
+    const poll = async () => {
+      for (const delay of POLL_DELAYS_MS) {
+        if (delay) await new Promise((r) => setTimeout(r, delay));
+        if (cancelled.current) return;
+        try {
+          const res = await axios.post(`${API}/billing/orders/${orderId}/confirm`);
+          const { status, reason } = res.data;
+          if (status === "PAID") {
+            await fetchUser().catch(() => {});
+            setState({ status: "success", subscription: res.data.subscription });
+            return;
+          }
+          if (status === "FAILED") {
+            setState({
+              status: "failed",
+              message:
+                reason === "USER_DROPPED" || reason === "CANCELLED"
+                  ? "The payment was cancelled. No money was taken."
+                  : "The payment didn't go through. If money was deducted, it will be refunded by your bank.",
+            });
+            return;
+          }
+          if (status === "EXPIRED" || status === "SUPERSEDED") {
+            setState({ status: "failed", message: "This checkout has expired. Please start again from the plans page." });
+            return;
+          }
+        } catch (err) {
+          if (err.response?.status === 404) {
+            setState({ status: "error", message: "We couldn't find this payment for your account." });
+            return;
+          }
+          // Network blips: keep polling
         }
-      } catch (err) {
-        console.error(err);
-        setStatus("error");
       }
+      setState({ status: "pending" });
     };
-    verifyPayment();
-  }, [location]);
+    poll();
+    return () => {
+      cancelled.current = true;
+    };
+  }, [orderId, authLoading, user?.id]);
 
   useEffect(() => {
-    if (status !== "success") return;
-
-    const timer = setInterval(() => {
-      setCountdown((prev) => (prev > 0 ? prev - 1 : 0));
-    }, 1000);
-
-    const redirect = setTimeout(() => {
-      window.location.href = "/dashboard";
-    }, 3000);
-
+    if (state.status !== "success") return undefined;
+    const timer = setInterval(() => setCountdown((c) => (c > 0 ? c - 1 : 0)), 1000);
+    const redirect = setTimeout(() => navigate("/dashboard", { replace: true }), 5000);
     return () => {
       clearInterval(timer);
       clearTimeout(redirect);
     };
-  }, [status]);
+  }, [state.status, navigate]);
+
+  if (authLoading) return <Loader fullScreen text="Confirming your payment..." />;
+  if (!user) return <Navigate to="/login" state={{ from: location }} replace />;
+
+  const views = {
+    verifying: {
+      icon: <Loader2 className="w-14 h-14 text-orange-500 animate-spin" />,
+      title: "Confirming your payment",
+      body: "This usually takes a few seconds. Please don't close this page.",
+    },
+    success: {
+      icon: <CheckCircle2 className="w-14 h-14 text-emerald-500" />,
+      title: "Payment successful",
+      body: state.subscription?.plan
+        ? `Your ${state.subscription.plan} plan is active until ${new Date(state.subscription.ends_at).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}. Taking you to your dashboard in ${countdown}s.`
+        : `Your plan is active. Taking you to your dashboard in ${countdown}s.`,
+    },
+    pending: {
+      icon: <Clock className="w-14 h-14 text-amber-500" />,
+      title: "Payment is still processing",
+      body: "Your bank hasn't confirmed it yet. Your plan will activate automatically as soon as it does, so please don't pay again. If it doesn't go through, any amount debited is returned by your bank.",
+    },
+    failed: {
+      icon: <XCircle className="w-14 h-14 text-rose-500" />,
+      title: "Payment not completed",
+      body: state.message,
+    },
+    error: {
+      icon: <XCircle className="w-14 h-14 text-rose-500" />,
+      title: "Something went wrong",
+      body: state.message,
+    },
+  };
+  const v = views[state.status];
 
   return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6 relative overflow-hidden">
-      {/* Background decoration */}
-      <div className={`absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] rounded-full blur-3xl opacity-50 animate-pulse pointer-events-none ${status === "success" ? "bg-green-400/20" : status === "error" ? "bg-red-400/20" : "bg-blue-400/20"}`} />
-      
-      <div className="max-w-md w-full relative z-10 animate-in fade-in slide-in-from-bottom-8 duration-700">
-        <Card className="border-0 shadow-2xl bg-white/80 backdrop-blur-xl">
-          <CardContent className="pt-10 pb-8 px-8 text-center flex flex-col items-center">
-            
-            {status === "verifying" && (
-              <div className="py-4">
-                <Loader size="xl" text="Verifying Payment..." />
-                <p className="text-slate-500 mt-4 mb-8 max-w-[280px]">Please hold on while we confirm your payment securely.</p>
-              </div>
-            )}
-
-            {status === "success" && (
-              <>
-                <div className="relative mb-6">
-                  <div className="absolute inset-0 bg-green-100 rounded-full animate-ping opacity-75" />
-                  <div className="relative bg-green-100 text-green-600 p-4 rounded-full">
-                    <CheckCircle2 className="w-12 h-12" />
-                  </div>
-                </div>
-                <h2 className="text-3xl font-extrabold text-slate-900 mb-3 tracking-tight">Payment Successful!</h2>
-                <p className="text-slate-500 mb-8 max-w-[280px]">Your account has been instantly activated with your new plan features!</p>
-                <div className="w-full bg-slate-100 rounded-full h-1.5 mb-6 overflow-hidden">
-                  <div className="bg-green-500 h-full rounded-full transition-all duration-1000 ease-linear" style={{ width: `${((3 - countdown) / 3) * 100}%` }} />
-                </div>
-                <Button onClick={() => window.location.href = "/dashboard"} className="w-full group" size="lg">
-                  Go to Dashboard Now
-                  <ArrowRight className="w-4 h-4 ml-2 group-hover:translate-x-1 transition-transform" />
-                </Button>
-                <p className="text-xs text-slate-400 mt-4 h-4">
-                  {countdown > 0 ? `Redirecting automatically in ${countdown}s...` : "Redirecting..."}
-                </p>
-              </>
-            )}
-
-            {status === "error" && (
-              <>
-                <div className="relative mb-6">
-                  <div className="relative bg-red-100 text-red-600 p-4 rounded-full">
-                    <XCircle className="w-12 h-12" />
-                  </div>
-                </div>
-                <h2 className="text-2xl font-extrabold text-slate-900 mb-3 tracking-tight">Verification Failed</h2>
-                <p className="text-slate-500 mb-8 max-w-[280px]">We couldn't confirm your payment automatically. If the amount was deducted from your account, please contact support.</p>
-                <Button onClick={() => window.location.href = "/dashboard"} className="w-full group bg-slate-900" size="lg">
-                  Return to Dashboard
-                </Button>
-              </>
-            )}
-
-          </CardContent>
-        </Card>
+    <div className="min-h-screen bg-background text-foreground flex items-center justify-center p-6" data-testid="payment-result">
+      <div className="w-full max-w-md rounded-3xl border border-border bg-card shadow-xl p-8 text-center space-y-5">
+        <div className="flex justify-center">{v.icon}</div>
+        <h1 className="text-2xl font-extrabold tracking-tight">{v.title}</h1>
+        <p className="text-sm text-muted-foreground font-medium leading-relaxed">{v.body}</p>
+        <p className="text-[11px] text-muted-foreground font-mono break-all">Order {orderId}</p>
+        <div className="flex flex-col gap-2 pt-2">
+          {(state.status === "success" || state.status === "pending") && (
+            <Button
+              className="h-11 rounded-xl font-bold text-white bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600"
+              onClick={() => navigate("/dashboard", { replace: true })}
+            >
+              Go to dashboard <ArrowRight className="w-4 h-4 ml-2" />
+            </Button>
+          )}
+          {(state.status === "failed" || state.status === "error" || state.status === "pending") && (
+            <Button variant="outline" className="h-11 rounded-xl font-bold" onClick={() => navigate("/upgrade", { replace: true })}>
+              Back to plans
+            </Button>
+          )}
+        </div>
       </div>
     </div>
   );
