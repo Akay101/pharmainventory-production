@@ -5,9 +5,10 @@
 //   1. Google Cloud Text-to-Speech, Chirp 3 HD: natural AND consistent, the
 //      same voice, pitch and pace every time. Used automatically when the
 //      Cloud TTS API is enabled for the key's Google project.
-//   2. Gemini TTS: natural but generative, so tone drifts a little between
-//      replies. Kept as steady as it allows (one model, fixed seed,
-//      temperature 0) and used when Cloud TTS isn't available.
+//   2. Gemini TTS: natural but generative, so a take can drift (higher, or
+//      a male-sounding read). Kept on one model, and every take's pitch is
+//      checked before it plays; a drifted take is regenerated.
+const { medianPitch } = require("./pitch");
 const ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models";
 const apiKey = () => process.env.GEMINI_API_KEY || process.env.EMERGENT_LLM_KEY || "";
 
@@ -120,10 +121,66 @@ async function streamSpeech({ text, language, signal, onChunk }) {
   return geminiSpeech(spoken, signal, onChunk);
 }
 
+// Kore normally speaks with a median pitch of about 180-220 Hz. A take outside
+// this band has drifted (deeper and male-sounding, or squeaky), so it is
+// dropped before anything is played and generated again with another seed.
+const PITCH_BAND = [
+  Number(process.env.ASSISTANT_TTS_PITCH_MIN) || 172,
+  Number(process.env.ASSISTANT_TTS_PITCH_MAX) || 240,
+];
+const CHECK_BYTES = SAMPLE_RATE * 2 * 1.6; // judge the voice on the first 1.6 s
+const MAX_TRIES = 4;
+// Only a retired model (404) moves us to the next one; other models' "Kore"
+// sounds like a different person, so busy/5xx errors retry the same model
+let modelIndex = 0;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// The voice model has a daily request quota; once it is used up we stay quiet
+// until Google resets it rather than switch to a different-sounding voice
+let quotaPausedUntil = 0;
+const quotaError = () => Object.assign(new Error("Daily voice limit reached"), { code: "VOICE_QUOTA" });
+
+// "43587s" -> ms; whether a 429 is the daily quota
+async function readLimit(res) {
+  try {
+    const body = await res.json();
+    const details = body?.error?.details || [];
+    const daily = details.some((d) => (d.violations || []).some((v) => /PerDay/i.test(v.quotaId || "")));
+    const delay = details.find((d) => d.retryDelay)?.retryDelay;
+    return { daily, retryMs: delay ? parseFloat(delay) * 1000 : 0 };
+  } catch {
+    return { daily: false, retryMs: 0 };
+  }
+}
+
 async function geminiSpeech(spoken, signal, onChunk) {
+  if (Date.now() < quotaPausedUntil) throw quotaError();
   let lastErr;
-  for (const model of MODELS()) {
-    let bytes = 0;
+  let pitchRetries = 0;
+  for (let attempt = 0; attempt < MAX_TRIES; attempt++) {
+    const models = MODELS();
+    if (modelIndex >= models.length) modelIndex = 0;
+    const model = models[modelIndex];
+    const ctl = new AbortController();
+    const onAbort = () => ctl.abort();
+    signal?.addEventListener("abort", onAbort);
+    let sent = 0;
+    let held = []; // audio kept back until the voice is checked
+    let heldBytes = 0;
+    let verdict = null; // "ok" once checked
+    const lastTry = attempt === MAX_TRIES - 1;
+    const release = () => {
+      for (const b of held) {
+        sent += b.length;
+        onChunk(b);
+      }
+      held = [];
+    };
+    const check = () => {
+      const { hz, frames } = medianPitch(Buffer.concat(held));
+      if (frames < 12 || lastTry || (hz >= PITCH_BAND[0] && hz <= PITCH_BAND[1])) return "ok";
+      console.warn(`[assistant tts] voice drifted (${Math.round(hz)} Hz); regenerating`);
+      return "drift";
+    };
     try {
       const res = await fetch(`${ENDPOINT}/${model}:streamGenerateContent?alt=sse`, {
         method: "POST",
@@ -132,46 +189,96 @@ async function geminiSpeech(spoken, signal, onChunk) {
           // Only the reply itself: TTS models read any style instruction aloud
           // (and reject system instructions), so the voice choice sets the tone
           contents: [{ parts: [{ text: spoken }] }],
-          // Same model, seed and temperature every time keeps the tone as steady as Gemini allows
-          generationConfig: { responseModalities: ["AUDIO"], temperature: 0, seed: 7, speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: VOICE() } } } },
+          generationConfig: {
+            responseModalities: ["AUDIO"],
+            temperature: 0,
+            seed: 7 + pitchRetries * 101,
+            speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: VOICE() } } },
+          },
         }),
-        signal,
+        signal: ctl.signal,
       });
       if (!res.ok) {
         lastErr = new Error(`TTS ${model} failed (${res.status})`);
-        if (res.status === 404) continue; // model retired: try the next one
+        if (res.status === 404) {
+          modelIndex++;
+          continue;
+        }
+        if (res.status === 429) {
+          const { daily, retryMs } = await readLimit(res);
+          if (daily) {
+            quotaPausedUntil = Date.now() + (retryMs || 60 * 60 * 1000);
+            console.warn(`[assistant tts] daily voice quota for ${model} used up; voice paused for ${Math.round((quotaPausedUntil - Date.now()) / 60000)} min`);
+            throw quotaError();
+          }
+          if (retryMs > 4000) throw lastErr; // busy for a while: skip this reply
+          await sleep(retryMs || 800 * (attempt + 1));
+          continue;
+        }
+        if (res.status >= 500) {
+          await sleep(500 * (attempt + 1));
+          continue;
+        }
         throw lastErr;
       }
       const dec = new TextDecoder();
       let buf = "";
+      let drifted = false;
       const handle = (ev) => {
         const line = ev.split("\n").find((l) => l.startsWith("data:"));
         if (!line) return;
+        let part;
         try {
-          const part = JSON.parse(line.slice(5)).candidates?.[0]?.content?.parts?.find((p) => p.inlineData);
-          if (part) {
-            let pcm = Buffer.from(part.inlineData.data, "base64");
-            if (/wav/i.test(part.inlineData.mimeType) && pcm.slice(0, 4).toString() === "RIFF") pcm = pcm.slice(44);
-            bytes += pcm.length;
-            onChunk(pcm);
-          }
-        } catch {}
+          part = JSON.parse(line.slice(5)).candidates?.[0]?.content?.parts?.find((p) => p.inlineData);
+        } catch {
+          return;
+        }
+        if (!part) return;
+        let pcm = Buffer.from(part.inlineData.data, "base64");
+        if (/wav/i.test(part.inlineData.mimeType) && pcm.slice(0, 4).toString() === "RIFF") pcm = pcm.slice(44);
+        if (verdict === "ok") {
+          sent += pcm.length;
+          onChunk(pcm);
+          return;
+        }
+        held.push(pcm);
+        heldBytes += pcm.length;
+        if (heldBytes >= CHECK_BYTES) {
+          verdict = check();
+          if (verdict === "ok") release();
+          else drifted = true;
+        }
       };
       for await (const chunk of res.body) {
         buf += dec.decode(chunk, { stream: true }).replace(/\r\n/g, "\n");
         let i;
-        while ((i = buf.indexOf("\n\n")) >= 0) {
+        while (!drifted && (i = buf.indexOf("\n\n")) >= 0) {
           handle(buf.slice(0, i));
           buf = buf.slice(i + 2);
         }
+        if (drifted) break;
       }
-      if (buf.trim()) handle(buf);
-      if (bytes) return bytes;
+      if (!drifted && buf.trim()) handle(buf);
+      if (!drifted && verdict !== "ok" && heldBytes) {
+        // Short reply: judge it whole
+        verdict = check();
+        if (verdict === "ok") release();
+        else drifted = true;
+      }
+      if (drifted) {
+        ctl.abort();
+        pitchRetries++;
+        continue;
+      }
+      if (sent) return sent;
       lastErr = new Error(`TTS ${model} returned no audio`);
     } catch (err) {
       if (signal?.aborted) return 0;
+      if (err.code === "VOICE_QUOTA") throw err;
       lastErr = err;
-      if (bytes) return bytes; // partial audio already sent
+      if (sent) return sent; // partial audio already played
+    } finally {
+      signal?.removeEventListener("abort", onAbort);
     }
   }
   throw lastErr || new Error("Speech unavailable");

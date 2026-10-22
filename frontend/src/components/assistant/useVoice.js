@@ -4,6 +4,11 @@ const Recognition = typeof window !== "undefined" ? window.SpeechRecognition || 
 
 // Speech-to-text with the browser's recognizer. hi-IN understands Hindi and
 // Hinglish (and plenty of English); en-IN is there for English-only speakers.
+// Phones (Android Chrome, iOS Safari) often keep listening after you stop
+// talking and never mark the text final, so we end the turn ourselves after a
+// short silence and send whatever was heard.
+const SILENCE_MS = 1500;
+
 export function useVoiceInput({ lang = "hi-IN", onFinal } = {}) {
   const [listening, setListening] = useState(false);
   const [interim, setInterim] = useState("");
@@ -22,22 +27,41 @@ export function useVoiceInput({ lang = "hi-IN", onFinal } = {}) {
     rec.interimResults = true;
     rec.continuous = false;
     rec.maxAlternatives = 1;
-    let finalText = "";
+    let heard = "";
+    let silence = null;
+    let sent = false;
+    const send = () => {
+      if (sent) return;
+      sent = true;
+      clearTimeout(silence);
+      if (heard.trim()) finalRef.current?.(heard.trim());
+    };
     rec.onresult = (e) => {
+      // Rebuild from every result: some phones resend earlier segments
+      let finals = "";
       let live = "";
-      for (let i = e.resultIndex; i < e.results.length; i++) {
+      for (let i = 0; i < e.results.length; i++) {
         const t = e.results[i][0].transcript;
-        if (e.results[i].isFinal) finalText += t;
+        if (e.results[i].isFinal) finals += t;
         else live += t;
       }
-      setInterim(finalText + live);
+      heard = (finals + live).replace(/\s+/g, " ");
+      setInterim(heard);
+      clearTimeout(silence);
+      silence = setTimeout(() => {
+        send();
+        try {
+          rec.stop();
+        } catch {}
+      }, SILENCE_MS);
     };
     rec.onerror = () => {};
     rec.onend = () => {
+      clearTimeout(silence);
       setListening(false);
       setInterim("");
       recRef.current = null;
-      if (finalText.trim()) finalRef.current?.(finalText.trim());
+      send();
     };
     recRef.current = rec;
     setListening(true);

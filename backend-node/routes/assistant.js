@@ -43,6 +43,9 @@ router.post("/tts", auth, requireSubscription(), async (req, res) => {
     res.end();
   } catch (err) {
     console.warn("[assistant tts]", err.message);
+    if (!res.headersSent && err.code === "VOICE_QUOTA") {
+      return res.status(429).json({ detail: "Voice replies are paused for today (daily voice limit reached)", code: "VOICE_QUOTA" });
+    }
     if (!res.headersSent) return res.status(502).json({ detail: "Voice is unavailable right now" });
     res.end();
   }

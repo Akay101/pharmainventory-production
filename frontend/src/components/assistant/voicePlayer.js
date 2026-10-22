@@ -1,3 +1,4 @@
+import { toast } from "sonner";
 import { API, getAccessToken, refreshAccessToken } from "../../App";
 
 // Plays the assistant's natural Gemini voice. Audio arrives as streamed
@@ -6,6 +7,7 @@ import { API, getAccessToken, refreshAccessToken } from "../../App";
 const SAMPLE_RATE = 24000;
 let sharedCtx = null;
 let current = null; // { abort, sources: [] }
+let quotaNoticeShown = false;
 const listeners = new Set();
 const notify = () => listeners.forEach((fn) => fn(!!current));
 
@@ -96,6 +98,13 @@ export async function speakReply(text, language) {
     if (res.status === 401) {
       await refreshAccessToken();
       res = await send();
+    }
+    if (res.status === 429) {
+      const body = await res.json().catch(() => ({}));
+      if (body.code === "VOICE_QUOTA" && !quotaNoticeShown) {
+        quotaNoticeShown = true;
+        toast.info("Voice replies are paused for today", { description: "The daily voice limit is used up. Replies still appear on screen." });
+      }
     }
     if (!res.ok || !res.body) throw new Error("tts unavailable");
     const reader = res.body.getReader();
