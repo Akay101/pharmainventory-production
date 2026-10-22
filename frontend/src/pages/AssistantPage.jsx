@@ -34,6 +34,16 @@ import {
   X,
 } from "lucide-react";
 import { useAuth } from "../App";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "../components/ui/alert-dialog";
 import { AGENT_META, assistantApi, streamTurn } from "../components/assistant/assistantClient";
 import { ChoicesBlock, ConfirmBlock, DraftBlock, NoticeBlock, ResultBlock, StatsBlock, TableBlock } from "../components/assistant/Blocks";
 import ChartBlock from "../components/assistant/ChartBlock";
@@ -482,18 +492,30 @@ export default function AssistantPage() {
     setTimeout(() => inputRef.current?.focus(), 50);
   };
 
-  const removeChat = async (chat) => {
-    if (!window.confirm(`Delete "${chat.title}"?`)) return;
-    await assistantApi.remove(chat.id).catch(() => toast.error("Couldn't delete"));
-    setChats((c) => c.filter((x) => x.id !== chat.id));
-    if (chat.id === activeId) newChat();
-  };
+  // { chat } for one chat, { all: true } for every chat; null when closed
+  const [pendingDelete, setPendingDelete] = useState(null);
+  const [deleting, setDeleting] = useState(false);
 
-  const clearAll = async () => {
-    if (!window.confirm("Delete all your chats? This can't be undone.")) return;
-    await assistantApi.removeAll().catch(() => toast.error("Couldn't delete"));
-    setChats([]);
-    newChat();
+  const confirmDelete = async () => {
+    const target = pendingDelete;
+    if (!target) return;
+    setDeleting(true);
+    try {
+      if (target.all) {
+        await assistantApi.removeAll();
+        setChats([]);
+        newChat();
+      } else {
+        await assistantApi.remove(target.chat.id);
+        setChats((c) => c.filter((x) => x.id !== target.chat.id));
+        if (target.chat.id === activeId) newChat();
+      }
+      setPendingDelete(null);
+    } catch {
+      toast.error("Couldn't delete. Please try again.");
+    } finally {
+      setDeleting(false);
+    }
   };
 
   const grouped = useMemo(() => groupChats(chats), [chats]);
@@ -564,7 +586,7 @@ export default function AssistantPage() {
                     await assistantApi.update(c.id, { pinned: !c.pinned }).catch(() => {});
                     loadChats(search.trim());
                   }}
-                  onDelete={() => removeChat(c)}
+                  onDelete={() => setPendingDelete({ chat: c })}
                 />
               ))}
             </div>
@@ -576,7 +598,7 @@ export default function AssistantPage() {
       <div className="border-t border-border px-4 py-3 text-[11px] text-muted-foreground">
         <p>Chats are kept for {retention} days, then deleted automatically.</p>
         {chats.length > 0 && (
-          <button type="button" onClick={clearAll} className="mt-1 font-semibold text-rose-500 hover:underline">
+          <button type="button" onClick={() => setPendingDelete({ all: true })} className="mt-1 font-semibold text-rose-500 hover:underline">
             Delete all chats
           </button>
         )}
@@ -851,6 +873,39 @@ export default function AssistantPage() {
           </div>
         </div>
       </main>
+
+      <AlertDialog open={!!pendingDelete} onOpenChange={(open) => !open && !deleting && setPendingDelete(null)}>
+        <AlertDialogContent className="rounded-2xl max-w-sm border border-border bg-background p-6 shadow-2xl">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-lg font-bold">{pendingDelete?.all ? "Delete all chats" : "Delete chat"}</AlertDialogTitle>
+            <AlertDialogDescription className="text-sm text-muted-foreground">
+              {pendingDelete?.all ? (
+                "All your conversations with DavaDesk AI will be deleted. This can't be undone."
+              ) : (
+                <>
+                  <span className="font-semibold text-foreground">"{pendingDelete?.chat?.title || "Untitled chat"}"</span> will be deleted. This can't be undone.
+                </>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="mt-4 flex flex-wrap sm:justify-end gap-2">
+            <AlertDialogCancel disabled={deleting} className="h-10 rounded-xl border border-border hover:bg-muted font-semibold">
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={deleting}
+              onClick={(e) => {
+                e.preventDefault(); // keep the dialog open until the delete finishes
+                confirmDelete();
+              }}
+              className="h-10 rounded-xl bg-destructive text-destructive-foreground hover:bg-destructive/90 font-semibold shadow-md shadow-destructive/10"
+            >
+              {deleting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {pendingDelete?.all ? "Delete all" : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
