@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Camera, Check, ImagePlus, Loader2, Sparkles, X } from "lucide-react";
+import { Camera, Check, ImagePlus, Loader2, X } from "lucide-react";
 import { MATCH_META } from "./scanClient";
 
 // Soft animated colour blobs behind the scanner screens
@@ -13,13 +13,17 @@ export function AiAmbient() {
   );
 }
 
-export function AiMark({ className = "h-9 w-9" }) {
+// DavaDesk AI badge, used on every AI screen
+export const AI_LOGO_SRC = "/assets/svgs/logoBrand/logoAI-mark.png";
+
+export function AiMark({ className = "h-9 w-9", glow = true }) {
   return (
-    <div className={`${className} shrink-0 rounded-xl bg-gradient-to-br from-orange-500 via-pink-500 to-violet-500 p-[1.5px] shadow-lg shadow-fuchsia-500/20`}>
-      <div className="flex h-full w-full items-center justify-center rounded-[10px] bg-card">
-        <Sparkles className="h-1/2 w-1/2 text-orange-500" />
-      </div>
-    </div>
+    <img
+      src={AI_LOGO_SRC}
+      alt="DavaDesk AI"
+      draggable={false}
+      className={`${className} shrink-0 rounded-full object-contain select-none ${glow ? "shadow-lg shadow-indigo-500/30 ring-1 ring-indigo-500/20" : ""}`}
+    />
   );
 }
 
@@ -128,7 +132,10 @@ export function ScanningView({ photo, steps, active, title = "Reading with AI", 
           <div className="ai-scan-beam" />
         </div>
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-bold ai-shimmer-text">{title}</p>
+          <div className="flex items-center gap-2">
+            <AiMark className="h-6 w-6 animate-pulse" glow={false} />
+            <p className="text-sm font-bold ai-shimmer-text">{title}</p>
+          </div>
           {subtitle && <p className="text-xs text-muted-foreground mt-0.5">{subtitle}</p>}
           <ol className="mt-2 space-y-1.5">
             {steps.map((s, i) => (
