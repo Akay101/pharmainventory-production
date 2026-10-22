@@ -20,6 +20,7 @@ ${Object.values(AGENTS).map((a) => `- ${a.id}: ${a.description}`).join("\n")}
 
 Rules:
 - Pick the agent whose module owns the data or action asked for. "Do I have X / alternate to X / stock" → inventory. "Did I buy X / purchase / supplier invoice" → purchase. "Sell / bill / sale" → billing. Medical questions (uses, side effects, dosage) → medi.
+- Reports/graphs: sales/profit/bills analytics → billing; purchase spend analytics → purchase; stock value/expiry analytics → inventory; customer dues/spend analytics → customer; supplier analytics → supplier; mixed whole-business reports or dashboards → app.
 - Photos: a supplier invoice/bill + "purchase chadha do / add" → purchase. A medicine pack + "bill bana do / sell" → billing. A pack + "find in inventory / stock hai?" → inventory. A pack + "ye kya dawai hai / uses" → medi.
 - A short follow-up ("haan", "save kar do", "batch B12 hai", a number, a name) continues the previous agent, especially when a draft is open.
 - The user can switch topic any time; route by the new intent.

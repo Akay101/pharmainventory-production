@@ -102,7 +102,7 @@ function toHistory(messages) {
     let text = String(m.text || "");
     if (m.role === "assistant" && m.blocks?.length) {
       const notes = m.blocks
-        .map((b) => (b.type === "table" ? `table "${b.title}" (${b.rows?.length || 0} rows)` : b.type === "draft" ? `${b.kind} draft ${b.draft_id}` : b.type === "result" ? `result: ${b.title}${b.text ? ` – ${b.text}` : ""}` : b.type === "confirm" ? `confirm card: ${b.title}` : b.type === "stats" ? `stats: ${(b.items || []).map((i) => `${i.label} ${i.value}`).join(", ")}` : null))
+        .map((b) => (b.type === "table" ? `table "${b.title}" (${b.rows?.length || 0} rows)` : b.type === "draft" ? `${b.kind} draft ${b.draft_id}` : b.type === "result" ? `result: ${b.title}${b.text ? ` – ${b.text}` : ""}` : b.type === "confirm" ? `confirm card: ${b.title}` : b.type === "stats" ? `stats: ${(b.items || []).map((i) => `${i.label} ${i.value}`).join(", ")}` : b.type === "chart" ? `${b.chart} chart "${b.title}" (${b.subtitle || ""}; ${(b.kpis || []).map((k) => `${k.label} ${k.value}`).join(", ")})` : null))
         .filter(Boolean);
       if (notes.length) text += `\n<ui>${notes.join("; ")}</ui>`;
     }

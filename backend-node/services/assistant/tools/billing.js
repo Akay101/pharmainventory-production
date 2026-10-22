@@ -129,16 +129,12 @@ const tools = [
   },
   {
     name: "sales_report",
-    description: "Sales totals (revenue, profit, bill count) for a period, optionally grouped by day, product, customer, payment mode or doctor. Use for 'aaj ki sale', 'top selling medicines', 'best customers', 'UPI vs cash'.",
-    parameters: {
-      type: "object",
-      properties: { ...DATE_PROPS, group_by: { type: "string", enum: ["none", "day", "month", "product", "customer", "payment_mode", "doctor"] }, limit: { type: "integer" } },
-    },
+    description: "Quick sales totals (sales, profit, bills, dues) for a period as stat tiles. For any breakdown, trend, top-N or graph use build_report instead.",
+    parameters: { type: "object", properties: { ...DATE_PROPS } },
     status: (a, lang) => say(lang, { en: "Crunching the sales numbers", hinglish: "Sale ka hisaab laga raha hoon", hi: "बिक्री का हिसाब लगा रहा हूँ" }),
     async run(a, ctx) {
       const match = { pharmacy_id: ctx.pharmacyId, ...dateRange("billing_date", a.date_from, a.date_to) };
-      const col = ctx.db.collection("bills");
-      const totals = await col.aggregate([{ $match: match }, { $group: { _id: null, bills: { $sum: 1 }, revenue: { $sum: billTotal }, profit: { $sum: { $ifNull: ["$profit", 0] } }, paid: { $sum: billPaid } } }]).next();
+      const totals = await ctx.db.collection("bills").aggregate([{ $match: match }, { $group: { _id: null, bills: { $sum: 1 }, revenue: { $sum: billTotal }, profit: { $sum: { $ifNull: ["$profit", 0] } }, paid: { $sum: billPaid } } }]).next();
       const t = { bills: totals?.bills || 0, revenue: round2(totals?.revenue || 0), profit: round2(totals?.profit || 0), due: round2((totals?.revenue || 0) - (totals?.paid || 0)) };
       ctx.emit(
         blocks.stats([
@@ -148,42 +144,7 @@ const tools = [
           { label: "Due", value: inr(t.due) },
         ], `${a.date_from ? fmtDate(a.date_from) : "All time"}${a.date_to && a.date_to !== a.date_from ? ` – ${fmtDate(a.date_to)}` : ""}`)
       );
-      if (!a.group_by || a.group_by === "none") return t;
-
-      const limit = clampLimit(a.limit, 10, 31);
-      let pipeline;
-      if (a.group_by === "product") {
-        pipeline = [
-          { $match: match },
-          { $unwind: "$items" },
-          { $group: { _id: "$items.product_name", units: { $sum: "$items.quantity" }, revenue: { $sum: "$items.item_total" }, profit: { $sum: { $ifNull: ["$items.profit", 0] } }, bills: { $sum: 1 } } },
-          { $sort: { revenue: -1 } },
-          { $limit: limit },
-        ];
-      } else {
-        const key = { day: "$billing_date", month: { $substr: ["$billing_date", 0, 7] }, customer: { $ifNull: ["$customer_name", "Walk-in"] }, payment_mode: { $ifNull: ["$payment_mode", "Credit"] }, doctor: { $ifNull: ["$doctor", "—"] } }[a.group_by];
-        pipeline = [
-          { $match: match },
-          { $group: { _id: key, revenue: { $sum: billTotal }, profit: { $sum: { $ifNull: ["$profit", 0] } }, bills: { $sum: 1 } } },
-          { $sort: ["day", "month"].includes(a.group_by) ? { _id: -1 } : { revenue: -1 } },
-          { $limit: limit },
-        ];
-      }
-      const rows = (await col.aggregate(pipeline).toArray()).map((r) => ({ key: r._id || "—", revenue: round2(r.revenue), profit: round2(r.profit), bills: r.bills, ...(r.units !== undefined ? { units: r.units } : {}) }));
-      if (rows.length) {
-        const label = { day: "Date", month: "Month", product: "Medicine", customer: "Customer", payment_mode: "Mode", doctor: "Doctor" }[a.group_by];
-        ctx.emit(
-          blocks.table(
-            `Sales by ${label.toLowerCase()}`,
-            a.group_by === "product"
-              ? cols(["key", label], ["units", "Units", null, "right"], ["bills", "Bills", null, "right"], ["profit", "Profit", "inr", "right"], ["revenue", "Sales", "inr", "right"])
-              : cols(["key", label], ["bills", "Bills", null, "right"], ["profit", "Profit", "inr", "right"], ["revenue", "Sales", "inr", "right"]),
-            rows,
-            { chart: { x: "key", y: "revenue" } }
-          )
-        );
-      }
-      return { ...t, rows, note: "Stats and table shown; give the key insight." };
+      return t;
     },
   },
   {

@@ -143,58 +143,6 @@ const tools = [
     },
   },
   {
-    name: "purchase_insights",
-    description: "Aggregated purchase spend grouped by supplier, product, month or day for a period (top N). Use for 'which supplier do I buy most from', 'monthly purchase', 'most bought medicine'.",
-    parameters: {
-      type: "object",
-      properties: {
-        ...DATE_PROPS,
-        group_by: { type: "string", enum: ["supplier", "product", "month", "day"] },
-        limit: { type: "integer" },
-      },
-      required: ["group_by"],
-    },
-    status: (a, lang) => say(lang, { en: `Analysing purchases by ${a.group_by}`, hinglish: `Purchases ka ${a.group_by} wise hisaab bana raha hoon`, hi: "खरीद का विश्लेषण कर रहा हूँ" }),
-    async run(a, ctx) {
-      const match = { pharmacy_id: ctx.pharmacyId, ...dateRange("purchase_date", a.date_from, a.date_to) };
-      const limit = clampLimit(a.limit, 10, 31);
-      let pipeline;
-      if (a.group_by === "product") {
-        pipeline = [
-          { $match: match },
-          { $unwind: "$items" },
-          { $group: { _id: "$items.product_name", amount: { $sum: "$items.item_total" }, packs: { $sum: "$items.pack_quantity" }, units: { $sum: "$items.total_units" }, purchases: { $sum: 1 } } },
-          { $sort: { amount: -1 } },
-          { $limit: limit },
-        ];
-      } else {
-        const key = a.group_by === "supplier" ? "$supplier_name" : a.group_by === "month" ? { $substr: ["$purchase_date", 0, 7] } : "$purchase_date";
-        pipeline = [
-          { $match: match },
-          { $group: { _id: key, amount: { $sum: "$total_amount" }, purchases: { $sum: 1 }, unpaid: { $sum: { $subtract: ["$total_amount", { $ifNull: ["$amount_paid", 0] }] } } } },
-          { $sort: a.group_by === "supplier" ? { amount: -1 } : { _id: -1 } },
-          { $limit: limit },
-        ];
-      }
-      const rows = await ctx.db.collection("purchases").aggregate(pipeline).toArray();
-      const table = rows.map((r) => ({ key: r._id || "—", amount: round2(r.amount), purchases: r.purchases, ...(r.packs !== undefined ? { packs: r.packs, units: r.units } : { unpaid: round2(r.unpaid) }) }));
-      if (table.length) {
-        const label = { supplier: "Supplier", product: "Medicine", month: "Month", day: "Date" }[a.group_by];
-        ctx.emit(
-          blocks.table(
-            `Purchase spend by ${a.group_by}`,
-            a.group_by === "product"
-              ? cols(["key", label], ["packs", "Packs", null, "right"], ["units", "Units", null, "right"], ["purchases", "Purchases", null, "right"], ["amount", "Spend", "inr", "right"])
-              : cols(["key", label], ["purchases", "Purchases", null, "right"], ["unpaid", "Unpaid", "inr", "right"], ["amount", "Spend", "inr", "right"]),
-            table,
-            { chart: { x: "key", y: "amount" } }
-          )
-        );
-      }
-      return { rows: table, note: "Shown to the user as a table/chart." };
-    },
-  },
-  {
     name: "price_history",
     description: "Purchase price history of one medicine: dates, suppliers, rate per pack, MRP, discount. Use for 'kis rate pe li thi', 'cheapest supplier for X'.",
     parameters: { type: "object", properties: { product: { type: "string" }, limit: { type: "integer" } }, required: ["product"] },

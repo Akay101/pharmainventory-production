@@ -36,6 +36,7 @@ import {
 import { useAuth } from "../App";
 import { AGENT_META, assistantApi, streamTurn } from "../components/assistant/assistantClient";
 import { ChoicesBlock, ConfirmBlock, DraftBlock, NoticeBlock, ResultBlock, StatsBlock, TableBlock } from "../components/assistant/Blocks";
+import ChartBlock from "../components/assistant/ChartBlock";
 import { useVoiceInput } from "../components/assistant/useVoice";
 import { onSpeakingChange, primeVoice, speakReply, stopVoice } from "../components/assistant/voicePlayer";
 import { AI_LOGO_SRC, AiAmbient } from "../components/scan/ScanUI";
@@ -134,6 +135,7 @@ function AssistantMessage({ msg, onAction, onReply, busyKey, settled, openDrafts
           const props = { block: b, onAction: (a, label) => onAction(a, label, key, b), busy: busyKey === key };
           if (b.type === "table") return <TableBlock key={key} {...props} />;
           if (b.type === "stats") return <StatsBlock key={key} {...props} />;
+          if (b.type === "chart") return <ChartBlock key={key} block={b} />;
           if (b.type === "draft") {
             const superseded = latestDraftMsg?.[b.draft_id] && latestDraftMsg[b.draft_id] !== msg.id ? "Updated below" : null;
             const closed = !msg.pending && openDrafts && !openDrafts.includes(b.draft_id) ? "Closed" : null;

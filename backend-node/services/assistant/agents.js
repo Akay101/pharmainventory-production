@@ -7,6 +7,8 @@ const people = require("./tools/people");
 const app = require("./tools/app");
 
 const { makePhotoTools } = require("./tools/photos");
+const { reportTool, chartTool } = require("./tools/analytics");
+const charts = [reportTool, chartTool];
 
 const tool = (list, name) => list.find((t) => t.name === name);
 const photo = makePhotoTools({ purchaseTools: purchase.tools, billingTools: billing.tools });
@@ -26,7 +28,7 @@ const AGENTS = {
 - When the draft is complete, ask "Kuch aur add karna hai (GST, discount, free) ya save kar du?" style question with buttons: Save / Add more details / another item.
 - Payment status defaults to Unpaid.
 - PHOTOS: if the user attached a supplier invoice/bill photo, call read_invoice_photo (it reads every line and builds the draft). If it's a single medicine pack, call read_product_photo_for_purchase. Then review what's missing as usual.`,
-    tools: [...purchase.tools, photo.readInvoice, photo.readPackForPurchase],
+    tools: [...purchase.tools, photo.readInvoice, photo.readPackForPurchase, ...charts],
   },
   billing: {
     id: "billing",
@@ -40,7 +42,7 @@ const AGENTS = {
 - Payment: Cash/UPI/Card, or Credit (unpaid, goes to customer's dues). Ask for the customer name/mobile only if they want it on the bill; Walk-in is fine.
 - After a draft: offer buttons Save bill / Add item / Change payment.
 - PHOTOS: if the user attached a medicine pack photo, call read_product_photo (adds it to the bill, matched by batch then name). To add to an open bill pass its draft_id.`,
-    tools: [...billing.tools, photo.readPackForBill, tool(inventory.tools, "find_alternatives"), tool(inventory.tools, "search_stock")],
+    tools: [...billing.tools, photo.readPackForBill, tool(inventory.tools, "find_alternatives"), tool(inventory.tools, "search_stock"), ...charts],
   },
   inventory: {
     id: "inventory",
@@ -52,7 +54,7 @@ const AGENTS = {
 - Alternatives = other medicines in stock with the same salt and strength (find_alternatives). Mention if only a different strength exists.
 - Stock can be increased for a batch (corrections); reducing stock happens through bills/returns, not here.
 - PHOTOS: "ye product dhoondo / find this" with a photo → identify_product_photo.`,
-    tools: [...inventory.tools, photo.identify, tool(purchase.tools, "price_history")],
+    tools: [...inventory.tools, photo.identify, tool(purchase.tools, "price_history"), ...charts],
   },
   customer: {
     id: "customer",
@@ -62,7 +64,7 @@ const AGENTS = {
 - Customers have name, mobile, email, address, dues (unpaid bills) and advance.
 - Dues come from credit bills; clearing dues marks all their unpaid bills paid.
 - Use search_bills to show a customer's bills in detail.`,
-    tools: [...people.customerTools, tool(billing.tools, "search_bills")]
+    tools: [...people.customerTools, tool(billing.tools, "search_bills"), ...charts],
   },
   supplier: {
     id: "supplier",
@@ -72,18 +74,18 @@ const AGENTS = {
 - Your suppliers have purchases and dues (unpaid purchase amounts). The global directory has distributors you can add.
 - Paying a supplier settles their oldest unpaid purchases first.
 - Use search_purchases to show purchases from a supplier.`,
-    tools: [...people.supplierTools, tool(purchase.tools, "search_purchases")]
+    tools: [...people.supplierTools, tool(purchase.tools, "search_purchases"), ...charts],
   },
   app: {
     id: "app",
     label: { en: "App assistant", hinglish: "App assistant", hi: "ऐप सहायक" },
-    description: "The application itself: overall business summary/dashboard, settings (thresholds, defaults, theme), navigating to pages, how to use features, greetings and small talk.",
+    description: "The application itself: overall business summary/dashboard and cross-module business reports (sales vs purchases, overall growth), settings (thresholds, defaults, theme), navigating to pages, how to use features, greetings and small talk.",
     knowledge: `DAVADESK APP
 - Pages: Dashboard, Inventory, Purchases, Billing, Suppliers, Customers, Expiry, Returns, Users (staff), Reports, Settings, AI scanners (scan a purchase invoice or product pack; scan a pack to bill).
 - Plans: subscription is per pharmacy; upgrade from the Upgrade page.
 - Settings include low-stock threshold, expiry warning days, default payment modes and whether payment mode is mandatory, theme.
 - For greetings, introduce yourself briefly and suggest 3-4 useful things you can do as ::choices::.`,
-    tools: [...app.appTools]
+    tools: [...app.appTools, ...charts],
   },
   medi: {
     id: "medi",
@@ -117,6 +119,7 @@ HOW TO WORK
 - ${LANG_RULE[ctx.language] || LANG_RULE.en} If the user switches language, switch with them.
 - Facts about the user's business ALWAYS come from tools. Never invent numbers, names or records. If a tool returns nothing, say so plainly and suggest a next step.
 - <ui>…</ui> notes in the history describe what was displayed earlier and <reply-language> tells you which language to answer in; never write such tags yourself.
+- REPORTS & GRAPHS: for any analytical question (trend, compare, top/bottom N, share, "graph/chart/report bana do", growth, best day/hour) call build_report — it draws the chart live. For a richer report or "dashboard", call it 2-4 times in the same turn with different metrics/groupings (e.g. sales trend by day + top products + payment mode share + busiest hours). Use compare_previous when the user asks about growth or "pichhle mahine se". Pick sensible defaults (last 30 days, top 10) without asking.
 - Tables, stats and cards produced by tools are already visible to the user. Don't repeat them row by row; give a crisp 1-3 sentence takeaway (totals, the standout item, what to do next).
 - Nothing is created, changed or deleted until the user taps the confirm/Save button on a card. Never say something was saved unless a tool result says it was saved.
 - Ask for missing details smartly: only what's needed, at most two things at a time.
