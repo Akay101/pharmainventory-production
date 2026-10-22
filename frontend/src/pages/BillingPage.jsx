@@ -416,19 +416,24 @@ export default function BillingPage() {
     toast.success(`Loaded Draft ${draft.draft_no} into New Bill layout!`);
   };
 
+  // Scanned lines arrive already matched to stock (inventory_id + that
+  // product's batches). Older drafts carry only the inventory_id, so their
+  // batch list is looked up for that exact product.
   const handleTransferScannedItemsToBill = async (scannedItems) => {
     if (!scannedItems || scannedItems.length === 0) return;
 
-    let allInv = [];
-    try {
-      const res = await axios.get(`${API}/inventory?limit=500`);
-      allInv = res.data.inventory || res.data || [];
-    } catch (e) {
-      console.error("Failed to fetch inventory for auto-linking:", e);
-    }
-
-    const cleanAlphanumeric = (str) =>
-      (str || "").replace(/[^a-zA-Z0-9]/g, "").toLowerCase().replace(/^0+/, "");
+    const batchLists = await Promise.all(
+      scannedItems.map(async (item) => {
+        if (!item.inventory_id || item.available_batches?.length) return item.available_batches || [];
+        try {
+          const res = await axios.get(`${API}/inventory/search`, { params: { q: item.product_name, limit: 5 } });
+          const group = (res.data.inventory || []).find((g) => (g.batches || []).some((b) => b.id === item.inventory_id));
+          return (group?.batches || []).filter((b) => (b.available_quantity || 0) > 0 || b.id === item.inventory_id);
+        } catch {
+          return [];
+        }
+      })
+    );
 
     setBillItems((prev) => {
       const isFirstRowEmpty =
@@ -437,83 +442,40 @@ export default function BillingPage() {
         !prev[0].inventory_id &&
         !prev[0].batch_no;
 
-      const newRows = scannedItems.map((item) => {
+      const newRows = scannedItems.map((item, idx) => {
         const qty = parseInt(item.quantity) || 1;
         const mrp = parseFloat(item.mrp) || parseFloat(item.unit_price) || 0;
         const purchasePrice = parseFloat(item.purchase_price) || 0;
-        const profit = (mrp - purchasePrice) * qty;
-
-        const scannedNameNorm = (item.product_name || "").toLowerCase().trim();
-        const cleanScannedBatch = cleanAlphanumeric(item.batch_no);
-
-        // Match inventory item
-        let invProduct = allInv.find((inv) => {
-          if (!inv.product_name) return false;
-          const normName = inv.product_name.toLowerCase().trim();
-          return (
-            normName === scannedNameNorm ||
-            normName.includes(scannedNameNorm) ||
-            scannedNameNorm.includes(normName)
-          );
-        });
-
-        let availableBatches = item.available_batches || [];
-        let matchedBatch = null;
-
-        if (invProduct) {
-          availableBatches = (invProduct.batches || []).filter(
-            (b) => (b.available_quantity || 0) > 0 || b.batch_no === item.batch_no
-          );
-          if (availableBatches.length === 0) {
-            availableBatches = invProduct.batches || [];
-          }
-
-          if (cleanScannedBatch) {
-            matchedBatch = availableBatches.find((b) => {
-              const cleanB = cleanAlphanumeric(b.batch_no);
-              return (
-                cleanB === cleanScannedBatch ||
-                cleanScannedBatch.includes(cleanB) ||
-                cleanB.includes(cleanScannedBatch)
-              );
-            });
-          }
-
-          if (!matchedBatch && availableBatches.length > 0) {
-            matchedBatch = availableBatches[0];
-          }
-        }
-
-        const invId = matchedBatch?.id || item.inventory_id || (invProduct?.batches?.[0]?.id) || null;
-        const finalBatchNo = matchedBatch?.batch_no || item.batch_no || "";
-        const finalExpDate = matchedBatch?.expiry_date || item.expiry_date || "";
-        const finalAvail = matchedBatch
-          ? (matchedBatch.available_quantity !== undefined ? matchedBatch.available_quantity : matchedBatch.available_units)
-          : (item.available !== undefined ? item.available : (item.available_quantity || 0));
-
-        const isManual = !invId;
+        const cgstVal = parseFloat(item.cgst) || 0;
+        const sgstVal = parseFloat(item.sgst) || 0;
+        const exclPrice = mrp / (1 + (cgstVal + sgstVal) / 100);
+        const invId = item.inventory_id || null;
+        const avail = item.available !== undefined ? item.available : item.available_quantity || 0;
 
         return {
           id: uuidv4(),
           inventory_id: invId,
-          product_name: invProduct?.product_name || item.product_name || "",
-          salt_composition: invProduct?.salt_composition || item.salt_composition || "",
-          batch_no: finalBatchNo,
-          available_batches: availableBatches,
+          product_name: item.product_name || "",
+          salt_composition: item.salt_composition || "",
+          batch_no: item.batch_no || "",
+          available_batches: batchLists[idx],
           quantity: qty,
-          available: finalAvail,
-          available_quantity: finalAvail,
+          available: avail,
+          available_quantity: avail,
           unit_price: mrp,
+          exclusive_price: exclPrice,
+          net_total: qty * mrp,
           mrp: mrp,
           purchase_price: purchasePrice,
-          discount: 0,
+          discount_percent: 0,
           cgst: item.cgst || 0,
           sgst: item.sgst || 0,
-          profit: profit,
-          is_manual: isManual,
-          is_pack: false,
-          pack_units: 1,
-          expiry_date: finalExpDate,
+          hsn_no: item.hsn_no || "",
+          units_per_pack: item.units_per_pack || 1,
+          profit: (mrp - purchasePrice) * qty,
+          is_manual: !invId,
+          source: invId ? "inventory" : "manual",
+          expiry_date: item.expiry_date || "",
         };
       });
 
@@ -525,8 +487,11 @@ export default function BillingPage() {
   };
 
   // Automatically open New Bill form and populate scanned items & customer details when returning from /scan-bill
+  const consumedScanNavRef = useRef(null);
   useEffect(() => {
-    if (location.state?.scannedItems) {
+    // Each navigation hands its scanned items over once (StrictMode re-runs effects)
+    if (location.state?.scannedItems && consumedScanNavRef.current !== location.key) {
+      consumedScanNavRef.current = location.key;
       const { scannedItems, customerDetails } = location.state;
       setShowNewBill(true);
       if (scannedItems && scannedItems.length > 0) {
@@ -4124,7 +4089,7 @@ export default function BillingPage() {
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => window.open("/scan-bill", "_blank")}
+                    onClick={() => setScannerModalOpen(true)}
                     data-testid="scan-for-bill-btn"
                     className="h-9 px-4 border-amber-500/40 text-amber-600 dark:text-amber-400 bg-amber-500/10 hover:bg-amber-500/20 rounded-xl transition-all duration-200 shadow-2xs font-extrabold cursor-pointer"
                   >

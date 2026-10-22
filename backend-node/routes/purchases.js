@@ -4,17 +4,19 @@ const mongoose = require("mongoose");
 const { v4: uuidv4 } = require("uuid");
 const axios = require("axios");
 const multer = require("multer");
-const sharp = require("sharp");
 const fs = require("fs");
 const path = require("path");
-const rateLimit = require("express-rate-limit");
 const { auth } = require("../middleware/auth");
 const { normalizeName, normalizeExpiryDate } = require("../utils/helpers");
 const { generatePurchasePDF } = require("../services/pdf");
-const { uploadToR2, deleteFromR2 } = require("../services/r2");
+const { uploadToR2 } = require("../services/r2");
 const { logActivity } = require("../utils/activityLogger");
 const { requireSubscription } = require("../middleware/subscription");
-const { purchaseStockImpact, publicImpact, findBatch } = require("../services/stock");
+const {
+  purchaseStockImpact,
+  publicImpact,
+  findBatch,
+} = require("../services/stock");
 const {
   getGlobalDistributorsCollection,
   clearCachePattern,
@@ -25,19 +27,9 @@ const escapeRegex = (str) => {
   return String(str).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 };
 
-const ScanJob = require("../models/scanJob");
-const { scanQueue } = require("../services/ai/queue");
-const { compressImage } = require("../services/ai/image_processor");
+const { acceptImages, enqueueScan, scanStatus } = require("../services/ai/scanService");
+const { matchForPurchase } = require("../services/ai/inventoryMatch");
 
-const pythonPath = process.env.PYTHON_PATH || "python3";
-
-// Rate limiter for scanning endpoints
-const scanRateLimiter = rateLimit({
-  windowMs: 5 * 60 * 1000, // 5 minutes
-  max: 20, // 20 requests per user
-  message: { detail: "Too many scan requests. Please try again in 5 minutes." },
-  keyGenerator: (req) => req.user.id, // Limit per user
-});
 
 // Multer Configuration
 const storage = multer.diskStorage({
@@ -70,15 +62,23 @@ const upload = multer({
       "application/x-csv",
       "text/comma-separated-values",
     ];
-    if (allowedTypes.includes(file.mimetype) || ext === ".csv" || ext === ".txt") {
+    if (
+      allowedTypes.includes(file.mimetype) ||
+      ext === ".csv" ||
+      ext === ".txt"
+    ) {
       cb(null, true);
     } else {
-      cb(new Error("Invalid file type. Only PNG, JPEG, WebP, and CSV files are allowed."));
+      cb(
+        new Error(
+          "Invalid file type. Only PNG, JPEG, WebP, and CSV files are allowed."
+        )
+      );
     }
   },
 });
 
-// POST /api/purchases/match-suggestions - Smart matching against inventory & products
+// POST /api/purchases/match-suggestions - Link scanned lines to existing catalog products
 router.post(
   "/match-suggestions",
   auth,
@@ -87,215 +87,14 @@ router.post(
     try {
       const db = mongoose.connection.db;
       const { items } = req.body;
-
-      if (!items || !Array.isArray(items)) {
+      if (!Array.isArray(items) || items.length === 0) {
         return res.json({ success: true, matches: [] });
       }
-
-      // Query both inventory AND products collections for maximum recall
-      const allInventoryItems = await db
-        .collection("inventory")
-        .find({ pharmacy_id: req.user.pharmacy_id })
-        .toArray();
-
-      const allProductItems = await db
-        .collection("products")
-        .find({ pharmacy_id: req.user.pharmacy_id })
-        .toArray();
-
-      // Build unified catalog map indexed by product_id and product_name
-      const catalogMap = new Map();
-
-      for (const p of allProductItems) {
-        if (p.name) {
-          const pName = p.name.trim();
-          const pId = p.id || p._id.toString();
-          catalogMap.set(pId, {
-            product_id: pId,
-            product_name: pName,
-            manufacturer: p.manufacturer || "",
-            batches: [],
-          });
-        }
-      }
-
-      for (const inv of allInventoryItems) {
-        if (inv.product_name) {
-          const invName = inv.product_name.trim();
-          const invId = inv.product_id || inv.id || inv._id.toString();
-          const existing = catalogMap.get(invId) || {
-            product_id: invId,
-            product_name: invName,
-            manufacturer: inv.manufacturer || "",
-            batches: [],
-          };
-          if (inv.batch_no) {
-            existing.batches.push(inv.batch_no.trim());
-          }
-          catalogMap.set(invId, existing);
-        }
-      }
-
-      const catalogList = Array.from(catalogMap.values());
-
-      const cleanAlphanumeric = (str) =>
-        (str || "").replace(/[^a-zA-Z0-9]/g, "").toLowerCase().replace(/^0+/, "");
-
-      const COMMON_DOSAGE_WORDS = new Set([
-        "ds", "cap", "capsule", "capsules", "tab", "tablet", "tablets",
-        "syp", "syrup", "dry", "inj", "injection", "gel", "cream",
-        "ointment", "suspension", "solution", "drops", "lotion", "mg", "ml", "gm", "g", "100mg", "200mg", "500mg", "650mg"
-      ]);
-
-      const getBrandCoreTokens = (name) => {
-        return (name || "")
-          .toLowerCase()
-          .replace(/[^a-z0-9\s]/g, " ")
-          .split(/\s+/)
-          .filter((t) => t.length > 0 && !COMMON_DOSAGE_WORDS.has(t));
-      };
-
-      const matches = items.map((item) => {
-        const scannedName = (item.product_name || "").trim();
-        const scannedBatch = (item.batch_no || "").trim();
-        const cleanScannedBatch = cleanAlphanumeric(scannedBatch);
-
-        let batchMatch = null;
-        let exactNameMatch = null;
-        const rawSuggestions = [];
-
-        // 1. Batch Match (Highest priority - strict exact batch matching)
-        if (cleanScannedBatch && cleanScannedBatch.length >= 2) {
-          const foundInv = allInventoryItems.find((inv) => {
-            const cleanInvBatch = cleanAlphanumeric(inv.batch_no);
-            if (!cleanInvBatch || cleanInvBatch.length < 2) return false;
-
-            // Exact match after normalization (e.g. "b525" === "b525" or "00.b525" === "b525")
-            if (cleanInvBatch === cleanScannedBatch) return true;
-
-            // Direct case-insensitive raw batch match
-            const rawInvBatch = (inv.batch_no || "").trim().toLowerCase();
-            const rawScannedBatch = scannedBatch.toLowerCase();
-            if (rawInvBatch && rawScannedBatch && rawInvBatch === rawScannedBatch) return true;
-
-            return false;
-          });
-
-          if (foundInv) {
-            batchMatch = {
-              product_id: foundInv.product_id || foundInv.id || (foundInv._id ? foundInv._id.toString() : ""),
-              inventory_id: foundInv.id || (foundInv._id ? foundInv._id.toString() : ""),
-              product_name: foundInv.product_name,
-              salt_composition: foundInv.salt_composition || "",
-              batch_no: foundInv.batch_no,
-              expiry_date: foundInv.expiry_date || "",
-              available_quantity: foundInv.available_quantity || 0,
-              mrp: foundInv.mrp_per_unit || foundInv.mrp || 0,
-              cost_price: foundInv.cost_per_unit || foundInv.purchase_price || 0,
-              cgst: foundInv.cgst || 0,
-              sgst: foundInv.sgst || 0,
-              type: "batch_exact",
-            };
-          }
-        }
-
-        // 2. Name Match & Brand Core Similarity Scoring
-        if (scannedName) {
-          const normScannedName = scannedName.toLowerCase();
-          const scannedBrandTokens = getBrandCoreTokens(scannedName);
-
-          catalogList.forEach((prod) => {
-            if (!prod.product_name) return;
-            const normProdName = prod.product_name.toLowerCase();
-            const prodBrandTokens = getBrandCoreTokens(prod.product_name);
-
-            let score = 0;
-            let isHighConfidence = false;
-
-            if (normProdName === normScannedName) {
-              score = 100;
-              isHighConfidence = true;
-              exactNameMatch = {
-                product_id: prod.product_id,
-                product_name: prod.product_name,
-                type: "name_exact",
-              };
-            } else if (normProdName.includes(normScannedName) || normScannedName.includes(normProdName)) {
-              score = 90;
-              isHighConfidence = true;
-            } else {
-              // Strict Brand Core Token Match (excluding generic words like DS, SYRUP, CAP)
-              if (scannedBrandTokens.length > 0 && prodBrandTokens.length > 0) {
-                let brandMatchCount = 0;
-                scannedBrandTokens.forEach((tok) => {
-                  if (prodBrandTokens.includes(tok)) brandMatchCount++;
-                });
-
-                const matchRatio = brandMatchCount / scannedBrandTokens.length;
-
-                if (brandMatchCount > 0 && matchRatio >= 0.5) {
-                  score = Math.round(50 + matchRatio * 40);
-                  if (matchRatio >= 0.75) {
-                    isHighConfidence = true;
-                  }
-                }
-              }
-            }
-
-            if (score >= 40) {
-              rawSuggestions.push({
-                product_id: prod.product_id,
-                product_name: prod.product_name,
-                score: Math.round(score),
-                is_high_confidence: isHighConfidence,
-              });
-            }
-          });
-        }
-
-        // 3. Ensure Batch Match is at position #1 in suggestions
-        if (batchMatch) {
-          rawSuggestions.unshift({
-            product_id: batchMatch.product_id,
-            inventory_id: batchMatch.inventory_id,
-            product_name: batchMatch.product_name,
-            salt_composition: batchMatch.salt_composition,
-            score: 10000,
-            is_batch_match: true,
-            is_high_confidence: true,
-            batch_no: batchMatch.batch_no,
-            expiry_date: batchMatch.expiry_date,
-            available_quantity: batchMatch.available_quantity,
-            mrp: batchMatch.mrp,
-            cost_price: batchMatch.cost_price,
-            cgst: batchMatch.cgst,
-            sgst: batchMatch.sgst,
-          });
-        }
-
-        rawSuggestions.sort((a, b) => b.score - a.score);
-
-        // Deduplicate suggestions by product_id (keeping highest score/batchMatch)
-        const uniqueSuggestions = [];
-        const seenIds = new Set();
-        for (const sug of rawSuggestions) {
-          if (!seenIds.has(sug.product_id)) {
-            seenIds.add(sug.product_id);
-            uniqueSuggestions.push(sug);
-          }
-        }
-
-        const topSuggestions = uniqueSuggestions.slice(0, 12);
-
-        return {
-          scanned_name: scannedName,
-          scanned_batch: scannedBatch,
-          batch_match: batchMatch,
-          exact_name_match: exactNameMatch,
-          suggestions: topSuggestions,
-        };
-      });
-
+      const matches = await Promise.all(
+        items.slice(0, 100).map((i) =>
+          matchForPurchase(db, req.user.pharmacy_id, { product_name: String(i?.product_name || ""), batch_no: String(i?.batch_no || "") })
+        )
+      );
       res.json({ success: true, matches });
     } catch (error) {
       next(error);
@@ -324,7 +123,10 @@ router.get(
         .find(
           {
             pharmacy_id: req.user.pharmacy_id,
-            "items.product_name": { $regex: normalizedInput.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&'), $options: "i" }
+            "items.product_name": {
+              $regex: normalizedInput.replace(/[-\/\\^$*+?.()|[\]{}]/g, "\\$&"),
+              $options: "i",
+            },
           },
           { projection: { _id: 0 } }
         )
@@ -376,7 +178,7 @@ router.get(
       res.json({
         product_name,
         count: historyRecords.length,
-        purchases: historyRecords
+        purchases: historyRecords,
       });
     } catch (error) {
       next(error);
@@ -392,14 +194,25 @@ router.get(
   async (req, res, next) => {
     try {
       const db = mongoose.connection.db;
-      const { product_name, current_price, current_rate, current_mrp } = req.query;
+      const { product_name, current_price, current_rate, current_mrp } =
+        req.query;
 
       if (!product_name) {
         return res.status(400).json({ detail: "product_name is required" });
       }
 
-      const currentRateNum = parseFloat(req.query.current_price || req.query.current_rate || req.query.rate_pack) || 0;
-      const currentMrpNum = parseFloat(req.query.current_mrp || req.query.current_mrp_pack || req.query.mrp_pack) || 0;
+      const currentRateNum =
+        parseFloat(
+          req.query.current_price ||
+            req.query.current_rate ||
+            req.query.rate_pack
+        ) || 0;
+      const currentMrpNum =
+        parseFloat(
+          req.query.current_mrp ||
+            req.query.current_mrp_pack ||
+            req.query.mrp_pack
+        ) || 0;
 
       // Find all purchases containing this product (case-insensitive match, with normalized name)
       const normalizedInput = normalizeName(product_name);
@@ -430,11 +243,16 @@ router.get(
               matchedProductName = item.product_name;
             }
 
-            const packPrice = parseFloat(item.rate_pack || item.pack_price || 0);
-            const unitsPerPack = parseInt(item.units_per_pack || item.units) || 1;
+            const packPrice = parseFloat(
+              item.rate_pack || item.pack_price || 0
+            );
+            const unitsPerPack =
+              parseInt(item.units_per_pack || item.units) || 1;
             const mrpPack = parseFloat(
               item.mrp_pack ||
-                (item.mrp_per_unit ? item.mrp_per_unit * unitsPerPack : item.mrp || 0)
+                (item.mrp_per_unit
+                  ? item.mrp_per_unit * unitsPerPack
+                  : item.mrp || 0)
             );
 
             if (packPrice > 0) {
@@ -466,37 +284,53 @@ router.get(
         (a, b) => a.rate_pack - b.rate_pack
       );
 
-      const latestRecord = sortedByDate.length > 0 ? sortedByDate[sortedByDate.length - 1] : null;
+      const latestRecord =
+        sortedByDate.length > 0 ? sortedByDate[sortedByDate.length - 1] : null;
       const cheapestRecord = sortedByRate.length > 0 ? sortedByRate[0] : null;
 
       const latestRate = latestRecord ? latestRecord.rate_pack : 0;
       const latestMrp = latestRecord ? latestRecord.mrp_pack : 0;
 
-      const rate_increased = currentRateNum > 0 && latestRate > 0 && (currentRateNum - latestRate) >= 0.5;
-      const rate_difference = rate_increased ? Number((currentRateNum - latestRate).toFixed(2)) : 0;
+      const rate_increased =
+        currentRateNum > 0 &&
+        latestRate > 0 &&
+        currentRateNum - latestRate >= 0.5;
+      const rate_difference = rate_increased
+        ? Number((currentRateNum - latestRate).toFixed(2))
+        : 0;
 
-      const mrp_increased = currentMrpNum > 0 && latestMrp > 0 && (currentMrpNum - latestMrp) >= 0.5;
-      const mrp_difference = mrp_increased ? Number((currentMrpNum - latestMrp).toFixed(2)) : 0;
+      const mrp_increased =
+        currentMrpNum > 0 && latestMrp > 0 && currentMrpNum - latestMrp >= 0.5;
+      const mrp_difference = mrp_increased
+        ? Number((currentMrpNum - latestMrp).toFixed(2))
+        : 0;
 
-      const mrp_lowered = currentMrpNum > 0 && latestMrp > 0 && (latestMrp - currentMrpNum) >= 0.5;
-      const mrp_drop_difference = mrp_lowered ? Number((latestMrp - currentMrpNum).toFixed(2)) : 0;
+      const mrp_lowered =
+        currentMrpNum > 0 && latestMrp > 0 && latestMrp - currentMrpNum >= 0.5;
+      const mrp_drop_difference = mrp_lowered
+        ? Number((latestMrp - currentMrpNum).toFixed(2))
+        : 0;
 
       // ALERT CONDITION: Rate increased while MRP remained SAME (neither increased nor lowered)
-      const is_higher_price_alert = rate_increased && !mrp_increased && !mrp_lowered;
+      const is_higher_price_alert =
+        rate_increased && !mrp_increased && !mrp_lowered;
       const is_mrp_lowered_alert = mrp_lowered;
 
       const alert_type = mrp_lowered
-        ? (rate_increased ? "MRP_LOWERED_HIGHER_RATE" : "MRP_LOWERED")
+        ? rate_increased
+          ? "MRP_LOWERED_HIGHER_RATE"
+          : "MRP_LOWERED"
         : is_higher_price_alert
-        ? "SAME_MRP_HIGHER_RATE"
-        : mrp_increased
-        ? "MRP_HIKE"
-        : "NORMAL";
+          ? "SAME_MRP_HIGHER_RATE"
+          : mrp_increased
+            ? "MRP_HIKE"
+            : "NORMAL";
 
       // Filter cheaper supplier options
-      const cheaperOptions = currentRateNum > 0
-        ? sortedByRate.filter((r) => r.rate_pack < currentRateNum)
-        : [];
+      const cheaperOptions =
+        currentRateNum > 0
+          ? sortedByRate.filter((r) => r.rate_pack < currentRateNum)
+          : [];
 
       res.json({
         searched_product_name: product_name,
@@ -573,7 +407,9 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
         .sort(sortOptions)
         .project({ id: 1 })
         .toArray();
-      const targetIndex = allPurchasesIds.findIndex((p) => p.id === highlight_id);
+      const targetIndex = allPurchasesIds.findIndex(
+        (p) => p.id === highlight_id
+      );
       if (targetIndex !== -1) {
         pageNum = Math.floor(targetIndex / parseInt(limit)) + 1;
       }
@@ -611,17 +447,34 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
   session.startTransaction();
 
   try {
-    const { supplier_id, supplier_name, supplier_data, invoice_no, purchase_date, items, payment_status, amount_paid, payment_mode } =
-      req.body;
+    const {
+      supplier_id,
+      supplier_name,
+      supplier_data,
+      invoice_no,
+      purchase_date,
+      items,
+      payment_status,
+      amount_paid,
+      payment_mode,
+    } = req.body;
     const db = mongoose.connection.db;
 
     // Validate payment mode against mandatory settings preference
-    const userPrefs = await db.collection("user_settings").findOne({ user_id: req.user.id });
+    const userPrefs = await db
+      .collection("user_settings")
+      .findOne({ user_id: req.user.id });
     const preferences = userPrefs?.preferences || {};
-    const isModeMandatory = preferences.purchase_payment_mode_mandatory === true;
+    const isModeMandatory =
+      preferences.purchase_payment_mode_mandatory === true;
 
-    const isPaidOrPartial = payment_status === "Paid" || payment_status === "Partial";
-    if (isModeMandatory && isPaidOrPartial && (!payment_mode || !["Cash", "UPI", "Card"].includes(payment_mode))) {
+    const isPaidOrPartial =
+      payment_status === "Paid" || payment_status === "Partial";
+    if (
+      isModeMandatory &&
+      isPaidOrPartial &&
+      (!payment_mode || !["Cash", "UPI", "Card"].includes(payment_mode))
+    ) {
       await session.abortTransaction();
       session.endSession();
       return res.status(400).json({ detail: "Payment mode is mandatory" });
@@ -632,7 +485,9 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
       if (isNaN(pAmount) || pAmount <= 0) {
         await session.abortTransaction();
         session.endSession();
-        return res.status(400).json({ detail: "Initial paid amount is mandatory for Partial payment" });
+        return res.status(400).json({
+          detail: "Initial paid amount is mandatory for Partial payment",
+        });
       }
     }
 
@@ -648,24 +503,38 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
 
     let localSup = null;
     if (supplier_id) {
-      localSup = await db.collection("suppliers").findOne({
-        pharmacy_id: req.user.pharmacy_id,
-        $or: [{ id: supplier_id }, { global_code: supplier_id }]
-      }, { session });
+      localSup = await db.collection("suppliers").findOne(
+        {
+          pharmacy_id: req.user.pharmacy_id,
+          $or: [{ id: supplier_id }, { global_code: supplier_id }],
+        },
+        { session }
+      );
     }
 
     if (!localSup && supplier_data?.gst_no) {
-      localSup = await db.collection("suppliers").findOne({
-        pharmacy_id: req.user.pharmacy_id,
-        $or: [{ gst_no: supplier_data.gst_no }, { gstin: supplier_data.gst_no }]
-      }, { session });
+      localSup = await db.collection("suppliers").findOne(
+        {
+          pharmacy_id: req.user.pharmacy_id,
+          $or: [
+            { gst_no: supplier_data.gst_no },
+            { gstin: supplier_data.gst_no },
+          ],
+        },
+        { session }
+      );
     }
 
     if (!localSup && supplier_name && supplier_name !== "Unknown") {
-      localSup = await db.collection("suppliers").findOne({
-        pharmacy_id: req.user.pharmacy_id,
-        name: { $regex: new RegExp(`^${escapeRegex(supplier_name.trim())}$`, "i") }
-      }, { session });
+      localSup = await db.collection("suppliers").findOne(
+        {
+          pharmacy_id: req.user.pharmacy_id,
+          name: {
+            $regex: new RegExp(`^${escapeRegex(supplier_name.trim())}$`, "i"),
+          },
+        },
+        { session }
+      );
     }
 
     let createdSupplier = null;
@@ -680,24 +549,33 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
         try {
           const globalDistCol = await getGlobalDistributorsCollection();
           if (globalDistCol) {
-            const rawId = typeof supplier_id === "string" && supplier_id.startsWith("DST-") ? parseInt(supplier_id.replace("DST-", "")) : supplier_id;
+            const rawId =
+              typeof supplier_id === "string" && supplier_id.startsWith("DST-")
+                ? parseInt(supplier_id.replace("DST-", ""))
+                : supplier_id;
             const foundDist = await globalDistCol.findOne({
-              $or: [{ supplier_code: supplier_id }, { supplier_id: rawId }]
+              $or: [{ supplier_code: supplier_id }, { supplier_id: rawId }],
             });
             if (foundDist) {
               distDetails = {
                 name: foundDist.agency_name,
                 phone: foundDist.contact_number,
                 gst_no: foundDist.gst_number,
-                address: [foundDist.locality, foundDist.city, foundDist.state].filter(Boolean).join(", "),
+                address: [foundDist.locality, foundDist.city, foundDist.state]
+                  .filter(Boolean)
+                  .join(", "),
                 city: foundDist.city,
                 state: foundDist.state,
-                global_id: foundDist.supplier_code || `DST-${foundDist.supplier_id}`,
+                global_id:
+                  foundDist.supplier_code || `DST-${foundDist.supplier_id}`,
               };
             }
           }
         } catch (e) {
-          console.warn("Global dist lookup fallback during purchase creation:", e.message);
+          console.warn(
+            "Global dist lookup fallback during purchase creation:",
+            e.message
+          );
         }
       }
 
@@ -707,10 +585,14 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
         id: newLocalSupId,
         pharmacy_id: req.user.pharmacy_id,
         name: finalName.trim(),
-        contact: (distDetails.phone || distDetails.contact || "").trim() || null,
+        contact:
+          (distDetails.phone || distDetails.contact || "").trim() || null,
         phone: (distDetails.phone || distDetails.contact || "").trim() || null,
         email: distDetails.email || null,
-        address: distDetails.address || [distDetails.city, distDetails.state].filter(Boolean).join(", ") || null,
+        address:
+          distDetails.address ||
+          [distDetails.city, distDetails.state].filter(Boolean).join(", ") ||
+          null,
         city: distDetails.city || null,
         state: distDetails.state || null,
         gst_no: (distDetails.gst_no || distDetails.gstin || "").trim() || null,
@@ -729,17 +611,25 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
 
     // [Issue #11] Idempotency Check
     if (invoice_no) {
-      const existingPurchase = await db.collection("purchases").findOne({
-        pharmacy_id: req.user.pharmacy_id,
-        supplier_id: resolvedSupplierId,
-        invoice_no,
-        created_at: { $gt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString() }
-      }, { session });
+      const existingPurchase = await db.collection("purchases").findOne(
+        {
+          pharmacy_id: req.user.pharmacy_id,
+          supplier_id: resolvedSupplierId,
+          invoice_no,
+          created_at: {
+            $gt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(),
+          },
+        },
+        { session }
+      );
 
       if (existingPurchase) {
         await session.abortTransaction();
         session.endSession();
-        return res.status(409).json({ detail: "Duplicate purchase detected (same invoice and supplier in last 30 days)" });
+        return res.status(409).json({
+          detail:
+            "Duplicate purchase detected (same invoice and supplier in last 30 days)",
+        });
       }
     }
 
@@ -750,7 +640,9 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
     if (items.some((it) => !String(it?.product_name || "").trim())) {
       await session.abortTransaction();
       session.endSession();
-      return res.status(400).json({ detail: "Every item needs a product name" });
+      return res
+        .status(400)
+        .json({ detail: "Every item needs a product name" });
     }
 
     for (const item of items) {
@@ -759,54 +651,89 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
       let matchedProduct = null;
 
       const pId = item.selected_product_id || item.product_id;
-      const strPid = pId !== undefined && pId !== null ? String(pId).trim() : "";
+      const strPid =
+        pId !== undefined && pId !== null ? String(pId).trim() : "";
       const isScanned = strPid.startsWith("scanned_");
 
       if (pId && !isScanned) {
-        matchedProduct = await db.collection("products").findOne({
-          pharmacy_id: req.user.pharmacy_id,
-          $or: [{ id: pId }, { id: strPid }, { product_id: pId }, { product_id: strPid }]
-        }, { session });
+        matchedProduct = await db.collection("products").findOne(
+          {
+            pharmacy_id: req.user.pharmacy_id,
+            $or: [
+              { id: pId },
+              { id: strPid },
+              { product_id: pId },
+              { product_id: strPid },
+            ],
+          },
+          { session }
+        );
       }
 
       if (!matchedProduct) {
-        matchedProduct = await db.collection("products").findOne({
-          pharmacy_id: req.user.pharmacy_id,
-          name: { $regex: new RegExp("^" + normalizedName.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&') + "$", "i") },
-        }, { session });
+        matchedProduct = await db.collection("products").findOne(
+          {
+            pharmacy_id: req.user.pharmacy_id,
+            name: {
+              $regex: new RegExp(
+                "^" +
+                  normalizedName.replace(/[-\/\\^$*+?.()|[\]{}]/g, "\\$&") +
+                  "$",
+                "i"
+              ),
+            },
+          },
+          { session }
+        );
       }
 
       let resolvedProductId;
       if (matchedProduct) {
         resolvedProductId = matchedProduct.id;
       } else {
-        resolvedProductId = (pId && !isScanned) ? pId : uuidv4();
-        await db.collection("products").insertOne({
-          id: resolvedProductId,
-          product_id: resolvedProductId,
-          pharmacy_id: req.user.pharmacy_id,
-          name: normalizedName,
-          product_name: normalizedName,
-          category: item.category || "medicine",
-          dosage_form: item.dosage_form || item.pack_type || "tablet",
-          manufacturer: item.manufacturer || "",
-          salt_composition: item.salt_composition || "",
-          pack_type: item.pack_type || "Strip",
-          units_per_pack: item.units_per_pack || item.units || 1,
-          hsn_no: item.hsn_no || "",
-          tax_rate: (parseFloat(item.cgst) || 0) + (parseFloat(item.sgst) || 0),
-          cgst: parseFloat(item.cgst) || 0,
-          sgst: parseFloat(item.sgst) || 0,
-          mrp: (item.mrp_per_unit || item.mrp_unit || 0) * (item.units_per_pack || item.units || 1),
-          trade_price: item.pack_price || item.rate_pack || 0,
-          purchase_price: item.pack_price || item.rate_pack || 0,
-          source: "catalog",
-          is_custom_catalog: true,
-          low_stock_threshold: item.low_stock_threshold !== undefined && item.low_stock_threshold !== "" && item.low_stock_threshold !== null ? Number(item.low_stock_threshold) : 10,
-          shortage_threshold: item.shortage_threshold !== undefined && item.shortage_threshold !== "" && item.shortage_threshold !== null ? Number(item.shortage_threshold) : 10,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        }, { session });
+        resolvedProductId = pId && !isScanned ? pId : uuidv4();
+        await db.collection("products").insertOne(
+          {
+            id: resolvedProductId,
+            product_id: resolvedProductId,
+            pharmacy_id: req.user.pharmacy_id,
+            name: normalizedName,
+            product_name: normalizedName,
+            category: item.category || "medicine",
+            dosage_form: item.dosage_form || item.pack_type || "tablet",
+            manufacturer: item.manufacturer || "",
+            salt_composition: item.salt_composition || "",
+            pack_type: item.pack_type || "Strip",
+            units_per_pack: item.units_per_pack || item.units || 1,
+            hsn_no: item.hsn_no || "",
+            tax_rate:
+              (parseFloat(item.cgst) || 0) + (parseFloat(item.sgst) || 0),
+            cgst: parseFloat(item.cgst) || 0,
+            sgst: parseFloat(item.sgst) || 0,
+            mrp:
+              (item.mrp_per_unit || item.mrp_unit || 0) *
+              (item.units_per_pack || item.units || 1),
+            trade_price: item.pack_price || item.rate_pack || 0,
+            purchase_price: item.pack_price || item.rate_pack || 0,
+            source: "catalog",
+            is_custom_catalog: true,
+            low_stock_threshold:
+              item.low_stock_threshold !== undefined &&
+              item.low_stock_threshold !== "" &&
+              item.low_stock_threshold !== null
+                ? Number(item.low_stock_threshold)
+                : 10,
+            shortage_threshold:
+              item.shortage_threshold !== undefined &&
+              item.shortage_threshold !== "" &&
+              item.shortage_threshold !== null
+                ? Number(item.shortage_threshold)
+                : 10,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+          { session }
+        );
       }
 
       let packQty = item.pack_quantity || item.quantity || 1;
@@ -827,7 +754,7 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
 
       const totalPacks = packQty + scheme;
       const totalUnits = totalPacks * unitsPerPack;
-      
+
       const netBasePrice = packQty * packPrice * (1 - discount / 100);
       const cgst = parseFloat(item.cgst) || 0;
       const sgst = parseFloat(item.sgst) || 0;
@@ -835,9 +762,13 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
       totalAmount += itemTotal;
 
       // True Net Landing Cost per unit (inclusive of GST and net of discounts/scheme)
-      const pricePerUnit = totalUnits > 0
-        ? itemTotal / totalUnits
-        : (unitsPerPack > 0 ? (packPrice * (1 - discount / 100) * (1 + (cgst + sgst) / 100)) / unitsPerPack : 0);
+      const pricePerUnit =
+        totalUnits > 0
+          ? itemTotal / totalUnits
+          : unitsPerPack > 0
+            ? (packPrice * (1 - discount / 100) * (1 + (cgst + sgst) / 100)) /
+              unitsPerPack
+            : 0;
 
       const normalizedExpiry = normalizeExpiryDate(item.expiry_date);
 
@@ -868,16 +799,24 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
         cgst: cgst,
         sgst: sgst,
         discount: discount,
-        shortage_threshold: item.shortage_threshold !== undefined && item.shortage_threshold !== null && item.shortage_threshold !== "" ? Number(item.shortage_threshold) : null,
+        shortage_threshold:
+          item.shortage_threshold !== undefined &&
+          item.shortage_threshold !== null &&
+          item.shortage_threshold !== ""
+            ? Number(item.shortage_threshold)
+            : null,
       };
       processedItems.push(processedItem);
 
       // Update inventory (with session)
-      const existingInventory = await db.collection("inventory").findOne({
-        pharmacy_id: req.user.pharmacy_id,
-        product_id: resolvedProductId,
-        batch_no: item.batch_no,
-      }, { session });
+      const existingInventory = await db.collection("inventory").findOne(
+        {
+          pharmacy_id: req.user.pharmacy_id,
+          product_id: resolvedProductId,
+          batch_no: item.batch_no,
+        },
+        { session }
+      );
 
       if (existingInventory) {
         await db.collection("inventory").updateOne(
@@ -898,47 +837,62 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
               sgst: sgst,
               discount: discount,
               scheme: scheme,
-              shortage_threshold: item.shortage_threshold !== undefined && item.shortage_threshold !== null && item.shortage_threshold !== "" ? Number(item.shortage_threshold) : (existingInventory.shortage_threshold !== undefined ? existingInventory.shortage_threshold : null),
+              shortage_threshold:
+                item.shortage_threshold !== undefined &&
+                item.shortage_threshold !== null &&
+                item.shortage_threshold !== ""
+                  ? Number(item.shortage_threshold)
+                  : existingInventory.shortage_threshold !== undefined
+                    ? existingInventory.shortage_threshold
+                    : null,
             },
           },
           { session }
         );
       } else {
         const inventoryId = uuidv4();
-        await db.collection("inventory").insertOne({
-          id: inventoryId,
-          pharmacy_id: req.user.pharmacy_id,
-          product_id: resolvedProductId,
-          product_name: item.product_name,
-          batch_no: item.batch_no,
-          hsn_no: item.hsn_no || null,
-          expiry_date: normalizedExpiry,
-          manufacturer: item.manufacturer || null,
-          salt_composition: item.salt_composition || null,
-          pack_type: item.pack_type || "Strip",
-          quantity: totalUnits,
-          available_quantity: totalUnits,
-          pack_quantity: packQty,
-          scheme: scheme,
-          units_per_pack: unitsPerPack,
-          purchase_price: pricePerUnit,
-          mrp: mrpPerUnit,
-          pack_price: packPrice,
-          mrp_pack: mrpPerUnit ? mrpPerUnit * unitsPerPack : null,
-          cgst: cgst,
-          sgst: sgst,
-          discount: discount,
-          purchase_id: purchaseId,
-          supplier_id: resolvedSupplierId || null,
-          shortage_threshold: item.shortage_threshold !== undefined && item.shortage_threshold !== null && item.shortage_threshold !== "" ? Number(item.shortage_threshold) : null,
-          created_at: new Date().toISOString(),
-        }, { session });
+        await db.collection("inventory").insertOne(
+          {
+            id: inventoryId,
+            pharmacy_id: req.user.pharmacy_id,
+            product_id: resolvedProductId,
+            product_name: item.product_name,
+            batch_no: item.batch_no,
+            hsn_no: item.hsn_no || null,
+            expiry_date: normalizedExpiry,
+            manufacturer: item.manufacturer || null,
+            salt_composition: item.salt_composition || null,
+            pack_type: item.pack_type || "Strip",
+            quantity: totalUnits,
+            available_quantity: totalUnits,
+            pack_quantity: packQty,
+            scheme: scheme,
+            units_per_pack: unitsPerPack,
+            purchase_price: pricePerUnit,
+            mrp: mrpPerUnit,
+            pack_price: packPrice,
+            mrp_pack: mrpPerUnit ? mrpPerUnit * unitsPerPack : null,
+            cgst: cgst,
+            sgst: sgst,
+            discount: discount,
+            purchase_id: purchaseId,
+            supplier_id: resolvedSupplierId || null,
+            shortage_threshold:
+              item.shortage_threshold !== undefined &&
+              item.shortage_threshold !== null &&
+              item.shortage_threshold !== ""
+                ? Number(item.shortage_threshold)
+                : null,
+            created_at: new Date().toISOString(),
+          },
+          { session }
+        );
       }
     }
 
     const pStatus = payment_status || "Unpaid";
     let pAmount = parseFloat(amount_paid) || 0;
-    
+
     if (pStatus === "Paid") pAmount = totalAmount;
     else if (pStatus === "Unpaid") pAmount = 0;
 
@@ -970,7 +924,7 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
     };
 
     await db.collection("purchases").insertOne(purchaseData, { session });
-    
+
     await logActivity(
       db,
       req.user.pharmacy_id,
@@ -986,7 +940,11 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
 
     await session.commitTransaction();
     session.endSession();
-    res.status(201).json({ message: "Purchase recorded", purchase: purchaseData, created_supplier: createdSupplier });
+    res.status(201).json({
+      message: "Purchase recorded",
+      purchase: purchaseData,
+      created_supplier: createdSupplier,
+    });
   } catch (error) {
     await session.abortTransaction();
     session.endSession();
@@ -1030,25 +988,45 @@ router.put(
     session.startTransaction();
 
     try {
-      const { items, purchase_date, invoice_no, supplier_id, supplier_name, payment_status, amount_paid, payment_mode } = req.body;
+      const {
+        items,
+        purchase_date,
+        invoice_no,
+        supplier_id,
+        supplier_name,
+        payment_status,
+        amount_paid,
+        payment_mode,
+      } = req.body;
       const db = mongoose.connection.db;
 
       // Validate payment mode against mandatory settings preference
-      const userPrefs = await db.collection("user_settings").findOne({ user_id: req.user.id });
+      const userPrefs = await db
+        .collection("user_settings")
+        .findOne({ user_id: req.user.id });
       const preferences = userPrefs?.preferences || {};
-      const isModeMandatory = preferences.purchase_payment_mode_mandatory === true;
+      const isModeMandatory =
+        preferences.purchase_payment_mode_mandatory === true;
 
-      const isPaidOrPartial = payment_status === "Paid" || payment_status === "Partial";
-      if (isModeMandatory && isPaidOrPartial && (!payment_mode || !["Cash", "UPI", "Card"].includes(payment_mode))) {
+      const isPaidOrPartial =
+        payment_status === "Paid" || payment_status === "Partial";
+      if (
+        isModeMandatory &&
+        isPaidOrPartial &&
+        (!payment_mode || !["Cash", "UPI", "Card"].includes(payment_mode))
+      ) {
         await session.abortTransaction();
         session.endSession();
         return res.status(400).json({ detail: "Payment mode is mandatory" });
       }
 
-      const purchase = await db.collection("purchases").findOne({
-        id: req.params.purchase_id,
-        pharmacy_id: req.user.pharmacy_id,
-      }, { session });
+      const purchase = await db.collection("purchases").findOne(
+        {
+          id: req.params.purchase_id,
+          pharmacy_id: req.user.pharmacy_id,
+        },
+        { session }
+      );
 
       if (!purchase) {
         await session.abortTransaction();
@@ -1059,7 +1037,9 @@ router.put(
       if (!Array.isArray(items) || items.length === 0) {
         await session.abortTransaction();
         session.endSession();
-        return res.status(400).json({ detail: "At least one item is required" });
+        return res
+          .status(400)
+          .json({ detail: "At least one item is required" });
       }
 
       const pharmacyId = req.user.pharmacy_id;
@@ -1074,23 +1054,39 @@ router.put(
         if (!normalizedName) {
           await session.abortTransaction();
           session.endSession();
-          return res.status(400).json({ detail: "Every item needs a product name" });
+          return res
+            .status(400)
+            .json({ detail: "Every item needs a product name" });
         }
 
         // Prefer the catalog entry the line already points at, then match by name
-        const pId = item.product_id !== undefined && item.product_id !== null ? String(item.product_id).trim() : "";
+        const pId =
+          item.product_id !== undefined && item.product_id !== null
+            ? String(item.product_id).trim()
+            : "";
         let matchedProduct = null;
         if (pId && !pId.startsWith("scanned_") && !pId.startsWith("prod-")) {
-          matchedProduct = await db.collection("products").findOne({
-            pharmacy_id: pharmacyId,
-            $or: [{ id: pId }, { product_id: pId }]
-          }, { session });
+          matchedProduct = await db.collection("products").findOne(
+            {
+              pharmacy_id: pharmacyId,
+              $or: [{ id: pId }, { product_id: pId }],
+            },
+            { session }
+          );
         }
         if (!matchedProduct) {
-          matchedProduct = await db.collection("products").findOne({
-            pharmacy_id: pharmacyId,
-            name: { $regex: new RegExp("^" + escapeRegex(normalizedName) + "$", "i") }
-          }, { session });
+          matchedProduct = await db.collection("products").findOne(
+            {
+              pharmacy_id: pharmacyId,
+              name: {
+                $regex: new RegExp(
+                  "^" + escapeRegex(normalizedName) + "$",
+                  "i"
+                ),
+              },
+            },
+            { session }
+          );
         }
 
         let resolvedProductId;
@@ -1098,32 +1094,43 @@ router.put(
           resolvedProductId = matchedProduct.id;
         } else {
           resolvedProductId = uuidv4();
-          await db.collection("products").insertOne({
-            id: resolvedProductId,
-            product_id: resolvedProductId,
-            pharmacy_id: pharmacyId,
-            name: normalizedName,
-            product_name: normalizedName,
-            category: item.category || "medicine",
-            dosage_form: item.dosage_form || item.pack_type || "tablet",
-            manufacturer: item.manufacturer || "",
-            salt_composition: item.salt_composition || "",
-            pack_type: item.pack_type || "Strip",
-            units_per_pack: parseInt(item.units_per_pack) || 1,
-            hsn_no: item.hsn_no || "",
-            tax_rate: (parseFloat(item.cgst) || 0) + (parseFloat(item.sgst) || 0),
-            cgst: parseFloat(item.cgst) || 0,
-            sgst: parseFloat(item.sgst) || 0,
-            mrp: (parseFloat(item.mrp_per_unit) || 0) * (parseInt(item.units_per_pack) || 1),
-            trade_price: parseFloat(item.pack_price) || 0,
-            purchase_price: parseFloat(item.pack_price) || 0,
-            source: "catalog",
-            is_custom_catalog: true,
-            low_stock_threshold: 10,
-            shortage_threshold: item.shortage_threshold !== undefined && item.shortage_threshold !== null && item.shortage_threshold !== "" ? Number(item.shortage_threshold) : 10,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          }, { session });
+          await db.collection("products").insertOne(
+            {
+              id: resolvedProductId,
+              product_id: resolvedProductId,
+              pharmacy_id: pharmacyId,
+              name: normalizedName,
+              product_name: normalizedName,
+              category: item.category || "medicine",
+              dosage_form: item.dosage_form || item.pack_type || "tablet",
+              manufacturer: item.manufacturer || "",
+              salt_composition: item.salt_composition || "",
+              pack_type: item.pack_type || "Strip",
+              units_per_pack: parseInt(item.units_per_pack) || 1,
+              hsn_no: item.hsn_no || "",
+              tax_rate:
+                (parseFloat(item.cgst) || 0) + (parseFloat(item.sgst) || 0),
+              cgst: parseFloat(item.cgst) || 0,
+              sgst: parseFloat(item.sgst) || 0,
+              mrp:
+                (parseFloat(item.mrp_per_unit) || 0) *
+                (parseInt(item.units_per_pack) || 1),
+              trade_price: parseFloat(item.pack_price) || 0,
+              purchase_price: parseFloat(item.pack_price) || 0,
+              source: "catalog",
+              is_custom_catalog: true,
+              low_stock_threshold: 10,
+              shortage_threshold:
+                item.shortage_threshold !== undefined &&
+                item.shortage_threshold !== null &&
+                item.shortage_threshold !== ""
+                  ? Number(item.shortage_threshold)
+                  : 10,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            },
+            { session }
+          );
         }
 
         const packQty =
@@ -1133,13 +1140,16 @@ router.put(
         const packPrice =
           parseFloat(item.pack_price) || parseFloat(item.rate_pack) || 0;
         const mrpPerUnit =
-          Math.round((parseFloat(item.mrp_per_unit) || parseFloat(item.mrp_unit) || 0) * 100) / 100;
+          Math.round(
+            (parseFloat(item.mrp_per_unit) || parseFloat(item.mrp_unit) || 0) *
+              100
+          ) / 100;
         const discount = parseFloat(item.discount) || 0;
         const scheme = parseFloat(item.scheme) || 0;
 
         const totalPacks = packQty + scheme;
         const totalUnits = totalPacks * unitsPerPack;
-        
+
         const netBasePrice = packQty * packPrice * (1 - discount / 100);
         const cgst = parseFloat(item.cgst) || 0;
         const sgst = parseFloat(item.sgst) || 0;
@@ -1147,15 +1157,20 @@ router.put(
         totalAmount += itemTotal;
 
         // True Net Landing Cost per unit (inclusive of GST and net of discounts/scheme)
-        const pricePerUnit = totalUnits > 0
-          ? itemTotal / totalUnits
-          : (unitsPerPack > 0 ? (packPrice * (1 - discount / 100) * (1 + (cgst + sgst) / 100)) / unitsPerPack : 0);
+        const pricePerUnit =
+          totalUnits > 0
+            ? itemTotal / totalUnits
+            : unitsPerPack > 0
+              ? (packPrice * (1 - discount / 100) * (1 + (cgst + sgst) / 100)) /
+                unitsPerPack
+              : 0;
 
         processedItems.push({
           ...item,
           product_id: resolvedProductId,
           product_name: normalizedName,
-          expiry_date: normalizeExpiryDate(item.expiry_date) || item.expiry_date || null,
+          expiry_date:
+            normalizeExpiryDate(item.expiry_date) || item.expiry_date || null,
           quantity: totalUnits,
           pack_quantity: packQty,
           scheme: scheme,
@@ -1163,7 +1178,9 @@ router.put(
           pack_price: packPrice,
           mrp: mrpPerUnit,
           mrp_per_unit: mrpPerUnit,
-          mrp_pack: mrpPerUnit ? Math.round(mrpPerUnit * unitsPerPack * 100) / 100 : null,
+          mrp_pack: mrpPerUnit
+            ? Math.round(mrpPerUnit * unitsPerPack * 100) / 100
+            : null,
           total_units: totalUnits,
           price_per_unit: Math.round(pricePerUnit * 10000) / 10000,
           purchase_price: Math.round(pricePerUnit * 10000) / 10000,
@@ -1172,7 +1189,12 @@ router.put(
           cgst: cgst,
           sgst: sgst,
           discount: discount,
-          shortage_threshold: item.shortage_threshold !== undefined && item.shortage_threshold !== null && item.shortage_threshold !== "" ? Number(item.shortage_threshold) : null,
+          shortage_threshold:
+            item.shortage_threshold !== undefined &&
+            item.shortage_threshold !== null &&
+            item.shortage_threshold !== ""
+              ? Number(item.shortage_threshold)
+              : null,
         });
       }
 
@@ -1180,10 +1202,20 @@ router.put(
         // Apply only the per-batch difference between the old and new lines,
         // so editing prices, expiry or GST works even after part of the stock
         // has been sold. A batch can't drop below what has already left it.
-        const before = await purchaseStockImpact(db, pharmacyId, purchase.items, session);
+        const before = await purchaseStockImpact(
+          db,
+          pharmacyId,
+          purchase.items,
+          session
+        );
         const plan = new Map();
         for (const b of before.batches) {
-          plan.set(b.inventory_id, { ...b, old_units: b.purchased, new_units: 0, line: null });
+          plan.set(b.inventory_id, {
+            ...b,
+            old_units: b.purchased,
+            new_units: 0,
+            line: null,
+          });
         }
         const inserts = new Map();
         for (const line of processedItems) {
@@ -1229,10 +1261,13 @@ router.put(
           await session.abortTransaction();
           session.endSession();
           const c = conflicts[0];
-          const detail = c.requested === 0
-            ? `${c.product_name} (batch ${c.batch_no}) can't be removed: ${c.consumed} of ${c.purchased} units from this purchase are already sold.`
-            : `${c.product_name} (batch ${c.batch_no}): ${c.consumed} of ${c.purchased} units are already sold, so quantity can't go below ${c.min_units} units.`;
-          return res.status(409).json({ code: "STOCK_CONSUMED", detail, conflicts });
+          const detail =
+            c.requested === 0
+              ? `${c.product_name} (batch ${c.batch_no}) can't be removed: ${c.consumed} of ${c.purchased} units from this purchase are already sold.`
+              : `${c.product_name} (batch ${c.batch_no}): ${c.consumed} of ${c.purchased} units are already sold, so quantity can't go below ${c.min_units} units.`;
+          return res
+            .status(409)
+            .json({ code: "STOCK_CONSUMED", detail, conflicts });
         }
 
         const batchFields = (line) => {
@@ -1251,49 +1286,66 @@ router.put(
           if (line.expiry_date) set.expiry_date = line.expiry_date;
           if (line.pack_type) set.pack_type = line.pack_type;
           if (line.hsn_no) set.hsn_no = line.hsn_no;
-          if (line.shortage_threshold !== null && line.shortage_threshold !== undefined) set.shortage_threshold = line.shortage_threshold;
+          if (
+            line.shortage_threshold !== null &&
+            line.shortage_threshold !== undefined
+          )
+            set.shortage_threshold = line.shortage_threshold;
           return set;
         };
 
         for (const [invId, p] of plan) {
           const delta = p.new_units - p.old_units;
           const update = {};
-          if (delta !== 0) update.$inc = { quantity: delta, available_quantity: delta };
+          if (delta !== 0)
+            update.$inc = { quantity: delta, available_quantity: delta };
           if (p.line) update.$set = batchFields(p.line);
           if (update.$inc || update.$set) {
-            await db.collection("inventory").updateOne({ id: invId, pharmacy_id: pharmacyId }, update, { session });
+            await db
+              .collection("inventory")
+              .updateOne({ id: invId, pharmacy_id: pharmacyId }, update, {
+                session,
+              });
           }
         }
 
-        const lineSupplierId = supplier_id !== undefined ? supplier_id : purchase.supplier_id;
+        const lineSupplierId =
+          supplier_id !== undefined ? supplier_id : purchase.supplier_id;
         for (const { line, units } of inserts.values()) {
-          await db.collection("inventory").insertOne({
-            id: uuidv4(),
-            pharmacy_id: pharmacyId,
-            product_id: line.product_id,
-            product_name: line.product_name,
-            batch_no: line.batch_no,
-            hsn_no: line.hsn_no || null,
-            manufacturer: line.manufacturer || null,
-            salt_composition: line.salt_composition || null,
-            pack_type: line.pack_type || "Strip",
-            quantity: units,
-            available_quantity: units,
-            pack_quantity: line.pack_quantity,
-            supplier_id: lineSupplierId || null,
-            ...batchFields(line),
-            expiry_date: line.expiry_date || null,
-            shortage_threshold: line.shortage_threshold,
-            purchase_id: req.params.purchase_id,
-            created_at: new Date().toISOString(),
-          }, { session });
+          await db.collection("inventory").insertOne(
+            {
+              id: uuidv4(),
+              pharmacy_id: pharmacyId,
+              product_id: line.product_id,
+              product_name: line.product_name,
+              batch_no: line.batch_no,
+              hsn_no: line.hsn_no || null,
+              manufacturer: line.manufacturer || null,
+              salt_composition: line.salt_composition || null,
+              pack_type: line.pack_type || "Strip",
+              quantity: units,
+              available_quantity: units,
+              pack_quantity: line.pack_quantity,
+              supplier_id: lineSupplierId || null,
+              ...batchFields(line),
+              expiry_date: line.expiry_date || null,
+              shortage_threshold: line.shortage_threshold,
+              purchase_id: req.params.purchase_id,
+              created_at: new Date().toISOString(),
+            },
+            { session }
+          );
         }
       }
 
-      const finalStatus = payment_status !== undefined ? payment_status : (purchase.payment_status || "Unpaid");
+      const finalStatus =
+        payment_status !== undefined
+          ? payment_status
+          : purchase.payment_status || "Unpaid";
       let finalAmountPaid = purchase.amount_paid || 0;
       if (payment_status !== undefined) {
-        finalAmountPaid = amount_paid !== undefined ? parseFloat(amount_paid) : finalAmountPaid;
+        finalAmountPaid =
+          amount_paid !== undefined ? parseFloat(amount_paid) : finalAmountPaid;
       }
       if (finalStatus === "Paid") {
         finalAmountPaid = totalAmount;
@@ -1303,7 +1355,9 @@ router.put(
         if (isNaN(finalAmountPaid) || finalAmountPaid <= 0) {
           await session.abortTransaction();
           session.endSession();
-          return res.status(400).json({ detail: "Initial paid amount is mandatory for Partial payment" });
+          return res.status(400).json({
+            detail: "Initial paid amount is mandatory for Partial payment",
+          });
         }
       }
 
@@ -1318,50 +1372,66 @@ router.put(
         updated_at: new Date().toISOString(),
       };
 
-      let finalSupplierId = supplier_id !== undefined ? supplier_id : purchase.supplier_id;
+      let finalSupplierId =
+        supplier_id !== undefined ? supplier_id : purchase.supplier_id;
       let finalSupplierName = supplier_name;
       if (!finalSupplierName || finalSupplierName === "Unknown") {
         if (finalSupplierId) {
-          const s = await db.collection("suppliers").findOne({ id: finalSupplierId });
+          const s = await db
+            .collection("suppliers")
+            .findOne({ id: finalSupplierId });
           if (s && s.name) finalSupplierName = s.name;
         }
         if (!finalSupplierName || finalSupplierName === "Unknown") {
-          finalSupplierName = purchase.supplier_name && purchase.supplier_name !== "Unknown" ? purchase.supplier_name : "Unknown";
+          finalSupplierName =
+            purchase.supplier_name && purchase.supplier_name !== "Unknown"
+              ? purchase.supplier_name
+              : "Unknown";
         }
       }
 
-      if (finalSupplierId !== undefined) updatePayload.supplier_id = finalSupplierId;
-      if (finalSupplierName !== undefined) updatePayload.supplier_name = finalSupplierName;
+      if (finalSupplierId !== undefined)
+        updatePayload.supplier_id = finalSupplierId;
+      if (finalSupplierName !== undefined)
+        updatePayload.supplier_name = finalSupplierName;
 
       // Calculate Edit History Changes
       const changes = [];
       const compareField = (fieldName, label, formatter = (v) => v) => {
         const oldVal = purchase[fieldName];
         const newVal = updatePayload[fieldName];
-        const normalizedOld = (oldVal === undefined || oldVal === null) ? "" : oldVal;
-        const normalizedNew = (newVal === undefined || newVal === null) ? "" : newVal;
+        const normalizedOld =
+          oldVal === undefined || oldVal === null ? "" : oldVal;
+        const normalizedNew =
+          newVal === undefined || newVal === null ? "" : newVal;
         if (normalizedOld !== normalizedNew) {
           changes.push({
             field: fieldName,
             old_value: formatter(oldVal),
             new_value: formatter(newVal),
-            description: `Changed ${label} from "${formatter(oldVal) || "none"}" to "${formatter(newVal) || "none"}"`
+            description: `Changed ${label} from "${formatter(oldVal) || "none"}" to "${formatter(newVal) || "none"}"`,
           });
         }
       };
 
       compareField("supplier_name", "Supplier Name");
       compareField("invoice_no", "Invoice Number");
-      compareField("purchase_date", "Purchase Date", (v) => v ? new Date(v).toLocaleDateString() : "");
+      compareField("purchase_date", "Purchase Date", (v) =>
+        v ? new Date(v).toLocaleDateString() : ""
+      );
       compareField("payment_status", "Payment Status");
-      compareField("amount_paid", "Amount Paid", (v) => v !== undefined && v !== null ? `₹${Number(v).toFixed(2)}` : "₹0.00");
+      compareField("amount_paid", "Amount Paid", (v) =>
+        v !== undefined && v !== null ? `₹${Number(v).toFixed(2)}` : "₹0.00"
+      );
       compareField("payment_mode", "Payment Mode");
-      compareField("total_amount", "Total Amount", (v) => v !== undefined && v !== null ? `₹${Number(v).toFixed(2)}` : "₹0.00");
+      compareField("total_amount", "Total Amount", (v) =>
+        v !== undefined && v !== null ? `₹${Number(v).toFixed(2)}` : "₹0.00"
+      );
 
       // Items Comparison
       const oldItemsMap = {};
       const oldCounts = {};
-      (purchase.items || []).forEach(item => {
+      (purchase.items || []).forEach((item) => {
         const pId = item.product_id || item.product_name;
         oldCounts[pId] = (oldCounts[pId] || 0) + 1;
         const key = `${pId}_${oldCounts[pId]}`;
@@ -1370,7 +1440,7 @@ router.put(
 
       const newItemsMap = {};
       const newCounts = {};
-      processedItems.forEach(item => {
+      processedItems.forEach((item) => {
         const pId = item.product_id || item.product_name;
         newCounts[pId] = (newCounts[pId] || 0) + 1;
         const key = `${pId}_${newCounts[pId]}`;
@@ -1378,33 +1448,52 @@ router.put(
       });
 
       const itemChanges = [];
-      processedItems.forEach(item => {
+      processedItems.forEach((item) => {
         const pId = item.product_id || item.product_name;
         const count = newCounts[pId] || 0;
         const key = `${pId}_${count}`;
         const oldItem = oldItemsMap[key];
-        
+
         if (!oldItem) {
-          itemChanges.push(`Added item ${item.product_name} (Qty: ${item.total_units || item.quantity})`);
+          itemChanges.push(
+            `Added item ${item.product_name} (Qty: ${item.total_units || item.quantity})`
+          );
         } else {
           const changesList = [];
-          
-          const checkItemField = (oldField, newField, label, formatter = (v) => v) => {
+
+          const checkItemField = (
+            oldField,
+            newField,
+            label,
+            formatter = (v) => v
+          ) => {
             const oldVal = oldItem[oldField];
             const newVal = item[newField];
-            const normalizedOld = (oldVal === undefined || oldVal === null) ? "" : String(oldVal).trim();
-            const normalizedNew = (newVal === undefined || newVal === null) ? "" : String(newVal).trim();
+            const normalizedOld =
+              oldVal === undefined || oldVal === null
+                ? ""
+                : String(oldVal).trim();
+            const normalizedNew =
+              newVal === undefined || newVal === null
+                ? ""
+                : String(newVal).trim();
             if (normalizedOld !== normalizedNew) {
-              changesList.push(`${label}: ${formatter(oldVal) || "none"} -> ${formatter(newVal) || "none"}`);
+              changesList.push(
+                `${label}: ${formatter(oldVal) || "none"} -> ${formatter(newVal) || "none"}`
+              );
             }
           };
 
-          const oldQty = oldItem.total_units !== undefined ? oldItem.total_units : oldItem.quantity;
-          const newQty = item.total_units !== undefined ? item.total_units : item.quantity;
+          const oldQty =
+            oldItem.total_units !== undefined
+              ? oldItem.total_units
+              : oldItem.quantity;
+          const newQty =
+            item.total_units !== undefined ? item.total_units : item.quantity;
           if (parseInt(oldQty) !== parseInt(newQty)) {
             changesList.push(`Qty: ${oldQty} -> ${newQty}`);
           }
-          
+
           checkItemField("batch_no", "batch_no", "Batch");
           checkItemField("hsn_no", "hsn_no", "HSN");
           checkItemField("expiry_date", "expiry_date", "Expiry");
@@ -1412,27 +1501,39 @@ router.put(
           checkItemField("sgst", "sgst", "SGST", (v) => `${v}%`);
           checkItemField("discount", "discount", "Discount", (v) => `${v}%`);
           checkItemField("scheme", "scheme", "Scheme");
-          checkItemField("shortage_threshold", "shortage_threshold", "Shortage Threshold");
+          checkItemField(
+            "shortage_threshold",
+            "shortage_threshold",
+            "Shortage Threshold"
+          );
 
           const oldPrice = oldItem.purchase_price || oldItem.pack_price || 0;
           const newPrice = item.purchase_price || item.pack_price || 0;
-          if (parseFloat(oldPrice).toFixed(2) !== parseFloat(newPrice).toFixed(2)) {
-            changesList.push(`Price: ₹${parseFloat(oldPrice).toFixed(2)} -> ₹${parseFloat(newPrice).toFixed(2)}`);
+          if (
+            parseFloat(oldPrice).toFixed(2) !== parseFloat(newPrice).toFixed(2)
+          ) {
+            changesList.push(
+              `Price: ₹${parseFloat(oldPrice).toFixed(2)} -> ₹${parseFloat(newPrice).toFixed(2)}`
+            );
           }
 
           const oldMrp = oldItem.mrp || oldItem.mrp_per_unit || 0;
           const newMrp = item.mrp || item.mrp_per_unit || 0;
           if (parseFloat(oldMrp).toFixed(2) !== parseFloat(newMrp).toFixed(2)) {
-            changesList.push(`MRP: ₹${parseFloat(oldMrp).toFixed(2)} -> ₹${parseFloat(newMrp).toFixed(2)}`);
+            changesList.push(
+              `MRP: ₹${parseFloat(oldMrp).toFixed(2)} -> ₹${parseFloat(newMrp).toFixed(2)}`
+            );
           }
 
           if (changesList.length > 0) {
-            itemChanges.push(`Updated item ${item.product_name} (${changesList.join(", ")})`);
+            itemChanges.push(
+              `Updated item ${item.product_name} (${changesList.join(", ")})`
+            );
           }
         }
       });
 
-      (purchase.items || []).forEach(item => {
+      (purchase.items || []).forEach((item) => {
         const pId = item.product_id || item.product_name;
         const key = `${pId}_${oldCounts[pId] || 1}`;
         if (!newItemsMap[key]) {
@@ -1443,7 +1544,7 @@ router.put(
       if (itemChanges.length > 0) {
         changes.push({
           field: "items",
-          description: itemChanges.join("; ")
+          description: itemChanges.join("; "),
         });
       }
 
@@ -1453,16 +1554,18 @@ router.put(
           updated_by_id: req.user.id,
           updated_by_name: req.user.name,
           updated_by_avatar: req.user.image_url || null,
-          changes: changes
+          changes: changes,
         };
         updatePayload.history = [...(purchase.history || []), historyEntry];
       }
 
-      await db.collection("purchases").updateOne(
-        { id: req.params.purchase_id },
-        { $set: updatePayload },
-        { session }
-      );
+      await db
+        .collection("purchases")
+        .updateOne(
+          { id: req.params.purchase_id },
+          { $set: updatePayload },
+          { session }
+        );
 
       await logActivity(
         db,
@@ -1496,19 +1599,31 @@ router.put(
 // GET /api/purchases/:purchase_id/stock-impact
 // What deleting this purchase would do to stock: per batch, units purchased,
 // still on the shelf, and already sold.
-router.get("/:purchase_id/stock-impact", auth, requireSubscription(), async (req, res, next) => {
-  try {
-    const db = mongoose.connection.db;
-    const purchase = await db.collection("purchases").findOne(
-      { id: req.params.purchase_id, pharmacy_id: req.user.pharmacy_id },
-      { projection: { _id: 0, items: 1 } }
-    );
-    if (!purchase) return res.status(404).json({ detail: "Purchase not found" });
-    res.json(publicImpact(await purchaseStockImpact(db, req.user.pharmacy_id, purchase.items)));
-  } catch (error) {
-    next(error);
+router.get(
+  "/:purchase_id/stock-impact",
+  auth,
+  requireSubscription(),
+  async (req, res, next) => {
+    try {
+      const db = mongoose.connection.db;
+      const purchase = await db
+        .collection("purchases")
+        .findOne(
+          { id: req.params.purchase_id, pharmacy_id: req.user.pharmacy_id },
+          { projection: { _id: 0, items: 1 } }
+        );
+      if (!purchase)
+        return res.status(404).json({ detail: "Purchase not found" });
+      res.json(
+        publicImpact(
+          await purchaseStockImpact(db, req.user.pharmacy_id, purchase.items)
+        )
+      );
+    } catch (error) {
+      next(error);
+    }
   }
-});
+);
 
 // DELETE /api/purchases/:purchase_id
 router.delete(
@@ -1524,12 +1639,20 @@ router.delete(
       // "true": take back all of this purchase's stock (refused if some was
       // already sold), "unsold": take back only what is still on the shelf,
       // "false": delete the record and leave inventory as it is.
-      const mode = req.query.delete_inventory === "unsold" ? "unsold" : req.query.delete_inventory === "false" ? "keep" : "all";
+      const mode =
+        req.query.delete_inventory === "unsold"
+          ? "unsold"
+          : req.query.delete_inventory === "false"
+            ? "keep"
+            : "all";
 
-      const purchase = await db.collection("purchases").findOne({
-        id: req.params.purchase_id,
-        pharmacy_id: req.user.pharmacy_id,
-      }, { session });
+      const purchase = await db.collection("purchases").findOne(
+        {
+          id: req.params.purchase_id,
+          pharmacy_id: req.user.pharmacy_id,
+        },
+        { session }
+      );
 
       if (!purchase) {
         await session.abortTransaction();
@@ -1540,7 +1663,12 @@ router.delete(
       let removedUnits = 0;
       let adjustedBatches = 0;
       if (mode !== "keep") {
-        const impact = await purchaseStockImpact(db, req.user.pharmacy_id, purchase.items, session);
+        const impact = await purchaseStockImpact(
+          db,
+          req.user.pharmacy_id,
+          purchase.items,
+          session
+        );
         if (mode === "all" && impact.consumed) {
           await session.abortTransaction();
           session.endSession();
@@ -1556,7 +1684,10 @@ router.delete(
           if (units <= 0) continue;
           await db.collection("inventory").updateOne(
             { id: b.inventory_id, pharmacy_id: req.user.pharmacy_id },
-            { $inc: { quantity: -units, available_quantity: -units }, $set: { updated_at: new Date().toISOString() } },
+            {
+              $inc: { quantity: -units, available_quantity: -units },
+              $set: { updated_at: new Date().toISOString() },
+            },
             { session }
           );
           removedUnits += units;
@@ -1631,147 +1762,14 @@ router.post(
   }
 );
 
-// GET /api/purchases/scan-status/:jobId
-router.get("/scan-status/:jobId", auth, async (req, res) => {
-  try {
-    const job = await ScanJob.findOne({
-      jobId: req.params.jobId,
-      pharmacyId: req.user.pharmacy_id
-    });
-    
-    if (!job) {
-      return res.status(404).json({ detail: "Job not found", success: false });
-    }
+// GET /api/purchases/scan-status/:jobId[?wait=1] - long-polls until the scan finishes
+router.get("/scan-status/:jobId", auth, scanStatus);
 
-    // [Issue #5] Fetch progress from BullMQ
-    const bullJob = await scanQueue.getJob(req.params.jobId);
-    const progress = bullJob?.progress || 0;
+// POST /api/purchases/scan-image - read product pack photos (queued)
+router.post("/scan-image", auth, requireSubscription(), acceptImages(6), enqueueScan("product"));
 
-    res.json({
-      ...job.toObject(),
-      progress
-    });
-  } catch (error) {
-    res.status(500).json({ detail: error.message, success: false });
-  }
-});
-
-// Helper for Scan Queueing
-async function queueScan(req, res, type) {
-  try {
-    // [Issue #15] File count limit
-    if (!req.files || req.files.length === 0) {
-      return res.status(400).json({ detail: "No images provided" });
-    }
-    if (req.files.length > 10) {
-      return res.status(400).json({ detail: "Maximum 10 files allowed" });
-    }
-
-    // [Issue #11] MIME Spoofing Protection (Sharp Validation)
-    const compressedFiles = [];
-    for (const file of req.files) {
-      try {
-        // Validate it's a real image
-        await sharp(file.path).metadata();
-        
-        const compressedPath = await compressImage(file.path);
-        compressedFiles.push(compressedPath);
-      } catch (e) {
-        console.error(`File validation/compression failed for ${file.path}:`, e);
-      } finally {
-        // [Issue #6] Always cleanup original upload
-        try { fs.unlinkSync(file.path); } catch (e) {}
-      }
-    }
-
-    if (compressedFiles.length === 0) {
-      return res.status(400).json({ detail: "No valid images could be processed" });
-    }
-
-    const jobId = uuidv4();
-    
-    // Create job record in MongoDB
-    await ScanJob.create({
-      jobId,
-      pharmacyId: req.user.pharmacy_id,
-      userId: req.user.id,
-      status: "pending",
-      type: type
-    });
-
-    // [Issue #R2] Upload to Cloudflare R2
-    const r2Keys = [];
-    for (const compressedPath of compressedFiles) {
-      try {
-        const key = `scans/${jobId}/${path.basename(compressedPath)}`;
-        const ext = path.extname(compressedPath).toLowerCase();
-        let mimeType = 'image/jpeg';
-        if (ext === '.png') mimeType = 'image/png';
-        else if (ext === '.webp') mimeType = 'image/webp';
-
-        const buffer = fs.readFileSync(compressedPath);
-        await uploadToR2(key, buffer, mimeType);
-        r2Keys.push(key);
-      } catch (r2Error) {
-        console.error(`R2 upload failed for ${compressedPath}:`, r2Error);
-      } finally {
-        // Always cleanup local compressed file after trying to upload
-        try { fs.unlinkSync(compressedPath); } catch (e) {}
-      }
-    }
-
-    if (r2Keys.length === 0) {
-      return res.status(500).json({ detail: "Failed to upload images for processing", success: false });
-    }
-
-    try {
-      // Add to BullMQ [Issue #6] Set jobId, [Issue #19] Remove secrets, [R2] Pass keys
-      await scanQueue.add("scan", {
-        jobId,
-        r2Keys,
-        type: type
-      }, { jobId });
-    } catch (queueError) {
-      // [Issue #4] Cleanup R2 files if queue fails
-      for (const key of r2Keys) {
-        try { await deleteFromR2(key); } catch (e) {}
-      }
-      // [Issue #3] Cleanup Orphaned ScanJob in DB
-      try { await ScanJob.deleteOne({ jobId }); } catch (dbErr) {}
-      
-      throw queueError;
-    }
-
-    res.json({ success: true, jobId });
-  } catch (error) {
-    console.error("Scan error:", error);
-    res.status(500).json({ detail: error.message, success: false });
-  }
-}
-
-// POST /api/purchases/scan-image
-router.post(
-  "/scan-image",
-  auth,
-  requireSubscription(),
-  scanRateLimiter,
-  upload.array("files", 10),
-  async (req, res) => {
-    await queueScan(req, res, "product");
-  }
-);
-
-// POST /api/purchases/scan-bill
-router.post(
-  "/scan-bill",
-  auth,
-  requireSubscription(),
-  scanRateLimiter,
-  upload.array("files", 10),
-  async (req, res) => {
-    await queueScan(req, res, "bill");
-  }
-);
+// POST /api/purchases/scan-bill - read supplier invoice pages (queued)
+router.post("/scan-bill", auth, requireSubscription(), acceptImages(10), enqueueScan("bill"));
 
 // Helper for parsing CSV lines with quote support and delimiter detection
 function parseCSVRow(line, delimiter = ",") {
@@ -1816,29 +1814,41 @@ const handleParseCsvUpload = async (req, res, next) => {
     const lines = content.split(/\r?\n/).filter((l) => l.trim());
 
     if (lines.length < 2) {
-      try { fs.unlinkSync(req.file.path); } catch (e) {}
-      return res
-        .status(400)
-        .json({ detail: "CSV file must contain a header row and at least 1 data row" });
+      try {
+        fs.unlinkSync(req.file.path);
+      } catch (e) {}
+      return res.status(400).json({
+        detail: "CSV file must contain a header row and at least 1 data row",
+      });
     }
 
     // Upload to Cloudflare R2
     const r2Key = `csv-imports/${req.user.pharmacy_id}/${Date.now()}-${uuidv4()}-${req.file.originalname}`;
     let r2Url = null;
     try {
-      r2Url = await uploadToR2(r2Key, fileBuffer, req.file.mimetype || "text/csv");
+      r2Url = await uploadToR2(
+        r2Key,
+        fileBuffer,
+        req.file.mimetype || "text/csv"
+      );
     } catch (r2Err) {
       console.error("R2 Upload failed for CSV:", r2Err);
     }
 
     // Cleanup local temp file
-    try { fs.unlinkSync(req.file.path); } catch (e) {}
+    try {
+      fs.unlinkSync(req.file.path);
+    } catch (e) {}
 
     const delimiter = detectCSVDelimiter(lines[0]);
-    const headers = parseCSVRow(lines[0], delimiter).map((h) => h.replace(/^["']|["']$/g, "").trim());
+    const headers = parseCSVRow(lines[0], delimiter).map((h) =>
+      h.replace(/^["']|["']$/g, "").trim()
+    );
 
     const sampleRows = lines.slice(1, 11).map((line) => {
-      const values = parseCSVRow(line, delimiter).map((v) => v.replace(/^["']|["']$/g, "").trim());
+      const values = parseCSVRow(line, delimiter).map((v) =>
+        v.replace(/^["']|["']$/g, "").trim()
+      );
       const row = {};
       headers.forEach((h, i) => {
         if (h) row[h] = values[i] !== undefined ? values[i] : "";
@@ -1847,7 +1857,9 @@ const handleParseCsvUpload = async (req, res, next) => {
     });
 
     const parsedAllRows = lines.slice(1).map((line) => {
-      const values = parseCSVRow(line, delimiter).map((v) => v.replace(/^["']|["']$/g, "").trim());
+      const values = parseCSVRow(line, delimiter).map((v) =>
+        v.replace(/^["']|["']$/g, "").trim()
+      );
       const row = {};
       headers.forEach((h, i) => {
         if (h) row[h] = values[i] !== undefined ? values[i] : "";
@@ -1856,7 +1868,11 @@ const handleParseCsvUpload = async (req, res, next) => {
     });
 
     // Supplier Template Check if supplier_id is provided
-    let templateMatch = { matched: false, missing_fields: [], mapped_fields: null };
+    let templateMatch = {
+      matched: false,
+      missing_fields: [],
+      mapped_fields: null,
+    };
     const supplierId = req.body.supplier_id || req.query.supplier_id;
 
     if (supplierId) {
@@ -1865,13 +1881,21 @@ const handleParseCsvUpload = async (req, res, next) => {
         pharmacy_id: req.user.pharmacy_id,
       });
 
-      if (supplier && supplier.csv_template && supplier.csv_template.mapped_fields) {
+      if (
+        supplier &&
+        supplier.csv_template &&
+        supplier.csv_template.mapped_fields
+      ) {
         const savedMap = supplier.csv_template.mapped_fields;
         const missing = [];
         const normalizedHeaders = new Set(headers.map((h) => h.toLowerCase()));
 
         Object.entries(savedMap).forEach(([targetField, csvCol]) => {
-          if (csvCol && csvCol !== "none" && !normalizedHeaders.has(csvCol.toLowerCase())) {
+          if (
+            csvCol &&
+            csvCol !== "none" &&
+            !normalizedHeaders.has(csvCol.toLowerCase())
+          ) {
             missing.push({ field: targetField, csv_col: csvCol });
           }
         });
@@ -1900,9 +1924,27 @@ const handleParseCsvUpload = async (req, res, next) => {
 };
 
 // Map all CSV parse endpoints for backward & forward compatibility
-router.post("/parse-csv", auth, requireSubscription(), upload.single("file"), handleParseCsvUpload);
-router.post("/csv-columns", auth, requireSubscription(), upload.single("file"), handleParseCsvUpload);
-router.post("/csv", auth, requireSubscription(), upload.single("file"), handleParseCsvUpload);
+router.post(
+  "/parse-csv",
+  auth,
+  requireSubscription(),
+  upload.single("file"),
+  handleParseCsvUpload
+);
+router.post(
+  "/csv-columns",
+  auth,
+  requireSubscription(),
+  upload.single("file"),
+  handleParseCsvUpload
+);
+router.post(
+  "/csv",
+  auth,
+  requireSubscription(),
+  upload.single("file"),
+  handleParseCsvUpload
+);
 
 // POST /api/purchases/bulk-import
 router.post(
@@ -1928,10 +1970,15 @@ router.post(
       const processedItems = [];
 
       for (const item of items) {
-        const packQty = parseInt(item.pack_quantity) || parseInt(item.quantity) || 1;
+        const packQty =
+          parseInt(item.pack_quantity) || parseInt(item.quantity) || 1;
         const scheme = parseFloat(item.scheme) || 0;
         const unitsPerPack = parseInt(item.units_per_pack) || 1;
-        const packPrice = parseFloat(item.pack_price) || parseFloat(item.rate_pack) || parseFloat(item.purchase_price) || 0;
+        const packPrice =
+          parseFloat(item.pack_price) ||
+          parseFloat(item.rate_pack) ||
+          parseFloat(item.purchase_price) ||
+          0;
         const mrpPack = parseFloat(item.mrp_pack) || parseFloat(item.mrp) || 0;
         const discount = parseFloat(item.discount) || 0;
 
@@ -1942,7 +1989,13 @@ router.post(
         const netBasePrice = packQty * packPrice * (1 - discount / 100);
         const itemTotal = netBasePrice * (1 + (cgst + sgst) / 100);
         totalAmount += itemTotal;
-        const pricePerUnit = totalUnits > 0 ? (itemTotal / totalUnits) : (unitsPerPack > 0 ? (packPrice * (1 - discount / 100) * (1 + (cgst + sgst) / 100)) / unitsPerPack : packPrice);
+        const pricePerUnit =
+          totalUnits > 0
+            ? itemTotal / totalUnits
+            : unitsPerPack > 0
+              ? (packPrice * (1 - discount / 100) * (1 + (cgst + sgst) / 100)) /
+                unitsPerPack
+              : packPrice;
         const mrpPerUnit = unitsPerPack > 0 ? mrpPack / unitsPerPack : mrpPack;
 
         const processedItem = {
@@ -1953,7 +2006,11 @@ router.post(
           pack_type: item.pack_type || "Strip",
           batch_no: item.batch_no || `BATCH-${Date.now()}`,
           hsn_no: item.hsn_no || null,
-          expiry_date: normalizeExpiryDate(item.expiry_date) || new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
+          expiry_date:
+            normalizeExpiryDate(item.expiry_date) ||
+            new Date(Date.now() + 365 * 24 * 60 * 60 * 1000)
+              .toISOString()
+              .split("T")[0],
           pack_quantity: packQty,
           scheme: scheme,
           units_per_pack: unitsPerPack,
@@ -1969,11 +2026,14 @@ router.post(
 
         processedItems.push(processedItem);
 
-        const existingInventory = await db.collection("inventory").findOne({
-          pharmacy_id: req.user.pharmacy_id,
-          product_name: item.product_name,
-          batch_no: processedItem.batch_no,
-        }, { session });
+        const existingInventory = await db.collection("inventory").findOne(
+          {
+            pharmacy_id: req.user.pharmacy_id,
+            product_name: item.product_name,
+            batch_no: processedItem.batch_no,
+          },
+          { session }
+        );
 
         if (existingInventory) {
           await db.collection("inventory").updateOne(
@@ -1992,24 +2052,27 @@ router.post(
             { session }
           );
         } else {
-          await db.collection("inventory").insertOne({
-            id: uuidv4(),
-            pharmacy_id: req.user.pharmacy_id,
-            product_id: processedItem.product_id,
-            product_name: item.product_name,
-            batch_no: processedItem.batch_no,
-            expiry_date: processedItem.expiry_date,
-            quantity: totalUnits,
-            available_quantity: totalUnits,
-            units_per_pack: unitsPerPack,
-            purchase_price: pricePerUnit,
-            mrp: mrpPerUnit,
-            pack_price: packPrice,
-            mrp_pack: mrpPack,
-            purchase_id: purchaseId,
-            supplier_id: supplier_id,
-            created_at: new Date().toISOString(),
-          }, { session });
+          await db.collection("inventory").insertOne(
+            {
+              id: uuidv4(),
+              pharmacy_id: req.user.pharmacy_id,
+              product_id: processedItem.product_id,
+              product_name: item.product_name,
+              batch_no: processedItem.batch_no,
+              expiry_date: processedItem.expiry_date,
+              quantity: totalUnits,
+              available_quantity: totalUnits,
+              units_per_pack: unitsPerPack,
+              purchase_price: pricePerUnit,
+              mrp: mrpPerUnit,
+              pack_price: packPrice,
+              mrp_pack: mrpPack,
+              purchase_id: purchaseId,
+              supplier_id: supplier_id,
+              created_at: new Date().toISOString(),
+            },
+            { session }
+          );
         }
       }
 
@@ -2058,7 +2121,9 @@ router.post(
       if (!amount || amount <= 0) {
         await session.abortTransaction();
         session.endSession();
-        return res.status(400).json({ detail: "Payment amount must be greater than 0" });
+        return res
+          .status(400)
+          .json({ detail: "Payment amount must be greater than 0" });
       }
 
       const purchase = await db.collection("purchases").findOne({

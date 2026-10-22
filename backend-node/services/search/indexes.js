@@ -20,6 +20,8 @@ const TENANT_INDEXES = {
     { key: { pharmacy_id: 1, product_id: 1 }, options: { name: "tenant_product_id" } },
     { key: { pharmacy_id: 1, created_at: -1 }, options: { name: "tenant_created" } },
     { key: { pharmacy_id: 1, expiry_date: 1 }, options: { name: "tenant_expiry" } },
+    // Batch lookups from scans and batch search
+    { key: { pharmacy_id: 1, batch_no: 1 }, options: { name: "tenant_batch" } },
     { key: { id: 1 }, options: { name: "id" } },
   ],
   products: [

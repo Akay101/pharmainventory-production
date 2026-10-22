@@ -1202,3 +1202,75 @@ input:-webkit-autofill:active {
 }
 
 
+
+/* ---------- AI scanner ---------- */
+@keyframes ai-scan-sweep {
+  0% { transform: translateY(-10%); opacity: 0; }
+  10% { opacity: 1; }
+  90% { opacity: 1; }
+  100% { transform: translateY(1000%); opacity: 0; }
+}
+@keyframes ai-border-spin {
+  to { --ai-angle: 360deg; }
+}
+@keyframes ai-text-shimmer {
+  0% { background-position: 200% 50%; }
+  100% { background-position: -200% 50%; }
+}
+@keyframes ai-blob {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(6%, -8%) scale(1.12); }
+}
+@keyframes ai-pop-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+@property --ai-angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+.ai-scan-beam {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 10%;
+  background: linear-gradient(180deg, transparent, rgba(249, 115, 22, 0.55) 70%, rgba(168, 85, 247, 0.9));
+  box-shadow: 0 6px 18px rgba(168, 85, 247, 0.55);
+  animation: ai-scan-sweep 1.6s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+.ai-glow-border {
+  position: relative;
+  isolation: isolate;
+}
+.ai-glow-border::before {
+  content: "";
+  position: absolute;
+  inset: -1.5px;
+  border-radius: inherit;
+  padding: 1.5px;
+  background: conic-gradient(from var(--ai-angle), #f97316, #ec4899, #a855f7, #3b82f6, #f97316);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  animation: ai-border-spin 3s linear infinite;
+  z-index: -1;
+}
+.ai-shimmer-text {
+  background: linear-gradient(90deg, #f97316, #ec4899, #a855f7, #f97316);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: ai-text-shimmer 3s linear infinite;
+}
+.ai-blob {
+  animation: ai-blob 9s ease-in-out infinite;
+}
+.ai-pop-in {
+  animation: ai-pop-in 0.35s ease-out both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ai-scan-beam, .ai-glow-border::before, .ai-shimmer-text, .ai-blob, .ai-pop-in { animation: none; }
+}
