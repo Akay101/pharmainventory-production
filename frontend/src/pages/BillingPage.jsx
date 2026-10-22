@@ -562,6 +562,16 @@ export default function BillingPage() {
   // Refs for keyboard navigation
   const productInputRef = useRef(null);
   const quantityInputRef = useRef(null);
+  // Row whose batch picker should open right after a product is chosen
+  const [autoOpenBatchFor, setAutoOpenBatchFor] = useState(null);
+  const focusQtyFor = (itemId) =>
+    setTimeout(() => {
+      const el = document.querySelector(`[data-qty-for="${itemId}"]`);
+      if (el) {
+        el.focus();
+        el.select?.();
+      }
+    }, 30);
   const editingProductInputRef = useRef(null);
 
   // Keyboard shortcuts info
@@ -1689,6 +1699,8 @@ export default function BillingPage() {
     setShowInventorySuggestions(false);
     setIsMouseOverSuggestions(false);
     setActiveBillItemId(null);
+    if (!isGlobalOrEmpty && availableBatches.length > 0) setAutoOpenBatchFor(itemId);
+    else focusQtyFor(itemId);
   };
 
   // Handle manual entry for items not in inventory
@@ -2342,6 +2354,8 @@ export default function BillingPage() {
     setHighlightedEditingSuggestion(-1);
     setIsMouseOverEditingSuggestions(false);
     setActiveEditingItemId(null);
+    if (!isGlobalOrEmpty && availableBatches.length > 0) setAutoOpenBatchFor(itemId);
+    else focusQtyFor(itemId);
   };
 
   const handleManualEntryForEdit = (itemId, productName) => {
@@ -3795,6 +3809,9 @@ export default function BillingPage() {
                               batches={item.available_batches}
                               value={item.inventory_id}
                               fallbackLabel={item.batch_no}
+                              autoOpen={autoOpenBatchFor === item.id}
+                              onAutoOpened={() => setAutoOpenBatchFor(null)}
+                              onPicked={() => focusQtyFor(item.id)}
                               nearExpiry={nearExpiryBatchFilter}
                               onToggleNearExpiry={() => setNearExpiryBatchFilter((prev) => !prev)}
                               accent="primary"
@@ -3870,6 +3887,7 @@ export default function BillingPage() {
                                   : null
                               }
                               type="number"
+                              data-qty-for={item.id}
                               value={item.quantity || ""}
                               onFocus={(e) => e.target.select()}
                               onChange={(e) =>
@@ -5187,6 +5205,9 @@ export default function BillingPage() {
                               batches={item.available_batches}
                               value={item.inventory_id}
                               fallbackLabel={item.batch_no}
+                              autoOpen={autoOpenBatchFor === item.id}
+                              onAutoOpened={() => setAutoOpenBatchFor(null)}
+                              onPicked={() => focusQtyFor(item.id)}
                               nearExpiry={nearExpiryBatchFilter}
                               onToggleNearExpiry={() => setNearExpiryBatchFilter((prev) => !prev)}
                               accent="amber"
@@ -5273,6 +5294,7 @@ export default function BillingPage() {
                         <TableCell>
                           <Input
                             type="number"
+                            data-qty-for={item.id}
                             value={item.quantity || ""}
                             onFocus={(e) => e.target.select()}
                             onChange={(e) =>

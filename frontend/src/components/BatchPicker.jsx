@@ -20,12 +20,25 @@ export default function BatchPicker({
   nearExpiry = false,
   onToggleNearExpiry,
   accent = "primary",
+  autoOpen = false,
+  onAutoOpened,
+  onPicked,
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [limit, setLimit] = useState(PAGE);
   const [active, setActive] = useState(0);
   const listRef = useRef(null);
+  const pickedRef = useRef(false);
+
+  // Opened by the page right after a product is picked for this row
+  useEffect(() => {
+    if (autoOpen) {
+      setOpen(true);
+      onAutoOpened?.();
+    }
+    // eslint-disable-next-line
+  }, [autoOpen]);
 
   const selected = batches.find((b) => b.id === value);
 
@@ -63,6 +76,7 @@ export default function BatchPicker({
 
   const pick = (b) => {
     onSelect(b.id);
+    pickedRef.current = true;
     setOpen(false);
   };
 
@@ -104,6 +118,14 @@ export default function BatchPicker({
         onOpenAutoFocus={(e) => {
           e.preventDefault();
           e.currentTarget.querySelector("input")?.focus();
+        }}
+        onCloseAutoFocus={(e) => {
+          // After a pick, focus moves on to the quantity instead of back here
+          if (pickedRef.current && onPicked) {
+            e.preventDefault();
+            onPicked();
+          }
+          pickedRef.current = false;
         }}
       >
         <div className="px-3 py-1.5 mb-1.5 border-b border-border/70 text-[11px] font-black uppercase text-muted-foreground flex items-center justify-between bg-muted/60 rounded-t-xl">
