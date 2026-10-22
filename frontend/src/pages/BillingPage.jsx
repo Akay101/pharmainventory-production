@@ -95,7 +95,7 @@ import BatchPicker from "../components/BatchPicker";
 import PlanBadge from "../components/PlanBadge";
 import Loader from "../components/Loader";
 import BillingScannerModal from "../components/BillingScannerModal";
-import { formatDate, formatExpiry, formatExpiryInput, expiryToIso } from "./utils";
+import { formatDate, formatExpiry, formatExpiryInput, expiryToIso, openScanner } from "./utils";
 import { getOS } from "../hooks/useKeyboard";
 
 const LOCAL_STORAGE_KEY_BILL = "pharmalogy_bill_draft";
@@ -2702,7 +2702,7 @@ export default function BillingPage() {
                 size="sm"
                 onClick={() => setShowShortcuts(true)}
                 data-testid="shortcuts-btn"
-                className="h-8 text-xs font-bold rounded-xl border-border/70"
+                className="h-8 text-xs font-bold rounded-xl border-border/70 max-md:hidden"
               >
                 <Keyboard className="w-3.5 h-3.5 mr-1.5 text-muted-foreground" />
                 Shortcuts
@@ -2715,7 +2715,7 @@ export default function BillingPage() {
                 disabled={showNewBill || editingBillId}
               >
                 <Plus className="w-3.5 h-3.5 mr-1 stroke-[3]" />
-                {getOS() === "mac" ? "New Bill (⌥N)" : "New Bill (Alt+N)"}
+                New Bill<span className="max-md:hidden">{getOS() === "mac" ? " (⌥N)" : " (Alt+N)"}</span>
               </Button>
             </div>
           </div>
@@ -2861,11 +2861,11 @@ export default function BillingPage() {
 
                 {/* Infinite Scrollable / Paginated bills viewport */}
                 <div className="border border-border/50 rounded-xl overflow-hidden bg-background/30 backdrop-blur-sm max-h-[420px] overflow-y-auto">
-                  <Table>
+                  <Table mobileCards>
                     <TableHeader className="sticky top-0 bg-muted/90 backdrop-blur-md z-[20]">
                       <TableRow>
-                        <TableHead className="h-8 w-12"></TableHead>
-                        <TableHead className="h-8 text-[11px] font-bold">Bill No</TableHead>
+                        <TableHead data-card="corner" className="h-8 w-12"></TableHead>
+                        <TableHead data-card="title" className="h-8 text-[11px] font-bold">Bill No</TableHead>
                         <TableHead className="h-8 text-[11px] font-bold">Date</TableHead>
                         <TableHead className="h-8 text-[11px] font-bold text-center">Items</TableHead>
                         <TableHead className="h-8 text-[11px] font-bold text-right">Amount</TableHead>
@@ -2933,10 +2933,10 @@ export default function BillingPage() {
                                         Items Sold
                                       </p>
                                       <div className="border border-border/50 rounded-xl overflow-hidden bg-background/30 max-h-48 overflow-y-auto">
-                                        <Table>
+                                        <Table mobileCards>
                                           <TableHeader className="bg-muted/40">
                                             <TableRow className="border-b border-border/40">
-                                              <TableHead className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider py-1.5">
+                                              <TableHead data-card="title" className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider py-1.5">
                                                 Product
                                               </TableHead>
                                               <TableHead className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider py-1.5">
@@ -3338,7 +3338,7 @@ export default function BillingPage() {
             </div>
 
             {/* Right: Customer Stats + Units / Total Summary Pill + Close */}
-            <div className="flex items-center gap-2 shrink-0 self-end lg:self-center">
+            <div className="flex items-center gap-2 shrink-0 self-end lg:self-center max-md:w-full max-md:flex-wrap max-md:self-stretch">
               {selectedCustomerStats && (
                 <div className="flex items-center gap-2 bg-primary/5 px-3 py-1 rounded-xl border border-primary/15 h-9 text-xs font-semibold animate-in fade-in">
                   <div className="flex items-center gap-1">
@@ -3380,7 +3380,7 @@ export default function BillingPage() {
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-9 w-9 rounded-xl hover:bg-muted/80 text-muted-foreground hover:text-foreground"
+                className="h-9 w-9 rounded-xl hover:bg-muted/80 text-muted-foreground hover:text-foreground max-md:hidden"
                 onClick={handleCancelNewBill}
                 title="Close"
               >
@@ -3391,16 +3391,16 @@ export default function BillingPage() {
 
             {/* Items Table - Inline Editable */}
             <div className="border border-border/70 rounded-xl overflow-hidden shadow-sm bg-background/50 backdrop-blur-md mt-4">
-              <Table wrapperClassName="max-h-[300px]">
+              <Table mobileCards wrapperClassName="max-h-[300px]">
                 <TableHeader className="sticky top-0 bg-muted/90 backdrop-blur-md z-[50] border-b border-border/80">
                   <TableRow className="hover:bg-transparent border-b border-border/80">
-                    <TableHead className="w-[180px] font-bold text-foreground/80 text-xs uppercase tracking-wider">
+                    <TableHead data-card="title" className="w-[180px] font-bold text-foreground/80 text-xs uppercase tracking-wider">
                       Product *
                     </TableHead>
                     <TableHead className="w-[100px] font-bold text-foreground/80 text-xs uppercase tracking-wider">
                       Salt
                     </TableHead>
-                    <TableHead className="w-[70px] font-bold text-foreground/80 text-xs uppercase tracking-wider">
+                    <TableHead data-card="full" className="w-[70px] font-bold text-foreground/80 text-xs uppercase tracking-wider">
                       Batch
                     </TableHead>
                     <TableHead className="w-[60px] text-center font-bold text-foreground/80 text-xs uppercase tracking-wider">
@@ -3427,7 +3427,7 @@ export default function BillingPage() {
                     <TableHead className="w-[80px] text-right font-bold text-foreground/80 text-xs uppercase tracking-wider">
                       Total
                     </TableHead>
-                    <TableHead className="w-[60px] text-center font-bold text-foreground/80 text-xs uppercase tracking-wider">
+                    <TableHead data-card="corner" className="w-[60px] text-center font-bold text-foreground/80 text-xs uppercase tracking-wider">
                       Actions
                     </TableHead>
                   </TableRow>
@@ -4084,7 +4084,7 @@ export default function BillingPage() {
                     data-testid="add-item-btn"
                     className="h-9 px-4 border-border/80 hover:bg-muted/60 rounded-xl transition-all duration-200"
                   >
-                    <Plus className="h-4 w-4 mr-1.5 text-primary" /> Add Item (Alt+A)
+                    <Plus className="h-4 w-4 mr-1.5 text-primary" /> Add Item<span className="max-md:hidden">&nbsp;(Alt+A)</span>
                   </Button>
                   <Button
                     variant="outline"
@@ -4760,7 +4760,7 @@ export default function BillingPage() {
             </div>
 
             {/* Right: Customer Financial Summary Pill + Units / Total Stats Summary Pill + Close */}
-            <div className="flex items-center gap-2 shrink-0 self-end lg:self-center">
+            <div className="flex items-center gap-2 shrink-0 self-end lg:self-center max-md:w-full max-md:flex-wrap max-md:self-stretch">
               {selectedCustomerStats && (
                 <div className="hidden sm:flex items-center gap-2 bg-amber-500/10 border border-amber-500/20 px-3 py-1 rounded-xl shadow-2xs h-9 text-[10px] font-bold font-mono">
                   <span className="text-muted-foreground uppercase text-[9px]">Debt:</span>
@@ -4795,7 +4795,7 @@ export default function BillingPage() {
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-9 w-9 rounded-xl hover:bg-muted/80 text-muted-foreground hover:text-foreground"
+                className="h-9 w-9 rounded-xl hover:bg-muted/80 text-muted-foreground hover:text-foreground max-md:hidden"
                 onClick={handleCancelEditBill}
                 title="Close"
               >
@@ -4806,16 +4806,16 @@ export default function BillingPage() {
 
             {/* Items Table - Inline Editable */}
             <div className="border border-border/70 rounded-xl overflow-hidden shadow-sm bg-background/50 backdrop-blur-md mt-4">
-              <Table wrapperClassName="max-h-[300px]">
+              <Table mobileCards wrapperClassName="max-h-[300px]">
                 <TableHeader className="sticky top-0 bg-muted/90 backdrop-blur-md z-[50] border-b border-border/80">
                   <TableRow className="hover:bg-transparent border-b border-border/80">
-                    <TableHead className="w-[180px] font-bold text-foreground/80 text-xs uppercase tracking-wider">
+                    <TableHead data-card="title" className="w-[180px] font-bold text-foreground/80 text-xs uppercase tracking-wider">
                       Product *
                     </TableHead>
                     <TableHead className="w-[100px] font-bold text-foreground/80 text-xs uppercase tracking-wider">
                       Salt
                     </TableHead>
-                    <TableHead className="w-[70px] font-bold text-foreground/80 text-xs uppercase tracking-wider">
+                    <TableHead data-card="full" className="w-[70px] font-bold text-foreground/80 text-xs uppercase tracking-wider">
                       Batch
                     </TableHead>
                     <TableHead className="w-[60px] text-center font-bold text-foreground/80 text-xs uppercase tracking-wider">
@@ -4845,7 +4845,7 @@ export default function BillingPage() {
                     <TableHead className="w-[80px] text-right font-bold text-foreground/80 text-xs uppercase tracking-wider">
                       Total
                     </TableHead>
-                    <TableHead className="w-[60px] text-center font-bold text-foreground/80 text-xs uppercase tracking-wider">
+                    <TableHead data-card="corner" className="w-[60px] text-center font-bold text-foreground/80 text-xs uppercase tracking-wider">
                       Actions
                     </TableHead>
                   </TableRow>
@@ -5618,7 +5618,7 @@ export default function BillingPage() {
                 variant="outline"
                 size="sm"
                 className="h-9 text-xs font-bold rounded-xl bg-gradient-to-r from-amber-500/10 to-orange-500/10 border-amber-500/30 text-amber-600 dark:text-amber-400 hover:border-amber-500/50 cursor-pointer shadow-2xs"
-                onClick={() => window.open("/scan-bill", "_blank")}
+                onClick={() => openScanner("/scan-bill")}
                 data-testid="scan-bill-list-btn"
               >
                 <Camera className="w-4 h-4 mr-1.5 text-amber-500" />
@@ -5919,13 +5919,13 @@ export default function BillingPage() {
                             Top Grossing Products
                           </h4>
                           <div className="border border-border/70 rounded-2xl overflow-hidden glass bg-card/20">
-                            <Table>
+                            <Table mobileCards>
                               <TableHeader className="bg-muted/40">
                                 <TableRow>
-                                  <TableHead className="w-12 text-center text-xs font-bold text-muted-foreground uppercase tracking-wider">
+                                  <TableHead data-card="hide" className="w-12 text-center text-xs font-bold text-muted-foreground uppercase tracking-wider">
                                     #
                                   </TableHead>
-                                  <TableHead className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Product Name</TableHead>
+                                  <TableHead data-card="title" className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Product Name</TableHead>
                                   <TableHead className="text-center text-xs font-bold text-muted-foreground uppercase tracking-wider">
                                     Units Sold
                                   </TableHead>
@@ -6013,14 +6013,14 @@ export default function BillingPage() {
                 <p className="text-xs text-muted-foreground">Scan products from "Scan for Bill" page to create draft bills.</p>
               </div>
             ) : (
-              <Table>
+              <Table mobileCards>
                 <TableHeader className="bg-muted/40">
                   <TableRow className="border-b border-border/60">
-                    <TableHead className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Draft No / Timestamp</TableHead>
+                    <TableHead data-card="title" className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Draft No / Timestamp</TableHead>
                     <TableHead className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Customer Name</TableHead>
                     <TableHead className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Items</TableHead>
                     <TableHead className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Est. Amount</TableHead>
-                    <TableHead className="text-right text-xs font-bold text-muted-foreground uppercase tracking-wider">Actions</TableHead>
+                    <TableHead data-card="actions" className="text-right text-xs font-bold text-muted-foreground uppercase tracking-wider">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -6078,17 +6078,17 @@ export default function BillingPage() {
       {!showNewBill && !editingBillId && activeViewTab !== "drafts" && (
         <Card className="data-table glass bg-card/45 backdrop-blur-xl border border-border/70 shadow-lg rounded-2xl overflow-hidden mt-3">
           <div className="overflow-x-auto">
-            <Table>
+            <Table mobileCards>
               <TableHeader className="bg-muted/40">
                 <TableRow className="border-b border-border/60">
-                  <TableHead className="w-12"></TableHead>
-                  <TableHead className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Bill No / Timestamp</TableHead>
-                  <TableHead className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Customer</TableHead>
+                  <TableHead className="w-12" data-card="corner"></TableHead>
+                  <TableHead className="text-xs font-bold text-muted-foreground uppercase tracking-wider" data-card="title">Bill No / Timestamp</TableHead>
+                  <TableHead className="text-xs font-bold text-muted-foreground uppercase tracking-wider" data-card="full">Customer</TableHead>
                   <TableHead className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Items</TableHead>
                   <TableHead className="text-right text-xs font-bold text-muted-foreground uppercase tracking-wider">Amount</TableHead>
                   <TableHead className="text-right text-xs font-bold text-muted-foreground uppercase tracking-wider">Profit</TableHead>
                   <TableHead className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Status</TableHead>
-                  <TableHead className="text-center text-xs font-bold text-muted-foreground uppercase tracking-wider">Actions</TableHead>
+                  <TableHead className="text-center text-xs font-bold text-muted-foreground uppercase tracking-wider" data-card="actions">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody className={tableLoading ? "opacity-50 pointer-events-none transition-opacity duration-200" : "transition-opacity duration-200"}>
@@ -6247,15 +6247,15 @@ export default function BillingPage() {
                         {isExpanded && bill.items && bill.items.length > 0 && (
                           <TableRow className="bg-muted/15 border-b border-border/40">
                             <TableCell colSpan={8} className="p-0">
-                              <div className="p-6 pl-12">
+                              <div className="p-6 pl-12 max-md:p-3">
                                 <p className="text-xs font-bold text-muted-foreground/80 uppercase tracking-wider mb-3">
                                   Items Sold
                                 </p>
                                 <div className="border border-border/50 rounded-xl overflow-hidden bg-background/30">
-                                  <Table>
+                                  <Table mobileCards>
                                     <TableHeader className="bg-muted/40">
                                       <TableRow className="border-b border-border/40">
-                                        <TableHead className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
+                                        <TableHead data-card="title" className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
                                           Product
                                         </TableHead>
                                         <TableHead className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
@@ -6897,8 +6897,8 @@ export default function BillingPage() {
 
       {/* TABS & ACTION NAVBAR */}
       {(showNewBill || editingBillId) && createPortal(
-        <div className="fixed bottom-0 left-0 right-0 z-[100] flex items-center justify-between bg-card/95 backdrop-blur-xl border-t-2 border-border shadow-2xl px-6 py-3.5 gap-4 overflow-x-auto scroller-hide overflow-y-hidden mb-0 transition-all duration-300">
-          <div className="flex items-center gap-2 overflow-x-auto scroller-hide">
+        <div className="fixed bottom-0 left-0 right-0 z-[100] flex items-center justify-between bg-card/95 backdrop-blur-xl border-t-2 border-border shadow-2xl px-6 py-3.5 gap-4 overflow-x-auto scroller-hide overflow-y-hidden mb-0 transition-all duration-300 mobile-action-bar max-md:flex-wrap max-md:gap-2 max-md:px-3 max-md:pt-2.5 max-md:pb-[calc(0.625rem+env(safe-area-inset-bottom))]">
+          <div className="flex items-center gap-2 overflow-x-auto scroller-hide max-md:w-full empty:hidden">
             {showNewBill &&
               tabs.map((tab, idx) => {
                 const isActive = tab.id === activeTabId;
@@ -6957,20 +6957,20 @@ export default function BillingPage() {
             )}
           </div>
 
-          <div className="flex items-center gap-3 shrink-0 ml-auto border-l border-border pl-6">
+          <div className="flex items-center gap-3 shrink-0 ml-auto border-l border-border pl-6 max-md:w-full max-md:ml-0 max-md:border-l-0 max-md:pl-0 max-md:gap-2">
             <Button
               variant="ghost"
               onClick={showNewBill ? handleCancelNewBill : handleCancelEditBill}
-              className="text-muted-foreground hover:text-foreground"
+              className="text-muted-foreground hover:text-foreground max-md:flex-1 max-md:border max-md:border-border"
             >
-              Cancel (Esc)
+              Cancel<span className="max-md:hidden">&nbsp;(Esc)</span>
             </Button>
 
             {showNewBill ? (
               <Button
                 onClick={handleSubmitBill}
                 disabled={submitting || validItems.length === 0}
-                className="btn-primary shadow-lg shadow-primary/20 min-w-[140px]"
+                className="btn-primary shadow-lg shadow-primary/20 min-w-[140px] max-md:flex-[2] max-md:min-w-0"
               >
                 {submitting ? (
                   <>
@@ -6981,7 +6981,7 @@ export default function BillingPage() {
                   <div className="flex items-center gap-2">
                     <CreditCard className="w-4 h-4" />
                     <span>Create Bill</span>
-                    <kbd className="hidden sm:inline-block ml-1 opacity-70 text-[9px] font-mono border border-white/20 px-1 rounded">
+                    <kbd className="hidden md:inline-block ml-1 opacity-70 text-[9px] font-mono border border-white/20 px-1 rounded">
                       {getOS() === "mac" ? "⌘Enter" : "Ctrl+Enter"}
                     </kbd>
                   </div>
@@ -6991,7 +6991,7 @@ export default function BillingPage() {
               <Button
                 onClick={handleSaveEditBill}
                 disabled={submitting || validEditItems.length === 0}
-                className="btn-primary bg-yellow-600 hover:bg-yellow-700 shadow-lg shadow-yellow-600/20 min-w-[140px]"
+                className="btn-primary bg-yellow-600 hover:bg-yellow-700 shadow-lg shadow-yellow-600/20 min-w-[140px] max-md:flex-[2] max-md:min-w-0"
               >
                 {submitting ? (
                   <>
@@ -7002,7 +7002,7 @@ export default function BillingPage() {
                   <div className="flex items-center gap-2">
                     <Save className="w-4 h-4" />
                     <span>Update Bill</span>
-                    <kbd className="hidden sm:inline-block ml-1 opacity-70 text-[9px] font-mono border border-white/20 px-1 rounded">
+                    <kbd className="hidden md:inline-block ml-1 opacity-70 text-[9px] font-mono border border-white/20 px-1 rounded">
                       Alt+U
                     </kbd>
                   </div>

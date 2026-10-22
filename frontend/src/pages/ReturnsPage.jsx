@@ -821,10 +821,10 @@ export default function ReturnsPage() {
 
           {/* Bundles Table */}
           <div className="rounded-2xl border border-border/70 bg-card/60 overflow-hidden backdrop-blur-md shadow-xs">
-            <Table>
+            <Table mobileCards>
               <TableHeader>
                 <TableRow className="bg-muted/40 hover:bg-muted/40">
-                  <TableHead className="font-extrabold text-[11px] uppercase tracking-wider h-10">
+                  <TableHead data-card="title" className="font-extrabold text-[11px] uppercase tracking-wider h-10">
                     Return Note #
                   </TableHead>
                   <TableHead className="font-extrabold text-[11px] uppercase tracking-wider h-10">
@@ -848,7 +848,7 @@ export default function ReturnsPage() {
                   <TableHead className="font-extrabold text-[11px] uppercase tracking-wider h-10 text-center">
                     Status
                   </TableHead>
-                  <TableHead className="w-28 text-right font-extrabold text-[11px] uppercase tracking-wider h-10">
+                  <TableHead data-card="actions" className="w-28 text-right font-extrabold text-[11px] uppercase tracking-wider h-10">
                     Actions
                   </TableHead>
                 </TableRow>
@@ -1088,10 +1088,10 @@ export default function ReturnsPage() {
 
           {/* Batches Table */}
           <div className="rounded-2xl border border-border/70 bg-card/60 overflow-hidden backdrop-blur-md shadow-xs">
-            <Table>
+            <Table mobileCards>
               <TableHeader>
                 <TableRow className="bg-muted/40 hover:bg-muted/40">
-                  <TableHead className="w-10 text-center">
+                  <TableHead data-card="corner" className="w-10 text-center">
                     <input
                       type="checkbox"
                       checked={
@@ -1102,7 +1102,7 @@ export default function ReturnsPage() {
                       className="rounded border-border accent-orange-600 cursor-pointer"
                     />
                   </TableHead>
-                  <TableHead className="font-extrabold text-[11px] uppercase tracking-wider h-10">
+                  <TableHead data-card="title" className="font-extrabold text-[11px] uppercase tracking-wider h-10">
                     Product Details
                   </TableHead>
                   <TableHead className="font-extrabold text-[11px] uppercase tracking-wider h-10">
@@ -1126,7 +1126,7 @@ export default function ReturnsPage() {
                   <TableHead className="font-extrabold text-[11px] uppercase tracking-wider h-10 text-center">
                     Status
                   </TableHead>
-                  <TableHead className="w-28 text-right font-extrabold text-[11px] uppercase tracking-wider h-10">
+                  <TableHead data-card="actions" className="w-28 text-right font-extrabold text-[11px] uppercase tracking-wider h-10">
                     Action
                   </TableHead>
                 </TableRow>
@@ -1417,16 +1417,16 @@ export default function ReturnsPage() {
                 </div>
               ) : (
                 <div className="rounded-xl border border-border/70 overflow-hidden max-h-60 overflow-y-auto">
-                  <Table>
+                  <Table mobileCards>
                     <TableHeader>
                       <TableRow className="bg-muted/40 text-[10px] uppercase">
-                        <TableHead className="py-2">Product</TableHead>
+                        <TableHead data-card="title" className="py-2">Product</TableHead>
                         <TableHead className="py-2">Batch #</TableHead>
                         <TableHead className="py-2">Expiry</TableHead>
                         <TableHead className="py-2 text-right">Units</TableHead>
                         <TableHead className="py-2 text-right">Rate (₹)</TableHead>
                         <TableHead className="py-2 text-right">Total (₹)</TableHead>
-                        <TableHead className="py-2 w-8"></TableHead>
+                        <TableHead data-card="corner" className="py-2 w-8"></TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -1598,10 +1598,10 @@ export default function ReturnsPage() {
                   Items in Return Note ({detailBundle.items?.length || 0})
                 </p>
                 <div className="rounded-xl border border-border/70 overflow-hidden">
-                  <Table>
+                  <Table mobileCards>
                     <TableHeader>
                       <TableRow className="bg-muted/40 text-[10px] uppercase">
-                        <TableHead className="py-2">Product Name</TableHead>
+                        <TableHead data-card="title" className="py-2">Product Name</TableHead>
                         <TableHead className="py-2">Batch #</TableHead>
                         <TableHead className="py-2">Expiry</TableHead>
                         <TableHead className="py-2 text-right">Units</TableHead>

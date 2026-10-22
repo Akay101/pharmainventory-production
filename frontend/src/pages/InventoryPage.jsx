@@ -662,10 +662,10 @@ export default function InventoryPage() {
       {/* Inventory Table Container (Single Product per Row) */}
       <div className="border border-border/60 rounded-2xl relative overflow-hidden bg-card/60 backdrop-blur-md shadow-xs">
         <div className="overflow-x-auto">
-          <Table>
+          <Table mobileCards>
             <TableHeader className="border-b border-border bg-muted/60">
               <TableRow className="hover:bg-transparent">
-                <TableHead className="w-10 h-9 text-center py-1.5">
+                <TableHead data-card="corner" className="w-10 h-9 text-center py-1.5">
                   <input
                     type="checkbox"
                     className="rounded border-border/80 focus:ring-primary w-4 h-4 cursor-pointer accent-primary"
@@ -679,7 +679,7 @@ export default function InventoryPage() {
                     }}
                   />
                 </TableHead>
-                <TableHead className="font-extrabold text-[11px] text-muted-foreground uppercase tracking-wider h-9 py-1.5">
+                <TableHead data-card="title" className="font-extrabold text-[11px] text-muted-foreground uppercase tracking-wider h-9 py-1.5">
                   <Button
                     variant="ghost"
                     onClick={() => handleSort("product_name")}
@@ -724,7 +724,7 @@ export default function InventoryPage() {
                 </TableHead>
                 <TableHead className="font-extrabold text-[11px] text-muted-foreground uppercase tracking-wider h-9 py-1.5 text-right">Stock Value</TableHead>
                 <TableHead className="font-extrabold text-[11px] text-muted-foreground uppercase tracking-wider h-9 py-1.5">Status</TableHead>
-                <TableHead className="w-16 h-9 py-1.5"></TableHead>
+                <TableHead data-card="actions" className="w-16 h-9 py-1.5"></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>

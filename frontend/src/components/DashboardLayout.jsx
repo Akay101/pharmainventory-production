@@ -44,6 +44,8 @@ import { useKeyboardShortcut, formatShortcut } from "../hooks/useKeyboard";
 import AssistantLauncher from "./assistant/AssistantLauncher";
 import PlanBadge from "./PlanBadge";
 import NotificationCenter from "./NotificationCenter";
+import { MobileBottomNav } from "./MobileNav";
+import { AI_LOGO_SRC } from "./scan/ScanUI";
 
 const navItems = [
   { path: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -211,17 +213,17 @@ export default function DashboardLayout() {
   return (
     <TooltipProvider delayDuration={0}>
       <div
-        className="h-screen w-screen max-h-screen bg-background flex flex-col select-none overflow-hidden"
+        className="h-screen w-screen max-h-screen max-md:h-[100dvh] max-md:max-h-[100dvh] bg-background flex flex-col select-none overflow-hidden"
         data-testid="dashboard-layout"
       >
         {/* Fixed Glassy Top Header Navigation Bar */}
-        <header className="h-16 shrink-0 w-full z-50 border-b border-border/80 dark:border-border/50 bg-background/90 dark:bg-zinc-950/90 backdrop-blur-xl transition-colors duration-200">
-          <div className="w-full h-full px-4 sm:px-6 flex items-center justify-between gap-4">
+        <header className="h-16 max-md:h-14 max-md:pt-[env(safe-area-inset-top)] max-md:box-content shrink-0 w-full z-50 border-b border-border/80 dark:border-border/50 bg-background/90 dark:bg-zinc-950/90 backdrop-blur-xl transition-colors duration-200">
+          <div className="w-full h-full px-4 sm:px-6 max-md:px-3 flex items-center justify-between gap-4 max-md:gap-2">
             {/* Left Brand Identifier */}
             <div className="flex items-center gap-3 min-w-0 shrink">
               {/* Mobile Drawer Sheet Trigger */}
               <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
-                <SheetTrigger asChild className="lg:hidden">
+                <SheetTrigger asChild className="hidden md:inline-flex lg:hidden">
                   <Button
                     variant="ghost"
                     size="icon"
@@ -321,7 +323,7 @@ export default function DashboardLayout() {
                     className="w-9 h-9 object-contain group-hover:scale-105 transition-transform"
                   />
                 )}
-                <div className="hidden sm:flex flex-col min-w-0 max-w-[160px] 2xl:max-w-[220px]">
+                <div className="flex flex-col min-w-0 max-w-[160px] max-md:max-w-[140px] 2xl:max-w-[220px]">
                   <span className="font-black text-sm tracking-tight text-foreground group-hover:text-orange-500 transition-colors leading-tight truncate">
                     {pharmacy?.name || "DavaDesk"}
                   </span>
@@ -367,7 +369,17 @@ export default function DashboardLayout() {
             </nav>
 
             {/* Right Controls Panel */}
-            <div className="flex items-center gap-2.5 shrink-0">
+            <div className="flex items-center gap-2.5 max-md:gap-1.5 shrink-0">
+              {/* Phone: DavaDesk AI lives in the header instead of a floating bubble */}
+              <button
+                type="button"
+                onClick={() => navigate("/assistant")}
+                aria-label="Open DavaDesk AI"
+                className="md:hidden flex h-9 w-9 items-center justify-center rounded-xl border border-border/60 active:scale-95"
+              >
+                <img src={AI_LOGO_SRC} alt="" className="h-7 w-7 rounded-full" />
+              </button>
+
               {/* Theme Toggle Button */}
               <Button
                 variant="ghost"
@@ -392,7 +404,7 @@ export default function DashboardLayout() {
                 variant="ghost"
                 size="icon"
                 onClick={toggleActivity}
-                className={`group relative rounded-xl border border-border/60 dark:border-border/40 h-9 w-9 transition-all duration-200 hover:scale-105 active:scale-95 cursor-pointer ${
+                className={`group relative max-md:hidden rounded-xl border border-border/60 dark:border-border/40 h-9 w-9 transition-all duration-200 hover:scale-105 active:scale-95 cursor-pointer ${
                   activityOpen
                     ? "bg-orange-500/15 text-orange-500 border-orange-500/40 shadow-xs"
                     : "hover:bg-muted/80 text-foreground"
@@ -407,7 +419,7 @@ export default function DashboardLayout() {
                 <DropdownMenuTrigger asChild>
                   <Button
                     variant="ghost"
-                    className="flex items-center gap-2 hover:bg-muted/80 text-foreground px-2.5 py-1.5 rounded-xl border border-border/60 dark:border-border/40 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98] h-9 cursor-pointer"
+                    className="flex items-center gap-2 hover:bg-muted/80 text-foreground px-2.5 max-md:px-1 py-1.5 rounded-xl border border-border/60 dark:border-border/40 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98] h-9 cursor-pointer"
                     data-testid="user-menu-btn"
                   >
                     <Avatar className="w-7 h-7 ring-1 ring-border/60 shadow-xs shrink-0 transition-transform duration-200 group-hover:scale-105">
@@ -419,7 +431,7 @@ export default function DashboardLayout() {
                     <span className="hidden xl:inline text-xs font-extrabold text-foreground max-w-[120px] truncate" title={user?.name}>
                       {user?.name}
                     </span>
-                    <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
+                    <ChevronDown className="w-3.5 h-3.5 text-muted-foreground max-md:hidden" />
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent
@@ -460,7 +472,7 @@ export default function DashboardLayout() {
             className={`flex-1 h-full overflow-y-auto w-full flex flex-col ${
               location.pathname.startsWith("/purchases") || location.pathname.startsWith("/billing")
                 ? "p-2.5 sm:p-3.5 lg:px-4 lg:py-3"
-                : "p-4 sm:p-6 lg:p-7"
+                : "p-4 max-md:px-3 sm:p-6 lg:p-7"
             }`}
           >
             <div
@@ -496,8 +508,20 @@ export default function DashboardLayout() {
           </div>
         </div>
 
-        {/* DavaDesk AI launcher */}
-        <AssistantLauncher />
+        {/* Phone: bottom tab bar */}
+        <MobileBottomNav
+          items={filteredItems}
+          isActive={checkIsActive}
+          onLogout={handleLogout}
+          onOpenActivity={() => !activityOpen && toggleActivity()}
+          pharmacy={pharmacy}
+          planLabel={planLabel(user)}
+        />
+
+        {/* DavaDesk AI launcher (phones use the header button) */}
+        <div className="max-md:hidden">
+          <AssistantLauncher />
+        </div>
       </div>
     </TooltipProvider>
   );

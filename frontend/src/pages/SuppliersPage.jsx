@@ -938,7 +938,7 @@ export default function SuppliersPage() {
       </div>
 
       {/* Top Stat Overview Dashboard */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mobile-stat-grid">
         {/* Total Suppliers */}
         <Card className="glass bg-card/45 border-border/70 shadow-md rounded-2xl relative overflow-hidden group hover:border-primary/30 transition-all">
           <div className="absolute top-0 right-0 w-24 h-24 bg-primary/5 rounded-full blur-2xl transform translate-x-4 -translate-y-4"></div>
@@ -1265,12 +1265,12 @@ export default function SuppliersPage() {
       </AlertDialog>
 
       {/* Directory Tab Switcher */}
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 max-md:grid max-md:grid-cols-2 max-md:gap-2">
         <Button
           type="button"
           variant={activeTab === "my_suppliers" ? "default" : "outline"}
           onClick={() => setActiveTab("my_suppliers")}
-          className={`h-11 px-5 rounded-2xl font-bold text-xs flex items-center gap-2 transition-all ${
+          className={`h-11 px-5 max-md:px-2 max-md:w-full max-md:justify-center rounded-2xl font-bold text-xs flex items-center gap-2 transition-all ${
             activeTab === "my_suppliers"
               ? "bg-primary text-primary-foreground shadow-lg shadow-primary/20"
               : "border-border/80 text-muted-foreground hover:text-foreground hover:bg-muted"
@@ -1287,14 +1287,14 @@ export default function SuppliersPage() {
           type="button"
           variant={activeTab === "global_catalog" ? "default" : "outline"}
           onClick={() => setActiveTab("global_catalog")}
-          className={`h-11 px-5 rounded-2xl font-bold text-xs flex items-center gap-2 transition-all ${
+          className={`h-11 px-5 max-md:px-2 max-md:w-full max-md:justify-center rounded-2xl font-bold text-xs flex items-center gap-2 transition-all ${
             activeTab === "global_catalog"
               ? "bg-primary text-primary-foreground shadow-lg shadow-primary/20"
               : "border-border/80 text-muted-foreground hover:text-foreground hover:bg-muted"
           }`}
         >
           <Globe className="w-4 h-4 text-sky-400" />
-          <span>Global Distributors Catalog</span>
+          <span><span className="max-md:hidden">Global Distributors Catalog</span><span className="md:hidden">Global</span></span>
           <span className="ml-1 px-2 py-0.5 rounded-full text-[10px] bg-sky-500/10 text-sky-400 border border-sky-500/20 font-mono">
             87,000+
           </span>
@@ -1378,7 +1378,7 @@ export default function SuppliersPage() {
                             {initial}
                           </div>
                           <div className="cursor-pointer min-w-0 flex-1" onClick={() => handleViewDetails(supplier.id)}>
-                            <h3 className="font-bold text-foreground group-hover:text-primary transition-colors flex items-center gap-1.5 text-base truncate">
+                            <h3 className="font-bold text-foreground group-hover:text-primary transition-colors flex items-center gap-1.5 text-base truncate max-md:whitespace-normal max-md:line-clamp-2 max-md:leading-snug">
                               {supplier.name} 
                               <ExternalLink className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 text-muted-foreground" />
                             </h3>

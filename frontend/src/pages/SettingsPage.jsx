@@ -554,7 +554,7 @@ export default function SettingsPage() {
                   />
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-2 max-md:grid-cols-1 gap-4">
                   <div className="space-y-2">
                     <Label>License Number</Label>
                     <Input
@@ -576,7 +576,7 @@ export default function SettingsPage() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-2 max-md:grid-cols-1 gap-4">
                   <div className="space-y-2">
                     <Label>Contact Details (Email/Phone)</Label>
                     <Input
@@ -612,7 +612,7 @@ export default function SettingsPage() {
 
                 <div className="space-y-4 pt-2">
                   <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Bank Details</h3>
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-2 max-md:grid-cols-1 gap-4">
                     <div className="space-y-2">
                       <Label>Bank Name & Branch</Label>
                       <Input
@@ -634,7 +634,7 @@ export default function SettingsPage() {
                       />
                     </div>
                   </div>
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-2 max-md:grid-cols-1 gap-4">
                     <div className="space-y-2">
                       <Label>Account Number</Label>
                       <Input

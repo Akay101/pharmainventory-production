@@ -278,24 +278,25 @@ export default function UpgradePage() {
             <p className="text-xs text-muted-foreground font-semibold truncate">{user.email}</p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 shrink-0">
           {isLive && (
-            <Button variant="outline" className="rounded-full" onClick={() => navigate("/dashboard")}>
-              <ArrowLeft className="w-4 h-4 mr-1.5" />
-              Dashboard
+            <Button variant="outline" className="rounded-full max-md:px-3" onClick={() => navigate("/dashboard")} aria-label="Dashboard">
+              <ArrowLeft className="w-4 h-4 mr-1.5 max-md:mr-0" />
+              <span className="max-md:hidden">Dashboard</span>
             </Button>
           )}
           <ThemeToggle />
           <Button
             variant="ghost"
-            className="rounded-full"
+            className="rounded-full max-md:px-3"
+            aria-label="Logout"
             onClick={async () => {
               await logout();
               navigate("/login");
             }}
           >
-            <LogOut className="w-4 h-4 mr-1.5" />
-            Logout
+            <LogOut className="w-4 h-4 mr-1.5 max-md:mr-0" />
+            <span className="max-md:hidden">Logout</span>
           </Button>
         </div>
       </header>

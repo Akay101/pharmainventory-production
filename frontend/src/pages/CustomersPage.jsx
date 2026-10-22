@@ -436,7 +436,7 @@ export default function CustomersPage() {
       </div>
 
       {/* Metrics Dashboard Overview */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mobile-stat-grid">
         {/* Total Customers */}
         <Card className="glass bg-card/45 border-border/70 shadow-md rounded-2xl relative overflow-hidden group hover:border-primary/30 transition-all">
           <div className="absolute top-0 right-0 w-24 h-24 bg-primary/5 rounded-full blur-2xl transform translate-x-4 -translate-y-4"></div>
@@ -1235,10 +1235,10 @@ export default function CustomersPage() {
       {/* Customers Table */}
       <Card className="glass bg-card/45 border border-border/40 backdrop-blur-sm shadow-sm rounded-xl overflow-hidden">
         <div className="overflow-x-auto">
-          <Table>
+          <Table mobileCards>
             <TableHeader className="border-b border-border/40 bg-muted/20">
               <TableRow className="hover:bg-transparent">
-                <TableHead className="font-bold text-xs text-muted-foreground uppercase tracking-wider h-11">
+                <TableHead data-card="title" className="font-bold text-xs text-muted-foreground uppercase tracking-wider h-11">
                   <Button
                     variant="ghost"
                     onClick={() => handleSort("name")}
@@ -1270,7 +1270,7 @@ export default function CustomersPage() {
                   </Button>
                 </TableHead>
                 <TableHead className="font-bold text-xs text-muted-foreground uppercase tracking-wider h-11">Status</TableHead>
-                <TableHead className="font-bold text-xs text-muted-foreground uppercase tracking-wider h-11 text-center">Actions</TableHead>
+                <TableHead data-card="actions" className="font-bold text-xs text-muted-foreground uppercase tracking-wider h-11 text-center">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>

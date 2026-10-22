@@ -165,7 +165,7 @@ export default function NotificationCenter() {
 
       {/* Floating Notifications Dropdown Panel */}
       {isOpen && (
-        <div className="absolute right-0 top-12 w-[360px] sm:w-[420px] max-h-[540px] bg-card border border-border/90 dark:border-border/60 rounded-2xl shadow-2xl z-50 flex flex-col overflow-hidden backdrop-blur-2xl animate-in fade-in-0 zoom-in-95 slide-in-from-top-2 duration-200 origin-top-right">
+        <div className="absolute right-0 top-12 w-[360px] sm:w-[420px] max-h-[540px] max-md:fixed max-md:left-2 max-md:right-2 max-md:top-[calc(3.75rem+env(safe-area-inset-top))] max-md:w-auto max-md:max-h-[75dvh] bg-card border border-border/90 dark:border-border/60 rounded-2xl shadow-2xl z-50 flex flex-col overflow-hidden backdrop-blur-2xl animate-in fade-in-0 zoom-in-95 slide-in-from-top-2 duration-200 origin-top-right">
           {/* Header */}
           <div className="p-4 border-b border-border/70 flex items-center justify-between bg-muted/30">
             <div className="flex items-center gap-2">

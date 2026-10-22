@@ -341,15 +341,15 @@ export default function UsersPage() {
 
       {/* Users Table */}
       <Card className="data-table">
-        <Table>
+        <Table mobileCards>
           <TableHeader>
             <TableRow>
-              <TableHead>User</TableHead>
+              <TableHead data-card="title">User</TableHead>
               <TableHead>Email</TableHead>
               <TableHead>Mobile</TableHead>
               <TableHead>Role</TableHead>
               <TableHead>Joined</TableHead>
-              <TableHead>Actions</TableHead>
+              <TableHead data-card="actions">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>

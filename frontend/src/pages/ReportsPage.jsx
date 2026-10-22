@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card"
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Badge } from "../components/ui/badge";
+import { Table } from "../components/ui/table";
 import {
   Select,
   SelectContent,
@@ -330,7 +331,7 @@ export default function ReportsPage() {
       {activeTab === "financial" && (
         <div className="space-y-6">
           {/* Summary Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mobile-stat-grid">
             <Card className="stat-card bg-gradient-to-br from-primary/5 to-transparent hover:border-primary/30 transition-all duration-300">
               <CardContent className="p-6">
                 <div className="flex items-center justify-between">
@@ -583,10 +584,10 @@ export default function ReportsPage() {
               </CardHeader>
               <CardContent className="p-0">
                 <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
+                  <Table mobileCards className="text-sm">
                     <thead>
                       <tr className="border-b border-white/5 bg-white/[0.01]">
-                        <th className="text-left py-3.5 px-6 font-semibold text-muted-foreground">Supplier</th>
+                        <th data-card="title" className="text-left py-3.5 px-6 font-semibold text-muted-foreground">Supplier</th>
                         <th className="text-center py-3.5 px-6 font-semibold text-muted-foreground">Total Invoices</th>
                         <th className="text-right py-3.5 px-6 font-semibold text-muted-foreground">Purchases Value</th>
                       </tr>
@@ -602,7 +603,7 @@ export default function ReportsPage() {
                         </tr>
                       ))}
                     </tbody>
-                  </table>
+                  </Table>
                 </div>
               </CardContent>
             </Card>
@@ -767,10 +768,10 @@ export default function ReportsPage() {
                   <CardContent className="p-0 flex-1 overflow-y-auto">
                     {(inventoryAlerts.low_stock_alerts || []).length > 0 ? (
                       <div className="overflow-x-auto">
-                        <table className="w-full text-sm">
+                        <Table mobileCards className="text-sm">
                           <thead>
                             <tr className="border-b border-white/5 bg-white/[0.01]">
-                              <th className="text-left py-3.5 px-6 font-semibold text-muted-foreground">Product Name</th>
+                              <th data-card="title" className="text-left py-3.5 px-6 font-semibold text-muted-foreground">Product Name</th>
                               <th className="text-center py-3.5 px-6 font-semibold text-muted-foreground">Current Stock</th>
                               <th className="text-center py-3.5 px-6 font-semibold text-muted-foreground">Reorder Threshold</th>
                               <th className="text-right py-3.5 px-6 font-semibold text-muted-foreground">Status Badge</th>
@@ -790,7 +791,7 @@ export default function ReportsPage() {
                               </tr>
                             ))}
                           </tbody>
-                        </table>
+                        </Table>
                       </div>
                     ) : (
                       <div className="h-full flex flex-col items-center justify-center text-muted-foreground p-6 gap-2">
@@ -1146,10 +1147,10 @@ export default function ReportsPage() {
                 <CardContent className="p-0">
                   {(sourcingResults.all_historical_prices || []).length > 0 ? (
                     <div className="overflow-x-auto">
-                      <table className="w-full text-sm">
+                      <Table mobileCards className="text-sm">
                         <thead>
                           <tr className="border-b border-white/5 bg-white/[0.01]">
-                            <th className="text-left py-3 px-6 font-semibold text-muted-foreground">Purchase Date</th>
+                            <th data-card="title" className="text-left py-3 px-6 font-semibold text-muted-foreground">Purchase Date</th>
                             <th className="text-left py-3 px-6 font-semibold text-muted-foreground">Supplier</th>
                             <th className="text-center py-3 px-6 font-semibold text-muted-foreground">Invoice / Batch No</th>
                             <th className="text-right py-3 px-6 font-semibold text-muted-foreground">Pack Price</th>
@@ -1184,7 +1185,7 @@ export default function ReportsPage() {
                             </tr>
                           ))}
                         </tbody>
-                      </table>
+                      </Table>
                     </div>
                   ) : (
                     <div className="p-8 text-center text-muted-foreground">No historical record found for this product.</div>
@@ -1260,10 +1261,10 @@ export default function ReportsPage() {
                   <CardContent className="p-0 flex-1 overflow-y-auto">
                     {debtCustomers.length > 0 ? (
                       <div className="overflow-x-auto">
-                        <table className="w-full text-sm">
+                        <Table mobileCards className="text-sm">
                           <thead>
                             <tr className="border-b border-white/5 bg-white/[0.01]">
-                              <th className="text-left py-3 px-6 font-semibold text-muted-foreground">Customer</th>
+                              <th data-card="title" className="text-left py-3 px-6 font-semibold text-muted-foreground">Customer</th>
                               <th className="text-left py-3 px-6 font-semibold text-muted-foreground">Contact</th>
                               <th className="text-right py-3 px-6 font-semibold text-muted-foreground">Total Debt</th>
                             </tr>
@@ -1279,7 +1280,7 @@ export default function ReportsPage() {
                               </tr>
                             ))}
                           </tbody>
-                        </table>
+                        </Table>
                       </div>
                     ) : (
                       <div className="h-full flex flex-col items-center justify-center text-muted-foreground p-6 gap-2">
@@ -1304,10 +1305,10 @@ export default function ReportsPage() {
                   <CardContent className="p-0 flex-1 overflow-y-auto">
                     {dueSuppliers.length > 0 ? (
                       <div className="overflow-x-auto">
-                        <table className="w-full text-sm">
+                        <Table mobileCards className="text-sm">
                           <thead>
                             <tr className="border-b border-white/5 bg-white/[0.01]">
-                              <th className="text-left py-3 px-6 font-semibold text-muted-foreground">Supplier</th>
+                              <th data-card="title" className="text-left py-3 px-6 font-semibold text-muted-foreground">Supplier</th>
                               <th className="text-left py-3 px-6 font-semibold text-muted-foreground">GST No / Contact</th>
                               <th className="text-right py-3 px-6 font-semibold text-muted-foreground">Owed Amount</th>
                             </tr>
@@ -1326,7 +1327,7 @@ export default function ReportsPage() {
                               </tr>
                             ))}
                           </tbody>
-                        </table>
+                        </Table>
                       </div>
                     ) : (
                       <div className="h-full flex flex-col items-center justify-center text-muted-foreground p-6 gap-2">

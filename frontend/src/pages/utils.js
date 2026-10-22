@@ -163,3 +163,11 @@ export const formatExpiryInput = (rawVal) => {
   return m;
 };
 
+
+// Phones: the camera-first scanner pages open in place (a new tab is awkward
+// on a phone); desktop keeps them in a separate tab next to the form
+export const isPhone = () => typeof window !== "undefined" && window.matchMedia("(max-width: 767.98px)").matches;
+export const openScanner = (path) => {
+  if (isPhone()) window.location.assign(path);
+  else window.open(path, "_blank");
+};

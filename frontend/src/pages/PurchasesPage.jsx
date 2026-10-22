@@ -90,7 +90,7 @@ import {
 import { toast } from "sonner";
 import PlanBadge from "../components/PlanBadge";
 import Loader, { AiLoader } from "../components/Loader";
-import { formatDate, formatExpiry, formatExpiryInput, expiryToIso } from "./utils";
+import { formatDate, formatExpiry, formatExpiryInput, expiryToIso, openScanner } from "./utils";
 import CustomTooltip from "@/components/ui/CustomTooltip";
 import { getOS } from "../hooks/useKeyboard";
 import ProductCatalogModal from "../components/ProductCatalogModal";
@@ -4464,7 +4464,7 @@ export default function PurchasesPage() {
             </div>
 
             {/* Right: Stats Summary + AI Autofill + Close */}
-            <div className="flex items-center gap-2 shrink-0 self-end lg:self-center">
+            <div className="flex items-center gap-2 shrink-0 self-end lg:self-center max-md:w-full max-md:flex-wrap max-md:self-stretch">
               {/* Total Stats Pill */}
               <div className="flex items-center gap-2 bg-muted px-3 py-1 rounded-xl border border-border shadow-2xs h-9">
                 <div className="flex items-center gap-1 border-r border-border pr-2.5">
@@ -4526,7 +4526,7 @@ export default function PurchasesPage() {
                     size="sm"
                   >
                     <Sparkles className="w-3.5 h-3.5 text-white" />
-                    <span>Autofill ({getOS() === "mac" ? "⌥I" : "Alt+I"})</span>
+                    <span>Autofill<span className="max-md:hidden"> ({getOS() === "mac" ? "⌥I" : "Alt+I"})</span></span>
                   </Button>
                   <CustomTooltip
                     position="bottom-right"
@@ -4548,7 +4548,7 @@ export default function PurchasesPage() {
                 variant="ghost"
                 size="sm"
                 onClick={handleCancelNewPurchase}
-                className="h-9 w-9 p-0 rounded-xl hover:bg-muted"
+                className="h-9 w-9 p-0 rounded-xl hover:bg-muted max-md:hidden"
                 title="Close"
               >
                 <X className="h-4 w-4 text-muted-foreground" />
@@ -4560,10 +4560,10 @@ export default function PurchasesPage() {
 
           {/* Items Table - Inline Editable with enhanced fields */}
           <div className="border-2 border-border rounded-2xl relative overflow-hidden bg-card shadow-sm">
-            <Table className="table-fixed min-w-[1100px] w-full" wrapperClassName="h-[420px]">
+            <Table mobileCards className="table-fixed min-w-[1100px] w-full" wrapperClassName="h-[420px]">
               <TableHeader className="sticky top-0 bg-muted/95 backdrop-blur z-[50] border-b-2 border-border shadow-xs">
                 <TableRow className="hover:bg-transparent">
-                  <TableHead className="min-w-[260px] py-2.5 font-extrabold text-foreground text-left">
+                  <TableHead data-card="title" className="min-w-[260px] py-2.5 font-extrabold text-foreground text-left">
                     Item Name
                   </TableHead>
                   <TableHead className="w-[130px] py-2.5 font-extrabold text-foreground text-left">
@@ -4587,7 +4587,7 @@ export default function PurchasesPage() {
                   <TableHead className="w-[80px] py-2.5 text-center font-extrabold text-foreground">
                     Disc %
                   </TableHead>
-                  <TableHead className="w-[90px] py-2.5 text-center font-extrabold text-foreground">
+                  <TableHead data-card-label="GST %" className="w-[90px] py-2.5 text-center font-extrabold text-foreground">
                     <div className="flex items-center justify-center gap-1.5">
                       <span>GST %</span>
                       <label className="flex items-center gap-1 text-[10px] font-semibold text-muted-foreground cursor-pointer select-none hover:text-foreground">
@@ -4606,7 +4606,7 @@ export default function PurchasesPage() {
                   <TableHead className="w-[115px] py-2.5 text-center font-extrabold text-foreground">
                     Amount
                   </TableHead>
-                  <TableHead className="w-[48px] py-2.5 text-center font-extrabold text-foreground">
+                  <TableHead data-card="corner" className="w-[48px] py-2.5 text-center font-extrabold text-foreground">
                     Action
                   </TableHead>
                 </TableRow>
@@ -6394,10 +6394,10 @@ export default function PurchasesPage() {
               </div>
 
               <div className="border border-border rounded-lg overflow-hidden">
-                  <Table wrapperClassName="h-[400px]">
+                  <Table mobileCards wrapperClassName="h-[400px]">
                     <TableHeader className="sticky top-0 bg-muted/95 backdrop-blur z-[50]">
                       <TableRow>
-                        <TableHead>Product Name</TableHead>
+                        <TableHead data-card="title">Product Name</TableHead>
                         <TableHead>Batch</TableHead>
                         <TableHead>Expiry</TableHead>
                         <TableHead className="text-center">Packs</TableHead>
@@ -6647,7 +6647,7 @@ export default function PurchasesPage() {
                   size="sm"
                   onClick={() => setShowShortcuts(true)}
                   data-testid="shortcuts-btn"
-                  className="h-8 text-xs font-bold rounded-xl border-border/70"
+                  className="h-8 text-xs font-bold rounded-xl border-border/70 max-md:hidden"
                 >
                   <Keyboard className="w-3.5 h-3.5 mr-1.5 text-muted-foreground" />
                   Shortcuts
@@ -6657,7 +6657,7 @@ export default function PurchasesPage() {
                   variant="outline"
                   size="sm"
                   className="h-8 text-xs font-bold rounded-xl bg-gradient-to-r from-orange-500/10 to-amber-500/10 border-orange-500/30 text-orange-600 dark:text-orange-400 hover:border-orange-500/50"
-                  onClick={() => window.open("/scan", "_blank")}
+                  onClick={() => openScanner("/scan")}
                   data-testid="scan-products-btn"
                 >
                   <Upload className="w-3.5 h-3.5 mr-1.5" />
@@ -6682,7 +6682,7 @@ export default function PurchasesPage() {
                   data-testid="add-purchase-btn"
                 >
                   <Plus className="w-3.5 h-3.5 mr-1 stroke-[3]" />
-                  {getOS() === "mac" ? "New (⌥N)" : "New (Alt+N)"}
+                  New<span className="max-md:hidden">{getOS() === "mac" ? " (⌥N)" : " (Alt+N)"}</span>
                 </Button>
               </div>
             </div>
@@ -6754,12 +6754,12 @@ export default function PurchasesPage() {
 
           {/* Purchases Table */}
           <Card className="glass bg-card/35 backdrop-blur-xl border border-border/70 shadow-lg rounded-2xl overflow-hidden">
-            <Table>
+            <Table mobileCards>
               <TableHeader>
                 <TableRow>
-                  <TableHead className="w-[40px]"></TableHead>
-                  <TableHead>Invoice / Timestamp</TableHead>
-                  <TableHead>
+                  <TableHead data-card="corner" className="w-[40px]"></TableHead>
+                  <TableHead data-card="title">Invoice / Timestamp</TableHead>
+                  <TableHead data-card="full">
                     <Button
                       variant="ghost"
                       onClick={() => {
@@ -6793,7 +6793,7 @@ export default function PurchasesPage() {
                       Amount <ArrowUpDown className="ml-2 h-4 w-4" />
                     </Button>
                   </TableHead>
-                  <TableHead className="text-center">Actions</TableHead>
+                  <TableHead data-card="actions" className="text-center">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody
@@ -6917,10 +6917,10 @@ export default function PurchasesPage() {
                       <TableRow className="bg-muted/30">
                         <TableCell colSpan={7} className="p-4">
                           <div className="rounded-lg border border-border overflow-hidden">
-                            <Table>
+                            <Table mobileCards>
                               <TableHeader>
                                 <TableRow>
-                                  <TableHead>Product</TableHead>
+                                  <TableHead data-card="title">Product</TableHead>
                                   <TableHead>Batch</TableHead>
                                   <TableHead>Expiry</TableHead>
                                   <TableHead className="text-center">
@@ -7774,8 +7774,8 @@ export default function PurchasesPage() {
       {/* TABS & ACTION NAVBAR */}
       {(showNewPurchase || editingPurchaseId) &&
         createPortal(
-          <div className="fixed bottom-0 left-0 right-0 z-[100] flex items-center justify-between bg-card/95 backdrop-blur-xl border-t-2 border-border shadow-2xl px-6 py-3.5 gap-4 overflow-x-auto scroller-hide overflow-y-hidden mb-0 transition-all duration-300">
-            <div className="flex items-center gap-2 overflow-x-auto scroller-hide">
+          <div className="fixed bottom-0 left-0 right-0 z-[100] flex items-center justify-between bg-card/95 backdrop-blur-xl border-t-2 border-border shadow-2xl px-6 py-3.5 gap-4 overflow-x-auto scroller-hide overflow-y-hidden mb-0 transition-all duration-300 mobile-action-bar max-md:flex-wrap max-md:gap-2 max-md:px-3 max-md:pt-2.5 max-md:pb-[calc(0.625rem+env(safe-area-inset-bottom))]">
+            <div className="flex items-center gap-2 overflow-x-auto scroller-hide max-md:w-full empty:hidden">
               {showNewPurchase &&
                 tabs.map((tab, idx) => {
                   const isActive = tab.id === activeTabId;
@@ -7836,14 +7836,14 @@ export default function PurchasesPage() {
               )}
             </div>
 
-            <div className="flex items-center gap-3 shrink-0 ml-auto border-l border-border pl-6">
+            <div className="flex items-center gap-3 shrink-0 ml-auto border-l border-border pl-6 max-md:w-full max-md:ml-0 max-md:border-l-0 max-md:pl-0 max-md:gap-2">
               <Button
                 variant="ghost"
                 onClick={handleCancelNewPurchase}
                 disabled={processingRowId !== null}
-                className="text-muted-foreground hover:text-foreground"
+                className="text-muted-foreground hover:text-foreground max-md:flex-1 max-md:border max-md:border-border"
               >
-                Cancel (Esc)
+                Cancel<span className="max-md:hidden">&nbsp;(Esc)</span>
               </Button>
 
               <Button
@@ -7853,7 +7853,7 @@ export default function PurchasesPage() {
                   processingRowId !== null ||
                   purchaseItems.filter((i) => i.product_name).length === 0
                 }
-                className="btn-primary shadow-lg shadow-primary/20 min-w-[160px]"
+                className="btn-primary shadow-lg shadow-primary/20 min-w-[160px] max-md:flex-[2] max-md:min-w-0"
               >
                 {submitting ? (
                   <>
@@ -7866,7 +7866,7 @@ export default function PurchasesPage() {
                     <span>
                       {editingPurchaseId ? "Update Purchase" : "Save Purchase"}
                     </span>
-                    <kbd className="hidden sm:inline-block ml-1 opacity-70 text-[9px] font-mono border border-white/20 px-1 rounded">
+                    <kbd className="hidden md:inline-block ml-1 opacity-70 text-[9px] font-mono border border-white/20 px-1 rounded">
                       {getOS() === "mac" ? "⌘Enter" : "Ctrl+Enter"}
                     </kbd>
                   </div>
