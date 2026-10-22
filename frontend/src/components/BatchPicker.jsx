@@ -23,6 +23,7 @@ export default function BatchPicker({
   autoOpen = false,
   onAutoOpened,
   onPicked,
+  triggerClassName = "h-8 w-28",
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -106,7 +107,7 @@ export default function BatchPicker({
       <PopoverTrigger asChild>
         <button
           type="button"
-          className={`h-8 w-28 px-2.5 inline-flex items-center justify-between gap-1 text-xs font-mono font-bold border border-border/80 bg-background text-foreground rounded-lg shadow-2xs focus-visible:outline-none focus-visible:ring-1 ${ring}`}
+          className={`${triggerClassName} px-2.5 inline-flex items-center justify-between gap-1 text-xs font-mono font-bold border border-border/80 bg-background text-foreground rounded-lg shadow-2xs focus-visible:outline-none focus-visible:ring-1 ${ring}`}
         >
           <span className="truncate">{selected?.batch_no || fallbackLabel || "Select Batch"}</span>
           <ChevronDown className="w-3.5 h-3.5 shrink-0 opacity-60" />

@@ -265,91 +265,172 @@ function ItemCard({ item, index, onChange, onRemove }) {
   );
 }
 
-// Supplier search against the server; the supplier read from the invoice is
-// matched by GSTIN or name, or offered as a new supplier.
+// Supplier search over your suppliers and the global distributor directory.
+// The supplier printed on the invoice is matched by GSTIN or name (in either
+// list), or offered as a new supplier.
 function SupplierPicker({ value, onChange, detected }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState([]);
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [active, setActive] = useState(0);
   const seq = useRef(0);
+  const listRef = useRef(null);
 
-  useEffect(() => {
-    const q = query.trim();
+  const load = async (q, p) => {
     const s = ++seq.current;
     setLoading(true);
-    const t = setTimeout(async () => {
-      try {
-        const res = await axios.get(`${API}/suppliers`, { params: { search: q || undefined, page: 1, limit: 12 } });
-        if (s === seq.current) setResults(res.data.suppliers || []);
-      } catch {
-        if (s === seq.current) setResults([]);
-      } finally {
-        if (s === seq.current) setLoading(false);
-      }
-    }, 250);
+    try {
+      const res = await axios.get(`${API}/suppliers`, { params: { search: q || undefined, page: p, limit: 20, include_global: true } });
+      if (s !== seq.current) return;
+      const rows = res.data.suppliers || [];
+      setResults((prev) => (p === 1 ? rows : [...prev, ...rows]));
+      setHasMore(res.data.pagination?.has_more ?? rows.length === 20);
+      setPage(p);
+      if (p === 1) setActive(0);
+    } catch {
+      if (s === seq.current && p === 1) setResults([]);
+    } finally {
+      if (s === seq.current) setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (value) return;
+    const t = setTimeout(() => load(query.trim(), 1), 250);
     return () => clearTimeout(t);
-  }, [query]);
+    // eslint-disable-next-line
+  }, [query, value]);
 
   // Auto-pick the supplier printed on the invoice
   useEffect(() => {
     if (!detected?.name || value) return;
     (async () => {
       try {
-        const res = await axios.get(`${API}/suppliers`, { params: { search: detected.gstin || detected.name, limit: 5 } });
-        const list = res.data.suppliers || [];
-        const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-        const hit =
-          list.find((s) => detected.gstin && norm(s.gst_no || s.gstin) === norm(detected.gstin)) ||
-          list.find((s) => norm(s.name) === norm(detected.name));
-        if (hit) onChange({ id: hit.id, name: hit.name });
+        const norm = (x) => String(x || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+        const lookups = [detected.gstin, detected.name].filter(Boolean);
+        for (const q of lookups) {
+          const res = await axios.get(`${API}/suppliers`, { params: { search: q, limit: 10, include_global: true } });
+          const list = res.data.suppliers || [];
+          const hit =
+            list.find((x) => detected.gstin && norm(x.gst_no || x.gstin) === norm(detected.gstin)) ||
+            list.find((x) => norm(x.name) === norm(detected.name));
+          if (hit) {
+            onChange(toChoice(hit));
+            return;
+          }
+        }
       } catch {}
     })();
     // eslint-disable-next-line
   }, [detected?.name, detected?.gstin]);
 
+  const toChoice = (x) => ({ id: x.id, name: x.name, gst_no: x.gst_no || x.gstin || "", city: x.city || "", isGlobal: x.is_local === false || x.source === "global" });
+
+  const options = [
+    ...(detected?.name && !query ? [{ __new: true, name: detected.name, gst_no: detected.gstin }] : []),
+    ...results,
+  ];
+  const pick = (o) => (o.__new ? onChange({ id: null, name: o.name, gst_no: o.gst_no || "", isNew: true }) : onChange(toChoice(o)));
+
+  useEffect(() => {
+    listRef.current?.querySelector(`[data-idx="${active}"]`)?.scrollIntoView({ block: "nearest" });
+  }, [active]);
+
+  if (value) {
+    return (
+      <div className="flex items-center gap-2 rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-3 py-2.5">
+        <Truck className="h-4 w-4 text-emerald-500 shrink-0" />
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-semibold truncate">{value.name}</p>
+          <p className="text-[11px] text-muted-foreground truncate">
+            {value.isNew
+              ? `New supplier, will be added${value.gst_no ? ` · GSTIN ${value.gst_no}` : ""}`
+              : value.isGlobal
+              ? `Global distributor, added to your suppliers${value.gst_no ? ` · GSTIN ${value.gst_no}` : ""}`
+              : `Your supplier${value.gst_no ? ` · GSTIN ${value.gst_no}` : ""}`}
+          </p>
+        </div>
+        <button type="button" onClick={() => onChange(null)} className="text-xs font-semibold text-muted-foreground hover:text-foreground">
+          Change
+        </button>
+      </div>
+    );
+  }
+
   return (
-    <div>
-      {value ? (
-        <div className="flex items-center gap-2 rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-3 py-2.5">
-          <Truck className="h-4 w-4 text-emerald-500 shrink-0" />
-          <div className="min-w-0 flex-1">
-            <p className="text-sm font-semibold truncate">{value.name}</p>
-            {value.isNew && <p className="text-[11px] text-muted-foreground">New supplier, will be added{value.gst_no ? ` · GSTIN ${value.gst_no}` : ""}</p>}
+    <div className="rounded-xl border border-border bg-background">
+      <div className="flex items-center gap-2 px-3 border-b border-border">
+        <Search className="h-4 w-4 text-muted-foreground" />
+        <input
+          autoFocus
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "ArrowDown") {
+              e.preventDefault();
+              setActive((a) => Math.min(a + 1, options.length - 1));
+            } else if (e.key === "ArrowUp") {
+              e.preventDefault();
+              setActive((a) => Math.max(a - 1, 0));
+            } else if (e.key === "Enter" && options[active]) {
+              e.preventDefault();
+              pick(options[active]);
+            }
+          }}
+          placeholder="Search your suppliers & distributors…"
+          className="h-10 w-full bg-transparent text-sm outline-none"
+        />
+        {loading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+      </div>
+      <div
+        ref={listRef}
+        className="max-h-56 overflow-y-auto p-1"
+        onScroll={(e) => {
+          const el = e.currentTarget;
+          if (hasMore && !loading && el.scrollTop + el.clientHeight >= el.scrollHeight - 40) load(query.trim(), page + 1);
+        }}
+      >
+        {options.map((o, idx) => {
+          const global = o.is_local === false || o.source === "global";
+          return (
+            <button
+              key={o.__new ? "__new" : `${global ? "g" : "l"}-${o.id}`}
+              type="button"
+              data-idx={idx}
+              onMouseEnter={() => setActive(idx)}
+              onClick={() => pick(o)}
+              className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left ${idx === active ? "bg-muted" : ""}`}
+            >
+              {o.__new && <Sparkles className="h-4 w-4 text-orange-500 shrink-0" />}
+              <div className="min-w-0 flex-1">
+                <p className="text-sm truncate">
+                  {o.__new ? (
+                    <>
+                      Add "{o.name}" <span className="text-muted-foreground">(from invoice)</span>
+                    </>
+                  ) : (
+                    o.name
+                  )}
+                </p>
+                {!o.__new && (o.gst_no || o.gstin || o.city) && (
+                  <p className="text-[11px] text-muted-foreground truncate font-mono">
+                    {[o.gst_no || o.gstin, o.city].filter(Boolean).join(" · ")}
+                  </p>
+                )}
+              </div>
+              {!o.__new && <Pill tone={global ? "sky" : "emerald"}>{global ? "Distributor" : "Yours"}</Pill>}
+            </button>
+          );
+        })}
+        {loading && results.length > 0 && (
+          <div className="py-2 flex justify-center">
+            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
           </div>
-          <button type="button" onClick={() => onChange(null)} className="text-xs font-semibold text-muted-foreground hover:text-foreground">
-            Change
-          </button>
-        </div>
-      ) : (
-        <div className="rounded-xl border border-border bg-background">
-          <div className="flex items-center gap-2 px-3 border-b border-border">
-            <Search className="h-4 w-4 text-muted-foreground" />
-            <input autoFocus value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search supplier…" className="h-10 w-full bg-transparent text-sm outline-none" />
-            {loading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
-          </div>
-          <div className="max-h-52 overflow-y-auto p-1">
-            {detected?.name && (
-              <button
-                type="button"
-                onClick={() => onChange({ id: null, name: detected.name, gst_no: detected.gstin || "", isNew: true })}
-                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-muted"
-              >
-                <Sparkles className="h-4 w-4 text-orange-500" />
-                <span className="flex-1 truncate">
-                  Add "{detected.name}" <span className="text-muted-foreground">(from invoice)</span>
-                </span>
-              </button>
-            )}
-            {results.map((s) => (
-              <button key={s.id} type="button" onClick={() => onChange({ id: s.id, name: s.name })} className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm hover:bg-muted">
-                <span className="truncate">{s.name}</span>
-                {s.city && <span className="text-xs text-muted-foreground">{s.city}</span>}
-              </button>
-            ))}
-            {!loading && results.length === 0 && <p className="px-3 py-4 text-center text-xs text-muted-foreground">No suppliers found</p>}
-          </div>
-        </div>
-      )}
+        )}
+        {!loading && results.length === 0 && <p className="px-3 py-4 text-center text-xs text-muted-foreground">No suppliers or distributors found</p>}
+      </div>
     </div>
   );
 }

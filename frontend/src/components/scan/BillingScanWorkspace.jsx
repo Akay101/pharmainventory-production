@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { compressForScan, scanPackForBilling, scanErrorMessage } from "./scanClient";
 import { ConfidencePill, MatchBadge, PhotoTray, ScanningView, useScanSteps } from "./ScanUI";
 import { formatExpiry } from "../../pages/utils";
+import BatchPicker from "../BatchPicker";
 
 const STEPS = ["Optimising photo", "Reading pack with AI", "Matching your stock (batch → name)"];
 const newCard = () => ({ id: `scan-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, photos: [], status: "draft", result: null, item: null });
@@ -120,17 +121,15 @@ function ScanCard({ card, index, onUpdate, onRemove, onScan, canRemove }) {
           <div className="col-span-2">
             <label className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Batch</label>
             {item.available_batches.length > 0 ? (
-              <select
-                value={item.inventory_id || ""}
-                onChange={(e) => pickBatch(e.target.value)}
-                className="mt-0.5 h-9 w-full rounded-lg border border-border bg-background px-2 text-sm font-mono"
-              >
-                {item.available_batches.map((b) => (
-                  <option key={b.id} value={b.id}>
-                    {b.batch_no} · exp {b.expiry_date ? formatExpiry(b.expiry_date) : "—"} · {b.available_quantity} left
-                  </option>
-                ))}
-              </select>
+              <div className="mt-0.5">
+                <BatchPicker
+                  batches={item.available_batches}
+                  value={item.inventory_id}
+                  fallbackLabel={item.batch_no}
+                  onSelect={pickBatch}
+                  triggerClassName="h-9 w-full text-sm"
+                />
+              </div>
             ) : (
               <input
                 value={item.batch_no}
