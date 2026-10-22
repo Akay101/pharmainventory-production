@@ -1,0 +1,537 @@
+// Purchase agent tools
+const { v4: uuidv4 } = require("uuid");
+const { parseExpiry } = require("../../ai/extract");
+const S = require("./shared");
+const L = require("./lookup");
+
+const { blocks, cols, inr, fmtDate, dateRange, textMatch, clampLimit, round2, say } = S;
+
+const purchaseFilter = (ctx, a) => {
+  const q = { pharmacy_id: ctx.pharmacyId, ...dateRange("purchase_date", a.date_from, a.date_to) };
+  const and = [];
+  if (a.supplier) and.push(textMatch(["supplier_name"], a.supplier));
+  if (a.product) and.push(textMatch(["items.product_name"], a.product));
+  if (a.invoice_no) q.invoice_no = { $regex: S.escapeRegex(a.invoice_no), $options: "i" };
+  if (a.payment_status) q.payment_status = a.payment_status;
+  if (a.min_amount || a.max_amount) {
+    q.total_amount = {};
+    if (a.min_amount) q.total_amount.$gte = Number(a.min_amount);
+    if (a.max_amount) q.total_amount.$lte = Number(a.max_amount);
+  }
+  const clean = and.filter((x) => Object.keys(x).length);
+  if (clean.length) q.$and = clean;
+  return q;
+};
+
+async function findPurchase(ctx, { purchase_id, invoice_no }) {
+  const col = ctx.db.collection("purchases");
+  if (purchase_id) return col.findOne({ pharmacy_id: ctx.pharmacyId, id: purchase_id }, { projection: { _id: 0 } });
+  if (invoice_no) {
+    const rows = await col
+      .find({ pharmacy_id: ctx.pharmacyId, invoice_no: { $regex: `^${S.escapeRegex(invoice_no)}$`, $options: "i" } }, { projection: { _id: 0 } })
+      .sort({ created_at: -1 })
+      .limit(1)
+      .toArray();
+    return rows[0] || null;
+  }
+  return null;
+}
+
+const DATE_PROPS = {
+  date_from: { type: "string", description: "Start date YYYY-MM-DD (inclusive)" },
+  date_to: { type: "string", description: "End date YYYY-MM-DD (inclusive)" },
+};
+
+const tools = [
+  {
+    name: "search_purchases",
+    description:
+      "Find purchases with any combination of filters, sorted as asked. Use for: recent purchases, purchases from a supplier, purchases containing a medicine, unpaid purchases, most expensive purchases. Shows a table to the user.",
+    parameters: {
+      type: "object",
+      properties: {
+        ...DATE_PROPS,
+        supplier: { type: "string", description: "Supplier name (partial ok)" },
+        product: { type: "string", description: "Medicine contained in the purchase" },
+        invoice_no: { type: "string" },
+        payment_status: { type: "string", enum: ["Paid", "Unpaid", "Partial"] },
+        min_amount: { type: "number" },
+        max_amount: { type: "number" },
+        sort_by: { type: "string", enum: ["date", "amount"], description: "default date" },
+        sort_order: { type: "string", enum: ["desc", "asc"], description: "default desc" },
+        limit: { type: "integer", description: "max rows, default 20, up to 50" },
+      },
+    },
+    status: (a, lang) => say(lang, { en: `Searching purchases${a.supplier ? ` from ${a.supplier}` : ""}${a.product ? ` with ${a.product}` : ""}`, hinglish: `Purchases dhoondh raha hoon${a.supplier ? ` (${a.supplier})` : ""}`, hi: "खरीद खोज रहा हूँ" }),
+    async run(a, ctx) {
+      const q = purchaseFilter(ctx, a);
+      const limit = clampLimit(a.limit);
+      const sort = a.sort_by === "amount" ? { total_amount: a.sort_order === "asc" ? 1 : -1 } : { purchase_date: a.sort_order === "asc" ? 1 : -1, created_at: -1 };
+      const col = ctx.db.collection("purchases");
+      const [rows, agg] = await Promise.all([
+        col.find(q, { projection: { _id: 0, id: 1, purchase_date: 1, supplier_name: 1, invoice_no: 1, total_amount: 1, amount_paid: 1, payment_status: 1, items: 1 } }).sort(sort).limit(limit).toArray(),
+        col.aggregate([{ $match: q }, { $group: { _id: null, n: { $sum: 1 }, total: { $sum: "$total_amount" }, paid: { $sum: { $ifNull: ["$amount_paid", 0] } } } }]).next(),
+      ]);
+      const productRe = a.product ? new RegExp(S.tokenize(a.product).map(S.escapeRegex).join(".*"), "i") : null;
+      const table = rows.map((p) => {
+        const matched = productRe ? (p.items || []).filter((i) => productRe.test(i.product_name || "")) : [];
+        return {
+          id: p.id,
+          date: fmtDate(p.purchase_date),
+          supplier: p.supplier_name,
+          invoice: p.invoice_no || "—",
+          items: matched.length ? matched.map((i) => `${i.product_name} × ${i.pack_quantity}${i.scheme ? `+${i.scheme}` : ""} @ ${inr(i.pack_price)}`).join(", ") : `${(p.items || []).length} item(s)`,
+          amount: round2(p.total_amount),
+          status: p.payment_status || "Unpaid",
+        };
+      });
+      if (table.length) {
+        ctx.emit(
+          blocks.table(
+            `Purchases${a.supplier ? ` · ${a.supplier}` : ""}${a.product ? ` · ${a.product}` : ""}`,
+            cols(["date", "Date"], ["supplier", "Supplier"], ["invoice", "Invoice"], ["items", "Items"], ["amount", "Amount", "inr", "right"], ["status", "Status", "badge"]),
+            table,
+            { footer: `${agg?.n || 0} purchase(s) · ${inr(agg?.total || 0)} total · ${inr((agg?.total || 0) - (agg?.paid || 0))} unpaid`, open: "/purchases" }
+          )
+        );
+      }
+      return {
+        total_matches: agg?.n || 0,
+        total_amount: round2(agg?.total || 0),
+        unpaid_amount: round2((agg?.total || 0) - (agg?.paid || 0)),
+        shown: table.length,
+        rows: table.map(({ id, date, supplier, invoice, amount, status, items }) => ({ id, date, supplier, invoice, amount, status, items })),
+        note: table.length ? "A table with these rows is already shown to the user; summarise, don't repeat every row." : "Nothing matched.",
+      };
+    },
+  },
+  {
+    name: "get_purchase",
+    description: "Full details of one purchase (all lines) by id or invoice number.",
+    parameters: { type: "object", properties: { purchase_id: { type: "string" }, invoice_no: { type: "string" } } },
+    status: (a, lang) => say(lang, { en: "Opening the purchase", hinglish: "Purchase khol raha hoon", hi: "खरीद खोल रहा हूँ" }),
+    async run(a, ctx) {
+      const p = await findPurchase(ctx, a);
+      if (!p) return { error: "Purchase not found" };
+      ctx.emit(
+        blocks.table(
+          `${p.supplier_name} · ${p.invoice_no || ""} · ${fmtDate(p.purchase_date)}`,
+          cols(["product", "Medicine"], ["batch", "Batch"], ["expiry", "Exp"], ["qty", "Qty"], ["rate", "Rate/pack", "inr", "right"], ["mrp", "MRP/pack", "inr", "right"], ["gst", "GST %", null, "right"], ["total", "Total", "inr", "right"]),
+          (p.items || []).map((i) => ({
+            product: i.product_name,
+            batch: i.batch_no || "—",
+            expiry: S.fmtExpiry(i.expiry_date),
+            qty: `${i.pack_quantity}${i.scheme ? `+${i.scheme} free` : ""} × ${i.units_per_pack}`,
+            rate: i.pack_price,
+            mrp: i.mrp_pack || (i.mrp_per_unit || 0) * (i.units_per_pack || 1),
+            gst: (Number(i.cgst) || 0) + (Number(i.sgst) || 0),
+            total: round2(i.item_total),
+          })),
+          { footer: `Total ${inr(p.total_amount)} · Paid ${inr(p.amount_paid || 0)} · ${p.payment_status || "Unpaid"}` }
+        )
+      );
+      return {
+        id: p.id,
+        supplier: p.supplier_name,
+        invoice_no: p.invoice_no,
+        date: p.purchase_date,
+        total: round2(p.total_amount),
+        paid: round2(p.amount_paid || 0),
+        status: p.payment_status,
+        items: (p.items || []).map((i) => ({ product: i.product_name, batch: i.batch_no, packs: i.pack_quantity, free: i.scheme, units_per_pack: i.units_per_pack, rate_per_pack: i.pack_price, total: round2(i.item_total) })),
+      };
+    },
+  },
+  {
+    name: "purchase_insights",
+    description: "Aggregated purchase spend grouped by supplier, product, month or day for a period (top N). Use for 'which supplier do I buy most from', 'monthly purchase', 'most bought medicine'.",
+    parameters: {
+      type: "object",
+      properties: {
+        ...DATE_PROPS,
+        group_by: { type: "string", enum: ["supplier", "product", "month", "day"] },
+        limit: { type: "integer" },
+      },
+      required: ["group_by"],
+    },
+    status: (a, lang) => say(lang, { en: `Analysing purchases by ${a.group_by}`, hinglish: `Purchases ka ${a.group_by} wise hisaab bana raha hoon`, hi: "खरीद का विश्लेषण कर रहा हूँ" }),
+    async run(a, ctx) {
+      const match = { pharmacy_id: ctx.pharmacyId, ...dateRange("purchase_date", a.date_from, a.date_to) };
+      const limit = clampLimit(a.limit, 10, 31);
+      let pipeline;
+      if (a.group_by === "product") {
+        pipeline = [
+          { $match: match },
+          { $unwind: "$items" },
+          { $group: { _id: "$items.product_name", amount: { $sum: "$items.item_total" }, packs: { $sum: "$items.pack_quantity" }, units: { $sum: "$items.total_units" }, purchases: { $sum: 1 } } },
+          { $sort: { amount: -1 } },
+          { $limit: limit },
+        ];
+      } else {
+        const key = a.group_by === "supplier" ? "$supplier_name" : a.group_by === "month" ? { $substr: ["$purchase_date", 0, 7] } : "$purchase_date";
+        pipeline = [
+          { $match: match },
+          { $group: { _id: key, amount: { $sum: "$total_amount" }, purchases: { $sum: 1 }, unpaid: { $sum: { $subtract: ["$total_amount", { $ifNull: ["$amount_paid", 0] }] } } } },
+          { $sort: a.group_by === "supplier" ? { amount: -1 } : { _id: -1 } },
+          { $limit: limit },
+        ];
+      }
+      const rows = await ctx.db.collection("purchases").aggregate(pipeline).toArray();
+      const table = rows.map((r) => ({ key: r._id || "—", amount: round2(r.amount), purchases: r.purchases, ...(r.packs !== undefined ? { packs: r.packs, units: r.units } : { unpaid: round2(r.unpaid) }) }));
+      if (table.length) {
+        const label = { supplier: "Supplier", product: "Medicine", month: "Month", day: "Date" }[a.group_by];
+        ctx.emit(
+          blocks.table(
+            `Purchase spend by ${a.group_by}`,
+            a.group_by === "product"
+              ? cols(["key", label], ["packs", "Packs", null, "right"], ["units", "Units", null, "right"], ["purchases", "Purchases", null, "right"], ["amount", "Spend", "inr", "right"])
+              : cols(["key", label], ["purchases", "Purchases", null, "right"], ["unpaid", "Unpaid", "inr", "right"], ["amount", "Spend", "inr", "right"]),
+            table,
+            { chart: { x: "key", y: "amount" } }
+          )
+        );
+      }
+      return { rows: table, note: "Shown to the user as a table/chart." };
+    },
+  },
+  {
+    name: "price_history",
+    description: "Purchase price history of one medicine: dates, suppliers, rate per pack, MRP, discount. Use for 'kis rate pe li thi', 'cheapest supplier for X'.",
+    parameters: { type: "object", properties: { product: { type: "string" }, limit: { type: "integer" } }, required: ["product"] },
+    status: (a, lang) => say(lang, { en: `Checking price history of ${a.product}`, hinglish: `${a.product} ki price history dekh raha hoon`, hi: `${a.product} का मूल्य इतिहास देख रहा हूँ` }),
+    async run(a, ctx) {
+      const rows = await ctx.db
+        .collection("purchases")
+        .aggregate([
+          { $match: { pharmacy_id: ctx.pharmacyId, ...textMatch(["items.product_name"], a.product) } },
+          { $unwind: "$items" },
+          { $match: textMatch(["items.product_name"], a.product) },
+          { $sort: { purchase_date: -1 } },
+          { $limit: clampLimit(a.limit, 15, 50) },
+          { $project: { _id: 0, date: "$purchase_date", supplier: "$supplier_name", product: "$items.product_name", rate: "$items.pack_price", mrp: "$items.mrp_pack", discount: "$items.discount", packs: "$items.pack_quantity", units_per_pack: "$items.units_per_pack" } },
+        ])
+        .toArray();
+      if (rows.length) {
+        ctx.emit(
+          blocks.table(
+            `Price history · ${a.product}`,
+            cols(["date", "Date"], ["supplier", "Supplier"], ["product", "Medicine"], ["packs", "Packs", null, "right"], ["rate", "Rate/pack", "inr", "right"], ["discount", "Disc %", null, "right"], ["mrp", "MRP/pack", "inr", "right"]),
+            rows.map((r) => ({ ...r, date: fmtDate(r.date) }))
+          )
+        );
+      }
+      const rates = rows.map((r) => Number(r.rate) || 0).filter(Boolean);
+      return { purchases: rows.length, lowest_rate: rates.length ? Math.min(...rates) : null, highest_rate: rates.length ? Math.max(...rates) : null, latest: rows[0] || null, rows: rows.slice(0, 10) };
+    },
+  },
+  {
+    name: "find_supplier",
+    description: "Look up a supplier/distributor by name or GSTIN in the user's suppliers and the global distributor directory.",
+    parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
+    status: (a, lang) => say(lang, { en: `Looking up supplier ${a.query}`, hinglish: `Supplier "${a.query}" dhoondh raha hoon`, hi: "सप्लायर खोज रहा हूँ" }),
+    async run(a, ctx) {
+      return L.resolveSupplier(ctx, a.query);
+    },
+  },
+  {
+    name: "draft_purchase",
+    description:
+      "Create or update a purchase DRAFT (nothing is saved until the user confirms with the Save button). Pass everything known; omit unknown fields. To change an existing draft pass its draft_id and the full updated item list. The tool links each medicine to the user's catalog, fills pack size / GST / last rate from history, and reports what's missing.",
+    parameters: {
+      type: "object",
+      properties: {
+        draft_id: { type: "string", description: "Existing draft to update" },
+        supplier: { type: "string", description: "Supplier name as said by the user" },
+        supplier_id: { type: "string", description: "Exact supplier id when the user picked one from options" },
+        invoice_no: { type: "string" },
+        purchase_date: { type: "string", description: "YYYY-MM-DD, default today" },
+        payment_status: { type: "string", enum: ["Paid", "Unpaid"] },
+        items: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              product_name: { type: "string" },
+              catalog_product_id: { type: "string", description: "When the user picked a catalog option" },
+              batch_no: { type: "string" },
+              expiry: { type: "string", description: "As said: '08/27', 'Aug 2027' or YYYY-MM-DD" },
+              packs: { type: "number", description: "Packs/strips bought (excluding free)" },
+              free_packs: { type: "number" },
+              units_per_pack: { type: "number" },
+              rate_per_pack: { type: "number", description: "Purchase rate per pack (before GST)" },
+              mrp_per_pack: { type: "number" },
+              discount_percent: { type: "number" },
+              gst_percent: { type: "number" },
+            },
+            required: ["product_name"],
+          },
+        },
+      },
+    },
+    status: (a, lang) => say(lang, { en: a.draft_id ? "Updating the purchase draft" : "Preparing the purchase draft", hinglish: a.draft_id ? "Draft update kar raha hoon" : "Purchase ka draft bana raha hoon", hi: "खरीद का ड्राफ्ट बना रहा हूँ" }),
+    async run(a, ctx) {
+      const prev = a.draft_id ? ctx.getDraft(a.draft_id) : null;
+      const draft = {
+        id: prev?.id || `pd_${uuidv4().slice(0, 8)}`,
+        kind: "purchase",
+        created_at: prev?.created_at || new Date().toISOString(),
+        invoice_no: a.invoice_no ?? prev?.invoice_no ?? "",
+        purchase_date: S.isYmd(a.purchase_date) ? a.purchase_date : prev?.purchase_date || S.todayIst(),
+        payment_status: a.payment_status || prev?.payment_status || "Unpaid",
+        supplier: prev?.supplier || null,
+        supplier_options: [],
+        items: [],
+      };
+
+      // Supplier
+      if (a.supplier_id) {
+        const r = await L.resolveSupplier(ctx, a.supplier || a.supplier_id);
+        draft.supplier = r.options.find((o) => o.id === a.supplier_id) || { id: a.supplier_id, name: a.supplier || a.supplier_id };
+      } else if (a.supplier) {
+        const r = await L.resolveSupplier(ctx, a.supplier);
+        draft.supplier = r.supplier || { id: null, name: a.supplier.trim(), is_new: true };
+        if (!r.supplier) draft.supplier_options = r.options;
+      }
+
+      // Lines
+      // Updates may carry only the changed fields: merge them into the
+      // previous line with the same medicine (or the same position)
+      const prevInputs = prev?.items?.map((i) => ({ ...i.input })) || [];
+      const lines = a.items?.length
+        ? a.items.map((it, idx) => {
+            const same = prevInputs.find((p) => L.norm(p.product_name) === L.norm(it.product_name)) || (a.items.length === prevInputs.length ? prevInputs[idx] : null);
+            const changes = Object.fromEntries(Object.entries(it).filter(([, v]) => v !== undefined && v !== null && v !== ""));
+            return same ? { ...same, ...changes } : it;
+          })
+        : prevInputs;
+      for (const it of lines) {
+        const input = { ...it };
+        let link = null;
+        let options = [];
+        if (it.catalog_product_id) {
+          const p = await L.catalogProduct(ctx, it.catalog_product_id);
+          link = p ? { product_id: p.id, product_name: p.name, via: "picked" } : null;
+        }
+        if (!link) {
+          const r = await L.resolveCatalogProduct(ctx, it.product_name, it.batch_no);
+          link = r.linked;
+          options = link ? [] : r.options;
+        }
+        const product = link ? await L.catalogProduct(ctx, link.product_id) : null;
+        const last = link ? await L.lastPurchaseLine(ctx, link.product_id, link.product_name) : null;
+        const global = !link ? await L.globalMedicine(it.product_name) : null;
+
+        const units = Number(it.units_per_pack) || last?.units_per_pack || product?.units_per_pack || global?.units_per_pack || 1;
+        const line = {
+          input,
+          product_name: link?.product_name || global?.name || it.product_name,
+          product_id: link?.product_id || null,
+          link_via: link?.via || null,
+          catalog_options: options,
+          is_new_product: !link,
+          manufacturer: product?.manufacturer || global?.manufacturer || "",
+          salt_composition: product?.salt_composition || global?.salt_composition || "",
+          pack_type: product?.pack_type || last?.pack_type || "Strip",
+          batch_no: (it.batch_no || "").toUpperCase(),
+          expiry_date: parseExpiry(it.expiry) || (S.isYmd(it.expiry) ? it.expiry : ""),
+          packs: Number(it.packs) || 0,
+          free_packs: Number(it.free_packs) || 0,
+          units_per_pack: units,
+          rate_per_pack: Number(it.rate_per_pack) || 0,
+          mrp_per_pack: Number(it.mrp_per_pack) || 0,
+          discount_percent: it.discount_percent ?? last?.discount_percent ?? 0,
+          gst_percent: it.gst_percent ?? (last?.gst_percent || 5),
+          last_purchase: last ? { date: last.date, supplier: last.supplier, rate_per_pack: last.rate_per_pack, mrp_per_pack: last.mrp_per_pack } : null,
+        };
+        line.total = round2(line.packs * line.rate_per_pack * (1 - line.discount_percent / 100) * (1 + line.gst_percent / 100));
+        draft.items.push(line);
+      }
+
+      draft.total = round2(draft.items.reduce((s, i) => s + i.total, 0));
+      draft.missing = [];
+      if (!draft.supplier) draft.missing.push("supplier");
+      if (!draft.items.length) draft.missing.push("items");
+      draft.items.forEach((i, idx) => {
+        const n = `${idx + 1}. ${i.product_name}`;
+        if (!i.packs) draft.missing.push(`${n}: quantity`);
+        if (!i.rate_per_pack) draft.missing.push(`${n}: rate`);
+        if (!i.mrp_per_pack) draft.missing.push(`${n}: MRP`);
+        if (!i.batch_no) draft.missing.push(`${n}: batch`);
+        if (!i.expiry_date) draft.missing.push(`${n}: expiry`);
+        if (i.mrp_per_pack && i.rate_per_pack && i.rate_per_pack > i.mrp_per_pack) draft.missing.push(`${n}: rate is higher than MRP, please check`);
+      });
+      await ctx.saveDraft(draft);
+      ctx.emit(purchaseDraftBlock(draft));
+
+      return {
+        draft_id: draft.id,
+        supplier: draft.supplier,
+        supplier_options: draft.supplier_options.slice(0, 5),
+        items: draft.items.map((i) => ({
+          product_name: i.product_name,
+          linked_to_catalog: !i.is_new_product,
+          catalog_options: i.catalog_options,
+          batch_no: i.batch_no,
+          expiry_date: i.expiry_date,
+          packs: i.packs,
+          free_packs: i.free_packs,
+          units_per_pack: i.units_per_pack,
+          rate_per_pack: i.rate_per_pack,
+          mrp_per_pack: i.mrp_per_pack,
+          gst_percent: i.gst_percent,
+          discount_percent: i.discount_percent,
+          last_purchase: i.last_purchase,
+          total: i.total,
+        })),
+        total: draft.total,
+        missing: draft.missing,
+        note: "The draft card with Save/Cancel buttons is shown. Ask for missing fields (batch, expiry are needed for stock). If a medicine isn't linked and has catalog_options, offer them as ::choices[dropdown]::. Do not claim it is saved.",
+      };
+    },
+  },
+  {
+    name: "delete_purchase",
+    description: "Ask to delete a purchase. Shows a confirmation card with its stock impact; deletion happens only when the user confirms.",
+    parameters: { type: "object", properties: { purchase_id: { type: "string" }, invoice_no: { type: "string" } } },
+    status: (a, lang) => say(lang, { en: "Checking stock impact of deleting", hinglish: "Delete karne se stock pe asar check kar raha hoon", hi: "स्टॉक पर असर देख रहा हूँ" }),
+    async run(a, ctx) {
+      const p = await findPurchase(ctx, a);
+      if (!p) return { error: "Purchase not found" };
+      const impact = await S.api(ctx, "GET", `/purchases/${p.id}/stock-impact`).catch(() => null);
+      const sold = impact?.consumed;
+      ctx.emit({
+        type: "confirm",
+        tone: "danger",
+        title: `Delete purchase ${p.invoice_no || ""} · ${p.supplier_name}`,
+        text: `${fmtDate(p.purchase_date)} · ${inr(p.total_amount)}${sold ? " · some of this stock is already sold" : ""}`,
+        rows: (impact?.batches || []).map((b) => ({ product: b.product_name, batch: b.batch_no, purchased: b.purchased, sold: b.consumed, in_stock: b.on_hand })),
+        columns: cols(["product", "Medicine"], ["batch", "Batch"], ["purchased", "Bought", null, "right"], ["sold", "Sold", null, "right"], ["in_stock", "In stock", null, "right"]),
+        actions: sold
+          ? [
+              { label: "Delete & remove unsold stock", style: "danger", action: { type: "op", op: "delete_purchase", purchase_id: p.id, mode: "unsold" } },
+              { label: "Delete, keep stock", style: "secondary", action: { type: "op", op: "delete_purchase", purchase_id: p.id, mode: "false" } },
+              { label: "Cancel", style: "ghost", action: { type: "dismiss" } },
+            ]
+          : [
+              { label: "Delete & remove stock", style: "danger", action: { type: "op", op: "delete_purchase", purchase_id: p.id, mode: "true" } },
+              { label: "Cancel", style: "ghost", action: { type: "dismiss" } },
+            ],
+      });
+      return { awaiting_confirmation: true, purchase: { invoice: p.invoice_no, supplier: p.supplier_name, total: p.total_amount }, stock_already_sold: !!sold };
+    },
+  },
+  {
+    name: "record_purchase_payment",
+    description: "Ask to record a payment made to a supplier against a purchase. Shows a confirmation card.",
+    parameters: {
+      type: "object",
+      properties: { purchase_id: { type: "string" }, invoice_no: { type: "string" }, amount: { type: "number" }, payment_mode: { type: "string", enum: ["Cash", "UPI", "Card", "Bank"] } },
+      required: ["amount"],
+    },
+    status: (a, lang) => say(lang, { en: "Preparing the payment", hinglish: "Payment ready kar raha hoon", hi: "भुगतान तैयार कर रहा हूँ" }),
+    async run(a, ctx) {
+      const p = await findPurchase(ctx, a);
+      if (!p) return { error: "Purchase not found" };
+      const due = round2((p.total_amount || 0) - (p.amount_paid || 0));
+      ctx.emit({
+        type: "confirm",
+        tone: "primary",
+        title: `Pay ${inr(a.amount)} to ${p.supplier_name}`,
+        text: `Invoice ${p.invoice_no || "—"} · due ${inr(due)} · ${a.payment_mode || "UPI"}`,
+        actions: [
+          { label: `Record ${inr(a.amount)}`, style: "primary", action: { type: "op", op: "purchase_payment", purchase_id: p.id, amount: a.amount, payment_mode: a.payment_mode || "UPI" } },
+          { label: "Cancel", style: "ghost", action: { type: "dismiss" } },
+        ],
+      });
+      return { awaiting_confirmation: true, due };
+    },
+  },
+];
+
+function purchaseDraftBlock(d) {
+  return {
+    type: "draft",
+    kind: "purchase",
+    draft_id: d.id,
+    title: "Purchase draft",
+    fields: [
+      { label: "Supplier", value: d.supplier ? `${d.supplier.name}${d.supplier.is_new ? " (new)" : d.supplier.is_global ? " (distributor)" : ""}` : "—", missing: !d.supplier },
+      { label: "Invoice", value: d.invoice_no || "Auto" },
+      { label: "Date", value: fmtDate(d.purchase_date) },
+      { label: "Payment", value: d.payment_status },
+    ],
+    columns: cols(["product", "Medicine"], ["batch", "Batch"], ["expiry", "Exp"], ["qty", "Qty"], ["rate", "Rate", "inr", "right"], ["mrp", "MRP", "inr", "right"], ["gst", "GST", null, "right"], ["total", "Total", "inr", "right"]),
+    rows: d.items.map((i) => ({
+      product: `${i.product_name}${i.is_new_product ? " · new" : ""}`,
+      batch: i.batch_no || "?",
+      expiry: S.fmtExpiry(i.expiry_date) || "?",
+      qty: `${i.packs || "?"}${i.free_packs ? `+${i.free_packs}` : ""} × ${i.units_per_pack}`,
+      rate: i.rate_per_pack,
+      mrp: i.mrp_per_pack,
+      gst: `${i.gst_percent}%`,
+      total: i.total,
+    })),
+    totals: [{ label: "Total (incl. GST)", value: d.total }],
+    missing: d.missing,
+    actions: [
+      { label: "Save purchase", style: "primary", action: { type: "commit", draft_id: d.id }, disabled: d.missing.some((m) => /supplier|items|quantity|rate|higher|batch|expiry/.test(m)) },
+      { label: "Discard", style: "ghost", action: { type: "discard", draft_id: d.id } },
+    ],
+  };
+}
+
+// Saving a confirmed purchase draft through the normal purchase API
+async function commitPurchase(draft, ctx) {
+  const s = draft.supplier || {};
+  const payload = {
+    supplier_id: s.id || null,
+    supplier_name: s.name,
+    ...(s.is_new ? { supplier_data: { name: s.name } } : {}),
+    invoice_no: draft.invoice_no || `AI-${Date.now().toString().slice(-8)}`,
+    purchase_date: draft.purchase_date,
+    payment_status: draft.payment_status,
+    items: draft.items.map((i) => ({
+      product_id: i.product_id || `scanned_${uuidv4().slice(0, 12)}`,
+      selected_product_id: i.product_id || undefined,
+      product_name: i.product_name,
+      manufacturer: i.manufacturer || null,
+      salt_composition: i.salt_composition || null,
+      pack_type: i.pack_type || "Strip",
+      batch_no: i.batch_no || null,
+      expiry_date: i.expiry_date || null,
+      pack_quantity: i.packs || 1,
+      scheme: i.free_packs || 0,
+      units_per_pack: i.units_per_pack || 1,
+      pack_price: i.rate_per_pack,
+      mrp_per_unit: (i.mrp_per_pack || 0) / (i.units_per_pack || 1),
+      discount: i.discount_percent || 0,
+      cgst: (i.gst_percent || 0) / 2,
+      sgst: (i.gst_percent || 0) / 2,
+    })),
+  };
+  const res = await S.api(ctx, "POST", "/purchases", payload);
+  const p = res.purchase;
+  return {
+    block: {
+      type: "result",
+      tone: "success",
+      title: "Purchase saved",
+      text: `${p.supplier_name} · ${p.invoice_no} · ${inr(p.total_amount)} · ${p.items.length} item(s) added to stock`,
+      actions: [{ label: "Open purchases", action: { type: "navigate", to: `/purchases`, state: { highlightId: p.id } } }],
+    },
+    summary: { saved: "purchase", id: p.id, invoice_no: p.invoice_no, supplier: p.supplier_name, total: p.total_amount, items: p.items.length },
+  };
+}
+
+const ops = {
+  async delete_purchase(a, ctx) {
+    const res = await S.api(ctx, "DELETE", `/purchases/${a.purchase_id}?delete_inventory=${a.mode}`);
+    return { block: { type: "result", tone: "success", title: "Purchase deleted", text: res.removed_units ? `${res.removed_units} units removed from stock` : "Stock left unchanged" }, summary: { deleted: "purchase", removed_units: res.removed_units || 0 } };
+  },
+  async purchase_payment(a, ctx) {
+    await S.api(ctx, "POST", `/purchases/${a.purchase_id}/payments`, { amount: a.amount, payment_mode: a.payment_mode });
+    return { block: { type: "result", tone: "success", title: "Payment recorded", text: `${inr(a.amount)} · ${a.payment_mode}` }, summary: { recorded: "supplier payment", amount: a.amount } };
+  },
+};
+
+module.exports = { tools, commitPurchase, ops, purchaseDraftBlock };

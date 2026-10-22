@@ -82,6 +82,9 @@ mongoose
     ensureTenantIndexes(mongoose.connection.db).catch((err) =>
       console.warn("[Indexes] ensureTenantIndexes failed:", err.message)
     );
+    require("./services/assistant/store").ensureIndexes(mongoose.connection.db).catch((err) =>
+      console.warn("[Indexes] assistant indexes failed:", err.message)
+    );
     ensureCoreIndexes(mongoose.connection.db).catch((err) =>
       console.warn("[Indexes] ensureCoreIndexes failed:", err.message)
     );
@@ -153,7 +156,7 @@ app.get("/api/plans", async (req, res, next) => {
 });
 app.use("/api/billing", require("./routes/billing"));
 app.use("/api/webhook", require("./routes/webhook"));
-app.use("/api/chat", require("./routes/chat"));
+app.use("/api/assistant", require("./routes/assistant"));
 
 // Bull Board Setup (Protected with Basic Auth)
 if (!process.env.ADMIN_PASSWORD) {

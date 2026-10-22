@@ -41,7 +41,7 @@ import {
 
 import RecentActivitySidebar from "./RecentActivitySidebar";
 import { useKeyboardShortcut, formatShortcut } from "../hooks/useKeyboard";
-import AgentWidget from "./Agent/AgentWidget";
+import AssistantLauncher from "./assistant/AssistantLauncher";
 import PlanBadge from "./PlanBadge";
 import NotificationCenter from "./NotificationCenter";
 
@@ -496,8 +496,8 @@ export default function DashboardLayout() {
           </div>
         </div>
 
-        {/* Global AI Agent Interface widget */}
-        <AgentWidget user={user} />
+        {/* DavaDesk AI launcher */}
+        <AssistantLauncher />
       </div>
     </TooltipProvider>
   );

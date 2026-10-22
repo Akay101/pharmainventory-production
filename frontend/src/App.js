@@ -25,6 +25,7 @@ import SettingsPage from "./pages/SettingsPage";
 import ReportsPage from "./pages/ReportsPage";
 import ScannerPage from "./pages/ScannerPage";
 import BillingScannerPage from "./pages/BillingScannerPage";
+import AssistantPage from "./pages/AssistantPage";
 import ExpiryPage from "./pages/ExpiryPage";
 import ReturnsPage from "./pages/ReturnsPage";
 
@@ -98,6 +99,9 @@ const refreshSession = () => {
   }
   return refreshPromise;
 };
+
+// For fetch-based callers (streaming) that can't use the axios interceptor
+export const refreshAccessToken = () => refreshSession();
 
 // Drop pre-redesign tokens that older builds kept in localStorage
 ["pharmalogy_token", "pharmalogy_refresh_token"].forEach((k) => localStorage.removeItem(k));
@@ -417,6 +421,14 @@ function App() {
             element={
               <ProtectedRoute>
                 <ScannerPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/assistant"
+            element={
+              <ProtectedRoute>
+                <AssistantPage />
               </ProtectedRoute>
             }
           />

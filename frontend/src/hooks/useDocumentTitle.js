@@ -38,6 +38,8 @@ export const getPageTitle = (pathname) => {
       return "Payment Success - DavaDesk";
     case "/scan":
       return "Scanner - DavaDesk";
+    case "/assistant":
+      return "DavaDesk AI - DavaDesk";
     case "/scan-bill":
       return "Billing Scanner - DavaDesk";
     default: {
