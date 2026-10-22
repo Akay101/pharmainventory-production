@@ -16,6 +16,42 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
+const fmtPaise = (p) =>
+  `₹${(p / 100).toLocaleString("en-IN", { minimumFractionDigits: p % 100 ? 2 : 0, maximumFractionDigits: 2 })}`;
+
+// Latest redemption (pharmacy, user, amount paid), plus how many others
+function RedemptionCell({ promo }) {
+  const reds = promo.redemptions || [];
+  if (!reds.length) {
+    return promo.in_checkout ? (
+      <span className="text-amber-600 text-[11px] font-semibold">In a checkout, not paid yet</span>
+    ) : (
+      <span className="text-slate-400 text-[11px] italic">Not redeemed yet</span>
+    );
+  }
+  const r = reds[0];
+  return (
+    <div>
+      <div className="font-bold text-slate-800 flex items-center gap-1">
+        <Building className="w-3 h-3 text-slate-400" />
+        {r.pharmacy_name}
+      </div>
+      {(r.user_name || r.user_email) && (
+        <div className="text-[10px] text-slate-500 flex items-center gap-1">
+          <User className="w-3 h-3 text-slate-400" />
+          {r.user_name}
+          {r.user_email ? ` · ${r.user_email}` : ""}
+        </div>
+      )}
+      <div className="text-[10px] text-slate-400">
+        Redeemed {r.at ? new Date(r.at).toLocaleDateString() : ""}
+        {r.amount_paid_paise != null ? ` · paid ${fmtPaise(r.amount_paid_paise)}` : ""}
+        {reds.length > 1 ? ` · +${reds.length - 1} more` : ""}
+      </div>
+    </div>
+  );
+}
+
 export default function PromoCodesPage({
   promos,
   summary,
@@ -225,21 +261,7 @@ export default function PromoCodesPage({
                     <td className="py-3.5 px-4">{getStatusBadge(promo)}</td>
 
                     <td className="py-3.5 px-4">
-                      {promo.used_by_pharmacy_name ? (
-                        <div>
-                          <div className="font-bold text-slate-800 flex items-center gap-1">
-                            <Building className="w-3 h-3 text-slate-400" />
-                            {promo.used_by_pharmacy_name}
-                          </div>
-                          {promo.used_at && (
-                            <div className="text-[10px] text-slate-400">
-                              Redeemed {new Date(promo.used_at).toLocaleDateString()}
-                            </div>
-                          )}
-                        </div>
-                      ) : (
-                        <span className="text-slate-400 text-[11px] italic">Not redeemed yet</span>
-                      )}
+                      <RedemptionCell promo={promo} />
                     </td>
 
                     <td className="py-3.5 px-4 text-slate-500">

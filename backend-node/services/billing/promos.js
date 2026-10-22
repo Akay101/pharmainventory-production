@@ -96,11 +96,28 @@ async function reserve(db, promo, { pharmacyId, userId, orderId = null, status =
   return redemption;
 }
 
+// Keep the code's own "last redeemed by" fields in step with its redemptions
+async function stampRedeemer(db, code, { pharmacyId, userId }) {
+  const pharmacy = await db.collection("pharmacies").findOne({ id: pharmacyId }, { projection: { name: 1 } });
+  await db.collection("promo_codes").updateOne(
+    { code },
+    {
+      $set: {
+        used_at: new Date().toISOString(),
+        used_by_pharmacy_id: pharmacyId,
+        used_by_pharmacy_name: pharmacy?.name || null,
+        used_by_user_id: userId,
+      },
+    }
+  );
+}
+
 async function markRedeemedForOrder(db, orderId) {
-  await db.collection("promo_redemptions").updateOne(
+  const r = await db.collection("promo_redemptions").findOneAndUpdate(
     { order_id: orderId, status: "RESERVED" },
     { $set: { status: "REDEEMED", updated_at: new Date() } }
   );
+  if (r) await stampRedeemer(db, r.code, { pharmacyId: r.pharmacy_id, userId: r.user_id });
 }
 
 // Give a reserved use back (payment failed, order expired or superseded).
@@ -136,10 +153,7 @@ async function redeemAccessCode(db, rawCode, { pharmacyId, userId }) {
     actor: { user_id: userId },
     meta: { promo_code: promo.code, redemption_id: redemption.id },
   });
-  await db.collection("promo_codes").updateOne(
-    { code: promo.code },
-    { $set: { used_at: new Date().toISOString(), used_by_pharmacy_id: pharmacyId, used_by_user_id: userId } }
-  );
+  await stampRedeemer(db, promo.code, { pharmacyId, userId });
   return { promo, ...result };
 }
 

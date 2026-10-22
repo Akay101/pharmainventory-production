@@ -136,8 +136,15 @@ async function userJourney(db, user) {
   const usage = pid ? await usageStats(db, pid, trialWindow) : { counts: {}, bills: {}, purchases: {}, recent_activity: [], has_records: false };
 
   const stage = stageInfo(pickStage({ user, sub, ledger, orders, usage }));
+  const paid = orders.filter((o) => o.status === "PAID");
   return {
     stage,
+    payments_summary: {
+      total_paid_paise: paid.reduce((sum, o) => sum + (o.amount_paise || 0), 0),
+      payments: paid.length,
+      last_paid_at: paid.reduce((m, o) => (!m || new Date(o.paid_at || o.created_at) > new Date(m) ? o.paid_at || o.created_at : m), null),
+      discount_codes: [...new Set(paid.map((o) => o.promo_code).filter(Boolean))],
+    },
     subscription: { ...sub, trial_claimed_at: pharmacy?.trial_claimed_at || null, trial_window: trialWindow },
     usage,
     ledger,
@@ -158,6 +165,7 @@ async function pendingJourney(db, pending) {
   ].sort((a, b) => new Date(b.at) - new Date(a.at));
   return {
     stage: stageInfo("DROPPED_AT_OTP"),
+    payments_summary: { total_paid_paise: 0, payments: 0, last_paid_at: null, discount_codes: [] },
     subscription: describe(null),
     usage: null,
     ledger: [],

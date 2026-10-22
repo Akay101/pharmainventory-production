@@ -76,6 +76,45 @@ router.get("/", async (req, res, next) => {
     const promos = await req.db.collection("promo_codes").find({}).sort({ created_at: -1 }).limit(2000).toArray();
     const now = new Date();
 
+    // Who used each code comes from promo_redemptions (one row per pharmacy use)
+    const reds = await req.db
+      .collection("promo_redemptions")
+      .find({ status: { $in: ["REDEEMED", "RESERVED"] } }, { projection: { _id: 0 } })
+      .sort({ updated_at: -1 })
+      .toArray();
+    const [pharms, users, orders] = await Promise.all([
+      req.db
+        .collection("pharmacies")
+        .find({ id: { $in: [...new Set(reds.map((r) => r.pharmacy_id))] } }, { projection: { _id: 0, id: 1, name: 1 } })
+        .toArray(),
+      req.db
+        .collection("users")
+        .find({ id: { $in: [...new Set(reds.map((r) => r.user_id).filter(Boolean))] } }, { projection: { _id: 0, id: 1, name: 1, email: 1 } })
+        .toArray(),
+      req.db
+        .collection("payment_orders")
+        .find({ order_id: { $in: reds.map((r) => r.order_id).filter(Boolean) } }, { projection: { _id: 0, order_id: 1, amount_paise: 1, status: 1 } })
+        .toArray(),
+    ]);
+    const pharmName = new Map(pharms.map((p) => [p.id, p.name]));
+    const userBy = new Map(users.map((u) => [u.id, u]));
+    const orderBy = new Map(orders.map((o) => [o.order_id, o]));
+    const byCode = new Map();
+    for (const r of reds) {
+      if (!byCode.has(r.code)) byCode.set(r.code, []);
+      const order = r.order_id ? orderBy.get(r.order_id) : null;
+      byCode.get(r.code).push({
+        status: r.status,
+        pharmacy_id: r.pharmacy_id,
+        pharmacy_name: pharmName.get(r.pharmacy_id) || "Unknown pharmacy",
+        user_name: userBy.get(r.user_id)?.name || null,
+        user_email: userBy.get(r.user_id)?.email || null,
+        order_id: r.order_id || null,
+        amount_paid_paise: order?.status === "PAID" ? order.amount_paise : null,
+        at: r.updated_at || r.created_at,
+      });
+    }
+
     let rows = promos.map((p) => ({
       _id: p._id,
       code: p.code,
@@ -104,12 +143,20 @@ router.get("/", async (req, res, next) => {
       used_by_pharmacy_name: p.used_by_pharmacy_name || null,
       used_by_pharmacy_id: p.used_by_pharmacy_id || null,
       status: statusOf(p, now),
+      redemptions: (byCode.get(p.code) || []).filter((r) => r.status === "REDEEMED"),
+      in_checkout: (byCode.get(p.code) || []).filter((r) => r.status === "RESERVED").length,
     }));
+    // Older codes recorded the redeemer only on the code itself
+    for (const r of rows) {
+      if (!r.redemptions.length && r.used_by_pharmacy_id) {
+        r.redemptions = [{ status: "REDEEMED", pharmacy_id: r.used_by_pharmacy_id, pharmacy_name: r.used_by_pharmacy_name || pharmName.get(r.used_by_pharmacy_id) || "Unknown pharmacy", at: r.used_at }];
+      }
+    }
 
     const summary = {
       total: rows.length,
       active: rows.filter((p) => p.status === "ACTIVE").length,
-      redeemed: rows.filter((p) => p.used_count > 0).length,
+      redeemed: rows.filter((p) => p.redemptions.length > 0).length,
       exhausted: rows.filter((p) => p.status === "EXHAUSTED").length,
       trials: rows.filter((p) => p.source === "TRIAL").length,
       discounts: rows.filter((p) => p.type === "DISCOUNT").length,
@@ -118,7 +165,9 @@ router.get("/", async (req, res, next) => {
     if (search) {
       const term = String(search).toLowerCase();
       rows = rows.filter(
-        (p) => p.code.toLowerCase().includes(term) || (p.used_by_pharmacy_name || "").toLowerCase().includes(term)
+        (p) =>
+          p.code.toLowerCase().includes(term) ||
+          p.redemptions.some((r) => `${r.pharmacy_name} ${r.user_name || ""} ${r.user_email || ""}`.toLowerCase().includes(term))
       );
     }
     if (status && status !== "ALL") rows = rows.filter((p) => p.status === status);

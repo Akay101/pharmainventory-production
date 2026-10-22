@@ -13,7 +13,7 @@ router.get("/", async (req, res, next) => {
     const { search, filter = "ALL", role, page = 1, limit = 50 } = req.query;
     const now = new Date();
 
-    const [users, pharmacies, subscriptions, pending] = await Promise.all([
+    const [users, pharmacies, subscriptions, pending, paidTotals] = await Promise.all([
       db.collection("users").find({}, { projection: { password_hash: 0, password: 0 } }).toArray(),
       db.collection("pharmacies").find({}).toArray(),
       db.collection("subscriptions").find({}).toArray(),
@@ -22,7 +22,13 @@ router.get("/", async (req, res, next) => {
         .find({}, { projection: { password_hash: 0 } })
         .toArray()
         .catch(() => []),
+      db
+        .collection("payment_orders")
+        .aggregate([{ $match: { status: "PAID" } }, { $group: { _id: "$pharmacy_id", total: { $sum: "$amount_paise" }, n: { $sum: 1 } } }])
+        .toArray()
+        .catch(() => []),
     ]);
+    const paidBy = new Map(paidTotals.map((t) => [t._id, t]));
 
     const pharmacyMap = new Map();
     pharmacies.forEach((p) => {
@@ -72,6 +78,8 @@ router.get("/", async (req, res, next) => {
         subscription_expiry: sub ? sub.ends_at : u.subscription_expiry || null,
         subscription: sub || null,
         days_left: sub ? sub.days_left : null,
+        total_paid_paise: paidBy.get(u.pharmacy_id)?.total || 0,
+        payments: paidBy.get(u.pharmacy_id)?.n || 0,
         is_subscribed: isSubscribed,
         status,
         kind: "USER",

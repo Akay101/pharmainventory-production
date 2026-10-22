@@ -31,7 +31,8 @@ const TONE = {
 };
 
 const inr = (rupees) => `₹${Number(rupees || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
-const inrPaise = (paise) => `₹${((paise || 0) / 100).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
+const inrPaise = (paise) =>
+  `₹${((paise || 0) / 100).toLocaleString("en-IN", { minimumFractionDigits: (paise || 0) % 100 ? 2 : 0, maximumFractionDigits: 2 })}`;
 
 const ago = (d) => {
   if (!d) return "never";
@@ -161,6 +162,21 @@ export default function UserDetailDrawer({ userId, onClose, onChanged }) {
                   <h4 className="font-black text-slate-900 text-sm">Subscription</h4>
                   <StatusPill sub={sub} />
                 </div>
+                {data.payments_summary?.payments > 0 && (
+                  <div className="flex flex-wrap items-baseline justify-between gap-2 p-3 rounded-xl bg-emerald-50 border border-emerald-200">
+                    <div>
+                      <div className="text-[10px] font-bold text-emerald-700 uppercase">Total paid</div>
+                      <div className="text-xl font-black text-emerald-800">{inrPaise(data.payments_summary.total_paid_paise)}</div>
+                    </div>
+                    <div className="text-[11px] font-semibold text-emerald-800 text-right">
+                      {data.payments_summary.payments} payment{data.payments_summary.payments === 1 ? "" : "s"}
+                      {data.payments_summary.last_paid_at ? ` · last ${fmtDate(data.payments_summary.last_paid_at)}` : ""}
+                      {data.payments_summary.discount_codes.length ? (
+                        <div>Codes used: {data.payments_summary.discount_codes.join(", ")}</div>
+                      ) : null}
+                    </div>
+                  </div>
+                )}
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                   <div>
                     <div className="text-[10px] font-bold text-slate-400 uppercase">Started</div>

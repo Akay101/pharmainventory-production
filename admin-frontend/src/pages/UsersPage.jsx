@@ -28,6 +28,18 @@ const FILTERS = [
   ["INCOMPLETE", "Incomplete signup"],
 ];
 
+// Lifetime amount the pharmacy has paid (all successful checkouts)
+function PaidLine({ user }) {
+  if (!user.total_paid_paise) return null;
+  const p = user.total_paid_paise;
+  return (
+    <div className="text-[10px] font-bold text-emerald-700 mt-0.5">
+      ₹{(p / 100).toLocaleString("en-IN", { minimumFractionDigits: p % 100 ? 2 : 0, maximumFractionDigits: 2 })} paid
+      {user.payments > 1 ? ` · ${user.payments} payments` : ""}
+    </div>
+  );
+}
+
 function SubscriptionCell({ user }) {
   const status = statusOf(user);
   const sub = user.subscription;
@@ -57,12 +69,14 @@ function SubscriptionCell({ user }) {
             {user.days_left != null ? `${user.days_left} day(s) left · ` : ""}Exp: {new Date(sub?.ends_at || user.subscription_expiry).toLocaleDateString()}
           </div>
         )}
+        <PaidLine user={user} />
       </div>
     );
   }
   if (status === "EXPIRED") {
     return (
       <div>
+        <PaidLine user={user} />
         <span className="status-pill bg-rose-50 text-rose-700 border border-rose-200">
           <Hourglass className="w-3 h-3" />
           {sub?.kind === "TRIAL" ? "Trial ended" : "Plan expired"}
