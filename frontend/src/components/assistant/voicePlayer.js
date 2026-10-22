@@ -1,5 +1,4 @@
 import { API, getAccessToken, refreshAccessToken } from "../../App";
-import { speak as browserSpeak, stopSpeaking as stopBrowserSpeech } from "./useVoice";
 
 // Plays the assistant's natural Gemini voice. Audio arrives as streamed
 // 16-bit PCM (24 kHz mono); each chunk is scheduled right after the previous
@@ -36,14 +35,13 @@ export function stopVoice() {
     current = null;
     notify();
   }
-  stopBrowserSpeech();
 }
 
 export async function speakReply(text, language) {
   stopVoice();
   if (!text?.trim()) return;
   const ctx = primeVoice();
-  if (!ctx) return browserSpeak(text, language);
+  if (!ctx) return;
 
   const me = { abort: new AbortController(), sources: [] };
   current = me;
@@ -111,9 +109,8 @@ export async function speakReply(text, language) {
     if (last) last.onended = finish;
     else finish();
   } catch {
-    if (me.abort.signal.aborted) return;
+    // Stay silent rather than switch to a different (browser) voice; the
+    // reply is on screen and the speaker button can retry
     finish();
-    // Fall back to the browser's voice rather than staying silent
-    browserSpeak(text, language);
   }
 }
