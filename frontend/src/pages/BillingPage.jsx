@@ -91,6 +91,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import CustomerFilter from "../components/CustomerFilter";
+import BatchPicker from "../components/BatchPicker";
 import PlanBadge from "../components/PlanBadge";
 import Loader from "../components/Loader";
 import BillingScannerModal from "../components/BillingScannerModal";
@@ -169,7 +170,6 @@ export default function BillingPage() {
   // New bill state - inline table approach
   const [showNewBill, setShowNewBill] = useState(false);
   const [billItems, setBillItems] = useState([]);
-  const [visibleBatchesLimit, setVisibleBatchesLimit] = useState({});
   const [customerInfo, setCustomerInfo] = useState({
     customer_id: "",
     customer_name: "",
@@ -3791,9 +3791,14 @@ export default function BillingPage() {
                               className="h-8 text-xs border-border/80 focus-visible:ring-1 focus-visible:ring-primary focus-visible:border-primary rounded-lg transition-all duration-200 w-16"
                             />
                           ) : (item.available_batches && item.available_batches.length > 0) ? (
-                            <Select
+                            <BatchPicker
+                              batches={item.available_batches}
                               value={item.inventory_id}
-                              onValueChange={(selectedInvId) => {
+                              fallbackLabel={item.batch_no}
+                              nearExpiry={nearExpiryBatchFilter}
+                              onToggleNearExpiry={() => setNearExpiryBatchFilter((prev) => !prev)}
+                              accent="primary"
+                              onSelect={(selectedInvId) => {
                                 const selectedBatch = item.available_batches.find(b => b.id === selectedInvId);
                                 if (selectedBatch) {
                                   const qty = parseInt(item.quantity) || 1;
@@ -3829,101 +3834,7 @@ export default function BillingPage() {
                                   );
                                 }
                               }}
-                            >
-                              <SelectTrigger className="h-8 text-xs font-mono font-bold border-border/80 bg-background text-foreground rounded-lg w-28 focus:ring-1 focus:ring-primary shadow-2xs">
-                                <SelectValue>
-                                  {item.available_batches?.find(b => b.id === item.inventory_id)?.batch_no || item.batch_no || "Select Batch"}
-                                </SelectValue>
-                              </SelectTrigger>
-                              <SelectContent className="border-2 border-border shadow-2xl rounded-2xl z-[99999] w-[460px] min-w-[460px] p-2 bg-background dark:bg-zinc-950 text-foreground opacity-100 font-sans">
-                                <div className="px-3 py-1.5 mb-1.5 border-b border-border/70 text-[11px] font-black uppercase text-muted-foreground flex items-center justify-between bg-muted/60 rounded-t-xl">
-                                  <span>Available Batches</span>
-                                  <button
-                                    type="button"
-                                    onMouseDown={(e) => {
-                                      e.preventDefault();
-                                      e.stopPropagation();
-                                      setNearExpiryBatchFilter((prev) => !prev);
-                                    }}
-                                    className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold border transition-all duration-150 flex items-center gap-1 cursor-pointer ${
-                                      nearExpiryBatchFilter
-                                        ? "bg-amber-500 text-white border-amber-600 shadow-xs"
-                                        : "bg-background hover:bg-muted text-muted-foreground border-border"
-                                    }`}
-                                    title="Click to sort batches by earliest expiry date first"
-                                  >
-                                    <Clock className="w-3 h-3" />
-                                    <span>Near Expiry {nearExpiryBatchFilter ? "ON" : ""}</span>
-                                  </button>
-                                </div>
-                                {(() => {
-                                  const rawBatches = item.available_batches || [];
-                                  const displayBatches = nearExpiryBatchFilter
-                                    ? [...rawBatches].sort((a, b) => {
-                                        const tA = a.expiry_date ? new Date(a.expiry_date).getTime() : Infinity;
-                                        const tB = b.expiry_date ? new Date(b.expiry_date).getTime() : Infinity;
-                                        return (isNaN(tA) ? Infinity : tA) - (isNaN(tB) ? Infinity : tB);
-                                      })
-                                    : rawBatches;
-
-                                  return displayBatches.slice(0, visibleBatchesLimit[item.id] || 15).map((b, idx) => (
-                                    <SelectItem
-                                      key={b.id}
-                                      value={b.id}
-                                      textValue={b.batch_no}
-                                      className="text-xs py-2.5 px-3 my-1 rounded-xl border border-border/40 hover:border-border cursor-pointer focus:bg-primary/10 transition-colors"
-                                    >
-                                      <div className="flex flex-col gap-1 w-full pr-4">
-                                        <div className="flex items-center justify-between gap-3">
-                                          <div className="flex items-center gap-2">
-                                            <span className="font-mono font-black text-foreground text-sm">
-                                              {b.batch_no}
-                                            </span>
-                                            {nearExpiryBatchFilter && idx === 0 && (
-                                              <span className="text-[10px] bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/40 px-2 py-0.5 rounded-md font-black shadow-2xs">
-                                                Near Expiry
-                                              </span>
-                                            )}
-                                          </div>
-                                          <span className="text-[11px] font-extrabold text-emerald-600 dark:text-emerald-400 bg-emerald-500/15 border border-emerald-500/30 px-2.5 py-0.5 rounded-full">
-                                            {b.available_quantity || 0} units available
-                                          </span>
-                                        </div>
-                                        <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground font-mono pt-0.5">
-                                          <span>Exp: <strong className="text-foreground font-bold">{b.expiry_date ? formatExpiry(b.expiry_date) : "N/A"}</strong></span>
-                                          {b.supplier_name ? (
-                                            <span className="text-muted-foreground font-semibold truncate max-w-[210px]" title={b.supplier_name}>
-                                              Supp: <strong className="text-foreground/90">{b.supplier_name}</strong>
-                                            </span>
-                                          ) : (
-                                            <span className="text-muted-foreground/60 font-medium">Supp: -</span>
-                                          )}
-                                        </div>
-                                      </div>
-                                    </SelectItem>
-                                  ));
-                                })()}
-                                {item.available_batches.length > (visibleBatchesLimit[item.id] || 15) && (
-                                  <div className="p-1 border-t border-border/20">
-                                    <Button
-                                      variant="ghost"
-                                      size="sm"
-                                      className="w-full h-7 text-[10px] font-bold text-amber-500 hover:text-amber-600 hover:bg-amber-500/5 transition-all"
-                                      onMouseDown={(e) => {
-                                        e.preventDefault();
-                                        e.stopPropagation();
-                                        setVisibleBatchesLimit(prev => ({
-                                          ...prev,
-                                          [item.id]: (visibleBatchesLimit[item.id] || 15) + 15
-                                        }));
-                                      }}
-                                    >
-                                      Show More Batches...
-                                    </Button>
-                                  </div>
-                                )}
-                              </SelectContent>
-                            </Select>
+                            />
                           ) : (
                             <span className="text-xs text-muted-foreground font-mono">
                               {item.batch_no || "-"}
@@ -5272,9 +5183,14 @@ export default function BillingPage() {
                         </TableCell>
                         <TableCell>
                           {(!item.is_manual && item.available_batches && item.available_batches.length > 0) ? (
-                            <Select
+                            <BatchPicker
+                              batches={item.available_batches}
                               value={item.inventory_id}
-                              onValueChange={(selectedInvId) => {
+                              fallbackLabel={item.batch_no}
+                              nearExpiry={nearExpiryBatchFilter}
+                              onToggleNearExpiry={() => setNearExpiryBatchFilter((prev) => !prev)}
+                              accent="amber"
+                              onSelect={(selectedInvId) => {
                                 const selectedBatch = item.available_batches.find(b => b.id === selectedInvId);
                                 if (selectedBatch) {
                                   const qty = parseInt(item.quantity) || 1;
@@ -5310,101 +5226,7 @@ export default function BillingPage() {
                                   );
                                 }
                               }}
-                            >
-                              <SelectTrigger className="h-8 text-xs font-mono font-bold border-border/80 bg-background text-foreground rounded-lg w-28 focus:ring-1 focus:ring-amber-500 shadow-2xs">
-                                <SelectValue>
-                                  {item.available_batches?.find(b => b.id === item.inventory_id)?.batch_no || item.batch_no || "Select Batch"}
-                                </SelectValue>
-                              </SelectTrigger>
-                              <SelectContent className="border-2 border-border shadow-2xl rounded-2xl z-[99999] w-[460px] min-w-[460px] p-2 bg-background dark:bg-zinc-950 text-foreground opacity-100 font-sans">
-                                <div className="px-3 py-1.5 mb-1.5 border-b border-border/70 text-[11px] font-black uppercase text-muted-foreground flex items-center justify-between bg-muted/60 rounded-t-xl">
-                                  <span>Available Batches</span>
-                                  <button
-                                    type="button"
-                                    onMouseDown={(e) => {
-                                      e.preventDefault();
-                                      e.stopPropagation();
-                                      setNearExpiryBatchFilter((prev) => !prev);
-                                    }}
-                                    className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold border transition-all duration-150 flex items-center gap-1 cursor-pointer ${
-                                      nearExpiryBatchFilter
-                                        ? "bg-amber-500 text-white border-amber-600 shadow-xs"
-                                        : "bg-background hover:bg-muted text-muted-foreground border-border"
-                                    }`}
-                                    title="Click to sort batches by earliest expiry date first"
-                                  >
-                                    <Clock className="w-3 h-3" />
-                                    <span>Near Expiry {nearExpiryBatchFilter ? "ON" : ""}</span>
-                                  </button>
-                                </div>
-                                {(() => {
-                                  const rawBatches = item.available_batches || [];
-                                  const displayBatches = nearExpiryBatchFilter
-                                    ? [...rawBatches].sort((a, b) => {
-                                        const tA = a.expiry_date ? new Date(a.expiry_date).getTime() : Infinity;
-                                        const tB = b.expiry_date ? new Date(b.expiry_date).getTime() : Infinity;
-                                        return (isNaN(tA) ? Infinity : tA) - (isNaN(tB) ? Infinity : tB);
-                                      })
-                                    : rawBatches;
-
-                                  return displayBatches.slice(0, visibleBatchesLimit[item.id] || 15).map((b, idx) => (
-                                    <SelectItem
-                                      key={b.id}
-                                      value={b.id}
-                                      textValue={b.batch_no}
-                                      className="text-xs py-2.5 px-3 my-1 rounded-xl border border-border/40 hover:border-border cursor-pointer focus:bg-amber-500/10 transition-colors"
-                                    >
-                                      <div className="flex flex-col gap-1 w-full pr-4">
-                                        <div className="flex items-center justify-between gap-3">
-                                          <div className="flex items-center gap-2">
-                                            <span className="font-mono font-black text-foreground text-sm">
-                                              {b.batch_no}
-                                            </span>
-                                            {nearExpiryBatchFilter && idx === 0 && (
-                                              <span className="text-[10px] bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/40 px-2 py-0.5 rounded-md font-black shadow-2xs">
-                                                Near Expiry
-                                              </span>
-                                            )}
-                                          </div>
-                                          <span className="text-[11px] font-extrabold text-emerald-600 dark:text-emerald-400 bg-emerald-500/15 border border-emerald-500/30 px-2.5 py-0.5 rounded-full">
-                                            {b.available_quantity || 0} units available
-                                          </span>
-                                        </div>
-                                        <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground font-mono pt-0.5">
-                                          <span>Exp: <strong className="text-foreground font-bold">{b.expiry_date ? formatExpiry(b.expiry_date) : "N/A"}</strong></span>
-                                          {b.supplier_name ? (
-                                            <span className="text-muted-foreground font-semibold truncate max-w-[210px]" title={b.supplier_name}>
-                                              Supp: <strong className="text-foreground/90">{b.supplier_name}</strong>
-                                            </span>
-                                          ) : (
-                                            <span className="text-muted-foreground/60 font-medium">Supp: -</span>
-                                          )}
-                                        </div>
-                                      </div>
-                                    </SelectItem>
-                                  ));
-                                })()}
-                                {item.available_batches.length > (visibleBatchesLimit[item.id] || 15) && (
-                                  <div className="p-1 border-t border-border/20">
-                                    <Button
-                                      variant="ghost"
-                                      size="sm"
-                                      className="w-full h-7 text-[10px] font-bold text-amber-500 hover:text-amber-600 hover:bg-amber-500/5 transition-all"
-                                      onMouseDown={(e) => {
-                                        e.preventDefault();
-                                        e.stopPropagation();
-                                        setVisibleBatchesLimit(prev => ({
-                                          ...prev,
-                                          [item.id]: (visibleBatchesLimit[item.id] || 15) + 15
-                                        }));
-                                      }}
-                                    >
-                                      Show More Batches...
-                                    </Button>
-                                  </div>
-                                )}
-                              </SelectContent>
-                            </Select>
+                            />
                           ) : (
                             <Input
                               value={item.batch_no || ""}
