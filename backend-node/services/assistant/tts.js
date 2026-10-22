@@ -63,7 +63,8 @@ function pieces(text) {
 }
 
 async function cloudPiece(text, voice, signal) {
-  const res = await fetch(`https://texttospeech.googleapis.com/v1/text:synthesize?key=${encodeURIComponent(apiKey())}`, {
+  // Gemini keys can't be combined with Cloud TTS, so the voice has its own key
+  const res = await fetch(`https://texttospeech.googleapis.com/v1/text:synthesize?key=${encodeURIComponent(process.env.GOOGLE_TTS_API_KEY || apiKey())}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
@@ -100,7 +101,7 @@ async function cloudSpeech(text, language, signal, onChunk) {
 async function streamSpeech({ text, language, signal, onChunk }) {
   const spoken = speakable(text);
   if (!spoken) return 0;
-  if (process.env.ASSISTANT_TTS_PROVIDER !== "gemini" && Date.now() > cloudDisabledUntil) {
+  if (process.env.ASSISTANT_TTS_PROVIDER !== "gemini" && process.env.GOOGLE_TTS_API_KEY && Date.now() > cloudDisabledUntil) {
     let sent = 0;
     try {
       return await cloudSpeech(spoken, language, signal, (b) => {
@@ -112,7 +113,7 @@ async function streamSpeech({ text, language, signal, onChunk }) {
       if (sent) return sent;
       if ([400, 403, 404].includes(err.status)) {
         cloudDisabledUntil = Date.now() + 10 * 60 * 1000;
-        console.warn("[assistant tts] Cloud TTS unavailable (enable the Cloud Text-to-Speech API for consistent voice); using Gemini TTS");
+        console.warn(`[assistant tts] Cloud TTS rejected GOOGLE_TTS_API_KEY (${err.status}); using Gemini TTS for 10 min`);
       }
     }
   }
