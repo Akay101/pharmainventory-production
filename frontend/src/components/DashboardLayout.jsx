@@ -218,7 +218,7 @@ export default function DashboardLayout() {
         <header className="h-16 shrink-0 w-full z-50 border-b border-border/80 dark:border-border/50 bg-background/90 dark:bg-zinc-950/90 backdrop-blur-xl transition-colors duration-200">
           <div className="w-full h-full px-4 sm:px-6 flex items-center justify-between gap-4">
             {/* Left Brand Identifier */}
-            <div className="flex items-center gap-3 shrink-0">
+            <div className="flex items-center gap-3 min-w-0 shrink">
               {/* Mobile Drawer Sheet Trigger */}
               <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
                 <SheetTrigger asChild className="lg:hidden">
@@ -305,7 +305,8 @@ export default function DashboardLayout() {
               {/* Desktop Logo & Name */}
               <div
                 onClick={() => navigate("/dashboard")}
-                className="flex items-center gap-3 cursor-pointer group"
+                className="flex items-center gap-3 cursor-pointer group min-w-0"
+                title={pharmacy?.name || "DavaDesk"}
               >
                 {pharmacy?.logo_url ? (
                   <img
@@ -320,11 +321,11 @@ export default function DashboardLayout() {
                     className="w-9 h-9 object-contain group-hover:scale-105 transition-transform"
                   />
                 )}
-                <div className="hidden sm:flex flex-col">
-                  <span className="font-black text-sm tracking-tight text-foreground group-hover:text-orange-500 transition-colors leading-tight">
+                <div className="hidden sm:flex flex-col min-w-0 max-w-[160px] 2xl:max-w-[220px]">
+                  <span className="font-black text-sm tracking-tight text-foreground group-hover:text-orange-500 transition-colors leading-tight truncate">
                     {pharmacy?.name || "DavaDesk"}
                   </span>
-                  <span className="text-[10px] text-orange-600 dark:text-orange-400 font-extrabold flex items-center gap-1">
+                  <span className="text-[10px] text-orange-600 dark:text-orange-400 font-extrabold flex items-center gap-1 truncate">
                     <Sparkles className="w-2.5 h-2.5 text-orange-500" />
                     {planLabel(user)}
                   </span>
@@ -333,7 +334,7 @@ export default function DashboardLayout() {
             </div>
 
             {/* Center Top Horizontal Navigation Bar (Desktop / Large Screens) */}
-            <nav className="hidden lg:flex items-center gap-1 bg-muted/40 dark:bg-muted/20 p-1.5 rounded-2xl border border-border/60 dark:border-border/40 shadow-xs">
+            <nav className="hidden lg:flex items-center gap-1 min-w-0 bg-muted/40 dark:bg-muted/20 p-1.5 rounded-2xl border border-border/60 dark:border-border/40 shadow-xs">
               {filteredItems.map((item) => {
                 const isItemActive = checkIsActive(item.path);
                 return (
@@ -341,7 +342,8 @@ export default function DashboardLayout() {
                     <TooltipTrigger asChild>
                       <NavLink
                         to={item.path}
-                        className={`group relative flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all duration-300 ease-out active:scale-95 whitespace-nowrap ${
+                        aria-label={item.label}
+                        className={`group relative flex items-center gap-2 px-2.5 2xl:px-3 py-1.5 rounded-xl text-xs font-bold transition-all duration-300 ease-out active:scale-95 whitespace-nowrap ${
                           isItemActive
                             ? "bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-md shadow-orange-500/25 scale-[1.02]"
                             : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
@@ -349,17 +351,16 @@ export default function DashboardLayout() {
                         data-testid={`nav-${item.path.slice(1)}`}
                       >
                         <item.icon className={`w-4 h-4 shrink-0 transition-transform duration-300 ease-out ${isItemActive ? "" : "group-hover:-rotate-12 group-hover:scale-110"}`} />
-                        <span>{item.label}</span>
+                        {/* Labels only where there is room; icons + tooltip otherwise */}
+                        <span className={isItemActive ? "hidden xl:inline" : "hidden 2xl:inline"}>{item.label}</span>
                       </NavLink>
                     </TooltipTrigger>
-                    {item.shortcut && (
-                      <TooltipContent
-                        side="bottom"
-                        className="font-mono text-[10px] font-bold shadow-md"
-                      >
-                        Shortcut: {formatShortcut(item.shortcut)}
-                      </TooltipContent>
-                    )}
+                    <TooltipContent side="bottom" className="text-[11px] font-bold shadow-md">
+                      {item.label}
+                      {item.shortcut && (
+                        <span className="ml-1.5 font-mono text-[10px] opacity-70">{formatShortcut(item.shortcut)}</span>
+                      )}
+                    </TooltipContent>
                   </Tooltip>
                 );
               })}
@@ -415,7 +416,7 @@ export default function DashboardLayout() {
                         {user?.name?.charAt(0)?.toUpperCase()}
                       </AvatarFallback>
                     </Avatar>
-                    <span className="hidden sm:inline text-xs font-extrabold text-foreground max-w-[100px] truncate">
+                    <span className="hidden xl:inline text-xs font-extrabold text-foreground max-w-[120px] truncate" title={user?.name}>
                       {user?.name}
                     </span>
                     <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
@@ -423,8 +424,13 @@ export default function DashboardLayout() {
                 </DropdownMenuTrigger>
                 <DropdownMenuContent
                   align="end"
-                  className="w-52 mt-1 border border-border/80 dark:border-border/50 shadow-xl rounded-2xl p-1.5 bg-background/95 backdrop-blur-xl animate-in fade-in-0 zoom-in-95 duration-200"
+                  className="w-56 mt-1 border border-border/80 dark:border-border/50 shadow-xl rounded-2xl p-1.5 bg-background/95 backdrop-blur-xl animate-in fade-in-0 zoom-in-95 duration-200"
                 >
+                  <div className="px-3 py-2 min-w-0">
+                    <p className="text-xs font-extrabold text-foreground truncate">{user?.name}</p>
+                    <p className="text-[11px] font-semibold text-muted-foreground truncate">{user?.email}</p>
+                  </div>
+                  <DropdownMenuSeparator className="bg-border/50 my-1" />
                   <DropdownMenuItem
                     onClick={() => navigate("/settings")}
                     data-testid="settings-dropdown"

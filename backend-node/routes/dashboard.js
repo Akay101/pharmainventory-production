@@ -4,121 +4,56 @@ const mongoose = require("mongoose");
 const { auth } = require("../middleware/auth");
 
 const { requireSubscription } = require("../middleware/subscription");
+const dash = require("../services/dashboard");
 
-// Helper function to get dashboard stats
+// Summary stats (also used by Reports). IST business dates, aggregations only.
 async function getDashboardStats(pharmacyId) {
   const db = mongoose.connection.db;
-
-  // Today's date range
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const startOfDay = new Date(today).toISOString();
-  today.setHours(23, 59, 59, 999);
-  const endOfDay = new Date(today).toISOString();
-
-  // Month date range
-  const now = new Date();
-  const startOfMonth = new Date(
-    now.getFullYear(),
-    now.getMonth(),
-    1
-  ).toISOString();
-  const endOfMonth = new Date(
-    now.getFullYear(),
-    now.getMonth() + 1,
-    0,
-    23,
-    59,
-    59,
-    999
-  ).toISOString();
-
-  // Get bills
-  const bills = await db
-    .collection("bills")
-    .find({ pharmacy_id: pharmacyId })
-    .project({ _id: 0 })
-    .toArray();
-
-  // Helper to get bill total (supports both grand_total and total_amount)
-  const getBillTotal = (bill) => bill.grand_total || bill.total_amount || 0;
-
-  // Today's stats
-  const todayBills = bills.filter(
-    (b) => b.created_at >= startOfDay && b.created_at <= endOfDay
-  );
-  const todaySales = todayBills.reduce((sum, b) => sum + getBillTotal(b), 0);
-  const todayProfit = todayBills.reduce((sum, b) => sum + (b.profit || 0), 0);
-
-  // Monthly stats
-  const monthBills = bills.filter(
-    (b) => b.created_at >= startOfMonth && b.created_at <= endOfMonth
-  );
-  const monthlySales = monthBills.reduce((sum, b) => sum + getBillTotal(b), 0);
-  const monthlyProfit = monthBills.reduce((sum, b) => sum + (b.profit || 0), 0);
-
-  // All time
-  const totalSales = bills.reduce((sum, b) => sum + getBillTotal(b), 0);
-  const totalProfit = bills.reduce((sum, b) => sum + (b.profit || 0), 0);
-
-  // Inventory stats
-  const inventory = await db
-    .collection("inventory")
-    .find({ pharmacy_id: pharmacyId, available_quantity: { $gt: 0 } })
-    .project({ _id: 0 })
-    .toArray();
-
-  const totalInventoryValue = inventory.reduce(
-    (sum, i) => sum + i.available_quantity * (i.purchase_price || 0),
-    0
-  );
-
-  // Counts
-  const customerCount = await db
-    .collection("customers")
-    .countDocuments({ pharmacy_id: pharmacyId });
-  const supplierCount = await db
-    .collection("suppliers")
-    .countDocuments({ pharmacy_id: pharmacyId });
-  const productCount = inventory.length;
-
-  // Pending debt
-  const customers = await db
-    .collection("customers")
-    .find({ pharmacy_id: pharmacyId })
-    .project({ _id: 0 })
-    .toArray();
-  const totalDebt = customers.reduce((sum, c) => sum + (c.total_debt || 0), 0);
-
+  const today = dash.istDate();
+  const [todayS, monthS, totalS, stock, customerCount, supplierCount, debt] = await Promise.all([
+    dash.salesBetween(db, pharmacyId, today, today),
+    dash.salesBetween(db, pharmacyId, dash.monthStart(today), today),
+    dash.salesBetween(db, pharmacyId, "0000-01-01", "9999-12-31"),
+    db
+      .collection("inventory")
+      .aggregate([
+        { $match: { pharmacy_id: pharmacyId, available_quantity: { $gt: 0 }, status: { $nin: ["Returned", "Expired & Returned"] } } },
+        {
+          $group: {
+            _id: null,
+            value: { $sum: { $multiply: ["$available_quantity", { $ifNull: ["$purchase_price", 0] }] } },
+            batches: { $sum: 1 },
+            medicines: { $addToSet: { $ifNull: ["$product_id", "$product_name"] } },
+          },
+        },
+      ])
+      .next(),
+    db.collection("customers").countDocuments({ pharmacy_id: pharmacyId }),
+    db.collection("suppliers").countDocuments({ pharmacy_id: pharmacyId }),
+    dash.receivables(db, pharmacyId, today),
+  ]);
   return {
-    today: {
-      revenue: todaySales,
-      profit: todayProfit,
-      bills: todayBills.length,
-    },
-    month: {
-      revenue: monthlySales,
-      profit: monthlyProfit,
-      bills: monthBills.length,
-    },
-    total: {
-      revenue: totalSales,
-      profit: totalProfit,
-      bills: bills.length,
-    },
+    today: { revenue: todayS.revenue, profit: todayS.profit, bills: todayS.bills },
+    month: { revenue: monthS.revenue, profit: monthS.profit, bills: monthS.bills },
+    total: { revenue: totalS.revenue, profit: totalS.profit, bills: totalS.bills },
     inventory: {
-      stock_value: totalInventoryValue,
+      stock_value: Math.round((stock?.value || 0) * 100) / 100,
+      total_items: stock?.medicines?.length || 0,
+      batches: stock?.batches || 0,
     },
-    pending: {
-      amount: totalDebt,
-    },
-    counts: {
-      customers: customerCount,
-      suppliers: supplierCount,
-      products: productCount,
-    },
+    pending: { amount: debt.total },
+    counts: { customers: customerCount, suppliers: supplierCount, products: stock?.batches || 0 },
   };
 }
+
+// GET /api/dashboard/overview — everything the dashboard needs in one call
+router.get("/overview", auth, requireSubscription(), async (req, res, next) => {
+  try {
+    res.json(await dash.overview(mongoose.connection.db, { pharmacyId: req.user.pharmacy_id, userId: req.user.id }));
+  } catch (error) {
+    next(error);
+  }
+});
 
 // GET /api/dashboard - Backward compatible root route
 router.get("/", auth, requireSubscription(), async (req, res, next) => {
@@ -147,51 +82,13 @@ router.get(
   requireSubscription(),
   async (req, res, next) => {
     try {
-      const db = mongoose.connection.db;
-      const { days = 30 } = req.query;
-      const numDays = parseInt(days);
-
-      const startDate = new Date();
-      startDate.setDate(startDate.getDate() - numDays);
-
-      const bills = await db
-        .collection("bills")
-        .find({
-          pharmacy_id: req.user.pharmacy_id,
-          created_at: { $gte: startDate.toISOString() },
-        })
-        .project({ _id: 0 })
-        .toArray();
-
-      // Helper to get bill total
-      const getBillTotal = (bill) => bill.grand_total || bill.total_amount || 0;
-
-      // Group by date
-      const salesByDate = {};
-      for (let i = 0; i < numDays; i++) {
-        const date = new Date();
-        date.setDate(date.getDate() - i);
-        const dateStr = date.toISOString().split("T")[0];
-        salesByDate[dateStr] = {
-          date: dateStr,
-          revenue: 0,
-          profit: 0,
-          orders: 0,
-        };
-      }
-
-      bills.forEach((bill) => {
-        const dateStr = bill.created_at.split("T")[0];
-        if (salesByDate[dateStr]) {
-          salesByDate[dateStr].revenue += getBillTotal(bill);
-          salesByDate[dateStr].profit += bill.profit || 0;
-          salesByDate[dateStr].orders += 1;
-        }
-      });
-
-      const trendData = Object.values(salesByDate).sort((a, b) =>
-        a.date.localeCompare(b.date)
-      );
+      const numDays = Math.min(Math.max(parseInt(req.query.days) || 30, 1), 366);
+      const trendData = (await dash.dailyTrend(mongoose.connection.db, req.user.pharmacy_id, numDays, dash.istDate())).map((d) => ({
+        date: d.date,
+        revenue: d.revenue,
+        profit: d.profit,
+        orders: d.bills,
+      }));
 
       res.json({ trend: trendData });
     } catch (error) {
@@ -207,78 +104,13 @@ router.get(
   requireSubscription(),
   async (req, res, next) => {
     try {
-      const db = mongoose.connection.db;
-      const pharmacyId = req.user.pharmacy_id;
-
-      // 30 days ago for overdue calculation
-      const thirtyDaysAgo = new Date();
-      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-      const overdueThreshold = thirtyDaysAgo.toISOString();
-
-      // Fetch all unpaid bills for this pharmacy
-      const unpaidBills = await db
-        .collection("bills")
-        .find({ 
-          pharmacy_id: pharmacyId, 
-          is_paid: false 
-        })
-        .project({ _id: 0, customer_id: 1, customer_name: 1, grand_total: 1, total_amount: 1, billing_date: 1, amount_paid: 1 })
-        .toArray();
-
-      const stats = {
-        total_debt: 0,
-        overdue_amount: 0,
-        total_unpaid_bills: unpaidBills.length,
-        overdue_count: 0,
-        debtors_map: {}
-      };
-
-      unpaidBills.forEach(bill => {
-        const total = bill.grand_total || bill.total_amount || 0;
-        const paid = bill.amount_paid || 0;
-        const remaining = Math.max(0, total - paid);
-        
-        if (remaining <= 0) return; // Skip if fully paid
-
-        stats.total_debt += remaining;
-        
-        // Overdue check
-        if (bill.billing_date < overdueThreshold) {
-          stats.overdue_amount += remaining;
-          stats.overdue_count += 1;
-        }
-
-        // Group by debtor
-        const customerId = bill.customer_id;
-        if (customerId) {
-          if (!stats.debtors_map[customerId]) {
-            stats.debtors_map[customerId] = {
-              id: customerId,
-              name: bill.customer_name || "Unknown",
-              total_debt: 0,
-              bills_count: 0
-            };
-          }
-          stats.debtors_map[customerId].total_debt += remaining;
-          stats.debtors_map[customerId].bills_count += 1;
-        }
-      });
-
-      // Get top 5 debtors
-      const topDebtors = Object.values(stats.debtors_map)
-        .sort((a, b) => b.total_debt - a.total_debt)
-        .slice(0, 5)
-        .map(d => ({
-          ...d,
-          total_debt: parseFloat(d.total_debt.toFixed(2))
-        }));
-
+      const r = await dash.receivables(mongoose.connection.db, req.user.pharmacy_id, dash.istDate());
       res.json({
-        total_debt: parseFloat(stats.total_debt.toFixed(2)),
-        overdue_amount: parseFloat(stats.overdue_amount.toFixed(2)),
-        total_unpaid_bills: stats.total_unpaid_bills,
-        overdue_count: stats.overdue_count,
-        top_debtors: topDebtors
+        total_debt: r.total,
+        overdue_amount: r.overdue,
+        total_unpaid_bills: r.bills,
+        overdue_count: r.overdue_bills,
+        top_debtors: r.top.map((d) => ({ id: d.id, name: d.name, total_debt: d.total_debt, bills_count: d.bills_count })),
       });
     } catch (error) {
       next(error);
@@ -442,36 +274,11 @@ router.get(
   requireSubscription(),
   async (req, res, next) => {
     try {
-      const db = mongoose.connection.db;
-      const { limit = 10 } = req.query;
-
-      const bills = await db
-        .collection("bills")
-        .find({ pharmacy_id: req.user.pharmacy_id })
-        .project({ _id: 0, items: 1 })
-        .toArray();
-
-      const productSales = {};
-      bills.forEach((bill) => {
-        (bill.items || []).forEach((item) => {
-          const name = item.product_name;
-          if (!productSales[name]) {
-            productSales[name] = {
-              product_name: name,
-              quantity: 0,
-              revenue: 0,
-            };
-          }
-          productSales[name].quantity += item.quantity;
-          productSales[name].revenue +=
-            item.item_total || item.quantity * item.unit_price;
-        });
-      });
-
-      const topProducts = Object.values(productSales)
-        .sort((a, b) => b.quantity - a.quantity)
-        .slice(0, parseInt(limit));
-
+      const limit = Math.min(Math.max(parseInt(req.query.limit) || 10, 1), 50);
+      const days = parseInt(req.query.days) || 0;
+      const today = dash.istDate();
+      const from = days > 0 ? dash.addDays(today, -(days - 1)) : "0000-01-01";
+      const topProducts = await dash.topProducts(mongoose.connection.db, req.user.pharmacy_id, from, today, limit);
       res.json({ top_products: topProducts });
     } catch (error) {
       next(error);

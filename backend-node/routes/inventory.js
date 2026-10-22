@@ -4,6 +4,7 @@ const mongoose = require("mongoose");
 const { v4: uuidv4 } = require("uuid");
 const { auth } = require("../middleware/auth");
 const { requireSubscription } = require("../middleware/subscription");
+const { thresholds: dashThresholds } = require("../services/dashboard");
 const { logActivity } = require("../utils/activityLogger");
 const {
   searchGlobalMedicines,
@@ -900,10 +901,15 @@ router.get("/alerts", auth, requireSubscription(), async (req, res, next) => {
   try {
     const db = mongoose.connection.db;
 
+    // Returned batches are no longer on the shelf
     const inventory = await db
       .collection("inventory")
-      .find({ pharmacy_id: req.user.pharmacy_id }, { projection: { _id: 0 } })
+      .find(
+        { pharmacy_id: req.user.pharmacy_id, status: { $nin: ["Returned", "Expired & Returned"] } },
+        { projection: { _id: 0 } }
+      )
       .toArray();
+    const t = await dashThresholds(db, req.user.id);
 
     const products = await db
       .collection("products")
@@ -911,7 +917,7 @@ router.get("/alerts", auth, requireSubscription(), async (req, res, next) => {
       .toArray();
 
     const thresholds = {};
-    products.forEach((p) => (thresholds[p.id] = p.low_stock_threshold || 10));
+    products.forEach((p) => (thresholds[p.id] = p.low_stock_threshold || t.lowStock));
 
     // Aggregate stock by product
     const productStock = {};
@@ -926,19 +932,19 @@ router.get("/alerts", auth, requireSubscription(), async (req, res, next) => {
 
     // Low stock items
     const lowStock = Object.values(productStock)
-      .filter((p) => p.total <= (thresholds[p.id] || 10))
+      .filter((p) => p.total <= (thresholds[p.id] || t.lowStock))
       .map((p) => ({
         product_name: p.name,
         available_quantity: p.total,
-        threshold: thresholds[p.id] || 10,
+        threshold: thresholds[p.id] || t.lowStock,
       }));
 
-    // Expiring soon (90 days)
-    const cutoff = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000)
+    // Expiring within the user's warning window, only batches still in stock
+    const cutoff = new Date(Date.now() + t.expiryWarningDays * 24 * 60 * 60 * 1000)
       .toISOString()
       .split("T")[0];
     const expiringSoon = inventory
-      .filter((i) => i.expiry_date && i.expiry_date <= cutoff)
+      .filter((i) => i.expiry_date && i.expiry_date <= cutoff && (i.available_quantity || 0) > 0)
       .map((i) => ({
         product_name: i.product_name,
         batch_no: i.batch_no,
@@ -949,7 +955,7 @@ router.get("/alerts", auth, requireSubscription(), async (req, res, next) => {
     // Expired items
     const today = new Date().toISOString().split("T")[0];
     const expired = inventory
-      .filter((i) => i.expiry_date && i.expiry_date < today)
+      .filter((i) => i.expiry_date && i.expiry_date < today && (i.available_quantity || 0) > 0)
       .map((i) => ({
         product_name: i.product_name,
         batch_no: i.batch_no,
