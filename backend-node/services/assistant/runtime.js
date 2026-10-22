@@ -19,6 +19,9 @@ const { say, todayIst } = require("./tools/shared");
 const attachments = require("./attachments");
 
 const MAX_STEPS = 6;
+const HINGLISH = new Set("hai hain ho hoon tha thi kya kaise kaisa kitna kitni kitne kab kaha kahan kyun kyu mein mai main mujhe mera meri mere aap aapka tum tumhara humara hum ka ki ke ko se par pe aur ya bhi nahi nahin mat batao bata dikhao dikha karo kar kardo karna chahiye sakte sakta sakti wala wali wale aaj kal abhi sab sabse thoda zyada jyada kuch koi bana banao bhai ji haan accha theek".split(" "));
+const hinglishWords = (t) => (String(t).toLowerCase().match(/[a-z]+/g) || []).filter((w) => HINGLISH.has(w)).length;
+
 const LANG_NAMES = { en: "English", hinglish: "Hinglish (Hindi in Latin script)", hi: "Hindi in Devanagari script" };
 const HISTORY_TURNS = 12;
 
@@ -200,6 +203,8 @@ async function handle({ req, res, db }) {
     const letters = message.replace(/[^\p{L}]/gu, "");
     const deva = (message.match(/[\u0900-\u097F]/g) || []).length;
     ctx.language = letters.length && deva / letters.length > 0.5 ? "hi" : r.language || language;
+    // Hindi written in English letters is Hinglish even if the router said English
+    if (ctx.language === "en" && hinglishWords(message) >= 2) ctx.language = "hinglish";
     stream.send("route", { agent: agent.id, label: agent.label[ctx.language] || agent.label.en, loader: r.loader });
     if (r.title && !conversation.message_count) {
       await store.renameConversation(db, user, conversation.id, { title: r.title });

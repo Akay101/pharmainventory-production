@@ -24,6 +24,7 @@ Rules:
 - Photos: a supplier invoice/bill + "purchase chadha do / add" → purchase. A medicine pack + "bill bana do / sell" → billing. A pack + "find in inventory / stock hai?" → inventory. A pack + "ye kya dawai hai / uses" → medi.
 - A short follow-up ("haan", "save kar do", "batch B12 hai", a number, a name) continues the previous agent, especially when a draft is open.
 - The user can switch topic any time; route by the new intent.
+- Questions about the assistant itself (who made you, how you work, which AI/API/backend) and anything unrelated to pharmacy work (coding, general knowledge, entertainment, etc.) → app.
 - language: copy the user's own style for THIS message.`;
 
 async function route({ message, recent, lastAgent, drafts, wantTitle, signal }) {
