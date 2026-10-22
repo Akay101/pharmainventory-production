@@ -80,7 +80,7 @@ const generateBillPDF = async (bill, pharmacy) => {
       const totalQty = enrichedItems.reduce((s, i) => s + i.line.qty, 0);
 
       // GST included in the amount actually charged (after all discounts)
-      const gst = { taxable: 0, cgst: 0, sgst: 0 };
+      const gst = { taxable: 0, cgst: 0, sgst: 0, rates: new Set() };
       const chargeFactor = linesTotal > 0 ? grandTotal / linesTotal : 0;
       for (const i of enrichedItems) {
         const c = Number(i.cgst) || 0;
@@ -90,7 +90,9 @@ const generateBillPDF = async (bill, pharmacy) => {
         gst.taxable += taxable;
         gst.cgst += taxable * (c / 100);
         gst.sgst += taxable * (sg / 100);
+        if (c + sg > 0) gst.rates.add(Number((c + sg).toFixed(2)));
       }
+      const gstRates = [...gst.rates].sort((a, b) => a - b).map((r) => `${r}%`).join(", ");
 
       const fetchImageBuffer = (url) => {
         return new Promise((resResolve) => {
@@ -391,7 +393,7 @@ const generateBillPDF = async (bill, pharmacy) => {
             .font("Helvetica")
             .fontSize(5.8)
             .text(
-              `Prices are inclusive of GST. Taxable value Rs ${money(gst.taxable)}, CGST Rs ${money(gst.cgst)}, SGST Rs ${money(gst.sgst)}.`,
+              gstRates ? `GST ${gstRates} included: Rs ${money(gst.cgst + gst.sgst)}` : "Prices are inclusive of GST",
               15,
               357,
               { width: 210 }
@@ -534,6 +536,14 @@ const generateBillPDF = async (bill, pharmacy) => {
           const perPack = item.units_per_pack;
           const packType = String(item.pack_type || "pack").replace(/^./, (c) => c.toUpperCase());
           const gstPercent = (Number(item.cgst) || 0) + (Number(item.sgst) || 0);
+          // Whole packs read as packs ("1 Strip" at the strip MRP); loose
+          // quantities stay in units
+          const fullPacks = perPack > 1 && qty % perPack === 0 ? qty / perPack : 0;
+          const packWord = (n) => {
+            const w = String(packType);
+            if (n === 1) return `1 ${w}`;
+            return `${n} ${/(s|x|ch|sh)$/i.test(w) ? `${w}es` : `${w}s`}`;
+          };
 
           if (itemIdx > 0) {
             doc.strokeColor("#e2e8f0").moveTo(10, rowY).lineTo(585, rowY).stroke();
@@ -546,8 +556,8 @@ const generateBillPDF = async (bill, pharmacy) => {
             item.hsn_no || "-",
             item.batch_no || "-",
             formatExpiry(item.expiry_date),
-            String(qty),
-            money(mrp),
+            fullPacks ? packWord(fullPacks) : String(qty),
+            fullPacks ? money(mrp * perPack) : money(mrp),
             discPct > 0 ? `${Number(discPct.toFixed(2))}%` : "-",
             gstPercent ? String(Number(gstPercent.toFixed(2))) : "-",
             money(amount),
@@ -558,8 +568,8 @@ const generateBillPDF = async (bill, pharmacy) => {
             "",
             "",
             "",
-            packLabel(qty, perPack, packType),
-            perPack > 1 ? `${money(mrp * perPack)}/${String(packType).toLowerCase()}` : "",
+            fullPacks ? `${qty} units` : packLabel(qty, perPack, packType),
+            fullPacks ? `${money(mrp)}/unit` : perPack > 1 ? `${money(mrp * perPack)}/${String(packType).toLowerCase()}` : "",
             discount > 0.004 ? `- ${money(discount)}` : "",
             "",
             "",
