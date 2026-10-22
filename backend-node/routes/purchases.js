@@ -27,9 +27,12 @@ const escapeRegex = (str) => {
   return String(str).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 };
 
-const { acceptImages, enqueueScan, scanStatus } = require("../services/ai/scanService");
+const {
+  acceptImages,
+  enqueueScan,
+  scanStatus,
+} = require("../services/ai/scanService");
 const { matchForPurchase } = require("../services/ai/inventoryMatch");
-
 
 // Multer Configuration
 const storage = multer.diskStorage({
@@ -92,7 +95,10 @@ router.post(
       }
       const matches = await Promise.all(
         items.slice(0, 100).map((i) =>
-          matchForPurchase(db, req.user.pharmacy_id, { product_name: String(i?.product_name || ""), batch_no: String(i?.batch_no || "") })
+          matchForPurchase(db, req.user.pharmacy_id, {
+            product_name: String(i?.product_name || ""),
+            batch_no: String(i?.batch_no || ""),
+          })
         )
       );
       res.json({ success: true, matches });
@@ -1766,10 +1772,22 @@ router.post(
 router.get("/scan-status/:jobId", auth, scanStatus);
 
 // POST /api/purchases/scan-image - read product pack photos (queued)
-router.post("/scan-image", auth, requireSubscription(), acceptImages(6), enqueueScan("product"));
+router.post(
+  "/scan-image",
+  auth,
+  requireSubscription(),
+  acceptImages(6),
+  enqueueScan("product")
+);
 
 // POST /api/purchases/scan-bill - read supplier invoice pages (queued)
-router.post("/scan-bill", auth, requireSubscription(), acceptImages(10), enqueueScan("bill"));
+router.post(
+  "/scan-bill",
+  auth,
+  requireSubscription(),
+  acceptImages(10),
+  enqueueScan("bill")
+);
 
 // Helper for parsing CSV lines with quote support and delimiter detection
 function parseCSVRow(line, delimiter = ",") {

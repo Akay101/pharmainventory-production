@@ -271,8 +271,8 @@ export default function ProductCatalogModal({
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-3xl rounded-2xl border border-border shadow-2xl p-0 overflow-hidden bg-card">
-        <DialogHeader className="p-5 border-b border-border/60 bg-muted/30">
+      <DialogContent className="max-w-3xl max-h-[88vh] overflow-hidden flex flex-col p-0 rounded-2xl border border-border shadow-2xl bg-card gap-0">
+        <DialogHeader className="shrink-0 p-4 sm:p-5 border-b border-border/60 bg-muted/30">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2.5">
               <div className="w-9 h-9 rounded-xl bg-orange-500/15 border border-orange-500/30 flex items-center justify-center text-orange-500 shadow-xs">
@@ -293,7 +293,11 @@ export default function ProductCatalogModal({
           </div>
         </DialogHeader>
 
-        <form onSubmit={handleSubmit} className="p-6 space-y-5 max-h-[75vh] overflow-y-auto">
+        <form
+          id="product-catalog-form"
+          onSubmit={handleSubmit}
+          className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 space-y-5"
+        >
           {/* SECTION 1: Basic & Medical Identity */}
           <div className="space-y-3">
             <div className="flex items-center justify-between border-b border-border/40 pb-1.5">
@@ -318,8 +322,8 @@ export default function ProductCatalogModal({
               </Button>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              <div className="md:col-span-2 space-y-1">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
+              <div className="md:col-span-2 space-y-1.5">
                 <Label className="text-xs font-bold text-foreground">
                   Product Name <span className="text-rose-500">*</span>
                 </Label>
@@ -330,11 +334,14 @@ export default function ProductCatalogModal({
                   onChange={(e) =>
                     setFormData({ ...formData, name: e.target.value })
                   }
-                  className="h-9 text-xs font-bold rounded-xl border-border bg-background focus:border-orange-500"
+                  className="h-9 text-xs font-bold rounded-xl border border-border bg-background focus:border-orange-500 px-3"
                 />
+                <p className="text-[10px] text-muted-foreground">
+                  Official brand & medicine strength name
+                </p>
               </div>
 
-              <div className="space-y-1">
+              <div className="space-y-1.5">
                 <Label className="text-xs font-bold text-foreground">
                   Category
                 </Label>
@@ -344,10 +351,10 @@ export default function ProductCatalogModal({
                     setFormData({ ...formData, category: val })
                   }
                 >
-                  <SelectTrigger className="h-9 text-xs font-semibold rounded-xl border-border bg-background">
-                    <SelectValue />
+                  <SelectTrigger className="h-9 text-xs font-semibold rounded-xl border border-border bg-background px-3">
+                    <SelectValue placeholder="Select Category" />
                   </SelectTrigger>
-                  <SelectContent>
+                  <SelectContent className="z-[999999]">
                     {CATEGORIES.map((cat) => (
                       <SelectItem
                         key={cat.value}
@@ -359,9 +366,12 @@ export default function ProductCatalogModal({
                     ))}
                   </SelectContent>
                 </Select>
+                <p className="text-[10px] text-muted-foreground">
+                  Primary medicine classification
+                </p>
               </div>
 
-              <div className="space-y-1">
+              <div className="space-y-1.5">
                 <Label className="text-xs font-bold text-foreground">
                   Dosage Form
                 </Label>
@@ -371,10 +381,10 @@ export default function ProductCatalogModal({
                     handlePackChange("dosage_form", val)
                   }
                 >
-                  <SelectTrigger className="h-9 text-xs font-semibold rounded-xl border-border bg-background capitalize">
-                    <SelectValue />
+                  <SelectTrigger className="h-9 text-xs font-semibold rounded-xl border border-border bg-background capitalize px-3">
+                    <SelectValue placeholder="Select Dosage Form" />
                   </SelectTrigger>
-                  <SelectContent>
+                  <SelectContent className="z-[999999]">
                     {DOSAGE_FORMS.map((form) => (
                       <SelectItem
                         key={form}
@@ -386,9 +396,12 @@ export default function ProductCatalogModal({
                     ))}
                   </SelectContent>
                 </Select>
+                <p className="text-[10px] text-muted-foreground">
+                  Delivery form (Tablet, Syrup, etc.)
+                </p>
               </div>
 
-              <div className="space-y-1">
+              <div className="space-y-1.5">
                 <Label className="text-xs font-bold text-foreground flex items-center gap-1">
                   <Building2 className="w-3 h-3 text-muted-foreground" />
                   Manufacturer / Brand
@@ -399,11 +412,14 @@ export default function ProductCatalogModal({
                   onChange={(e) =>
                     setFormData({ ...formData, manufacturer: e.target.value })
                   }
-                  className="h-9 text-xs font-semibold rounded-xl border-border bg-background"
+                  className="h-9 text-xs font-semibold rounded-xl border border-border bg-background px-3"
                 />
+                <p className="text-[10px] text-muted-foreground">
+                  Pharma manufacturing company
+                </p>
               </div>
 
-              <div className="space-y-1">
+              <div className="space-y-1.5">
                 <Label className="text-xs font-bold text-foreground">
                   Salt / Active Ingredients
                 </Label>
@@ -416,8 +432,11 @@ export default function ProductCatalogModal({
                       salt_composition: e.target.value,
                     })
                   }
-                  className="h-9 text-xs font-semibold rounded-xl border-border bg-background"
+                  className="h-9 text-xs font-semibold rounded-xl border border-border bg-background px-3"
                 />
+                <p className="text-[10px] text-muted-foreground">
+                  Active therapeutic composition
+                </p>
               </div>
             </div>
           </div>
@@ -431,8 +450,8 @@ export default function ProductCatalogModal({
               </span>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              <div className="space-y-1">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
+              <div className="space-y-1.5">
                 <Label className="text-xs font-bold text-foreground">
                   Pack Type
                 </Label>
@@ -440,10 +459,10 @@ export default function ProductCatalogModal({
                   value={formData.pack_type}
                   onValueChange={(val) => handlePackChange("pack_type", val)}
                 >
-                  <SelectTrigger className="h-9 text-xs font-semibold rounded-xl border-border bg-background">
-                    <SelectValue />
+                  <SelectTrigger className="h-9 text-xs font-semibold rounded-xl border border-border bg-background px-3">
+                    <SelectValue placeholder="Select Pack Type" />
                   </SelectTrigger>
-                  <SelectContent>
+                  <SelectContent className="z-[999999]">
                     {PACK_TYPES.map((type) => (
                       <SelectItem
                         key={type}
@@ -455,9 +474,12 @@ export default function ProductCatalogModal({
                     ))}
                   </SelectContent>
                 </Select>
+                <p className="text-[10px] text-muted-foreground">
+                  Primary packaging container form
+                </p>
               </div>
 
-              <div className="space-y-1">
+              <div className="space-y-1.5">
                 <Label className="text-xs font-bold text-foreground">
                   Units Per Pack <span className="text-muted-foreground font-normal">(e.g. 10 tabs/strip)</span>
                 </Label>
@@ -469,11 +491,14 @@ export default function ProductCatalogModal({
                   onChange={(e) =>
                     handlePackChange("units_per_pack", e.target.value)
                   }
-                  className="h-9 text-xs font-bold text-center rounded-xl border-border bg-background"
+                  className="h-9 text-xs font-bold text-center rounded-xl border border-border bg-background px-3"
                 />
+                <p className="text-[10px] text-muted-foreground text-center">
+                  Items contained in 1 pack
+                </p>
               </div>
 
-              <div className="space-y-1">
+              <div className="space-y-1.5">
                 <Label className="text-xs font-bold text-foreground">
                   Packaging Label / Details
                 </Label>
@@ -483,8 +508,11 @@ export default function ProductCatalogModal({
                   onChange={(e) =>
                     setFormData({ ...formData, package_details: e.target.value })
                   }
-                  className="h-9 text-xs font-semibold rounded-xl border-border bg-background"
+                  className="h-9 text-xs font-semibold rounded-xl border border-border bg-background px-3"
                 />
+                <p className="text-[10px] text-muted-foreground">
+                  Printed package description
+                </p>
               </div>
             </div>
           </div>
@@ -498,8 +526,8 @@ export default function ProductCatalogModal({
               </span>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-              <div className="space-y-1">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3.5">
+              <div className="space-y-1.5">
                 <Label className="text-xs font-bold text-foreground flex items-center gap-1">
                   <Hash className="w-3 h-3 text-muted-foreground" />
                   HSN Code
@@ -510,11 +538,14 @@ export default function ProductCatalogModal({
                   onChange={(e) =>
                     setFormData({ ...formData, hsn_no: e.target.value })
                   }
-                  className="h-9 text-xs font-mono font-semibold rounded-xl border-border bg-background"
+                  className="h-9 text-xs font-mono font-semibold rounded-xl border border-border bg-background px-3"
                 />
+                <p className="text-[10px] text-muted-foreground font-mono">
+                  HSN / SAC Code
+                </p>
               </div>
 
-              <div className="space-y-1">
+              <div className="space-y-1.5">
                 <Label className="text-xs font-bold text-foreground">
                   GST Rate %
                 </Label>
@@ -524,10 +555,10 @@ export default function ProductCatalogModal({
                     setFormData({ ...formData, tax_rate: val })
                   }
                 >
-                  <SelectTrigger className="h-9 text-xs font-bold rounded-xl border-border bg-background">
-                    <SelectValue />
+                  <SelectTrigger className="h-9 text-xs font-bold rounded-xl border border-border bg-background px-3">
+                    <SelectValue placeholder="Select GST %" />
                   </SelectTrigger>
-                  <SelectContent>
+                  <SelectContent className="z-[999999]">
                     {GST_RATES.map((rate) => (
                       <SelectItem
                         key={rate}
@@ -544,7 +575,7 @@ export default function ProductCatalogModal({
                 </p>
               </div>
 
-              <div className="space-y-1">
+              <div className="space-y-1.5">
                 <Label className="text-xs font-bold text-foreground">
                   MRP per Pack (₹)
                 </Label>
@@ -557,14 +588,14 @@ export default function ProductCatalogModal({
                   onChange={(e) =>
                     setFormData({ ...formData, mrp: e.target.value })
                   }
-                  className="h-9 text-xs font-bold rounded-xl border-border bg-background text-amber-500"
+                  className="h-9 text-xs font-bold rounded-xl border border-border bg-background text-amber-500 font-mono px-3"
                 />
                 <p className="text-[10px] text-muted-foreground font-mono">
                   Unit MRP: ₹{unitMrpPreview}
                 </p>
               </div>
 
-              <div className="space-y-1">
+              <div className="space-y-1.5">
                 <Label className="text-xs font-bold text-foreground">
                   Est. PTR / Trade Price (₹)
                 </Label>
@@ -577,7 +608,7 @@ export default function ProductCatalogModal({
                   onChange={(e) =>
                     setFormData({ ...formData, trade_price: e.target.value })
                   }
-                  className="h-9 text-xs font-bold rounded-xl border-border bg-background text-emerald-500"
+                  className="h-9 text-xs font-bold rounded-xl border border-border bg-background text-emerald-500 font-mono px-3"
                 />
                 <p className="text-[10px] text-muted-foreground">
                   Chemist purchase rate
@@ -595,8 +626,8 @@ export default function ProductCatalogModal({
               </span>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              <div className="space-y-1">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
+              <div className="space-y-1.5">
                 <Label className="text-xs font-bold text-foreground">
                   Low Stock Threshold
                 </Label>
@@ -611,11 +642,14 @@ export default function ProductCatalogModal({
                       low_stock_threshold: e.target.value,
                     })
                   }
-                  className="h-9 text-xs font-semibold rounded-xl border-border bg-background"
+                  className="h-9 text-xs font-semibold text-center rounded-xl border border-border bg-background px-3"
                 />
+                <p className="text-[10px] text-muted-foreground text-center">
+                  Alerts on low inventory
+                </p>
               </div>
 
-              <div className="space-y-1">
+              <div className="space-y-1.5">
                 <Label className="text-xs font-bold text-foreground">
                   Shortage List Threshold
                 </Label>
@@ -630,11 +664,14 @@ export default function ProductCatalogModal({
                       shortage_threshold: e.target.value,
                     })
                   }
-                  className="h-9 text-xs font-semibold rounded-xl border-border bg-background"
+                  className="h-9 text-xs font-semibold text-center rounded-xl border border-border bg-background px-3"
                 />
+                <p className="text-[10px] text-muted-foreground text-center">
+                  Auto-adds to order shortage
+                </p>
               </div>
 
-              <div className="space-y-1">
+              <div className="space-y-1.5">
                 <Label className="text-xs font-bold text-foreground flex items-center gap-1">
                   <MapPin className="w-3 h-3 text-muted-foreground" />
                   Rack / Shelf Location
@@ -645,14 +682,17 @@ export default function ProductCatalogModal({
                   onChange={(e) =>
                     setFormData({ ...formData, rack_location: e.target.value })
                   }
-                  className="h-9 text-xs font-semibold rounded-xl border-border bg-background"
+                  className="h-9 text-xs font-semibold rounded-xl border border-border bg-background px-3"
                 />
+                <p className="text-[10px] text-muted-foreground">
+                  Physical storage rack location
+                </p>
               </div>
             </div>
           </div>
         </form>
 
-        <DialogFooter className="p-4 border-t border-border/60 bg-muted/20 flex items-center justify-end gap-2 flex-wrap">
+        <DialogFooter className="shrink-0 p-3.5 sm:p-4 border-t border-border/60 bg-muted/20 flex items-center justify-end gap-2 flex-wrap">
           <Button
             type="button"
             variant="ghost"
@@ -663,7 +703,8 @@ export default function ProductCatalogModal({
             Cancel
           </Button>
           <Button
-            type="button"
+            type="submit"
+            form="product-catalog-form"
             onClick={handleSubmit}
             disabled={loading}
             className="h-9 px-5 text-xs font-extrabold bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white rounded-xl shadow-sm border-none flex items-center gap-1.5 cursor-pointer"
