@@ -608,12 +608,8 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
       if (inv.id) seenProductIds.add(String(inv.id));
       if (inv.product_id) seenProductIds.add(String(inv.product_id));
 
-      const uPack = inv.units_per_pack || 1;
-      const uMrp =
-        inv.mrp_per_unit ||
-        (inv.mrp && uPack > 0
-          ? parseFloat((inv.mrp / uPack).toFixed(2))
-          : inv.mrp || 0);
+      // Inventory batches store MRP per unit (mrp_pack holds the pack price)
+      const uMrp = inv.mrp_per_unit || inv.mrp || 0;
 
       return {
         ...inv,

@@ -14,6 +14,7 @@ const { generatePurchasePDF } = require("../services/pdf");
 const { uploadToR2, deleteFromR2 } = require("../services/r2");
 const { logActivity } = require("../utils/activityLogger");
 const { requireSubscription } = require("../middleware/subscription");
+const { purchaseStockImpact, publicImpact, findBatch } = require("../services/stock");
 const {
   getGlobalDistributorsCollection,
   clearCachePattern,
@@ -746,6 +747,12 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
     let totalAmount = 0;
     const processedItems = [];
 
+    if (items.some((it) => !String(it?.product_name || "").trim())) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(400).json({ detail: "Every item needs a product name" });
+    }
+
     for (const item of items) {
       // Find or create product in products collection (unique product directory)
       const normalizedName = item.product_name.trim();
@@ -922,7 +929,7 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
           sgst: sgst,
           discount: discount,
           purchase_id: purchaseId,
-          supplier_id: supplier_id,
+          supplier_id: resolvedSupplierId || null,
           shortage_threshold: item.shortage_threshold !== undefined && item.shortage_threshold !== null && item.shortage_threshold !== "" ? Number(item.shortage_threshold) : null,
           created_at: new Date().toISOString(),
         }, { session });
@@ -1049,84 +1056,42 @@ router.put(
         return res.status(404).json({ detail: "Purchase not found" });
       }
 
-      // Check if items changed
-      let itemsChanged = false;
-      if (!purchase.items || purchase.items.length !== items.length) {
-        itemsChanged = true;
-      } else {
-        for (let i = 0; i < purchase.items.length; i++) {
-          const oldItem = purchase.items[i];
-          const newItem = items[i];
-
-          const newPackQty = parseInt(newItem.pack_quantity) || parseInt(newItem.quantity) || 1;
-          const newUnitsPerPack = parseInt(newItem.units_per_pack) || parseInt(newItem.units) || 1;
-          const newPackPrice = parseFloat(newItem.pack_price) || parseFloat(newItem.rate_pack) || 0;
-          const newMrpPerUnit = parseFloat(newItem.mrp_per_unit) || parseFloat(newItem.mrp_unit) || 0;
-
-          if (
-            oldItem.product_name !== newItem.product_name ||
-            oldItem.batch_no !== newItem.batch_no ||
-            oldItem.pack_quantity !== newPackQty ||
-            oldItem.units_per_pack !== newUnitsPerPack ||
-            oldItem.pack_price !== newPackPrice ||
-            oldItem.mrp_per_unit !== newMrpPerUnit
-          ) {
-            itemsChanged = true;
-            break;
-          }
-        }
+      if (!Array.isArray(items) || items.length === 0) {
+        await session.abortTransaction();
+        session.endSession();
+        return res.status(400).json({ detail: "At least one item is required" });
       }
 
-      const updateInventory = req.query.update_inventory !== "false" && itemsChanged;
-
-      if (updateInventory) {
-        // Reverse old inventory
-        for (const oldItem of purchase.items) {
-          const updateResult = await db.collection("inventory").findOneAndUpdate(
-            {
-              pharmacy_id: req.user.pharmacy_id,
-              product_name: oldItem.product_name,
-              batch_no: oldItem.batch_no,
-            },
-            {
-              $inc: {
-                quantity: -oldItem.total_units,
-                available_quantity: -oldItem.total_units,
-              },
-            },
-            { session, returnDocument: "after" }
-          );
-
-          // [Issue #1] Handle Missing Inventory Record + Negative Protection
-          if (!updateResult) {
-            await session.abortTransaction();
-            session.endSession();
-            return res.status(404).json({
-              detail: `Inventory record missing for ${oldItem.product_name}. Cannot update.`,
-            });
-          }
-
-          if (updateResult.quantity < 0 || updateResult.available_quantity < 0) {
-            await session.abortTransaction();
-            session.endSession();
-            return res.status(400).json({
-              detail: `Update failed: Inventory for ${oldItem.product_name} would become negative.`,
-            });
-          }
-        }
-      }
+      const pharmacyId = req.user.pharmacy_id;
+      const updateInventory = req.query.update_inventory !== "false";
 
       // Process new items
       let totalAmount = 0;
       const processedItems = [];
 
       for (const item of items) {
-        // Find or create product in products collection (unique product directory)
-        const normalizedName = item.product_name.trim();
-        let matchedProduct = await db.collection("products").findOne({
-          pharmacy_id: req.user.pharmacy_id,
-          name: { $regex: new RegExp("^" + normalizedName.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&') + "$", "i") }
-        }, { session });
+        const normalizedName = String(item.product_name || "").trim();
+        if (!normalizedName) {
+          await session.abortTransaction();
+          session.endSession();
+          return res.status(400).json({ detail: "Every item needs a product name" });
+        }
+
+        // Prefer the catalog entry the line already points at, then match by name
+        const pId = item.product_id !== undefined && item.product_id !== null ? String(item.product_id).trim() : "";
+        let matchedProduct = null;
+        if (pId && !pId.startsWith("scanned_") && !pId.startsWith("prod-")) {
+          matchedProduct = await db.collection("products").findOne({
+            pharmacy_id: pharmacyId,
+            $or: [{ id: pId }, { product_id: pId }]
+          }, { session });
+        }
+        if (!matchedProduct) {
+          matchedProduct = await db.collection("products").findOne({
+            pharmacy_id: pharmacyId,
+            name: { $regex: new RegExp("^" + escapeRegex(normalizedName) + "$", "i") }
+          }, { session });
+        }
 
         let resolvedProductId;
         if (matchedProduct) {
@@ -1135,10 +1100,29 @@ router.put(
           resolvedProductId = uuidv4();
           await db.collection("products").insertOne({
             id: resolvedProductId,
-            pharmacy_id: req.user.pharmacy_id,
+            product_id: resolvedProductId,
+            pharmacy_id: pharmacyId,
             name: normalizedName,
+            product_name: normalizedName,
+            category: item.category || "medicine",
+            dosage_form: item.dosage_form || item.pack_type || "tablet",
+            manufacturer: item.manufacturer || "",
+            salt_composition: item.salt_composition || "",
+            pack_type: item.pack_type || "Strip",
+            units_per_pack: parseInt(item.units_per_pack) || 1,
+            hsn_no: item.hsn_no || "",
+            tax_rate: (parseFloat(item.cgst) || 0) + (parseFloat(item.sgst) || 0),
+            cgst: parseFloat(item.cgst) || 0,
+            sgst: parseFloat(item.sgst) || 0,
+            mrp: (parseFloat(item.mrp_per_unit) || 0) * (parseInt(item.units_per_pack) || 1),
+            trade_price: parseFloat(item.pack_price) || 0,
+            purchase_price: parseFloat(item.pack_price) || 0,
+            source: "catalog",
+            is_custom_catalog: true,
             low_stock_threshold: 10,
+            shortage_threshold: item.shortage_threshold !== undefined && item.shortage_threshold !== null && item.shortage_threshold !== "" ? Number(item.shortage_threshold) : 10,
             created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
           }, { session });
         }
 
@@ -1149,7 +1133,7 @@ router.put(
         const packPrice =
           parseFloat(item.pack_price) || parseFloat(item.rate_pack) || 0;
         const mrpPerUnit =
-          parseFloat(item.mrp_per_unit) || parseFloat(item.mrp_unit) || 0;
+          Math.round((parseFloat(item.mrp_per_unit) || parseFloat(item.mrp_unit) || 0) * 100) / 100;
         const discount = parseFloat(item.discount) || 0;
         const scheme = parseFloat(item.scheme) || 0;
 
@@ -1170,11 +1154,16 @@ router.put(
         processedItems.push({
           ...item,
           product_id: resolvedProductId,
+          product_name: normalizedName,
+          expiry_date: normalizeExpiryDate(item.expiry_date) || item.expiry_date || null,
+          quantity: totalUnits,
           pack_quantity: packQty,
           scheme: scheme,
           units_per_pack: unitsPerPack,
           pack_price: packPrice,
+          mrp: mrpPerUnit,
           mrp_per_unit: mrpPerUnit,
+          mrp_pack: mrpPerUnit ? Math.round(mrpPerUnit * unitsPerPack * 100) / 100 : null,
           total_units: totalUnits,
           price_per_unit: Math.round(pricePerUnit * 10000) / 10000,
           purchase_price: Math.round(pricePerUnit * 10000) / 10000,
@@ -1185,55 +1174,119 @@ router.put(
           discount: discount,
           shortage_threshold: item.shortage_threshold !== undefined && item.shortage_threshold !== null && item.shortage_threshold !== "" ? Number(item.shortage_threshold) : null,
         });
+      }
 
-        if (updateInventory) {
-          // Add to inventory
-          const existingInventory = await db.collection("inventory").findOne({
-            pharmacy_id: req.user.pharmacy_id,
-            product_id: resolvedProductId,
-            batch_no: item.batch_no,
-          }, { session });
-
-          if (existingInventory) {
-            await db.collection("inventory").updateOne(
-              { id: existingInventory.id },
-              {
-                $inc: { quantity: totalUnits, available_quantity: totalUnits },
-                $set: {
-                  purchase_price: pricePerUnit,
-                  mrp: mrpPerUnit,
-                  cgst: cgst,
-                  sgst: sgst,
-                  discount: discount,
-                  scheme: scheme,
-                  shortage_threshold: item.shortage_threshold !== undefined && item.shortage_threshold !== null && item.shortage_threshold !== "" ? Number(item.shortage_threshold) : (existingInventory.shortage_threshold !== undefined ? existingInventory.shortage_threshold : null),
-                },
-              },
-              { session }
-            );
+      if (updateInventory) {
+        // Apply only the per-batch difference between the old and new lines,
+        // so editing prices, expiry or GST works even after part of the stock
+        // has been sold. A batch can't drop below what has already left it.
+        const before = await purchaseStockImpact(db, pharmacyId, purchase.items, session);
+        const plan = new Map();
+        for (const b of before.batches) {
+          plan.set(b.inventory_id, { ...b, old_units: b.purchased, new_units: 0, line: null });
+        }
+        const inserts = new Map();
+        for (const line of processedItems) {
+          const inv = await findBatch(db, pharmacyId, line, session);
+          if (inv) {
+            const p = plan.get(inv.id) || {
+              inventory_id: inv.id,
+              product_name: inv.product_name || line.product_name,
+              batch_no: inv.batch_no,
+              on_hand: Math.max(0, Number(inv.available_quantity) || 0),
+              old_units: 0,
+              new_units: 0,
+            };
+            p.new_units += line.total_units;
+            p.line = line;
+            plan.set(inv.id, p);
           } else {
-            await db.collection("inventory").insertOne({
-              id: uuidv4(),
-              pharmacy_id: req.user.pharmacy_id,
-              product_id: resolvedProductId,
-              product_name: item.product_name,
-              batch_no: item.batch_no,
-              expiry_date: item.expiry_date,
-              quantity: totalUnits,
-              available_quantity: totalUnits,
-              pack_quantity: packQty,
-              scheme: scheme,
-              units_per_pack: unitsPerPack,
-              purchase_price: pricePerUnit,
-              mrp: mrpPerUnit,
-              cgst: cgst,
-              sgst: sgst,
-              discount: discount,
-              purchase_id: req.params.purchase_id,
-              shortage_threshold: item.shortage_threshold !== undefined && item.shortage_threshold !== null && item.shortage_threshold !== "" ? Number(item.shortage_threshold) : null,
-              created_at: new Date().toISOString(),
-            }, { session });
+            const key = `${line.product_id}::${line.batch_no}`;
+            const ins = inserts.get(key) || { units: 0 };
+            ins.units += line.total_units;
+            ins.line = line;
+            inserts.set(key, ins);
           }
+        }
+
+        const conflicts = [];
+        for (const p of plan.values()) {
+          const delta = p.new_units - p.old_units;
+          if (delta < 0 && p.on_hand + delta < 0) {
+            const used = p.old_units - p.on_hand;
+            conflicts.push({
+              product_name: p.product_name,
+              batch_no: p.batch_no,
+              purchased: p.old_units,
+              on_hand: p.on_hand,
+              consumed: used,
+              min_units: used,
+              requested: p.new_units,
+            });
+          }
+        }
+        if (conflicts.length > 0) {
+          await session.abortTransaction();
+          session.endSession();
+          const c = conflicts[0];
+          const detail = c.requested === 0
+            ? `${c.product_name} (batch ${c.batch_no}) can't be removed: ${c.consumed} of ${c.purchased} units from this purchase are already sold.`
+            : `${c.product_name} (batch ${c.batch_no}): ${c.consumed} of ${c.purchased} units are already sold, so quantity can't go below ${c.min_units} units.`;
+          return res.status(409).json({ code: "STOCK_CONSUMED", detail, conflicts });
+        }
+
+        const batchFields = (line) => {
+          const set = {
+            purchase_price: line.purchase_price,
+            mrp: line.mrp_per_unit,
+            mrp_pack: line.mrp_pack,
+            pack_price: line.pack_price,
+            units_per_pack: line.units_per_pack,
+            cgst: line.cgst,
+            sgst: line.sgst,
+            discount: line.discount,
+            scheme: line.scheme,
+            updated_at: new Date().toISOString(),
+          };
+          if (line.expiry_date) set.expiry_date = line.expiry_date;
+          if (line.pack_type) set.pack_type = line.pack_type;
+          if (line.hsn_no) set.hsn_no = line.hsn_no;
+          if (line.shortage_threshold !== null && line.shortage_threshold !== undefined) set.shortage_threshold = line.shortage_threshold;
+          return set;
+        };
+
+        for (const [invId, p] of plan) {
+          const delta = p.new_units - p.old_units;
+          const update = {};
+          if (delta !== 0) update.$inc = { quantity: delta, available_quantity: delta };
+          if (p.line) update.$set = batchFields(p.line);
+          if (update.$inc || update.$set) {
+            await db.collection("inventory").updateOne({ id: invId, pharmacy_id: pharmacyId }, update, { session });
+          }
+        }
+
+        const lineSupplierId = supplier_id !== undefined ? supplier_id : purchase.supplier_id;
+        for (const { line, units } of inserts.values()) {
+          await db.collection("inventory").insertOne({
+            id: uuidv4(),
+            pharmacy_id: pharmacyId,
+            product_id: line.product_id,
+            product_name: line.product_name,
+            batch_no: line.batch_no,
+            hsn_no: line.hsn_no || null,
+            manufacturer: line.manufacturer || null,
+            salt_composition: line.salt_composition || null,
+            pack_type: line.pack_type || "Strip",
+            quantity: units,
+            available_quantity: units,
+            pack_quantity: line.pack_quantity,
+            supplier_id: lineSupplierId || null,
+            ...batchFields(line),
+            expiry_date: line.expiry_date || null,
+            shortage_threshold: line.shortage_threshold,
+            purchase_id: req.params.purchase_id,
+            created_at: new Date().toISOString(),
+          }, { session });
         }
       }
 
@@ -1440,6 +1493,23 @@ router.put(
   }
 );
 
+// GET /api/purchases/:purchase_id/stock-impact
+// What deleting this purchase would do to stock: per batch, units purchased,
+// still on the shelf, and already sold.
+router.get("/:purchase_id/stock-impact", auth, requireSubscription(), async (req, res, next) => {
+  try {
+    const db = mongoose.connection.db;
+    const purchase = await db.collection("purchases").findOne(
+      { id: req.params.purchase_id, pharmacy_id: req.user.pharmacy_id },
+      { projection: { _id: 0, items: 1 } }
+    );
+    if (!purchase) return res.status(404).json({ detail: "Purchase not found" });
+    res.json(publicImpact(await purchaseStockImpact(db, req.user.pharmacy_id, purchase.items)));
+  } catch (error) {
+    next(error);
+  }
+});
+
 // DELETE /api/purchases/:purchase_id
 router.delete(
   "/:purchase_id",
@@ -1451,7 +1521,10 @@ router.delete(
 
     try {
       const db = mongoose.connection.db;
-      const adjustInventory = req.query.delete_inventory !== "false";
+      // "true": take back all of this purchase's stock (refused if some was
+      // already sold), "unsold": take back only what is still on the shelf,
+      // "false": delete the record and leave inventory as it is.
+      const mode = req.query.delete_inventory === "unsold" ? "unsold" : req.query.delete_inventory === "false" ? "keep" : "all";
 
       const purchase = await db.collection("purchases").findOne({
         id: req.params.purchase_id,
@@ -1464,40 +1537,30 @@ router.delete(
         return res.status(404).json({ detail: "Purchase not found" });
       }
 
-      // Reverse inventory if requested
-      if (adjustInventory) {
-        for (const item of purchase.items) {
-          const updateResult = await db.collection("inventory").findOneAndUpdate(
-            {
-              pharmacy_id: req.user.pharmacy_id,
-              product_name: item.product_name,
-              batch_no: item.batch_no,
-            },
-            {
-              $inc: {
-                quantity: -item.total_units,
-                available_quantity: -item.total_units,
-              },
-            },
-            { session, returnDocument: "after" }
+      let removedUnits = 0;
+      let adjustedBatches = 0;
+      if (mode !== "keep") {
+        const impact = await purchaseStockImpact(db, req.user.pharmacy_id, purchase.items, session);
+        if (mode === "all" && impact.consumed) {
+          await session.abortTransaction();
+          session.endSession();
+          const sold = impact.batches.filter((b) => b.consumed > 0);
+          return res.status(409).json({
+            code: "STOCK_CONSUMED",
+            detail: `Some stock from this purchase is already sold (${sold.map((b) => `${b.product_name}: ${b.consumed} units`).join(", ")}). Remove only the unsold stock, or keep the stock and delete the record.`,
+            impact: publicImpact(impact),
+          });
+        }
+        for (const b of impact.batches) {
+          const units = mode === "unsold" ? b.removable : b.purchased;
+          if (units <= 0) continue;
+          await db.collection("inventory").updateOne(
+            { id: b.inventory_id, pharmacy_id: req.user.pharmacy_id },
+            { $inc: { quantity: -units, available_quantity: -units }, $set: { updated_at: new Date().toISOString() } },
+            { session }
           );
-
-          // [Issue #1] Handle Missing Inventory Record + Negative Protection
-          if (!updateResult) {
-            await session.abortTransaction();
-            session.endSession();
-            return res.status(404).json({
-              detail: `Inventory record missing for ${item.product_name}. Cannot delete.`,
-            });
-          }
-
-          if (updateResult.quantity < 0 || updateResult.available_quantity < 0) {
-            await session.abortTransaction();
-            session.endSession();
-            return res.status(400).json({
-              detail: `Delete failed: Inventory for ${item.product_name} would become negative.`,
-            });
-          }
+          removedUnits += units;
+          adjustedBatches += 1;
         }
       }
 
@@ -1522,7 +1585,8 @@ router.delete(
       session.endSession();
       res.json({
         message: "Purchase deleted",
-        deleted_inventory_items: adjustInventory ? purchase.items.length : 0
+        deleted_inventory_items: adjustedBatches,
+        removed_units: removedUnits,
       });
     } catch (error) {
       await session.abortTransaction();

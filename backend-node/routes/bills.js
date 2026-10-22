@@ -9,6 +9,7 @@ const multer = require("multer");
 const sharp = require("sharp");
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const { auth } = require("../middleware/auth");
+const { takeFromStock, returnToStock } = require("../services/stock");
 const { generateBillPDF } = require("../services/pdf");
 const { uploadToR2 } = require("../services/r2");
 const { sendBillEmail } = require("../services/email");
@@ -44,8 +45,33 @@ const scanUpload = multer({
 
 // Generate bill number
 const generateBillNo = () => {
-  const now = new Date();
-  return `BILL-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}${String(now.getHours()).padStart(2, "0")}${String(now.getMinutes()).padStart(2, "0")}${String(now.getSeconds()).padStart(2, "0")}`;
+  // Timestamp in IST (servers run in UTC), e.g. BILL-20261022143005
+  const ist = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
+  const p = (n) => String(n).padStart(2, "0");
+  return `BILL-${ist.getUTCFullYear()}${p(ist.getUTCMonth() + 1)}${p(ist.getUTCDate())}${p(ist.getUTCHours())}${p(ist.getUTCMinutes())}${p(ist.getUTCSeconds())}`;
+};
+
+// Two counters billing in the same second would otherwise share a number
+const uniqueBillNo = async (db, pharmacyId) => {
+  const base = generateBillNo();
+  let candidate = base;
+  for (let i = 2; await db.collection("bills").findOne({ pharmacy_id: pharmacyId, bill_no: candidate }, { projection: { _id: 1 } }); i++) {
+    candidate = `${base}-${i}`;
+  }
+  return candidate;
+};
+
+// MRP is GST-inclusive, so a line's amount is qty x MRP less its discount.
+// Computed here rather than trusted from the client.
+const lineAmounts = (item) => {
+  const quantity = parseInt(item.quantity) || 1;
+  const unitPrice = parseFloat(item.unit_price) || 0;
+  const discountPercent = Math.min(100, Math.max(0, parseFloat(item.discount_percent) || 0));
+  const purchasePrice = parseFloat(item.purchase_price) || 0;
+  const gross = quantity * unitPrice;
+  const itemDiscount = gross * (discountPercent / 100);
+  const itemTotal = Math.round((gross - itemDiscount) * 100) / 100;
+  return { quantity, unitPrice, discountPercent, purchasePrice, itemTotal, itemProfit: itemTotal - purchasePrice * quantity };
 };
 
 // GET /api/bills
@@ -549,62 +575,40 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
     }
 
     const billId = uuidv4();
-    const billNo = generateBillNo();
+    const billNo = await uniqueBillNo(db, req.user.pharmacy_id);
     let subtotal = 0;
     let totalProfit = 0;
     const processedItems = [];
 
     for (const item of items) {
-      const quantity = parseInt(item.quantity) || 1;
-      const unitPrice = parseFloat(item.unit_price) || 0;
-      const discountPercent = parseFloat(item.discount_percent) || 0;
-      const purchasePrice = parseFloat(item.purchase_price) || 0;
-
-      const itemSubtotal = quantity * unitPrice;
-      const itemDiscount = itemSubtotal * (discountPercent / 100);
-      const cgst = parseFloat(item.cgst) || 0;
-      const sgst = parseFloat(item.sgst) || 0;
-      const itemTotal = item.item_total !== undefined ? parseFloat(item.item_total) : (itemSubtotal - itemDiscount);
-      const itemProfit = (unitPrice - purchasePrice) * quantity - itemDiscount;
+      const { quantity, unitPrice, discountPercent, purchasePrice, itemTotal, itemProfit } = lineAmounts(item);
 
       subtotal += itemTotal;
       totalProfit += itemProfit;
+
+      // Units that actually came off the shelf; any extra is negative billing
+      const stockDeducted = await takeFromStock(db, req.user.pharmacy_id, item.inventory_id, quantity);
 
       processedItems.push({
         inventory_id: item.inventory_id || null,
         product_name: item.product_name,
         batch_no: item.batch_no || null,
+        hsn_no: item.hsn_no || null,
         expiry_date: item.expiry_date || null,
         quantity,
+        units_per_pack: parseInt(item.units_per_pack) || null,
         unit_price: unitPrice,
         purchase_price: purchasePrice,
         discount_percent: discountPercent,
+        line_discount: Math.round((quantity * unitPrice - itemTotal) * 100) / 100,
         item_total: itemTotal,
         profit: itemProfit,
         is_manual: !item.inventory_id, // Mark as manual if no inventory_id
+        stock_deducted: stockDeducted,
         cgst: parseFloat(item.cgst) || 0,
         sgst: parseFloat(item.sgst) || 0,
         delivery_status: is_advance_paid ? "Pending" : "Delivered",
       });
-
-      // Update inventory stock for inventory items (supports both UUID id and Mongo ObjectId _id)
-      if (item.inventory_id) {
-        const invQuery = {
-          pharmacy_id: req.user.pharmacy_id,
-          $or: [
-            { id: item.inventory_id },
-            ...(mongoose.Types.ObjectId.isValid(item.inventory_id)
-              ? [{ _id: new mongoose.Types.ObjectId(item.inventory_id) }]
-              : []),
-          ],
-        };
-        await db
-          .collection("inventory")
-          .updateOne(
-            invQuery,
-            [{ $set: { available_quantity: { $max: [0, { $subtract: ["$available_quantity", quantity] }] } } }]
-          );
-      }
     }
 
     const discountAmount = subtotal * (discount_percent / 100);
@@ -895,15 +899,8 @@ router.put("/:bill_id", auth, requireSubscription(), async (req, res, next) => {
 
     /* ---------------- Reverse old inventory ---------------- */
 
-    for (const oldItem of bill.items) {
-      if (oldItem.inventory_id) {
-        await db
-          .collection("inventory")
-          .updateOne(
-            { id: oldItem.inventory_id },
-            { $inc: { available_quantity: oldItem.quantity } }
-          );
-      }
+    for (const oldItem of bill.items || []) {
+      await returnToStock(db, req.user.pharmacy_id, oldItem);
     }
 
     /* ---------------- Process new items ---------------- */
@@ -913,17 +910,7 @@ router.put("/:bill_id", auth, requireSubscription(), async (req, res, next) => {
     const processedItems = [];
 
     for (const item of items) {
-      const quantity = parseInt(item.quantity) || 1;
-      const unitPrice = parseFloat(item.unit_price) || 0;
-      const discountPercent = parseFloat(item.discount_percent) || 0;
-      const purchasePrice = parseFloat(item.purchase_price) || 0;
-
-      const itemSubtotal = quantity * unitPrice;
-      const itemDiscount = itemSubtotal * (discountPercent / 100);
-      const cgst = parseFloat(item.cgst) || 0;
-      const sgst = parseFloat(item.sgst) || 0;
-      const itemTotal = item.item_total !== undefined ? parseFloat(item.item_total) : (itemSubtotal - itemDiscount);
-      const itemProfit = (unitPrice - purchasePrice) * quantity - itemDiscount;
+      const { quantity, unitPrice, discountPercent, purchasePrice, itemTotal, itemProfit } = lineAmounts(item);
 
       subtotal += itemTotal;
       totalProfit += itemProfit;
@@ -935,32 +922,28 @@ router.put("/:bill_id", auth, requireSubscription(), async (req, res, next) => {
         finalDeliveryStatus = matchingOld ? (matchingOld.delivery_status || "Pending") : "Pending";
       }
 
+      const stockDeducted = await takeFromStock(db, req.user.pharmacy_id, item.inventory_id, quantity);
+
       processedItems.push({
         inventory_id: item.inventory_id || null,
         product_name: item.product_name,
         batch_no: item.batch_no || null,
+        hsn_no: item.hsn_no || null,
         expiry_date: item.expiry_date || null,
         quantity,
+        units_per_pack: parseInt(item.units_per_pack) || null,
         unit_price: unitPrice,
         purchase_price: purchasePrice,
         discount_percent: discountPercent,
+        line_discount: Math.round((quantity * unitPrice - itemTotal) * 100) / 100,
         item_total: itemTotal,
         profit: itemProfit,
         is_manual: !item.inventory_id,
+        stock_deducted: stockDeducted,
         cgst: parseFloat(item.cgst) || 0,
         sgst: parseFloat(item.sgst) || 0,
         delivery_status: finalDeliveryStatus,
       });
-
-      // Deduct inventory if item linked to inventory
-      if (item.inventory_id) {
-        await db
-          .collection("inventory")
-          .updateOne(
-            { id: item.inventory_id },
-            [{ $set: { available_quantity: { $max: [0, { $subtract: ["$available_quantity", quantity] }] } } }]
-          );
-      }
     }
 
     /* ---------------- Calculate totals ---------------- */
@@ -1036,11 +1019,17 @@ router.put("/:bill_id", auth, requireSubscription(), async (req, res, next) => {
     const oldAdvance = Math.max(0, oldPaid - oldDeliveredValue);
 
     // Calculate new active values
-    const finalIsPaid = is_paid !== undefined ? is_paid : bill.is_paid;
+    let finalIsPaid = is_paid !== undefined ? is_paid : bill.is_paid;
     const finalIsAdvancePaid = is_advance_paid !== undefined ? is_advance_paid : bill.is_advance_paid;
     const finalAdvanceAmount = is_advance_paid !== undefined ? (Number(advance_amount) || 0) : (bill.advance_amount || 0);
 
-    const newPaid = finalIsPaid ? totalAmount : (finalIsAdvancePaid ? finalAdvanceAmount : 0);
+    // A credit bill that stays on credit keeps the part-payments already
+    // recorded against it; editing items must not wipe them.
+    const keepRecordedPayments = !finalIsPaid && !finalIsAdvancePaid && !bill.is_paid && !bill.is_advance_paid && (Number(bill.total_paid) || 0) > 0;
+    const recordedPaid = keepRecordedPayments ? Number(bill.total_paid) || 0 : 0;
+    if (keepRecordedPayments && recordedPaid >= totalAmount) finalIsPaid = true;
+
+    const newPaid = keepRecordedPayments ? recordedPaid : finalIsPaid ? totalAmount : (finalIsAdvancePaid ? finalAdvanceAmount : 0);
     let newDeliveredValue = 0;
     if (finalIsAdvancePaid) {
       newDeliveredValue = processedItems.reduce((sum, i) => i.delivery_status === "Delivered" ? sum + (i.item_total || 0) : sum, 0);
@@ -1076,7 +1065,9 @@ router.put("/:bill_id", auth, requireSubscription(), async (req, res, next) => {
     /* ---------------- Update bill ---------------- */
 
     let finalPayments = bill.payments || [];
-    if (finalIsPaid) {
+    if (keepRecordedPayments) {
+      // unchanged
+    } else if (finalIsPaid) {
       finalPayments = [{ amount: totalAmount, payment_mode: payment_mode || bill.payment_mode || "Cash", paid_at: new Date().toISOString() }];
     } else if (finalIsAdvancePaid) {
       if (finalPayments.length === 0 && finalAdvanceAmount > 0) {
@@ -1293,15 +1284,8 @@ router.delete(
 
       // Restore inventory if requested
       if (restore_inventory === "true") {
-        for (const item of bill.items) {
-          if (item.inventory_id && !String(item.inventory_id).startsWith("negative-")) {
-            await db
-              .collection("inventory")
-              .updateOne(
-                { id: item.inventory_id },
-                { $inc: { available_quantity: item.quantity } }
-              );
-          }
+        for (const item of bill.items || []) {
+          await returnToStock(db, req.user.pharmacy_id, item);
         }
       }
 

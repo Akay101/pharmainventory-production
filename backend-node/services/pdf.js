@@ -1,34 +1,55 @@
 const PDFDocument = require("pdfkit");
 
+const IST = "Asia/Kolkata";
+
+// Retail bill line maths. MRP is GST-inclusive, so a line's amount is
+// qty x MRP less its own discount; the bill-level discount comes off the total.
+const billLine = (item) => {
+  const qty = Number(item.quantity || item.sold_units) || 1;
+  const mrp = Number(item.unit_price || item.mrp_per_unit) || 0;
+  const discPct = Number(item.discount_percent) || 0;
+  const gross = qty * mrp;
+  const discount = item.line_discount !== undefined ? Number(item.line_discount) || 0 : gross * (discPct / 100);
+  return { qty, mrp, discPct, gross, discount, amount: gross - discount };
+};
+
+// "2 strips", "1 strip + 3", "loose" for a quantity in units
+const packLabel = (qty, perPack, packType) => {
+  if (!perPack || perPack <= 1) return "";
+  const pt = String(packType || "pack").toLowerCase();
+  const packs = Math.floor(qty / perPack);
+  const rest = qty % perPack;
+  if (packs === 0) return "loose";
+  const name = packs > 1 ? `${packs} ${pt}s` : `1 ${pt}`;
+  return rest ? `${name} + ${rest}` : name;
+};
+
+const money = (n) => (Math.round((Number(n) || 0) * 100) / 100).toFixed(2);
+
 const generateBillPDF = async (bill, pharmacy) => {
   return new Promise(async (resolve, reject) => {
     try {
-      const PDFDocument = require("pdfkit");
       const https = require("https");
       const mongoose = require("mongoose");
+      const QRCode = require("qrcode");
 
       const db = mongoose.connection.db;
+      const scope = bill.pharmacy_id ? { pharmacy_id: bill.pharmacy_id } : {};
       let customer = null;
       if (db && bill.customer_id) {
-        customer = await db
-          .collection("customers")
-          .findOne({ id: bill.customer_id });
+        customer = await db.collection("customers").findOne({ id: bill.customer_id, ...scope });
       }
 
       const enrichedItems = [];
-      for (const item of bill.items) {
+      for (const item of bill.items || []) {
         let inv = null;
-        if (item.inventory_id && !item.inventory_id.startsWith("negative-")) {
-          inv = await db
-            .collection("inventory")
-            .findOne({ id: item.inventory_id });
+        if (db && item.inventory_id && !String(item.inventory_id).startsWith("negative-")) {
+          inv = await db.collection("inventory").findOne({ id: item.inventory_id, ...scope });
         }
 
         let hsn = item.hsn_no || inv?.hsn_no || "-";
         if (hsn === "-" && inv?.product_id) {
-          const prod = await db
-            .collection("products")
-            .findOne({ id: inv.product_id });
+          const prod = await db.collection("products").findOne({ id: inv.product_id, ...scope });
           if (prod && prod.hsn_no) {
             hsn = prod.hsn_no;
           }
@@ -36,10 +57,39 @@ const generateBillPDF = async (bill, pharmacy) => {
 
         enrichedItems.push({
           ...item,
-          manufacturer: item.manufacturer || inv?.manufacturer || "-",
+          manufacturer: item.manufacturer || inv?.manufacturer || "",
           hsn_no: hsn,
           expiry_date: item.expiry_date || inv?.expiry_date || "-",
+          units_per_pack: Number(item.units_per_pack || inv?.units_per_pack) || 1,
+          pack_type: item.pack_type || inv?.pack_type || "",
+          line: billLine(item),
         });
+      }
+
+      // Totals
+      const grandTotal = Number(bill.grand_total ?? bill.total_amount) || 0;
+      const totalGross = enrichedItems.reduce((s, i) => s + i.line.gross, 0);
+      const itemDiscount = enrichedItems.reduce((s, i) => s + i.line.discount, 0);
+      const linesTotal = enrichedItems.reduce((s, i) => s + i.line.amount, 0);
+      const billDiscount = Number(bill.discount_amount) || 0;
+      const saved = Math.max(0, totalGross - grandTotal);
+      const paid = bill.total_paid !== undefined
+        ? Number(bill.total_paid) || 0
+        : bill.is_paid ? grandTotal : Number(bill.advance_amount) || 0;
+      const balance = Math.max(0, grandTotal - paid);
+      const totalQty = enrichedItems.reduce((s, i) => s + i.line.qty, 0);
+
+      // GST included in the amount actually charged (after all discounts)
+      const gst = { taxable: 0, cgst: 0, sgst: 0 };
+      const chargeFactor = linesTotal > 0 ? grandTotal / linesTotal : 0;
+      for (const i of enrichedItems) {
+        const c = Number(i.cgst) || 0;
+        const sg = Number(i.sgst) || 0;
+        const charged = i.line.amount * chargeFactor;
+        const taxable = charged / (1 + (c + sg) / 100);
+        gst.taxable += taxable;
+        gst.cgst += taxable * (c / 100);
+        gst.sgst += taxable * (sg / 100);
       }
 
       const fetchImageBuffer = (url) => {
@@ -72,6 +122,18 @@ const generateBillPDF = async (bill, pharmacy) => {
         }
       }
 
+      // Scannable UPI QR for whatever is still due
+      const upiId = (pharmacy?.upi_id || "").trim();
+      let qrBuffer = null;
+      if (upiId && balance > 0) {
+        const upi = `upi://pay?pa=${encodeURIComponent(upiId)}&pn=${encodeURIComponent(pharmacy?.name || "")}&am=${money(balance)}&cu=INR&tn=${encodeURIComponent(bill.bill_no || "")}`;
+        try {
+          qrBuffer = await QRCode.toBuffer(upi, { margin: 0, width: 160, errorCorrectionLevel: "M" });
+        } catch (qrErr) {
+          console.error("UPI QR generation failed:", qrErr.message);
+        }
+      }
+
       const doc = new PDFDocument({
         size: "A5",
         layout: "landscape",
@@ -84,7 +146,10 @@ const generateBillPDF = async (bill, pharmacy) => {
       doc.on("end", () => resolve(Buffer.concat(chunks)));
       doc.on("error", reject);
 
-      const itemsPerPage = 15;
+      const ROW_H = 18;
+      const TABLE_TOP = 98;
+      const TABLE_BOTTOM = 300;
+      const itemsPerPage = Math.floor((TABLE_BOTTOM - TABLE_TOP) / ROW_H);
       const totalPages = Math.ceil(enrichedItems.length / itemsPerPage) || 1;
 
       const formatExpiry = (exp) => {
@@ -99,32 +164,32 @@ const generateBillPDF = async (bill, pharmacy) => {
         }
         const d = new Date(exp);
         if (isNaN(d.getTime())) return exp;
-        const mm = String(d.getMonth() + 1).padStart(2, "0");
-        const yy = String(d.getFullYear()).substring(2);
+        const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+        const yy = String(d.getUTCFullYear()).substring(2);
         return `${mm}/${yy}`;
       };
 
-      let totalQty = 0;
-      enrichedItems.forEach((item) => {
-        totalQty += item.quantity || 1;
-      });
+      // Bill date is the business date; the time is shown only when the bill
+      // was created on that same day (not for back-dated bills).
+      const billTimestamp = (() => {
+        const created = bill.created_at ? new Date(bill.created_at) : null;
+        const createdDay = created && !isNaN(created) ? created.toLocaleDateString("en-CA", { timeZone: IST }) : null;
+        const day = /^\d{4}-\d{2}-\d{2}$/.test(bill.billing_date || "") ? bill.billing_date : createdDay;
+        if (!day) return "-";
+        const dateLabel = new Date(`${day}T00:00:00Z`)
+          .toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric", timeZone: "UTC" })
+          .replace(/ /g, "-");
+        if (createdDay !== day) return dateLabel;
+        const time = created.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true, timeZone: IST });
+        return `${dateLabel} ${time}`;
+      })();
 
-      const columnWidths = [15, 190, 65, 30, 45, 30, 20, 45, 25, 30, 80];
-      const tableHeaders = [
-        "#",
-        "DESCRIPTION",
-        "COMP",
-        "HSN",
-        "BATCH",
-        "EXP",
-        "QTY",
-        "MRP",
-        "DIS %",
-        "GST %",
-        "AMT",
-      ];
+      const columnWidths = [16, 178, 38, 50, 32, 46, 52, 50, 28, 85];
+      const tableHeaders = ["#", "ITEM", "HSN", "BATCH", "EXP", "QTY", "MRP", "DISC", "GST%", "AMOUNT"];
+      const RIGHT_FROM = 5;
+      const MUTED = "#64748b";
 
-      const drawPageSkeleton = (pageNum, total) => {
+      const drawPageSkeleton = (pageNum, total, isLastPage) => {
         doc.lineWidth(1);
         doc.strokeColor("#000000");
 
@@ -170,7 +235,7 @@ const generateBillPDF = async (bill, pharmacy) => {
 
         if (logoBuffer) {
           try {
-            doc.image(logoBuffer, 30, 28, { width: 60, height: 48 });
+            doc.image(logoBuffer, 30, 28, { fit: [60, 48], align: "center", valign: "center" });
           } catch (err) {
             drawVectorMonogram();
           }
@@ -183,11 +248,11 @@ const generateBillPDF = async (bill, pharmacy) => {
         doc
           .font("Helvetica-Bold")
           .fontSize(10)
-          .text((pharmacy?.name || "").toUpperCase(), 115, 14);
+          .text((pharmacy?.name || "").toUpperCase(), 115, 14, { width: 225, lineBreak: false, ellipsis: true });
         doc
           .font("Helvetica")
           .fontSize(6.5)
-          .text(pharmacy?.location || "", 115, 26, { width: 225 });
+          .text(pharmacy?.location || "", 115, 26, { width: 225, height: 20, ellipsis: true });
 
         doc
           .font("Helvetica-Bold")
@@ -200,33 +265,21 @@ const generateBillPDF = async (bill, pharmacy) => {
           .text("GSTIN        ", 115, 57, { continued: true })
           .font("Helvetica")
           .text(pharmacy?.gst_no || "");
+        if (pharmacy?.license_no || pharmacy?.drug_license_no) {
+          doc
+            .font("Helvetica-Bold")
+            .text("D.L. No.     ", 115, 66, { continued: true })
+            .font("Helvetica")
+            .text(pharmacy.license_no || pharmacy.drug_license_no);
+        }
 
         // Right Header Panel: Customer and Billing details
-        const billDate = new Date(bill.created_at || bill.billing_date || new Date());
-        const billDateFormatted = isNaN(billDate.getTime())
-          ? "-"
-          : billDate.toLocaleDateString("en-GB", {
-              day: "2-digit",
-              month: "short",
-              year: "numeric",
-            }).replace(/ /g, "-");
-        const billTimeFormatted = isNaN(billDate.getTime())
-          ? ""
-          : billDate.toLocaleTimeString("en-IN", {
-              hour: "2-digit",
-              minute: "2-digit",
-              hour12: true,
-            });
-        const billTimestamp = billTimeFormatted
-          ? `${billDateFormatted} ${billTimeFormatted}`
-          : billDateFormatted;
-
         doc.fillColor("#000000");
-        doc.font("Helvetica-Bold").fontSize(6.5).text("Serial No.", 349, 14);
+        doc.font("Helvetica-Bold").fontSize(6.5).text("Bill No.", 349, 14);
         doc
           .font("Helvetica-Bold")
           .fontSize(7.5)
-          .text(bill.bill_no || "-", 395, 14, { width: 85 });
+          .text(bill.bill_no || "-", 385, 14, { width: 100, lineBreak: false });
         doc
           .font("Helvetica-Bold")
           .fontSize(7)
@@ -238,6 +291,8 @@ const generateBillPDF = async (bill, pharmacy) => {
           .fontSize(6.5)
           .text((bill.customer_name || "Walk-in").toUpperCase(), 395, 29, {
             width: 185,
+            lineBreak: false,
+            ellipsis: true,
           });
 
         doc.font("Helvetica-Bold").fontSize(6.5).text("ADDRESS", 349, 39);
@@ -246,272 +301,204 @@ const generateBillPDF = async (bill, pharmacy) => {
           .fontSize(6.5)
           .text((customer?.address || "").toUpperCase(), 395, 39, {
             width: 185,
+            lineBreak: false,
+            ellipsis: true,
           });
 
         doc.font("Helvetica-Bold").fontSize(6.5).text("CONTACT", 349, 49);
         doc
           .font("Helvetica")
           .fontSize(6.5)
-          .text(customer?.mobile || bill.customer_mobile || "", 395, 49, {
-            continued: true,
-          });
-        doc
-          .font("Helvetica-Bold")
-          .text("         POS   ", { continued: true })
-          .font("Helvetica")
-          .text(bill.pos || "");
+          .text(customer?.mobile || bill.customer_mobile || "-", 395, 49, { width: 185 });
 
         doc.font("Helvetica-Bold").fontSize(6.5).text("DOCTOR", 349, 59);
         doc
           .font("Helvetica")
           .fontSize(6.5)
-          .text((bill.doctor || "").toUpperCase(), 395, 59, { width: 185 });
+          .text((bill.doctor || "-").toUpperCase(), 395, 59, { width: 185, lineBreak: false, ellipsis: true });
+
+        doc.font("Helvetica-Bold").fontSize(6.5).text("PAYMENT", 349, 69);
+        doc
+          .font("Helvetica")
+          .fontSize(6.5)
+          .text(
+            balance <= 0.004 ? `PAID${bill.payment_mode ? ` (${String(bill.payment_mode).toUpperCase()})` : ""}` : paid > 0 ? "PART PAID" : "CREDIT",
+            395,
+            69,
+            { width: 185 }
+          );
 
         // 3. Table Structure
-        doc.rect(10, 80, 575, 18).stroke();
+        doc.fillColor("#f1f5f9").rect(10.5, 80.5, 574, 17).fill();
+        doc.strokeColor("#000000").rect(10, 80, 575, 18).stroke();
         let currentX = 10;
         tableHeaders.forEach((th, idx) => {
-          const isRightAlign = idx >= 6;
           doc.fillColor("#000000");
           doc
             .font("Helvetica-Bold")
             .fontSize(6.5)
             .text(th, currentX + 3, 86, {
-              width: columnWidths[idx] - (idx === 10 ? 10 : 6),
-              align: isRightAlign ? "right" : "left",
+              width: columnWidths[idx] - 6,
+              align: idx >= RIGHT_FROM ? "right" : "left",
             });
           currentX += columnWidths[idx];
         });
 
-        doc.moveTo(10, 98).lineTo(585, 98).stroke();
-        doc.moveTo(10, 323).lineTo(585, 323).stroke();
+        doc.moveTo(10, TABLE_TOP).lineTo(585, TABLE_TOP).stroke();
+        doc.moveTo(10, TABLE_BOTTOM).lineTo(585, TABLE_BOTTOM).stroke();
 
         let divX = 10;
         columnWidths.forEach((w) => {
           divX += w;
           if (divX < 585) {
-            doc.moveTo(divX, 80).lineTo(divX, 323).stroke();
+            doc.moveTo(divX, 80).lineTo(divX, TABLE_BOTTOM).stroke();
           }
         });
 
         // 4. Footer Structure
-        doc.moveTo(195, 323).lineTo(195, 398).stroke();
-        doc.moveTo(395, 323).lineTo(395, 398).stroke();
-        doc.moveTo(455, 323).lineTo(455, 398).stroke();
+        doc.moveTo(230, TABLE_BOTTOM).lineTo(230, 398).stroke();
+        doc.moveTo(395, TABLE_BOTTOM).lineTo(395, 398).stroke();
+        doc.moveTo(460, TABLE_BOTTOM).lineTo(460, 398).stroke();
         doc.moveTo(10, 398).lineTo(585, 398).stroke();
 
-        // Panel 1 Remarks
+        // Panel 1: remarks, savings and GST included
         doc.fillColor("#000000");
-        doc.font("Helvetica-Bold").fontSize(6.5).text("REMARKS", 15, 328);
+        doc.font("Helvetica-Bold").fontSize(6.5).text("REMARKS", 15, 305);
         doc
           .font("Helvetica-Bold")
           .fontSize(6.5)
-          .text("E&OE", 10, 328, { width: 180, align: "right" });
+          .text("E&OE", 10, 305, { width: 215, align: "right" });
         doc
           .font("Helvetica")
           .fontSize(6.5)
-          .text(bill.notes || "We Wish for your speedy recovery!", 15, 338, {
-            width: 175,
+          .text(bill.notes || "We wish you a speedy recovery!", 15, 315, {
+            width: 210,
+            height: 18,
+            ellipsis: true,
           });
+
+        if (isLastPage) {
+          if (saved > 0.004) {
+            doc.fillColor("#dcfce7").rect(15, 337, 210, 15).fill();
+            doc
+              .fillColor("#166534")
+              .font("Helvetica-Bold")
+              .fontSize(7)
+              .text(`YOU SAVED Rs ${money(saved)} ON MRP`, 15, 341.5, { width: 210, align: "center" });
+          }
+          doc
+            .fillColor(MUTED)
+            .font("Helvetica")
+            .fontSize(5.8)
+            .text(
+              `Prices are inclusive of GST. Taxable value Rs ${money(gst.taxable)}, CGST Rs ${money(gst.cgst)}, SGST Rs ${money(gst.sgst)}.`,
+              15,
+              357,
+              { width: 210 }
+            );
+        }
         doc
+          .fillColor("#000000")
           .font("Helvetica-Bold")
           .fontSize(6.5)
-          .text(
-            `PRODUCTS: ${enrichedItems.length}, TOTAL QTY: ${totalQty}`,
-            15,
-            386
-          );
+          .text(`ITEMS: ${enrichedItems.length}   TOTAL QTY: ${totalQty} units`, 15, 386);
 
-        // Panel 2 Bank
+        // Panel 2: bank details and signature
         const bankName = pharmacy?.bank_name || "";
         const bankIfsc = pharmacy?.bank_ifsc || "";
         const bankAcc = pharmacy?.bank_acc_no || "";
         const bankHolder = pharmacy?.bank_holder || "";
-        const bankUpi = pharmacy?.upi_id || "";
 
-        if (bankName || bankIfsc || bankAcc || bankHolder || bankUpi) {
-          doc
-            .font("Helvetica-Bold")
-            .fontSize(6.5)
-            .text("BANK DETAIL", 200, 328);
-          if (bankName)
+        if (bankName || bankIfsc || bankAcc || bankHolder || upiId) {
+          doc.fillColor("#000000").font("Helvetica-Bold").fontSize(6.5).text("BANK DETAIL", 235, 305);
+          let by = 315;
+          const bankRow = (label, value) => {
+            if (!value) return;
             doc
               .font("Helvetica-Bold")
               .fontSize(6)
-              .text(bankName.toUpperCase(), 200, 338, { width: 190 });
-
-          if (bankIfsc) {
-            doc
-              .font("Helvetica-Bold")
-              .fontSize(6)
-              .text("IFSC", 200, 350, { continued: true })
+              .text(label, 235, by, { continued: true })
               .font("Helvetica")
-              .text(`   ${bankIfsc}`);
+              .text(` ${value}`, { width: 155, lineBreak: false, ellipsis: true });
+            by += 10;
+          };
+          if (bankName) {
+            doc.font("Helvetica-Bold").fontSize(6).text(bankName.toUpperCase(), 235, by, { width: 155, lineBreak: false, ellipsis: true });
+            by += 10;
           }
-          if (bankAcc) {
-            doc
-              .font("Helvetica-Bold")
-              .fontSize(6)
-              .text("A/C No", 200, 362, { continued: true })
-              .font("Helvetica")
-              .text(` ${bankAcc}`);
-          }
-          if (bankHolder) {
-            doc
-              .font("Helvetica-Bold")
-              .fontSize(6)
-              .text("Holder", 200, 374, { continued: true })
-              .font("Helvetica")
-              .text(` ${bankHolder}`);
-          }
-          if (bankUpi) {
-            doc
-              .font("Helvetica-Bold")
-              .fontSize(6)
-              .text("UPI ID", 200, 386, { continued: true })
-              .font("Helvetica")
-              .text(` ${bankUpi}`);
-          }
+          bankRow("IFSC  ", bankIfsc);
+          bankRow("A/C No", bankAcc);
+          bankRow("Holder", bankHolder);
+          bankRow("UPI ID", upiId);
         }
-
-        // Panel 3 QR & Sign
-        const sigInitials = pharmacy?.name
-          ? pharmacy.name
-              .split(" ")
-              .map((w) => w[0])
-              .join("")
-              .substring(0, 2)
-              .toUpperCase()
-          : "";
-        if (bankUpi) {
-          const qrX = 407;
-          const qrY = 328;
-          doc.rect(qrX, qrY, 36, 36).stroke();
-
-          doc.fillColor("#000000");
-          doc.rect(qrX + 2, qrY + 2, 8, 8).fill();
-          doc
-            .rect(qrX + 4, qrY + 4, 4, 4)
-            .fillColor("white")
-            .fill();
-          doc
-            .rect(qrX + 5, qrY + 5, 2, 2)
-            .fillColor("black")
-            .fill();
-
-          doc.rect(qrX + 26, qrY + 2, 8, 8).fill();
-          doc
-            .rect(qrX + 28, qrY + 4, 4, 4)
-            .fillColor("white")
-            .fill();
-          doc
-            .rect(qrX + 29, qrY + 5, 2, 2)
-            .fillColor("black")
-            .fill();
-
-          doc.rect(qrX + 2, qrY + 26, 8, 8).fill();
-          doc
-            .rect(qrX + 4, qrY + 28, 4, 4)
-            .fillColor("white")
-            .fill();
-          doc
-            .rect(qrX + 5, qrY + 29, 2, 2)
-            .fillColor("black")
-            .fill();
-
-          const dots = [
-            [15, 5],
-            [18, 7],
-            [22, 4],
-            [14, 12],
-            [20, 15],
-            [24, 12],
-            [4, 15],
-            [7, 18],
-            [11, 20],
-            [15, 22],
-            [18, 20],
-            [22, 24],
-            [15, 29],
-            [19, 31],
-            [24, 28],
-            [29, 15],
-            [31, 20],
-            [28, 22],
-          ];
-          doc.fillColor("black");
-          dots.forEach(([dx, dy]) => {
-            doc.rect(qrX + dx, qrY + dy, 2, 2).fill();
-          });
-        }
-
-        doc.strokeColor("#000000");
+        doc.strokeColor("#94a3b8").moveTo(300, 384).lineTo(390, 384).stroke().strokeColor("#000000");
         doc
           .fillColor("#000000")
           .font("Helvetica-Bold")
           .fontSize(5.5)
-          .text("Authorized Sign", 395, 387, { width: 60, align: "center" });
+          .text("Authorised Signatory", 300, 387, { width: 90, align: "center" });
 
-        // Panel 4 Totals
-        doc.fillColor("#f8fafc").rect(455.5, 359.5, 129, 19).fill();
+        // Panel 3: scan to pay / paid stamp
+        if (isLastPage && qrBuffer) {
+          doc.image(qrBuffer, 402, 306, { width: 51, height: 51 });
+          doc
+            .fillColor("#000000")
+            .font("Helvetica-Bold")
+            .fontSize(5.5)
+            .text("SCAN TO PAY", 395, 362, { width: 65, align: "center" });
+          doc
+            .font("Helvetica")
+            .fontSize(5.5)
+            .text(`Rs ${money(balance)}`, 395, 370, { width: 65, align: "center" });
+        } else if (isLastPage && balance <= 0.004 && grandTotal > 0) {
+          doc.lineWidth(1.2).strokeColor("#16a34a").roundedRect(405, 334, 46, 18, 3).stroke();
+          doc
+            .fillColor("#16a34a")
+            .font("Helvetica-Bold")
+            .fontSize(9)
+            .text("PAID", 405, 339, { width: 46, align: "center" });
+          doc.lineWidth(1).strokeColor("#000000");
+        }
 
+        // Panel 4: totals (last page only)
         doc.fillColor("#000000");
-        doc.moveTo(455, 341).lineTo(585, 341).stroke();
-        doc.moveTo(455, 359).lineTo(585, 359).stroke();
-        doc.moveTo(455, 379).lineTo(585, 379).stroke();
-
-        const discountAmount = bill.discount_amount || 0;
-        const grandTotal = bill.grand_total || bill.total_amount || 0;
-        const subtotal = bill.subtotal || grandTotal + discountAmount;
-
-        doc.font("Helvetica").fontSize(6.5).text("Subtotal", 460, 329);
-        doc
-          .font("Helvetica")
-          .fontSize(6.5)
-          .text(Number(subtotal).toFixed(1), 460, 329, {
-            width: 120,
-            align: "right",
+        if (isLastPage) {
+          const rows = [
+            ["Total MRP", money(totalGross)],
+            ["Item discount", itemDiscount > 0.004 ? `- ${money(itemDiscount)}` : "0.00"],
+            [`Bill discount${bill.discount_percent ? ` (${Number(bill.discount_percent).toFixed(2).replace(/\.?0+$/, "")}%)` : ""}`, billDiscount > 0.004 ? `- ${money(billDiscount)}` : "0.00"],
+          ];
+          let ty = 305;
+          rows.forEach(([label, value]) => {
+            doc.font("Helvetica").fontSize(6.5).fillColor("#000000").text(label, 465, ty);
+            doc.text(value, 465, ty, { width: 115, align: "right" });
+            ty += 12;
           });
+          doc.fillColor("#f1f5f9").rect(460.5, 341.5, 124, 18).fill();
+          doc.strokeColor("#000000").moveTo(460, 341).lineTo(585, 341).stroke();
+          doc.moveTo(460, 360).lineTo(585, 360).stroke();
+          doc.fillColor("#000000").font("Helvetica-Bold").fontSize(8).text("NET AMOUNT", 465, 346.5);
+          doc.text(`Rs ${money(grandTotal)}`, 465, 346.5, { width: 115, align: "right" });
 
-        doc.font("Helvetica").fontSize(6.5).text("Your Savings", 460, 347);
-        doc
-          .font("Helvetica")
-          .fontSize(6.5)
-          .text(Number(discountAmount).toFixed(1), 460, 347, {
-            width: 120,
-            align: "right",
-          });
-
-        doc.font("Helvetica-Bold").fontSize(7.5).text("To Pay", 460, 365);
-        doc
-          .font("Helvetica-Bold")
-          .fontSize(7.5)
-          .text(`Rs ${Number(grandTotal).toFixed(2)}`, 460, 365, {
-            width: 120,
-            align: "right",
-          });
-
-        doc.font("Helvetica-Bold").fontSize(6.5).text("Paid/Balance", 460, 385);
-        const paidVal = bill.is_paid ? grandTotal : 0;
-        const balVal = bill.is_paid ? 0 : grandTotal;
-        doc
-          .font("Helvetica")
-          .fontSize(6.5)
-          .text(`${paidVal.toFixed(2)}/${balVal.toFixed(2)}`, 460, 385, {
-            width: 120,
-            align: "right",
-          });
+          doc.font("Helvetica").fontSize(6.5).text("Paid", 465, 366);
+          doc.text(money(paid), 465, 366, { width: 115, align: "right" });
+          doc.font("Helvetica-Bold").fontSize(7).fillColor(balance > 0.004 ? "#b91c1c" : "#000000").text("Balance due", 465, 379);
+          doc.text(money(balance), 465, 379, { width: 115, align: "right" });
+          doc.fillColor("#000000");
+        } else {
+          doc
+            .fillColor(MUTED)
+            .font("Helvetica-Oblique")
+            .fontSize(7)
+            .text("Continued on next page…", 465, 345, { width: 115, align: "center" });
+        }
 
         // Bottom Metadata
         doc
           .fillColor("#475569")
           .font("Helvetica")
           .fontSize(5.5)
-          .text(
-            `ORIGINAL / DUPLICATE / TRIPLICATE  |  Page ${pageNum} of ${total}`,
-            15,
-            402
-          );
+          .text(`Page ${pageNum} of ${total}`, 15, 402);
 
         const timestamp = new Date().toLocaleString("en-IN", {
           day: "2-digit",
@@ -520,9 +507,9 @@ const generateBillPDF = async (bill, pharmacy) => {
           hour: "2-digit",
           minute: "2-digit",
           hour12: true,
+          timeZone: IST,
         });
-        const pharmName = (pharmacy?.name || "JK Pharmacy").toUpperCase();
-        doc.text(`Generated by ${pharmName} at ${timestamp}`, 15, 402, {
+        doc.text(`Generated by DavaDesk on ${timestamp}`, 15, 402, {
           width: 565,
           align: "right",
         });
@@ -533,58 +520,71 @@ const generateBillPDF = async (bill, pharmacy) => {
           doc.addPage();
         }
 
-        drawPageSkeleton(pageIdx + 1, totalPages);
+        drawPageSkeleton(pageIdx + 1, totalPages, pageIdx === totalPages - 1);
 
         const pageItems = enrichedItems.slice(
           pageIdx * itemsPerPage,
           (pageIdx + 1) * itemsPerPage
         );
 
-        doc.fillColor("#000000");
         pageItems.forEach((item, itemIdx) => {
           const indexInBill = pageIdx * itemsPerPage + itemIdx;
-          const rowY = 98 + itemIdx * 15 + 4;
+          const rowY = TABLE_TOP + itemIdx * ROW_H;
+          const { qty, mrp, discPct, discount, amount } = item.line;
+          const perPack = item.units_per_pack;
+          const packType = String(item.pack_type || "pack").replace(/^./, (c) => c.toUpperCase());
+          const gstPercent = (Number(item.cgst) || 0) + (Number(item.sgst) || 0);
 
-          const unitPrice = item.unit_price || item.mrp_per_unit || 0;
-          const qty = item.quantity || item.sold_units || 1;
-          const disc = item.discount_percent || 0;
-          const rate = unitPrice * (1 - disc / 100);
-          const total =
-            item.item_total !== undefined
-              ? item.item_total
-              : qty * unitPrice * (1 - disc / 100);
+          if (itemIdx > 0) {
+            doc.strokeColor("#e2e8f0").moveTo(10, rowY).lineTo(585, rowY).stroke();
+          }
 
-          const gstPercent = (item.cgst || 0) + (item.sgst || 0);
-
-          const vals = [
-            indexInBill + 1,
-            (item.product_name || "-").substring(0, 38),
-            (item.manufacturer || "-").substring(0, 15),
+          // Main line, then a muted detail line under it
+          const main = [
+            String(indexInBill + 1),
+            item.product_name || "-",
             item.hsn_no || "-",
             item.batch_no || "-",
             formatExpiry(item.expiry_date),
-            qty,
-            unitPrice.toFixed(1),
-            disc.toFixed(1),
-            gstPercent.toFixed(1),
-            total.toFixed(2),
+            String(qty),
+            money(mrp),
+            discPct > 0 ? `${Number(discPct.toFixed(2))}%` : "-",
+            gstPercent ? String(Number(gstPercent.toFixed(2))) : "-",
+            money(amount),
+          ];
+          const detail = [
+            "",
+            [item.manufacturer, perPack > 1 ? `${packType} of ${perPack}` : ""].filter(Boolean).join("  ·  "),
+            "",
+            "",
+            "",
+            packLabel(qty, perPack, packType),
+            perPack > 1 ? `${money(mrp * perPack)}/${String(packType).toLowerCase()}` : "",
+            discount > 0.004 ? `- ${money(discount)}` : "",
+            "",
+            "",
           ];
 
           let currentX = 10;
-          vals.forEach((val, idx) => {
-            const isRightAlign = idx >= 6;
-            const isHighlighted = idx === 7;
+          main.forEach((val, idx) => {
+            const w = columnWidths[idx] - 6;
+            const align = idx >= RIGHT_FROM ? "right" : "left";
             doc
-              .font(isHighlighted ? "Helvetica-Bold" : "Helvetica")
-              .fontSize(6)
-              .text(String(val), currentX + 3, rowY, {
-                width: columnWidths[idx] - (idx === 10 ? 10 : 6),
-                align: isRightAlign ? "right" : "left",
-                lineBreak: false,
-              });
+              .fillColor("#000000")
+              .font(idx === 1 || idx === 9 ? "Helvetica-Bold" : "Helvetica")
+              .fontSize(6.5)
+              .text(val, currentX + 3, rowY + 3, { width: w, height: 8, align, lineBreak: false, ellipsis: true });
+            if (detail[idx]) {
+              doc
+                .fillColor(MUTED)
+                .font("Helvetica")
+                .fontSize(5.2)
+                .text(detail[idx], currentX + 3, rowY + 10.5, { width: w, height: 7, align, lineBreak: false, ellipsis: true });
+            }
             currentX += columnWidths[idx];
           });
         });
+        doc.strokeColor("#000000");
       }
 
       doc.end();

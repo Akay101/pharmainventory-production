@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, Fragment } from "react";
 import { useSearchParams, useLocation } from "react-router-dom";
 import { v4 as uuidv4 } from "uuid";
 import { createPortal } from "react-dom";
@@ -56,6 +56,7 @@ import {
   Search,
   Plus,
   Trash2,
+  Globe,
   Loader2,
   Upload,
   FileSpreadsheet,
@@ -1658,6 +1659,10 @@ export default function PurchasesPage() {
     open: false,
     purchase: null,
   });
+  // Per-batch stock effect of deleting the purchase in the dialog
+  const [deleteImpact, setDeleteImpact] = useState({ loading: false, data: null });
+  const [deletingPurchase, setDeletingPurchase] = useState(false);
+  const [listLoading, setListLoading] = useState(false);
 
   // Keyboard shortcuts dialog
   const [showShortcuts, setShowShortcuts] = useState(false);
@@ -2116,6 +2121,7 @@ export default function PurchasesPage() {
 
   const fetchPurchases = useCallback(
     async (page = 1, highlightId = undefined) => {
+      setListLoading(true);
       try {
         const params = new URLSearchParams();
         if (!highlightId) {
@@ -2157,6 +2163,8 @@ export default function PurchasesPage() {
         }
       } catch (error) {
         toast.error("Failed to load purchases");
+      } finally {
+        setListLoading(false);
       }
     },
     [
@@ -3457,7 +3465,9 @@ export default function PurchasesPage() {
       handleCancelNewPurchase(true);
       await fetchPurchases(pagination.page);
     } catch (error) {
-      toast.error(error.response?.data?.detail || "Failed to save purchase");
+      toast.error(error.response?.data?.detail || "Failed to save purchase", {
+        duration: error.response?.data?.code === "STOCK_CONSUMED" ? 9000 : undefined,
+      });
     } finally {
       setSubmitting(false);
     }
@@ -3575,7 +3585,9 @@ export default function PurchasesPage() {
       setEditingPurchase(null);
       await fetchPurchases(pagination.page);
     } catch (error) {
-      toast.error(error.response?.data?.detail || "Failed to update purchase");
+      toast.error(error.response?.data?.detail || "Failed to update purchase", {
+        duration: error.response?.data?.code === "STOCK_CONSUMED" ? 9000 : undefined,
+      });
     } finally {
       setSubmitting(false);
     }
@@ -3583,23 +3595,47 @@ export default function PurchasesPage() {
 
   // ============ DELETE PURCHASE ============
 
+  useEffect(() => {
+    const id = deleteDialog.open ? deleteDialog.purchase?.id : null;
+    if (!id) {
+      setDeleteImpact({ loading: false, data: null });
+      return;
+    }
+    let cancelled = false;
+    setDeleteImpact({ loading: true, data: null });
+    axios
+      .get(`${API}/purchases/${id}/stock-impact`)
+      .then((res) => !cancelled && setDeleteImpact({ loading: false, data: res.data }))
+      .catch(() => !cancelled && setDeleteImpact({ loading: false, data: null }));
+    return () => {
+      cancelled = true;
+    };
+  }, [deleteDialog.open, deleteDialog.purchase?.id]);
+
+  // mode: true = remove all its stock, "unsold" = remove what's left on the shelf, false = keep stock
   const handleDeletePurchase = async (deleteInventory = false) => {
     if (!deleteDialog.purchase) return;
 
+    setDeletingPurchase(true);
     try {
       const response = await axios.delete(
         `${API}/purchases/${deleteDialog.purchase.id}?delete_inventory=${deleteInventory}`
       );
       toast.success(response.data.message);
-      if (deleteInventory && response.data.deleted_inventory_items > 0) {
+      if (deleteInventory && response.data.removed_units > 0) {
         toast.info(
-          `${response.data.deleted_inventory_items} inventory items also deleted`
+          `${response.data.removed_units} units removed from ${response.data.deleted_inventory_items} batch(es)`
         );
       }
       setDeleteDialog({ open: false, purchase: null });
       await fetchPurchases(pagination.page);
     } catch (error) {
+      if (error.response?.data?.impact) {
+        setDeleteImpact({ loading: false, data: error.response.data.impact });
+      }
       toast.error(error.response?.data?.detail || "Failed to delete purchase");
+    } finally {
+      setDeletingPurchase(false);
     }
   };
 
@@ -5188,6 +5224,12 @@ export default function PurchasesPage() {
                               {medicineSuggestions.map((medicine, idx) => {
                                 const isSelected = highlightedSuggestionIndex === idx;
                                 const isInv = medicine.source === "inventory";
+                                // Your own items (inventory + catalog) come first, then the global database
+                                const isLocalSuggestion = (m) =>
+                                  m.source === "inventory" || m.source === "catalog" || m.is_custom_catalog;
+                                const isLocal = isLocalSuggestion(medicine);
+                                const startsGroup =
+                                  idx === 0 || isLocalSuggestion(medicineSuggestions[idx - 1]) !== isLocal;
                                 const packDetailsText =
                                   medicine.package_details ||
                                   medicine.packaging_label ||
@@ -5230,13 +5272,36 @@ export default function PurchasesPage() {
                                   medicine.hsn_code || medicine.hsn_no || "";
 
                                 return (
+                                  <Fragment key={idx}>
+                                  {startsGroup && (
+                                    <div
+                                      className={`px-3.5 py-1 text-[10px] font-bold uppercase tracking-wider border-b border-border flex items-center gap-1.5 ${
+                                        isLocal
+                                          ? "bg-emerald-500/10 text-emerald-500"
+                                          : "bg-muted/70 text-muted-foreground"
+                                      }`}
+                                    >
+                                      {isLocal ? (
+                                        <>
+                                          <Package className="w-3 h-3" /> Your inventory & catalog
+                                        </>
+                                      ) : (
+                                        <>
+                                          <Globe className="w-3 h-3" /> Global medicine database
+                                        </>
+                                      )}
+                                    </div>
+                                  )}
                                   <div
-                                    key={idx}
                                     id={`purchases-suggestion-${idx}`}
-                                    className={`p-3 cursor-pointer border-b border-border/50 transition-colors last:border-0 ${
+                                    className={`p-3 cursor-pointer border-b border-border/50 transition-colors last:border-0 border-l-[3px] ${
+                                      isLocal ? "border-l-emerald-500/70" : "border-l-transparent"
+                                    } ${
                                       isSelected
                                         ? "bg-orange-500/15"
-                                        : "hover:bg-muted/50"
+                                        : isLocal
+                                          ? "bg-emerald-500/[0.03] hover:bg-muted/50"
+                                          : "hover:bg-muted/50"
                                     }`}
                                     onMouseDown={(e) => {
                                       e.preventDefault();
@@ -5393,6 +5458,7 @@ export default function PurchasesPage() {
                                       )}
                                     </div>
                                   </div>
+                                  </Fragment>
                                 );
                               })}
 
@@ -6731,11 +6797,12 @@ export default function PurchasesPage() {
                   <TableHead className="text-center">Actions</TableHead>
                 </TableRow>
               </TableHeader>
-              <TableBody>
+              <TableBody
+                className={`transition-opacity duration-200 ${listLoading ? "opacity-50 pointer-events-none" : ""}`}
+              >
                 {purchases.map((purchase, index) => (
-                  <>
+                  <Fragment key={purchase.id}>
                     <TableRow
-                      key={purchase.id}
                       id={`record-${purchase.id}`}
                       className="cursor-pointer"
                       onClick={() =>
@@ -7167,7 +7234,7 @@ export default function PurchasesPage() {
                         </TableCell>
                       </TableRow>
                     )}
-                  </>
+                  </Fragment>
                 ))}
                 {purchases.length === 0 && (
                   <TableRow>
@@ -7175,7 +7242,13 @@ export default function PurchasesPage() {
                       colSpan={7}
                       className="text-center py-8 text-muted-foreground"
                     >
-                      No purchases found
+                      {listLoading ? (
+                        <span className="inline-flex items-center gap-2">
+                          <Loader2 className="w-4 h-4 animate-spin" /> Loading purchases…
+                        </span>
+                      ) : (
+                        "No purchases found"
+                      )}
                     </TableCell>
                   </TableRow>
                 )}
@@ -7346,26 +7419,88 @@ export default function PurchasesPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete Purchase</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete this purchase from{" "}
-              {deleteDialog.purchase?.supplier_name}?
+              Delete the purchase
+              {deleteDialog.purchase?.invoice_no ? ` #${deleteDialog.purchase.invoice_no}` : ""} from{" "}
+              <span className="font-medium text-foreground">{deleteDialog.purchase?.supplier_name}</span>?
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <div className="flex flex-col-reverse md:flex-row gap-2 justify-end mt-6">
-            <AlertDialogCancel className="w-full md:w-auto mt-0">
+
+          {deleteImpact.loading ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground py-4">
+              <Loader2 className="w-4 h-4 animate-spin" /> Checking stock from this purchase…
+            </div>
+          ) : deleteImpact.data?.batches?.length > 0 ? (
+            <div className="space-y-2">
+              {deleteImpact.data.consumed && (
+                <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-600">
+                  Some of this stock is already sold, so it can't all be taken back. You can remove only the
+                  unsold units, or keep the stock and delete just the purchase record.
+                </div>
+              )}
+              <div className="rounded-lg border border-border overflow-hidden">
+                <div className="max-h-56 overflow-y-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-muted/50 text-xs text-muted-foreground sticky top-0">
+                      <tr>
+                        <th className="text-left font-medium px-3 py-2">Item / Batch</th>
+                        <th className="text-right font-medium px-3 py-2">Purchased</th>
+                        <th className="text-right font-medium px-3 py-2">Sold</th>
+                        <th className="text-right font-medium px-3 py-2">In stock</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {deleteImpact.data.batches.map((b) => (
+                        <tr key={b.inventory_id} className="border-t border-border/60">
+                          <td className="px-3 py-2">
+                            <div className="font-medium truncate max-w-[220px]">{b.product_name}</div>
+                            <div className="text-xs text-muted-foreground">Batch {b.batch_no || "—"}</div>
+                          </td>
+                          <td className="px-3 py-2 text-right tabular-nums">{b.purchased}</td>
+                          <td className={`px-3 py-2 text-right tabular-nums ${b.consumed > 0 ? "text-amber-600 font-medium" : "text-muted-foreground"}`}>
+                            {b.consumed}
+                          </td>
+                          <td className="px-3 py-2 text-right tabular-nums">{b.on_hand}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              <p className="text-xs text-muted-foreground">Quantities are in units.</p>
+            </div>
+          ) : null}
+
+          <div className="flex flex-col-reverse md:flex-row gap-2 justify-end mt-4">
+            <AlertDialogCancel className="w-full md:w-auto mt-0" disabled={deletingPurchase}>
               Cancel
             </AlertDialogCancel>
-            <AlertDialogAction
-              className="w-full md:w-auto bg-destructive hover:bg-destructive/90 transition-colors"
+            <Button
+              variant="outline"
+              className="w-full md:w-auto text-destructive border-destructive/40 hover:bg-destructive/10"
+              disabled={deletingPurchase}
               onClick={() => handleDeletePurchase(false)}
             >
-              Force Delete (No Inventory Adjust)
-            </AlertDialogAction>
-            <AlertDialogAction
-              className="w-full md:w-auto btn-primary"
-              onClick={() => handleDeletePurchase(true)}
-            >
-              Delete & Decrease Stock
-            </AlertDialogAction>
+              Keep stock, delete record
+            </Button>
+            {deleteImpact.data?.consumed ? (
+              <Button
+                className="w-full md:w-auto btn-primary"
+                disabled={deletingPurchase}
+                onClick={() => handleDeletePurchase("unsold")}
+              >
+                {deletingPurchase && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                Delete & remove unsold stock
+              </Button>
+            ) : (
+              <Button
+                className="w-full md:w-auto btn-primary"
+                disabled={deletingPurchase || deleteImpact.loading}
+                onClick={() => handleDeletePurchase(true)}
+              >
+                {deletingPurchase && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                Delete & decrease stock
+              </Button>
+            )}
           </div>
         </AlertDialogContent>
       </AlertDialog>

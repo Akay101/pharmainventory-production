@@ -90,6 +90,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import { toast } from "sonner";
+import CustomerFilter from "../components/CustomerFilter";
 import PlanBadge from "../components/PlanBadge";
 import Loader from "../components/Loader";
 import BillingScannerModal from "../components/BillingScannerModal";
@@ -159,7 +160,6 @@ export default function BillingPage() {
   // Data state
   const [bills, setBills] = useState([]);
   const [totalBills, setTotalBills] = useState(0);
-  const [customers, setCustomers] = useState([]);
   const [loading, setLoading] = useState(true);
   const { user, settings } = useAuth();
   const [tabs, setTabs] = useState([]);
@@ -1534,9 +1534,6 @@ export default function BillingPage() {
         setTotalPages(billsRes.data.pagination.total_pages);
       }
 
-      const custRes = await axios.get(`${API}/customers`);
-      setCustomers(custRes.data.customers);
-
       if (hlId) {
         setTimeout(() => {
           setExpandedBills((prev) => ({ ...prev, [hlId]: true }));
@@ -1559,14 +1556,7 @@ export default function BillingPage() {
     }
   };
 
-  const searchLower = (customerSearch || "").trim().toLowerCase();
 
-  const filteredCustomers = customers.filter(
-    (customer) =>
-      (customer.name ?? "").toLowerCase().includes(searchLower) ||
-      (customer.mobile ?? "").toLowerCase().includes(searchLower) ||
-      (customer.email ?? "").toLowerCase().includes(searchLower)
-  );
 
   // ============ NEW BILL - INLINE TABLE ============
 
@@ -1844,7 +1834,7 @@ export default function BillingPage() {
           const cgstVal = Math.max(0, parseFloat(updated.cgst) || 0);
           const sgstVal = Math.max(0, parseFloat(updated.sgst) || 0);
 
-          if (field === "unit_price" || updated.exclusive_price === undefined || updated.exclusive_price === null || isNaN(updated.exclusive_price) || updated.exclusive_price === 0) {
+          if (field === "unit_price" || field === "cgst" || field === "sgst" || updated.exclusive_price === undefined || updated.exclusive_price === null || isNaN(updated.exclusive_price) || updated.exclusive_price === 0) {
             updated.exclusive_price = unitPrice / (1 + (cgstVal + sgstVal) / 100);
           }
 
@@ -2070,6 +2060,7 @@ export default function BillingPage() {
             discount_percent: parseFloat(item.discount_percent) || 0,
             cgst: parseFloat(item.cgst) || 0,
             sgst: parseFloat(item.sgst) || 0,
+            units_per_pack: parseInt(units_per_pack) || null,
             item_total: parseFloat(net_total) || 0,
           })
         ),
@@ -2174,9 +2165,17 @@ export default function BillingPage() {
           net_total: netTotal,
           purchase_price: item.purchase_price || 0,
           discount_percent: discPercent,
-          available: item.available_quantity || 0,
+          // What this line could use: the batch's shelf stock plus the units it already holds
+          available: (() => {
+            const batch = availableBatches.find((b) => b.id === item.inventory_id);
+            if (!batch) return item.available_quantity || 0;
+            const held = item.stock_deducted !== undefined ? Number(item.stock_deducted) || 0 : qty;
+            return (parseInt(batch.available_quantity ?? batch.available_units) || 0) + held;
+          })(),
           is_manual: !item.inventory_id,
           salt_composition: item.salt_composition || "",
+          units_per_pack: item.units_per_pack || 1,
+          hsn_no: item.hsn_no || "",
           original_quantity: item.quantity, // Track original for inventory adjustment
           cgst: item.cgst !== undefined ? item.cgst : "",
           sgst: item.sgst !== undefined ? item.sgst : "",
@@ -2235,7 +2234,7 @@ export default function BillingPage() {
           const cgstVal = Math.max(0, parseFloat(updated.cgst) || 0);
           const sgstVal = Math.max(0, parseFloat(updated.sgst) || 0);
 
-          if (field === "unit_price" || updated.exclusive_price === undefined || updated.exclusive_price === null || isNaN(updated.exclusive_price) || updated.exclusive_price === 0) {
+          if (field === "unit_price" || field === "cgst" || field === "sgst" || updated.exclusive_price === undefined || updated.exclusive_price === null || isNaN(updated.exclusive_price) || updated.exclusive_price === 0) {
             updated.exclusive_price = unitPrice / (1 + (cgstVal + sgstVal) / 100);
           }
 
@@ -2457,6 +2456,7 @@ export default function BillingPage() {
             inventory_id: item.inventory_id || null,
             product_name: item.product_name,
             batch_no: item.batch_no,
+            hsn_no: item.hsn_no || null,
             expiry_date: item.expiry_date ? expiryToIso(item.expiry_date) || item.expiry_date : null,
             quantity: parseInt(item.quantity) || 1,
             unit_price: parseFloat(item.unit_price) || 0,
@@ -2464,6 +2464,7 @@ export default function BillingPage() {
             discount_percent: parseFloat(item.discount_percent) || 0,
             cgst: parseFloat(item.cgst) || 0,
             sgst: parseFloat(item.sgst) || 0,
+            units_per_pack: parseInt(units_per_pack) || null,
             item_total: parseFloat(net_total) || 0,
           })
         ),
@@ -5814,22 +5815,10 @@ export default function BillingPage() {
                 <Camera className="w-4 h-4 mr-1.5 text-amber-500" />
                 <span>Scan for Bill</span>
               </Button>
-              <Select
+              <CustomerFilter
                 value={filterCustomer}
-                onValueChange={handleCustomerFilterChange}
-              >
-                <SelectTrigger className="w-44 h-9 text-xs font-semibold border-border/70 rounded-xl bg-card/60 backdrop-blur-md">
-                  <SelectValue placeholder="All Customers" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Customers</SelectItem>
-                  {customers?.map((c) => (
-                    <SelectItem key={c.id} value={c.id}>
-                      {c.name || c.mobile || "Unknown"}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                onChange={handleCustomerFilterChange}
+              />
 
               <Select
                 value={filterBillType}

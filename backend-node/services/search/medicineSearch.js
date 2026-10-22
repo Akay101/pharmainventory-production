@@ -234,8 +234,9 @@ const tenantTokenMatch = (q, fields, { wholeQueryFields = [] } = {}) => {
   if (tokens.length) {
     clauses.push({
       $and: tokens.map((t) => {
-        // Numbers may be glued to letters ("Dolo650"), words may not.
-        const boundary = /^\d/.test(t) ? "(^|[^0-9])" : "(^|[^a-z0-9])";
+        // Tokens split at letter/digit changes, so either kind may be glued
+        // to the other in the stored name ("Dolo650", "650mg").
+        const boundary = /^\d/.test(t) ? "(^|[^0-9])" : "(^|[^a-z])";
         const re = { $regex: boundary + escapeRegex(t), $options: "i" };
         return { $or: fields.map((f) => ({ [f]: re })) };
       }),
