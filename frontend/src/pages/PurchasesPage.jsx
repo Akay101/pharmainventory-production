@@ -1060,8 +1060,7 @@ export default function PurchasesPage() {
     });
 
     try {
-      const token = localStorage.getItem("token");
-      const headers = { Authorization: `Bearer ${token}` };
+      const headers = {};
       const [batchesRes, historyRes, priceHistRes] = await Promise.all([
         axios
           .get(
@@ -1560,7 +1559,8 @@ export default function PurchasesPage() {
       return;
     }
     const cleanName = (productName || "").trim();
-    const cacheKey = (productId || cleanName).toLowerCase();
+    // Global catalogue ids are numbers, so normalise before using as a key
+    const cacheKey = String(productId || cleanName).toLowerCase();
     if (batchCacheRef.current.has(cacheKey)) {
       setBatchSuggestions(batchCacheRef.current.get(cacheKey) || []);
       return;
@@ -1568,8 +1568,7 @@ export default function PurchasesPage() {
 
     setLoadingBatches(true);
     try {
-      const token = localStorage.getItem("token");
-      const headers = { Authorization: `Bearer ${token}` };
+      const headers = {};
       const params = new URLSearchParams();
       if (productId) params.append("product_id", productId);
       if (cleanName) params.append("product_name", cleanName);
