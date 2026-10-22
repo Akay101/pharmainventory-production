@@ -16,6 +16,7 @@ const { route } = require("./router");
 const { AGENTS, systemPrompt, COMMIT, OPS } = require("./agents");
 const limits = require("./limits");
 const { say, todayIst } = require("./tools/shared");
+const attachments = require("./attachments");
 
 const MAX_STEPS = 6;
 const LANG_NAMES = { en: "English", hinglish: "Hinglish (Hindi in Latin script)", hi: "Hindi in Devanagari script" };
@@ -117,7 +118,16 @@ function toHistory(messages) {
 
 async function handle({ req, res, db }) {
   const user = req.user;
-  const body = req.body || {};
+  const body = { ...(req.body || {}) };
+  // Multipart turns send fields as strings
+  if (typeof body.action === "string") {
+    try {
+      body.action = JSON.parse(body.action);
+    } catch {
+      body.action = null;
+    }
+  }
+  body.voice = body.voice === true || body.voice === "true";
   const stream = sse(res);
   const ctrl = new AbortController();
   res.on("close", () => !res.writableFinished && ctrl.abort());
@@ -149,6 +159,9 @@ async function handle({ req, res, db }) {
         stream.send("block", { block: b });
       },
       getDraft: (id) => ctx.drafts[id] || null,
+      images: null,
+      // Photos of this turn, else the ones sent earlier in this chat (1 h)
+      getImages: async () => ctx.images || (ctx.images = await attachments.recall(conversation.id)),
       saveDraft: async (d) => {
         ctx.drafts[d.id] = d;
         await store.setDraft(db, conversation.id, d);
@@ -160,14 +173,22 @@ async function handle({ req, res, db }) {
       return;
     }
 
-    const message = String(body.message || "").trim().slice(0, 4000);
+    let message = String(body.message || "").trim().slice(0, 4000);
+    let thumbs = [];
+    if (req.files?.length) {
+      const prepared = await attachments.prepare(req.files);
+      ctx.images = prepared.images;
+      thumbs = prepared.thumbs;
+      await attachments.remember(conversation.id, prepared.images);
+      if (!message) message = say(language, { en: "Here's a photo", hinglish: "Ye photo dekho", hi: "यह फ़ोटो देखिए" });
+    }
     if (!message) throw Object.assign(new Error("Type a message"), { status: 400 });
-    await store.addMessage(db, conversation.id, { role: "user", text: message, ...(body.voice ? { voice: true } : {}) });
+    await store.addMessage(db, conversation.id, { role: "user", text: message, ...(thumbs.length ? { images: thumbs } : {}), ...(body.voice ? { voice: true } : {}) });
     const history = await store.getMessages(db, conversation.id, { limit: HISTORY_TURNS * 2 + 1 });
 
     // 1. Route
     const r = await route({
-      message,
+      message: ctx.images?.length ? `${message}\n[The user attached ${ctx.images.length} photo(s) with this message]` : message,
       recent: history.slice(-7, -1),
       lastAgent: state.last_agent,
       drafts: Object.values(ctx.drafts),
@@ -175,7 +196,10 @@ async function handle({ req, res, db }) {
       signal: ctrl.signal,
     });
     const agent = AGENTS[r.agent];
-    ctx.language = r.language || language;
+    // Mostly-Devanagari input is Hindi, whatever the router guessed
+    const letters = message.replace(/[^\p{L}]/gu, "");
+    const deva = (message.match(/[\u0900-\u097F]/g) || []).length;
+    ctx.language = letters.length && deva / letters.length > 0.5 ? "hi" : r.language || language;
     stream.send("route", { agent: agent.id, label: agent.label[ctx.language] || agent.label.en, loader: r.loader });
     if (r.title && !conversation.message_count) {
       await store.renameConversation(db, user, conversation.id, { title: r.title });
@@ -195,7 +219,14 @@ async function handle({ req, res, db }) {
     const contents = toHistory(history);
     // Pin the reply language to the latest message (users switch mid-chat)
     const lastUser = contents[contents.length - 1];
-    if (lastUser?.role === "user") lastUser.parts.push({ text: `<reply-language>${LANG_NAMES[ctx.language] || "English"}</reply-language>` });
+    if (lastUser?.role === "user") {
+      // The agent sees this turn's photos itself; its photo tools do the exact reading
+      if (ctx.images?.length) {
+        lastUser.parts.push(...ctx.images.map((img) => ({ inline_data: { mime_type: img.mimeType, data: img.data.toString("base64") } })));
+        lastUser.parts.push({ text: `<attachments>${ctx.images.length} photo(s) attached to this message</attachments>` });
+      }
+      lastUser.parts.push({ text: `<reply-language>${LANG_NAMES[ctx.language] || "English"}</reply-language>` });
+    }
     const toolMap = Object.fromEntries(agent.tools.map((t) => [t.name, t]));
     let text = "";
     const toolLog = [];
@@ -242,7 +273,7 @@ async function handle({ req, res, db }) {
     }
 
     const parsed = filter.finish();
-    text = parsed.text.replace(/<\/?ui>|<\/?reply-language>/g, "").trim();
+    text = parsed.text.replace(/<\/?(ui|reply-language|attachments)>/g, "").trim();
     if (parsed.choices) ctx.emit(parsed.choices);
     const saved = await store.addMessage(db, conversation.id, { role: "assistant", agent: agent.id, language: ctx.language, text, blocks: shown, tools: toolLog });
     stream.send("done", { message: { ...saved, expires_at: undefined, _id: undefined } });

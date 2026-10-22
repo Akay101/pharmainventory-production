@@ -40,6 +40,13 @@ async function consume(user) {
   if (counts.pharmacy > parseInt(process.env.ASSISTANT_PHARMACY_PER_DAY || "2000", 10)) throw new LimitError("Your pharmacy has reached today's assistant limit. It resets at midnight.");
 }
 
+// Spoken replies: ASSISTANT_TTS_PER_MIN per user (default 30)
+async function consumeTts(user) {
+  const k = `asst:tts:${user.id}:${Math.floor(Date.now() / 60000)}`;
+  const n = await safe(async () => (await redis.multi().incr(k).expire(k, 70).exec())[0][1], 0);
+  if (n > parseInt(process.env.ASSISTANT_TTS_PER_MIN || "30", 10)) throw new LimitError("Voice replies are paused for a moment. Please try again shortly.");
+}
+
 // Serialises turns within one chat; waits briefly, then gives up
 async function lock(conversationId, { waitMs = 8000, ttlS = 120 } = {}) {
   const key = `asst:lock:${conversationId}`;
@@ -58,4 +65,4 @@ async function lock(conversationId, { waitMs = 8000, ttlS = 120 } = {}) {
   throw new LimitError("Still working on your previous message in this chat. Please wait.");
 }
 
-module.exports = { consume, lock, LimitError };
+module.exports = { consume, consumeTts, lock, LimitError };

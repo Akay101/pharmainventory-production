@@ -6,7 +6,10 @@ const inventory = require("./tools/inventory");
 const people = require("./tools/people");
 const app = require("./tools/app");
 
+const { makePhotoTools } = require("./tools/photos");
+
 const tool = (list, name) => list.find((t) => t.name === name);
+const photo = makePhotoTools({ purchaseTools: purchase.tools, billingTools: billing.tools });
 
 const AGENTS = {
   purchase: {
@@ -21,8 +24,9 @@ const AGENTS = {
 - Batch and expiry are needed to track stock properly; ask for them if missing (both in one short question).
 - If the user names a medicine that isn't linked to the catalog, offer its catalog_options as ::choices[dropdown]:: plus an option to add it as new.
 - When the draft is complete, ask "Kuch aur add karna hai (GST, discount, free) ya save kar du?" style question with buttons: Save / Add more details / another item.
-- Payment status defaults to Unpaid.`,
-    tools: [...purchase.tools]
+- Payment status defaults to Unpaid.
+- PHOTOS: if the user attached a supplier invoice/bill photo, call read_invoice_photo (it reads every line and builds the draft). If it's a single medicine pack, call read_product_photo_for_purchase. Then review what's missing as usual.`,
+    tools: [...purchase.tools, photo.readInvoice, photo.readPackForPurchase],
   },
   billing: {
     id: "billing",
@@ -34,8 +38,9 @@ const AGENTS = {
 - The batch is picked automatically (earliest expiry with stock) unless the user names one; other batches are listed in the result if they want to switch (offer them as a dropdown).
 - Items not in stock can still be billed as negative stock but warn the user, and offer to check alternatives via find_alternatives.
 - Payment: Cash/UPI/Card, or Credit (unpaid, goes to customer's dues). Ask for the customer name/mobile only if they want it on the bill; Walk-in is fine.
-- After a draft: offer buttons Save bill / Add item / Change payment.`,
-    tools: [...billing.tools, tool(inventory.tools, "find_alternatives"), tool(inventory.tools, "search_stock")]
+- After a draft: offer buttons Save bill / Add item / Change payment.
+- PHOTOS: if the user attached a medicine pack photo, call read_product_photo (adds it to the bill, matched by batch then name). To add to an open bill pass its draft_id.`,
+    tools: [...billing.tools, photo.readPackForBill, tool(inventory.tools, "find_alternatives"), tool(inventory.tools, "search_stock")],
   },
   inventory: {
     id: "inventory",
@@ -45,8 +50,9 @@ const AGENTS = {
 - Stock lives in batches (medicine + batch no + expiry). Quantities are in units (tablets); packs = units ÷ units per pack.
 - Low stock uses the user's threshold setting; expiring uses the expiry-warning days setting.
 - Alternatives = other medicines in stock with the same salt and strength (find_alternatives). Mention if only a different strength exists.
-- Stock can be increased for a batch (corrections); reducing stock happens through bills/returns, not here.`,
-    tools: [...inventory.tools, tool(purchase.tools, "price_history")]
+- Stock can be increased for a batch (corrections); reducing stock happens through bills/returns, not here.
+- PHOTOS: "ye product dhoondo / find this" with a photo → identify_product_photo.`,
+    tools: [...inventory.tools, photo.identify, tool(purchase.tools, "price_history")],
   },
   customer: {
     id: "customer",
@@ -88,8 +94,9 @@ const AGENTS = {
 - For a specific brand, call medicine_facts first so composition/maker are accurate.
 - Use check_in_stock when the user would benefit from knowing what they have (e.g. substitutes).
 - Never diagnose; for serious symptoms advise seeing a doctor. Doses for children/pregnancy: advise prescriber guidance. Keep a one-line safety note when relevant, not a long disclaimer.
-- Use markdown headings/bullets/tables for clarity.`,
-    tools: [...app.mediTools]
+- Use markdown headings/bullets/tables for clarity.
+- PHOTOS: "ye kaunsi dawai hai / what is this" with a photo → identify_product_photo, then explain.`,
+    tools: [...app.mediTools, photo.identify],
   },
 };
 

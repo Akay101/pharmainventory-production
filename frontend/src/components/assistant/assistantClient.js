@@ -3,15 +3,25 @@ import { API, getAccessToken, refreshAccessToken } from "../../App";
 
 // Streams one assistant turn. `body` is {conversation_id?, message} or
 // {conversation_id, action, label}. Calls onEvent(name, data) per SSE event.
-export async function streamTurn(body, { onEvent, signal }) {
-  const send = () =>
-    fetch(`${API}/assistant/chat`, {
+// Photos (File[]) go as multipart; everything else as JSON.
+export async function streamTurn(body, { onEvent, signal, files = [] }) {
+  const payload = () => {
+    if (!files.length) return { headers: { "content-type": "application/json" }, body: JSON.stringify(body) };
+    const fd = new FormData();
+    Object.entries(body).forEach(([k, v]) => v !== undefined && v !== null && fd.append(k, typeof v === "object" ? JSON.stringify(v) : String(v)));
+    files.forEach((f) => fd.append("files", f));
+    return { headers: {}, body: fd };
+  };
+  const send = () => {
+    const p = payload();
+    return fetch(`${API}/assistant/chat`, {
       method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${getAccessToken()}` },
-      body: JSON.stringify(body),
+      headers: { ...p.headers, authorization: `Bearer ${getAccessToken()}` },
+      body: p.body,
       credentials: "include",
       signal,
     });
+  };
   let res = await send();
   if (res.status === 401) {
     await refreshAccessToken();

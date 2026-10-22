@@ -210,6 +210,7 @@ const tools = [
               batch_no: { type: "string" },
               inventory_id: { type: "string", description: "Exact batch when the user picked one" },
               discount_percent: { type: "number" },
+              mrp_per_unit: { type: "number", description: "Only for items not in stock (e.g. read from a photo)" },
             },
             required: ["product"],
           },
@@ -268,14 +269,14 @@ const tools = [
           batches: (item.available_batches || []).slice(0, 8).map((b) => ({ id: b.id, batch_no: b.batch_no, expiry_date: b.expiry_date, available: b.available_quantity })),
           units_per_pack: upp,
           quantity: qty,
-          mrp: Number(item.mrp) || 0,
+          mrp: Number(item.mrp) || Number(it.mrp_per_unit) || 0,
           purchase_price: Number(item.purchase_price) || 0,
           cgst: item.cgst || 0,
           sgst: item.sgst || 0,
           discount_percent: disc,
           match_type: m.match_type,
           alternatives: m.alternatives,
-          total: round2(qty * (Number(item.mrp) || 0) * (1 - disc / 100)),
+          total: round2(qty * (Number(item.mrp) || Number(it.mrp_per_unit) || 0) * (1 - disc / 100)),
         });
       }
 

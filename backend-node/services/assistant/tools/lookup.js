@@ -72,24 +72,41 @@ async function globalMedicine(name) {
   }
 }
 
-// Supplier by name/GSTIN: your suppliers first, then the global directory
+// Supplier by name/GSTIN: your suppliers first, then the global directory.
+// Invoices often print a longer name ("Shiv Shakti Pharma Distributors" for
+// "Shiv Shakti Pharma"), so a name that is the start of the other counts.
 async function resolveSupplier(ctx, text) {
   if (!text) return { supplier: null, options: [] };
-  let list = [];
-  try {
-    const data = await api(ctx, "GET", `/suppliers?search=${encodeURIComponent(text)}&limit=8&include_global=true`);
-    list = data.suppliers || [];
-  } catch {}
+  const fetchList = async (q) => {
+    try {
+      const data = await api(ctx, "GET", `/suppliers?search=${encodeURIComponent(q)}&limit=8&include_global=true`);
+      return data.suppliers || [];
+    } catch {
+      return [];
+    }
+  };
+  const words = String(text).trim().split(/\s+/);
+  const lists = await Promise.all([fetchList(text), words.length > 2 ? fetchList(words.slice(0, 2).join(" ")) : []]);
+  const seen = new Set();
+  const list = lists.flat().filter((s) => {
+    const k = `${s.is_local === false ? "g" : "l"}:${s.id}`;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+  const t = norm(text);
   const scored = list
     .map((s) => {
-      const exact = norm(s.name) === norm(text) || (s.gst_no && norm(s.gst_no) === norm(text));
-      const starts = norm(s.name).startsWith(norm(text));
-      return { s, score: (exact ? 3 : starts ? 2 : 1) + (s.is_local === false ? 0 : 0.5) };
+      const n = norm(s.name);
+      const exact = n === t || (s.gst_no && norm(s.gst_no) === t);
+      const prefix = n.length >= 6 && t.length >= 6 && (n.startsWith(t) || t.startsWith(n));
+      const starts = n.startsWith(t.slice(0, 6));
+      return { s, score: (exact ? 3 : prefix ? 2.6 : starts ? 2 : 1) + (s.is_local === false ? 0 : 0.5) };
     })
     .sort((a, b) => b.score - a.score);
   const options = scored.slice(0, 6).map(({ s }) => ({ id: s.id, name: s.name, city: s.city || "", gst_no: s.gst_no || s.gstin || "", is_global: s.is_local === false }));
   const top = scored[0];
-  const confident = top && (top.score >= 3 || (top.score >= 2.5 && (scored.length === 1 || scored[1].score < 2)));
+  const confident = top && top.score >= 3 && (scored.length === 1 || scored[1].score < top.score);
   return { supplier: confident ? options[0] : null, options };
 }
 

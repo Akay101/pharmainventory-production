@@ -15,6 +15,7 @@ import {
   MessageSquarePlus,
   Mic,
   MicOff,
+  Paperclip,
   MoreHorizontal,
   Pencil,
   Pin,
@@ -35,8 +36,12 @@ import {
 import { useAuth } from "../App";
 import { AGENT_META, assistantApi, streamTurn } from "../components/assistant/assistantClient";
 import { ChoicesBlock, ConfirmBlock, DraftBlock, NoticeBlock, ResultBlock, StatsBlock, TableBlock } from "../components/assistant/Blocks";
-import { speak, stopSpeaking, useVoiceInput } from "../components/assistant/useVoice";
+import { useVoiceInput } from "../components/assistant/useVoice";
+import { onSpeakingChange, primeVoice, speakReply, stopVoice } from "../components/assistant/voicePlayer";
 import { AI_LOGO_SRC, AiAmbient } from "../components/scan/ScanUI";
+import { compressForScan } from "../components/scan/scanClient";
+
+const MAX_PHOTOS = 4;
 
 const AGENT_ICON = { purchase: ShoppingCart, billing: Receipt, inventory: Boxes, customer: Users, supplier: Truck, app: LayoutGrid, medi: Stethoscope };
 
@@ -173,7 +178,15 @@ function AssistantMessage({ msg, onAction, onReply, busyKey, settled, openDrafts
             >
               {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
             </button>
-            <button type="button" title="Read aloud" onClick={() => speak(msg.text, msg.language)} className="flex h-7 w-7 items-center justify-center rounded-lg hover:bg-muted hover:text-foreground">
+            <button
+              type="button"
+              title="Read aloud"
+              onClick={() => {
+                primeVoice();
+                speakReply(msg.text, msg.language);
+              }}
+              className="flex h-7 w-7 items-center justify-center rounded-lg hover:bg-muted hover:text-foreground"
+            >
               <Volume2 className="h-3.5 w-3.5" />
             </button>
             {msg.id && !String(msg.id).startsWith("local-") && (
@@ -274,6 +287,20 @@ export default function AssistantPage() {
   const [settled, setSettled] = useState({});
   const [input, setInput] = useState("");
   const [voiceLang, setVoiceLang] = useState(() => localStorage.getItem("dd-voice-lang") || "hi-IN");
+  const [photos, setPhotos] = useState([]); // [{file, preview}]
+  const [speaking, setSpeaking] = useState(false);
+  const fileRef = useRef(null);
+  useEffect(() => onSpeakingChange(setSpeaking), []);
+  useEffect(() => () => stopVoice(), []);
+
+  const addPhotos = async (fileList) => {
+    const files = Array.from(fileList || []).filter((f) => f.type?.startsWith("image/"));
+    if (!files.length) return;
+    const room = MAX_PHOTOS - photos.length;
+    if (room <= 0) return toast.error(`Up to ${MAX_PHOTOS} photos per message`);
+    const compressed = await Promise.all(files.slice(0, room).map((f) => compressForScan(f, { maxSide: 2200, quality: 0.85 })));
+    setPhotos((p) => [...p, ...compressed.map((file) => ({ file, preview: URL.createObjectURL(file) }))]);
+  };
   const ctrlRef = useRef(null);
   const scrollRef = useRef(null);
   const inputRef = useRef(null);
@@ -351,16 +378,16 @@ export default function AssistantPage() {
     });
 
   const run = useCallback(
-    async (body, userText, { onDone } = {}) => {
+    async (body, userText, { onDone, files = [], previews = [], speak = false } = {}) => {
       if (streaming) return;
-      stopSpeaking();
+      stopVoice();
       stickRef.current = true;
       const ctrl = new AbortController();
       ctrlRef.current = ctrl;
       setStreaming(true);
       setMessages((prev) => [
         ...prev,
-        { id: `local-u-${Date.now()}`, role: "user", text: userText, action: !!body.action },
+        { id: `local-u-${Date.now()}`, role: "user", text: userText, action: !!body.action, images: previews, voice: !!body.voice },
         { id: `local-a-${Date.now()}`, role: "assistant", pending: true, text: "", blocks: [], loader: body.action ? "Working on it…" : "Understanding your request…" },
       ]);
       let ok = false;
@@ -369,6 +396,7 @@ export default function AssistantPage() {
           { ...body, conversation_id: convRef.current || undefined },
           {
             signal: ctrl.signal,
+            files,
             onEvent: (name, data) => {
               if (name === "meta") {
                 if (data.conversation_id && data.conversation_id !== convRef.current) {
@@ -387,6 +415,8 @@ export default function AssistantPage() {
               else if (name === "error") updatePending({ error: data.detail, retry: body.message ? () => runRef.current?.({ message: body.message }, body.message) : null });
               else if (name === "done") {
                 ok = true;
+                // Spoken question -> spoken answer
+                if (speak && data.message?.text) speakReply(data.message.text, data.message.language);
                 updatePending((m) => ({ ...m, ...data.message, blocks: data.message.blocks?.length ? data.message.blocks : m.blocks, agentLabel: m.agentLabel, pending: false }));
               }
             },
@@ -409,12 +439,15 @@ export default function AssistantPage() {
   const runRef = useRef(null);
   runRef.current = run;
 
-  const send = (text) => {
+  const send = (text, { voice = false } = {}) => {
     const t = (text ?? input).trim();
-    if (!t || streaming) return;
+    if ((!t && !photos.length) || streaming) return;
+    const files = photos.map((p) => p.file);
+    const previews = photos.map((p) => p.preview);
     setInput("");
-    run({ message: t }, t);
-    inputRef.current?.focus();
+    setPhotos([]);
+    run({ message: t, ...(voice ? { voice: true } : {}) }, t || (files.length ? `📷 ${files.length} photo${files.length > 1 ? "s" : ""}` : ""), { files, previews, speak: voice });
+    if (!voice) inputRef.current?.focus();
   };
 
   const onAction = (action, label, key, block) => {
@@ -437,7 +470,7 @@ export default function AssistantPage() {
 
   const voice = useVoiceInput({
     lang: voiceLang,
-    onFinal: (text) => send(text),
+    onFinal: (text) => send(text, { voice: true }),
   });
 
   const newChat = () => {
@@ -630,10 +663,22 @@ export default function AssistantPage() {
               <div className="space-y-6">
                 {messages.map((m) =>
                   m.role === "user" ? (
-                    <div key={m.id} className="flex justify-end">
-                      <div className={`max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-md px-4 py-2.5 text-[15px] ${m.action ? "border border-border bg-card italic text-muted-foreground" : "bg-gradient-to-br from-orange-500 to-pink-500 text-white shadow-md shadow-orange-500/15"}`}>
-                        {m.text}
-                      </div>
+                    <div key={m.id} className="flex flex-col items-end gap-1.5">
+                      {m.images?.length > 0 && (
+                        <div className="flex max-w-[85%] flex-wrap justify-end gap-1.5">
+                          {m.images.map((src, i) => (
+                            <a key={i} href={src} target="_blank" rel="noreferrer">
+                              <img src={src} alt="" className="h-24 w-24 rounded-xl border border-border object-cover sm:h-28 sm:w-28" />
+                            </a>
+                          ))}
+                        </div>
+                      )}
+                      {m.text && (
+                        <div className={`max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-md px-4 py-2.5 text-[15px] ${m.action ? "border border-border bg-card italic text-muted-foreground" : "bg-gradient-to-br from-orange-500 to-pink-500 text-white shadow-md shadow-orange-500/15"}`}>
+                          {m.voice && <Mic className="mr-1 inline h-3.5 w-3.5 opacity-80" />}
+                          {m.text}
+                        </div>
+                      )}
                     </div>
                   ) : (
                     <AssistantMessage
@@ -660,10 +705,80 @@ export default function AssistantPage() {
         </div>
 
         <div className="border-t border-border bg-background/80 px-3 pb-[max(env(safe-area-inset-bottom),12px)] pt-3 backdrop-blur-xl sm:px-6">
-          <div className="mx-auto w-full max-w-3xl">
+          <div
+            className="mx-auto w-full max-w-3xl"
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => {
+              e.preventDefault();
+              addPhotos(e.dataTransfer.files);
+            }}
+          >
+            {speaking && (
+              <div className="mb-2 flex justify-center">
+                <button
+                  type="button"
+                  onClick={stopVoice}
+                  className="ai-pop-in flex items-center gap-2 rounded-full border border-orange-500/30 bg-card px-3 py-1.5 text-xs font-semibold shadow-sm"
+                >
+                  <span className="flex h-3 items-end gap-0.5">
+                    {[0, 1, 2, 3].map((i) => (
+                      <span key={i} className="w-0.5 animate-pulse rounded-full bg-orange-500" style={{ height: `${6 + (i % 2) * 6}px`, animationDelay: `${i * 0.15}s` }} />
+                    ))}
+                  </span>
+                  Speaking… <span className="text-muted-foreground">Tap to stop</span>
+                </button>
+              </div>
+            )}
+            {photos.length > 0 && (
+              <div className="mb-2 flex gap-2 overflow-x-auto">
+                {photos.map((p, i) => (
+                  <div key={p.preview} className="ai-pop-in relative h-16 w-16 shrink-0 overflow-hidden rounded-xl border border-border">
+                    <img src={p.preview} alt="" className="h-full w-full object-cover" />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        URL.revokeObjectURL(p.preview);
+                        setPhotos((list) => list.filter((_, idx) => idx !== i));
+                      }}
+                      className="absolute right-0.5 top-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-white"
+                      aria-label="Remove photo"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/*"
+              multiple
+              className="hidden"
+              onChange={(e) => {
+                addPhotos(e.target.files);
+                e.target.value = "";
+              }}
+            />
             <div className={`flex items-end gap-2 rounded-2xl border bg-card p-2 shadow-sm transition ${voice.listening ? "border-rose-500/50 ring-2 ring-rose-500/20" : "border-border focus-within:border-orange-500/50 focus-within:ring-2 focus-within:ring-orange-500/15"}`}>
+              <button
+                type="button"
+                onClick={() => fileRef.current?.click()}
+                disabled={streaming || photos.length >= MAX_PHOTOS}
+                title="Attach photo (invoice or medicine pack)"
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
+              >
+                <Paperclip className="h-5 w-5" />
+              </button>
               <textarea
                 ref={inputRef}
+                onPaste={(e) => {
+                  const imgs = Array.from(e.clipboardData?.files || []).filter((f) => f.type.startsWith("image/"));
+                  if (imgs.length) {
+                    e.preventDefault();
+                    addPhotos(imgs);
+                  }
+                }}
                 rows={1}
                 value={voice.listening ? voice.interim : input}
                 onChange={(e) => setInput(e.target.value)}
@@ -677,7 +792,7 @@ export default function AssistantPage() {
                   e.currentTarget.style.height = "auto";
                   e.currentTarget.style.height = `${Math.min(e.currentTarget.scrollHeight, 160)}px`;
                 }}
-                placeholder={voice.listening ? "Listening…" : "Ask anything… e.g. “Last 3 din ki purchase dikhao”"}
+                placeholder={voice.listening ? "Listening… speak now" : photos.length ? "Say what to do with the photo… e.g. “iski purchase chadha do”" : "Ask anything… e.g. “Last 3 din ki purchase dikhao”"}
                 className="max-h-40 min-h-[40px] flex-1 resize-none bg-transparent px-2 py-2 text-[15px] outline-none placeholder:text-muted-foreground"
               />
               {voice.supported && (
@@ -698,7 +813,12 @@ export default function AssistantPage() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => (voice.listening ? voice.stop() : voice.start())}
+                    onClick={() => {
+                      if (voice.listening) return voice.stop();
+                      primeVoice(); // unlock audio now so the spoken reply can play
+                      stopVoice();
+                      voice.start();
+                    }}
                     disabled={streaming}
                     title={voice.listening ? "Stop" : "Speak"}
                     className={`flex h-10 w-10 items-center justify-center rounded-xl transition disabled:opacity-40 ${voice.listening ? "bg-rose-500 text-white animate-pulse" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
@@ -715,7 +835,7 @@ export default function AssistantPage() {
                 <button
                   type="button"
                   onClick={() => send()}
-                  disabled={!input.trim()}
+                  disabled={!input.trim() && !photos.length}
                   title="Send"
                   className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-orange-500 to-pink-500 text-white shadow-md shadow-orange-500/20 transition active:scale-95 disabled:opacity-40"
                 >
