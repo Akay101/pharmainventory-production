@@ -3,6 +3,7 @@ const { v4: uuidv4 } = require("uuid");
 const { matchForBilling } = require("../../ai/inventoryMatch");
 const S = require("./shared");
 const L = require("./lookup");
+const { latinNames } = require("./names");
 
 const { blocks, cols, inr, fmtDate, dateRange, textMatch, clampLimit, round2, say } = S;
 
@@ -181,6 +182,10 @@ const tools = [
     status: (a, lang) => say(lang, { en: a.draft_id ? "Updating the bill" : "Preparing the bill", hinglish: a.draft_id ? "Bill update kar raha hoon" : "Bill bana raha hoon, stock check ho raha hai", hi: "बिल बना रहा हूँ" }),
     async run(a, ctx) {
       const prev = a.draft_id ? ctx.getDraft(a.draft_id) : null;
+      // Record names are English: convert anything said in Hindi script first
+      const products = await latinNames((a.items || []).map((it) => it.product), "medicine");
+      (a.items || []).forEach((it, i) => (it.product = products[i]));
+      [a.customer_name, a.doctor] = await latinNames([a.customer_name, a.doctor], "person");
       const draft = {
         id: prev?.id || `bd_${uuidv4().slice(0, 8)}`,
         kind: "bill",

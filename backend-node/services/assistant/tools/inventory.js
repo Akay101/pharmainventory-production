@@ -1,6 +1,7 @@
 // Inventory agent tools
 const S = require("./shared");
 const L = require("./lookup");
+const { latinName } = require("./names");
 const { thresholds } = require("../../dashboard");
 
 const { blocks, cols, inr, textMatch, clampLimit, round2, say, todayIst, addDays } = S;
@@ -203,6 +204,7 @@ const tools = [
     parameters: { type: "object", properties: { product: { type: "string" }, batch_no: { type: "string" }, units: { type: "integer" } }, required: ["product", "batch_no", "units"] },
     status: (a, lang) => say(lang, { en: "Preparing the stock update", hinglish: "Stock update ready kar raha hoon", hi: "स्टॉक अपडेट तैयार कर रहा हूँ" }),
     async run(a, ctx) {
+      a.product = await latinName(a.product, "medicine");
       const inv = await ctx.db.collection("inventory").findOne({ pharmacy_id: ctx.pharmacyId, ...textMatch(["product_name"], a.product), batch_no: { $regex: `^${S.escapeRegex(a.batch_no)}$`, $options: "i" } }, { projection: { _id: 0, id: 1, product_name: 1, batch_no: 1, available_quantity: 1 } });
       if (!inv) return { error: "Batch not found" };
       if (!(a.units > 0)) return { error: "Units must be positive" };

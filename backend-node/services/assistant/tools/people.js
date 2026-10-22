@@ -1,6 +1,7 @@
 // Customer and supplier agent tools
 const S = require("./shared");
 const L = require("./lookup");
+const { latinName } = require("./names");
 
 const { blocks, cols, inr, fmtDate, textMatch, clampLimit, round2, say } = S;
 const billTotal = { $ifNull: ["$grand_total", "$total_amount"] };
@@ -86,6 +87,7 @@ const customerTools = [
     },
     status: (a, lang) => say(lang, { en: "Preparing customer details", hinglish: "Customer details ready kar raha hoon", hi: "ग्राहक विवरण तैयार कर रहा हूँ" }),
     async run(a, ctx) {
+      a.name = await latinName(a.name, "person");
       let existing = null;
       if (a.customer_id) existing = await ctx.db.collection("customers").findOne({ pharmacy_id: ctx.pharmacyId, id: a.customer_id }, { projection: { _id: 0 } });
       if (a.customer_id && !existing) return { error: "Customer not found" };
@@ -207,6 +209,7 @@ const supplierTools = [
     },
     status: (a, lang) => say(lang, { en: "Preparing supplier details", hinglish: "Supplier details ready kar raha hoon", hi: "सप्लायर विवरण तैयार कर रहा हूँ" }),
     async run(a, ctx) {
+      a.name = await latinName(a.name, "supplier");
       const existing = a.supplier_id ? await ctx.db.collection("suppliers").findOne({ pharmacy_id: ctx.pharmacyId, id: a.supplier_id }, { projection: { _id: 0 } }) : null;
       if (!existing && !a.name && !a.global_id) return { error: "Supplier name is required" };
       const data = { name: a.name ?? existing?.name, contact: a.contact ?? existing?.contact ?? "", email: a.email ?? existing?.email ?? "", address: a.address ?? existing?.address ?? "", gst_no: a.gst_no ?? existing?.gst_no ?? "" };

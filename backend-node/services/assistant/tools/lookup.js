@@ -72,6 +72,35 @@ async function globalMedicine(name) {
   }
 }
 
+const globalFacts = (r) => ({
+  name: r.product_name || r.name,
+  manufacturer: r.manufacturer || r.manufacturer_name || "",
+  salt_composition: r.salt_composition || r.active_ingredients || r.short_composition1 || "",
+  pack_size: r.pack_size_label || r.packaging_label || r.package_details || "",
+  units_per_pack: r.units_per_pack || null,
+  mrp: Number(r.mrp || r["price(₹)"] || 0) || null,
+  dosage_form: r.dosage_form || "",
+});
+
+// Ranked matches from the global medicine database. `confident` when the top
+// one is a clear match for what was said (same brand and strength, nothing
+// else as close), so it can be used without asking.
+async function globalCandidates(name, limit = 6) {
+  try {
+    const rows = await searchGlobalMedicines(name, { limit: 12 });
+    const scored = rows
+      .map((r) => ({ r, sim: nameSimilarity(name, r.product_name || r.name || "") }))
+      .filter((x) => x.sim >= 0.5)
+      .sort((a, b) => b.sim - a.sim);
+    const list = scored.slice(0, limit).map((x) => ({ ...globalFacts(x.r), similarity: Math.round(x.sim * 100) / 100 }));
+    const [top, second] = scored;
+    const confident = !!top && top.sim >= 0.75 && (!second || second.sim <= top.sim - 0.08);
+    return { best: confident ? list[0] : null, list };
+  } catch {
+    return { best: null, list: [] };
+  }
+}
+
 // Supplier by name/GSTIN: your suppliers first, then the global directory.
 // Invoices often print a longer name ("Shiv Shakti Pharma Distributors" for
 // "Shiv Shakti Pharma"), so a name that is the start of the other counts.
@@ -130,4 +159,4 @@ async function resolveCustomer(ctx, { name, mobile }) {
   return { customer: pick, options: pick ? [] : rows };
 }
 
-module.exports = { resolveCatalogProduct, lastPurchaseLine, catalogProduct, globalMedicine, resolveSupplier, resolveCustomer, norm };
+module.exports = { resolveCatalogProduct, lastPurchaseLine, catalogProduct, globalMedicine, globalCandidates, resolveSupplier, resolveCustomer, norm };

@@ -3,6 +3,7 @@ const { v4: uuidv4 } = require("uuid");
 const { parseExpiry } = require("../../ai/extract");
 const S = require("./shared");
 const L = require("./lookup");
+const { latinNames, hasDevanagari } = require("./names");
 
 const { blocks, cols, inr, fmtDate, dateRange, textMatch, clampLimit, round2, say } = S;
 
@@ -184,13 +185,14 @@ const tools = [
   {
     name: "draft_purchase",
     description:
-      "Create or update a purchase DRAFT (nothing is saved until the user confirms with the Save button). Pass everything known; omit unknown fields. To change an existing draft pass its draft_id and the full updated item list. The tool links each medicine to the user's catalog, fills pack size / GST / last rate from history, and reports what's missing.",
+      "Create or update a purchase DRAFT (nothing is saved until the user confirms with the Save button). Pass everything known; omit unknown fields. To change an existing draft pass its draft_id and the full updated item list. Each medicine is matched to the user's catalog first, then the global medicine database (which fills maker, composition, pack size); medicines found in neither, and unknown suppliers, are only added after the user agrees (confirm_new_item / confirm_new_supplier). Reports what's missing.",
     parameters: {
       type: "object",
       properties: {
         draft_id: { type: "string", description: "Existing draft to update" },
-        supplier: { type: "string", description: "Supplier name as said by the user" },
+        supplier: { type: "string", description: "Supplier name in English/Latin letters (convert Hindi: नीलकंठ फार्मा -> Neelkanth Pharma)" },
         supplier_id: { type: "string", description: "Exact supplier id when the user picked one from options" },
+        confirm_new_supplier: { type: "boolean", description: "true only after the user agreed to add this supplier as a NEW supplier (not found in their list or the distributor directory)" },
         invoice_no: { type: "string" },
         purchase_date: { type: "string", description: "YYYY-MM-DD, default today" },
         payment_status: { type: "string", enum: ["Paid", "Unpaid"] },
@@ -199,8 +201,9 @@ const tools = [
           items: {
             type: "object",
             properties: {
-              product_name: { type: "string" },
+              product_name: { type: "string", description: "Medicine name in English as printed on the pack (convert Hindi: कालपोल 650 -> Calpol 650). Use the exact option name when the user picked one." },
               catalog_product_id: { type: "string", description: "When the user picked a catalog option" },
+              confirm_new_item: { type: "boolean", description: "true only after the user agreed to add this medicine as a NEW catalog item (found in neither their catalog nor the medicine database)" },
               batch_no: { type: "string" },
               expiry: { type: "string", description: "As said: '08/27', 'Aug 2027' or YYYY-MM-DD" },
               packs: { type: "number", description: "Packs/strips bought (excluding free)" },
@@ -227,18 +230,41 @@ const tools = [
         purchase_date: S.isYmd(a.purchase_date) ? a.purchase_date : prev?.purchase_date || S.todayIst(),
         payment_status: a.payment_status || prev?.payment_status || "Unpaid",
         supplier: prev?.supplier || null,
-        supplier_options: [],
+        supplier_pending: prev?.supplier_pending || null, // said but not found yet
+        supplier_options: prev?.supplier_options || [],
         items: [],
       };
 
-      // Supplier
+      // Record names are English: convert anything said in Hindi script first
+      const [supplierName] = await latinNames([a.supplier], "supplier", { signal: ctx.signal });
+      const itemNames = await latinNames((a.items || []).map((it) => it.product_name), "medicine", { signal: ctx.signal });
+      (a.items || []).forEach((it, i) => {
+        if (itemNames[i] && itemNames[i] !== it.product_name) it.spoken_name = it.product_name;
+        it.product_name = itemNames[i];
+      });
+
+      // Supplier: yours, then the distributor directory; a new one only when the user agrees
+      const supplierText = supplierName || (a.confirm_new_supplier ? draft.supplier_pending : null);
       if (a.supplier_id) {
-        const r = await L.resolveSupplier(ctx, a.supplier || a.supplier_id);
-        draft.supplier = r.options.find((o) => o.id === a.supplier_id) || { id: a.supplier_id, name: a.supplier || a.supplier_id };
-      } else if (a.supplier) {
-        const r = await L.resolveSupplier(ctx, a.supplier);
-        draft.supplier = r.supplier || { id: null, name: a.supplier.trim(), is_new: true };
-        if (!r.supplier) draft.supplier_options = r.options;
+        const r = await L.resolveSupplier(ctx, supplierText || a.supplier_id);
+        draft.supplier = r.options.find((o) => o.id === a.supplier_id) || { id: a.supplier_id, name: supplierText || a.supplier_id };
+        draft.supplier_pending = null;
+        draft.supplier_options = [];
+      } else if (supplierText) {
+        const r = await L.resolveSupplier(ctx, supplierText);
+        if (r.supplier) {
+          draft.supplier = r.supplier;
+          draft.supplier_pending = null;
+          draft.supplier_options = [];
+        } else if (a.confirm_new_supplier) {
+          draft.supplier = { id: null, name: supplierText.trim(), is_new: true };
+          draft.supplier_pending = null;
+          draft.supplier_options = [];
+        } else {
+          draft.supplier = null;
+          draft.supplier_pending = supplierText.trim();
+          draft.supplier_options = r.options;
+        }
       }
 
       // Lines
@@ -267,7 +293,10 @@ const tools = [
         }
         const product = link ? await L.catalogProduct(ctx, link.product_id) : null;
         const last = link ? await L.lastPurchaseLine(ctx, link.product_id, link.product_name) : null;
-        const global = !link ? await L.globalMedicine(it.product_name) : null;
+        // Not in the catalog: the global medicine database, like a manual purchase
+        const g = !link ? await L.globalCandidates(it.product_name) : { best: null, list: [] };
+        const global = g.best;
+        const source = link ? "catalog" : global ? "global" : it.confirm_new_item ? "new" : "not_found";
 
         const units = Number(it.units_per_pack) || last?.units_per_pack || product?.units_per_pack || global?.units_per_pack || 1;
         const line = {
@@ -276,6 +305,8 @@ const tools = [
           product_id: link?.product_id || null,
           link_via: link?.via || null,
           catalog_options: options,
+          medicine_options: source === "not_found" ? g.list.map((m) => ({ name: m.name, manufacturer: m.manufacturer, pack: m.pack_size })) : [],
+          source,
           is_new_product: !link,
           manufacturer: product?.manufacturer || global?.manufacturer || "",
           salt_composition: product?.salt_composition || global?.salt_composition || "",
@@ -297,10 +328,20 @@ const tools = [
 
       draft.total = round2(draft.items.reduce((s, i) => s + i.total, 0));
       draft.missing = [];
-      if (!draft.supplier) draft.missing.push("supplier");
+      if (!draft.supplier) {
+        draft.missing.push(
+          draft.supplier_pending
+            ? `supplier: "${draft.supplier_pending}" not found${draft.supplier_options.length ? ", pick one of the matches" : ""} or confirm adding it as a new supplier`
+            : "supplier"
+        );
+      }
       if (!draft.items.length) draft.missing.push("items");
       draft.items.forEach((i, idx) => {
         const n = `${idx + 1}. ${i.product_name}`;
+        if (i.source === "not_found") {
+          draft.missing.push(`${n}: not found in your catalog or the medicine database${i.medicine_options.length ? ", pick the right medicine" : ""} or confirm adding it as a new item`);
+        }
+        if (hasDevanagari(i.product_name)) draft.missing.push(`${n}: name must be in English`);
         if (!i.packs) draft.missing.push(`${n}: quantity`);
         if (!i.rate_per_pack) draft.missing.push(`${n}: rate`);
         if (!i.mrp_per_pack) draft.missing.push(`${n}: MRP`);
@@ -314,11 +355,14 @@ const tools = [
       return {
         draft_id: draft.id,
         supplier: draft.supplier,
+        supplier_not_found: draft.supplier_pending,
         supplier_options: draft.supplier_options.slice(0, 5),
         items: draft.items.map((i) => ({
           product_name: i.product_name,
+          source: i.source,
           linked_to_catalog: !i.is_new_product,
           catalog_options: i.catalog_options,
+          medicine_options: i.medicine_options,
           batch_no: i.batch_no,
           expiry_date: i.expiry_date,
           packs: i.packs,
@@ -333,7 +377,7 @@ const tools = [
         })),
         total: draft.total,
         missing: draft.missing,
-        note: "The draft card with Save/Cancel buttons is shown. Ask for missing fields (batch, expiry are needed for stock). If a medicine isn't linked and has catalog_options, offer them as ::choices[dropdown]::. Do not claim it is saved.",
+        note: "The draft card with Save/Cancel buttons is shown. Now ask about EVERYTHING still open in ONE message (short list), not one question per turn: items with source not_found (offer medicine_options / catalog_options as choices plus 'Add as new item'), supplier_not_found (offer supplier_options plus 'Add new supplier'), and missing batch/expiry/rate/MRP. source global = matched in the medicine database, fine to use. Do not claim it is saved.",
       };
     },
   },
@@ -403,14 +447,14 @@ function purchaseDraftBlock(d) {
     draft_id: d.id,
     title: "Purchase draft",
     fields: [
-      { label: "Supplier", value: d.supplier ? `${d.supplier.name}${d.supplier.is_new ? " (new)" : d.supplier.is_global ? " (distributor)" : ""}` : "—", missing: !d.supplier },
+      { label: "Supplier", value: d.supplier ? `${d.supplier.name}${d.supplier.is_new ? " (new)" : d.supplier.is_global ? " (distributor)" : ""}` : d.supplier_pending ? `${d.supplier_pending}? (not found)` : "—", missing: !d.supplier },
       { label: "Invoice", value: d.invoice_no || "Auto" },
       { label: "Date", value: fmtDate(d.purchase_date) },
       { label: "Payment", value: d.payment_status },
     ],
     columns: cols(["product", "Medicine"], ["batch", "Batch"], ["expiry", "Exp"], ["qty", "Qty"], ["rate", "Rate", "inr", "right"], ["mrp", "MRP", "inr", "right"], ["gst", "GST", null, "right"], ["total", "Total", "inr", "right"]),
     rows: d.items.map((i) => ({
-      product: `${i.product_name}${i.is_new_product ? " · new" : ""}`,
+      product: `${i.product_name}${{ global: " · from medicine DB", new: " · new item", not_found: " · not found" }[i.source] || (i.is_new_product && !i.source ? " · new" : "")}`,
       batch: i.batch_no || "?",
       expiry: S.fmtExpiry(i.expiry_date) || "?",
       qty: `${i.packs || "?"}${i.free_packs ? `+${i.free_packs}` : ""} × ${i.units_per_pack}`,
@@ -422,7 +466,7 @@ function purchaseDraftBlock(d) {
     totals: [{ label: "Total (incl. GST)", value: d.total }],
     missing: d.missing,
     actions: [
-      { label: "Save purchase", style: "primary", action: { type: "commit", draft_id: d.id }, disabled: d.missing.some((m) => /supplier|items|quantity|rate|higher|batch|expiry/.test(m)) },
+      { label: "Save purchase", style: "primary", action: { type: "commit", draft_id: d.id }, disabled: d.missing.some((m) => /supplier|items|quantity|rate|higher|batch|expiry|not found|English/.test(m)) },
       { label: "Discard", style: "ghost", action: { type: "discard", draft_id: d.id } },
     ],
   };
@@ -431,6 +475,10 @@ function purchaseDraftBlock(d) {
 // Saving a confirmed purchase draft through the normal purchase API
 async function commitPurchase(draft, ctx) {
   const s = draft.supplier || {};
+  // Last line of defence: never store a record under a Hindi-script or unconfirmed name
+  if (!s.name || hasDevanagari(s.name)) throw new Error("The supplier still needs to be confirmed in English before saving.");
+  const blocked = draft.items.find((i) => i.source === "not_found" || hasDevanagari(i.product_name));
+  if (blocked) throw new Error(`"${blocked.product_name}" still needs to be confirmed before saving.`);
   const payload = {
     supplier_id: s.id || null,
     supplier_name: s.name,

@@ -21,10 +21,11 @@ const AGENTS = {
     knowledge: `PURCHASES MODULE
 - A purchase = supplier + invoice no + date + lines. Each line: medicine, batch, expiry, packs bought, free packs (scheme), units per pack, rate per pack (before GST), MRP per pack, discount %, GST %.
 - Line total = packs × rate × (1 − discount%) × (1 + GST%). Free packs add stock but no cost.
-- Saving a purchase adds stock to that batch (creates the catalog item if new, links to existing catalog otherwise) and creates the supplier if new.
+- Saving a purchase adds stock to that batch and links each line to the catalog.
+- How medicines are resolved (draft_purchase does this for you): 1) the user's own catalog/inventory, 2) the global medicine database (source "global": use it, maker/composition/pack come from there), 3) not found anywhere → ask the user, with the closest matches as options and "Add as new item"; only after they agree pass confirm_new_item. Suppliers the same way: their list, then the distributor directory, then ask before confirm_new_supplier.
 - "30 rupe ki, 40 MRP" → rate 30, MRP 40 per pack unless the user says per tablet.
-- Batch and expiry are needed to track stock properly; ask for them if missing (both in one short question).
-- If the user names a medicine that isn't linked to the catalog, offer its catalog_options as ::choices[dropdown]:: plus an option to add it as new.
+- Batch and expiry are needed to track stock properly.
+- After drafting, ask about everything still open in one message: unknown medicines/supplier (with options) and missing batch/expiry/rate/MRP for all lines together.
 - When the draft is complete, ask "Kuch aur add karna hai (GST, discount, free) ya save kar du?" style question with buttons: Save / Add more details / another item.
 - Payment status defaults to Unpaid.
 - PHOTOS: if the user attached a supplier invoice/bill photo, call read_invoice_photo (it reads every line and builds the draft). If it's a single medicine pack, call read_product_photo_for_purchase. Then review what's missing as usual.`,
@@ -105,7 +106,7 @@ const AGENTS = {
 const LANG_RULE = {
   en: "Reply in English.",
   hinglish: "Reply in Hinglish (Hindi written in Roman/Latin script mixed with English words), the way the user writes. Keep numbers and medicine names as-is.",
-  hi: "Reply in Hindi using Devanagari script. Keep medicine names, numbers and ₹ amounts as-is.",
+  hi: "Reply in Hindi using Devanagari script, but write medicine, supplier and company names in English letters as on the pack (e.g. Calpol 650, Neelkanth Pharmaceuticals). Keep numbers and ₹ amounts as-is.",
 };
 
 function systemPrompt(agent, ctx) {
@@ -132,7 +133,9 @@ HOW TO WORK
 - REPORTS & GRAPHS: for any analytical question (trend, compare, top/bottom N, share, "graph/chart/report bana do", growth, best day/hour) call build_report — it draws the chart live. For a richer report or "dashboard", call it 2-4 times in the same turn with different metrics/groupings (e.g. sales trend by day + top products + payment mode share + busiest hours). Use compare_previous when the user asks about growth or "pichhle mahine se". Pick sensible defaults (last 30 days, top 10) without asking.
 - Tables, stats and cards produced by tools are already visible to the user. Don't repeat them row by row; give a crisp 1-3 sentence takeaway (totals, the standout item, what to do next).
 - Nothing is created, changed or deleted until the user taps the confirm/Save button on a card. Never say something was saved unless a tool result says it was saved.
-- Ask for missing details smartly: only what's needed, at most two things at a time.
+- RECORD NAMES ARE ENGLISH: language is only for talking. Anything you put into a record (medicine, supplier, customer, doctor names) is written in English/Latin letters as printed on the pack or as the business is known, never in Devanagari. Voice input in Hindi turns brand names into Devanagari ("कालपोल 650", "डोलो", "बोरोलीन क्रीम", "नीलकंठ फार्मास्यूटिकल्स"): read them as Calpol 650, Dolo, Boroline Cream, Neelkanth Pharmaceuticals.
+- Voice input can mishear medicine names. Interpret what the user most likely meant (a pharmacy context, similar-sounding brands), check it with tools, and if it's still unclear ask with the likely options.
+- Asking: first work out everything you can with tools, then ask for whatever is still needed in ONE message (a short list, with options as choices), instead of one question per turn. Don't ask for things you already know or can look up.
 - TAPPABLE OPTIONS: when there's a clear next step or a pick-one question, end your reply with ONE final line in exactly this format (it is turned into buttons and hidden from the text):
   ::choices:: Label one => reply sent when tapped | Label two => another reply
   Don't add choices that duplicate the buttons of a draft/confirm card you just showed (Save/Delete/Cancel are already on the card).
