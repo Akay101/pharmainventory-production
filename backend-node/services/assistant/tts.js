@@ -32,14 +32,8 @@ function speakable(text) {
   return t;
 }
 
-const STYLE = {
-  en: "Read this aloud in a warm, natural, professional voice, like a helpful pharmacist talking to a colleague. Indian English accent.",
-  hinglish: "Read this aloud in natural conversational Hinglish (Hindi-English mix) with an Indian accent, warm and professional, like a helpful pharmacist talking to a colleague.",
-  hi: "इसे गर्मजोशी भरी, स्वाभाविक और पेशेवर आवाज़ में पढ़ें, जैसे एक मददगार फार्मासिस्ट अपने साथी से बात कर रहा हो।",
-};
-
 // Streams PCM chunks via onChunk(Buffer). Resolves when done.
-async function streamSpeech({ text, language = "en", signal, onChunk }) {
+async function streamSpeech({ text, signal, onChunk }) {
   const spoken = speakable(text);
   if (!spoken) return 0;
   let lastErr;
@@ -50,7 +44,9 @@ async function streamSpeech({ text, language = "en", signal, onChunk }) {
         method: "POST",
         headers: { "content-type": "application/json", "x-goog-api-key": apiKey() },
         body: JSON.stringify({
-          contents: [{ parts: [{ text: `${STYLE[language] || STYLE.en}\n\n${spoken}` }] }],
+          // Only the reply itself: TTS models read any style instruction aloud
+          // (and reject system instructions), so the voice choice sets the tone
+          contents: [{ parts: [{ text: spoken }] }],
           generationConfig: { responseModalities: ["AUDIO"], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: VOICE() } } } },
         }),
         signal,
