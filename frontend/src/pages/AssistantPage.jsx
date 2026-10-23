@@ -45,7 +45,7 @@ import {
   AlertDialogTitle,
 } from "../components/ui/alert-dialog";
 import { AGENT_META, assistantApi, streamTurn } from "../components/assistant/assistantClient";
-import { ChoicesBlock, ConfirmBlock, DraftBlock, NoticeBlock, ResultBlock, StatsBlock, TableBlock } from "../components/assistant/Blocks";
+import { ChoicesBlock, ConfirmBlock, DraftBlock, NoticeBlock, PickerBlock, ResultBlock, StatsBlock, TableBlock } from "../components/assistant/Blocks";
 import ChartBlock from "../components/assistant/ChartBlock";
 import { useVoiceInput } from "../components/assistant/useVoice";
 import { onSpeakingChange, primeVoice, speakReply, stopVoice } from "../components/assistant/voicePlayer";
@@ -150,6 +150,12 @@ function AssistantMessage({ msg, onAction, onReply, busyKey, settled, openDrafts
             const superseded = latestDraftMsg?.[b.draft_id] && latestDraftMsg[b.draft_id] !== msg.id ? "Updated below" : null;
             const closed = !msg.pending && openDrafts && !openDrafts.includes(b.draft_id) ? "Closed" : null;
             return <DraftBlock key={key} {...props} settled={settled[key] || superseded || closed} />;
+          }
+          if (b.type === "picker") {
+            // Only the pickers under the newest version of a draft can be used
+            const stale = latestDraftMsg?.[b.draft_id] && latestDraftMsg[b.draft_id] !== msg.id ? "Updated below" : null;
+            const closed = !msg.pending && openDrafts && !openDrafts.includes(b.draft_id) ? "Closed" : null;
+            return <PickerBlock key={key} {...props} settled={settled[key] || stale || closed} />;
           }
           if (b.type === "confirm") return <ConfirmBlock key={key} {...props} settled={settled[key]} />;
           if (b.type === "result") return <ResultBlock key={key} {...props} />;
@@ -474,7 +480,7 @@ export default function AssistantPage() {
         if (!ok) return;
         const outcome =
           action.type === "commit" ? "Saved" : action.type === "discard" ? "Discarded" : action.type === "dismiss" ? "Cancelled" : "Done";
-        if (block?.type === "draft" || block?.type === "confirm") setSettled((s) => ({ ...s, [key]: outcome }));
+        if (block?.type === "draft" || block?.type === "confirm" || block?.type === "picker") setSettled((s) => ({ ...s, [key]: outcome }));
         if (block?.draft_id && ["commit", "discard"].includes(action.type)) setOpenDrafts((d) => (d || []).filter((x) => x !== block.draft_id));
       },
     });
@@ -644,7 +650,7 @@ export default function AssistantPage() {
           }}
           className="flex-1 overflow-y-auto"
         >
-          <div className="mx-auto w-full max-w-3xl px-3 py-5 sm:px-6">
+          <div className="mx-auto w-full max-w-3xl lg:max-w-[900px] xl:max-w-[1000px] 2xl:max-w-[1150px] px-3 py-5 sm:px-6 lg:px-8">
             {loadingChat ? (
               <div className="flex justify-center pt-20">
                 <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
@@ -730,7 +736,7 @@ export default function AssistantPage() {
 
         <div className="border-t border-border bg-background/80 px-3 pb-[max(env(safe-area-inset-bottom),12px)] pt-3 backdrop-blur-xl sm:px-6">
           <div
-            className="mx-auto w-full max-w-3xl"
+            className="mx-auto w-full max-w-3xl lg:max-w-[900px] xl:max-w-[1000px] 2xl:max-w-[1150px]"
             onDragOver={(e) => e.preventDefault()}
             onDrop={(e) => {
               e.preventDefault();

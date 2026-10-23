@@ -365,8 +365,8 @@ async function handleAction({ body, ctx, conversation, state, stream, db, shown 
     try {
       const r = await OPS[a.op](a, ctx);
       await markUsed();
-      ctx.emit(r.block);
-      text = say(lang, { en: "Done.", hinglish: "Ho gaya.", hi: "हो गया।" });
+      if (r.block) ctx.emit(r.block);
+      text = r.text || say(lang, { en: "Done.", hinglish: "Ho gaya.", hi: "हो गया।" });
     } catch (err) {
       ctx.emit({ type: "notice", tone: "danger", text: err.data?.detail || err.message });
       text = say(lang, { en: "That didn't go through.", hinglish: "Ye nahi ho paya.", hi: "यह नहीं हो पाया।" });

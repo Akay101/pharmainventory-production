@@ -3,6 +3,7 @@
 // names in Devanagari ("कालपोल 650"), so those are converted to the spelling
 // printed on packs ("Calpol 650") before anything is matched or drafted.
 const llm = require("../llm");
+const { cleanProductName } = require("../../search/normalize");
 
 const DEVANAGARI = /[ऀ-ॿ]/;
 const hasDevanagari = (s) => DEVANAGARI.test(String(s || ""));
@@ -78,4 +79,4 @@ async function latinNames(list, kind = "medicine", { signal } = {}) {
 
 const latinName = async (s, kind, opts) => (await latinNames([s], kind, opts))[0];
 
-module.exports = { hasDevanagari, latinNames, latinName, roughLatin };
+module.exports = { hasDevanagari, latinNames, latinName, roughLatin, cleanProductName };

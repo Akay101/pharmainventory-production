@@ -4,6 +4,7 @@ const { parseExpiry } = require("../../ai/extract");
 const S = require("./shared");
 const L = require("./lookup");
 const { latinNames, hasDevanagari } = require("./names");
+const { cleanProductName, medicineKey } = require("../../search/normalize");
 
 const { blocks, cols, inr, fmtDate, dateRange, textMatch, clampLimit, round2, say } = S;
 
@@ -291,17 +292,27 @@ const tools = [
           link = r.linked;
           options = link ? [] : r.options;
         }
-        const product = link ? await L.catalogProduct(ctx, link.product_id) : null;
-        const last = link ? await L.lastPurchaseLine(ctx, link.product_id, link.product_name) : null;
         // Not in the catalog: the global medicine database, like a manual purchase
         const g = !link ? await L.globalCandidates(it.product_name) : { best: null, list: [] };
-        const global = g.best;
+        // Picked by the user from the medicine database: take that entry
+        if (!link && !g.best && it.global_pick) g.best = g.list.find((m) => m.name.toLowerCase() === String(it.product_name).toLowerCase()) || g.list[0] || null;
+        let global = g.best;
+        // The database name may be a medicine the catalog already has under another spelling
+        if (!link && global) {
+          const same = await L.sameMedicineInCatalog(ctx, global.name);
+          if (same) {
+            link = same;
+            global = null;
+          }
+        }
         const source = link ? "catalog" : global ? "global" : it.confirm_new_item ? "new" : "not_found";
+        const product = link ? await L.catalogProduct(ctx, link.product_id) : null;
+        const last = link ? await L.lastPurchaseLine(ctx, link.product_id, link.product_name) : null;
 
         const units = Number(it.units_per_pack) || last?.units_per_pack || product?.units_per_pack || global?.units_per_pack || 1;
         const line = {
           input,
-          product_name: link?.product_name || global?.name || it.product_name,
+          product_name: link?.product_name || global?.name || cleanProductName(it.product_name) || it.product_name,
           product_id: link?.product_id || null,
           link_via: link?.via || null,
           catalog_options: options,
@@ -351,6 +362,7 @@ const tools = [
       });
       await ctx.saveDraft(draft);
       ctx.emit(purchaseDraftBlock(draft));
+      for (const b of purchasePickers(draft)) ctx.emit(b);
 
       return {
         draft_id: draft.id,
@@ -377,7 +389,7 @@ const tools = [
         })),
         total: draft.total,
         missing: draft.missing,
-        note: "The draft card with Save/Cancel buttons is shown. Now ask about EVERYTHING still open in ONE message (short list), not one question per turn: items with source not_found (offer medicine_options / catalog_options as choices plus 'Add as new item'), supplier_not_found (offer supplier_options plus 'Add new supplier'), and missing batch/expiry/rate/MRP. source global = matched in the medicine database, fine to use. Do not claim it is saved.",
+        note: "The draft card with Save/Cancel buttons is shown, plus a search picker card under it for every item with source not_found and for supplier_not_found (closest matches from the catalog / medicine database / distributors, a search box and 'Add as new'). Don't repeat those options as choices; just say in one line which ones need picking. In the SAME message ask for anything else missing (batch/expiry/rate/MRP for all lines together). source global = matched in the medicine database, fine to use. Do not claim it is saved.",
       };
     },
   },
@@ -472,6 +484,58 @@ function purchaseDraftBlock(d) {
   };
 }
 
+// Search picker cards for whatever the draft couldn't place with confidence:
+// closest matches from the user's catalog, then the medicine database (one
+// entry per medicine), with a search box and "add as new" in the card
+function purchasePickers(d) {
+  const out = [];
+  if (!d.supplier && d.supplier_pending) {
+    out.push({
+      type: "picker",
+      kind: "supplier",
+      draft_id: d.id,
+      target: "supplier",
+      title: `Which supplier is "${d.supplier_pending}"?`,
+      query: d.supplier_pending,
+      options: (d.supplier_options || []).map((o) => ({ source: o.is_global ? "global" : "yours", id: o.id, name: o.name, detail: [o.city, o.gst_no].filter(Boolean).join(" · ") })),
+      new_name: d.supplier_pending,
+      new_label: `Add "${d.supplier_pending}" as a new supplier`,
+    });
+  }
+  d.items.forEach((i, idx) => {
+    if (i.source !== "not_found") return;
+    const seen = new Set();
+    const options = [];
+    for (const o of i.catalog_options || []) {
+      const k = medicineKey(o.product_name);
+      if (seen.has(k)) continue;
+      seen.add(k);
+      options.push({ source: "catalog", id: o.product_id, name: o.product_name, detail: "In your catalog" });
+    }
+    for (const o of i.medicine_options || []) {
+      const k = medicineKey(o.name);
+      if (seen.has(k)) continue;
+      seen.add(k);
+      options.push({ source: "global", name: o.name, detail: [o.manufacturer, o.pack].filter(Boolean).join(" · ") });
+    }
+    const said = i.input?.spoken_name || i.input?.product_name || i.product_name;
+    const name = cleanProductName(i.input?.product_name || i.product_name) || i.product_name;
+    out.push({
+      type: "picker",
+      kind: "medicine",
+      draft_id: d.id,
+      target: "line",
+      line: idx,
+      title: `${idx + 1}. Which medicine is "${said}"?`,
+      query: name,
+      options: options.slice(0, 8),
+      new_name: name,
+      new_label: `Add "${name}" as a new item`,
+    });
+  });
+  return out;
+}
+
 // Saving a confirmed purchase draft through the normal purchase API
 async function commitPurchase(draft, ctx) {
   const s = draft.supplier || {};
@@ -520,6 +584,55 @@ async function commitPurchase(draft, ctx) {
 }
 
 const ops = {
+  // A pick from a search picker card: applied straight to the draft, no AI turn
+  async resolve_purchase_line(a, ctx) {
+    const draft = ctx.getDraft(a.draft_id);
+    if (!draft) throw new Error("This draft was already saved or discarded.");
+    const pick = a.pick || {};
+    const name = String(pick.name || "").trim();
+    if (!name) throw new Error("Nothing was picked.");
+    const args = { draft_id: draft.id };
+    let what;
+    if (a.target === "supplier") {
+      args.supplier = name;
+      if (pick.source === "new") args.confirm_new_supplier = true;
+      else args.supplier_id = pick.id;
+      what = name;
+    } else {
+      const line = draft.items[a.line];
+      if (!line) throw new Error("That line is no longer in the draft.");
+      const input = line.input;
+      delete input.catalog_product_id;
+      delete input.confirm_new_item;
+      delete input.global_pick;
+      if (pick.source === "catalog") {
+        input.catalog_product_id = pick.id;
+        input.product_name = name;
+      } else if (pick.source === "global") {
+        input.product_name = name;
+        input.global_pick = true;
+      } else {
+        input.product_name = cleanProductName(name) || name;
+        input.confirm_new_item = true;
+      }
+      what = `${a.line + 1}. ${input.product_name}`;
+    }
+    const draftTool = tools.find((t) => t.name === "draft_purchase");
+    const r = await draftTool.run(args, ctx);
+    // Short "what's left": names still to pick, then other missing fields
+    const toPick = [...(r.supplier_not_found ? [r.supplier_not_found] : []), ...r.items.filter((i) => i.source === "not_found").map((i) => i.product_name)];
+    const other = (r.missing || []).filter((m) => !/not found/.test(m)).map((m) => m.replace(/^\d+\.\s*/, ""));
+    const left = [...(toPick.length ? [`pick or add ${toPick.join(", ")}`] : []), ...other].join("; ");
+    return {
+      block: null,
+      text: say(ctx.language, {
+        en: left ? `Updated ${what}. Still needed: ${left}.` : `Updated ${what}. The purchase is ready to save.`,
+        hinglish: left ? `${what} update ho gaya. Abhi baaki: ${left}.` : `${what} update ho gaya. Purchase save karne ke liye ready hai.`,
+        hi: left ? `${what} अपडेट हो गया। अभी बाकी: ${left}।` : `${what} अपडेट हो गया। खरीद सेव करने के लिए तैयार है।`,
+      }),
+      summary: { updated: what, missing: r.missing },
+    };
+  },
   async delete_purchase(a, ctx) {
     const res = await S.api(ctx, "DELETE", `/purchases/${a.purchase_id}?delete_inventory=${a.mode}`);
     return { block: { type: "result", tone: "success", title: "Purchase deleted", text: res.removed_units ? `${res.removed_units} units removed from stock` : "Stock left unchanged" }, summary: { deleted: "purchase", removed_units: res.removed_units || 0 } };

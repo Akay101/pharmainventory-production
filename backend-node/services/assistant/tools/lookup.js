@@ -3,18 +3,39 @@
 const { matchForPurchase, nameSimilarity } = require("../../ai/inventoryMatch");
 const { searchGlobalMedicines } = require("../../search/medicineSearch");
 const { escapeRegex, api, textMatch } = require("./shared");
+const { tokenize, cleanProductName, medicineKey } = require("../../search/normalize");
 
 const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
 
 // Catalog product for a purchase line, with what we know about it
-async function resolveCatalogProduct(ctx, name, batch) {
+async function resolveCatalogProduct(ctx, rawName, batch) {
+  const name = cleanProductName(rawName) || rawName;
   const m = await matchForPurchase(ctx.db, ctx.pharmacyId, { product_name: name, batch_no: batch || "" });
   let linked = null;
   if (m.batch_match) linked = { product_id: m.batch_match.product_id, product_name: m.batch_match.product_name, via: "batch" };
   else if (m.exact_name_match) linked = { product_id: m.exact_name_match.product_id, product_name: m.exact_name_match.product_name, via: "name" };
   else if (m.suggestions[0]?.is_high_confidence) linked = { product_id: m.suggestions[0].product_id, product_name: m.suggestions[0].product_name, via: "similar" };
+  if (!linked) linked = await sameMedicineInCatalog(ctx, name);
   const options = m.suggestions.slice(0, 5).map((s) => ({ product_id: s.product_id, product_name: s.product_name }));
   return { linked, options };
+}
+
+// The catalog item that is this medicine under another spelling ("OXALGIN-DP
+// TAB 20S ." for "Oxalgin DP Tablet"): same cleaned key, or the same brand and
+// strength once pack text is stripped from both
+async function sameMedicineInCatalog(ctx, name) {
+  const key = medicineKey(name);
+  const brand = tokenize(cleanProductName(name)).find((t) => /[a-z]/.test(t) && t.length >= 3);
+  if (!key || !brand) return null;
+  const rows = await ctx.db
+    .collection("products")
+    .find({ pharmacy_id: ctx.pharmacyId, name: { $regex: `^\\W*${escapeRegex(brand)}`, $options: "i" } }, { projection: { _id: 0, id: 1, name: 1 } })
+    .limit(60)
+    .toArray();
+  const hit =
+    rows.find((r) => medicineKey(r.name) === key) ||
+    rows.find((r) => nameSimilarity(cleanProductName(name), cleanProductName(r.name)) >= 0.95);
+  return hit ? { product_id: hit.id, product_name: hit.name, via: "same medicine" } : null;
 }
 
 // What the last purchase of this product looked like (prefills a draft)
@@ -85,10 +106,26 @@ const globalFacts = (r) => ({
 // Ranked matches from the global medicine database. `confident` when the top
 // one is a clear match for what was said (same brand and strength, nothing
 // else as close), so it can be used without asking.
-async function globalCandidates(name, limit = 6) {
+async function globalCandidates(rawName, limit = 6) {
   try {
-    const rows = await searchGlobalMedicines(name, { limit: 12 });
-    const scored = rows
+    const name = cleanProductName(rawName) || rawName;
+    // Search the full name, then brand + strength, then the brand alone when
+    // the first search is thin ("Calpol 650 Tab" finds "Calpol 650mg Tablet")
+    const words = tokenize(name).filter((t) => !/^(tab|tabs|tablet|tablets|cap|caps|capsule|capsules|syp|syrup|inj|injection)$/.test(t));
+    const brand = words.find((t) => !/^\d/.test(t)) || "";
+    const strength = words.find((t) => /^\d/.test(t)) || "";
+    const queries = [...new Set([name, [brand, strength].filter(Boolean).join(" "), brand].filter((q) => q && q.length >= 2))];
+    const seen = new Map();
+    for (const q of queries) {
+      const rows = await searchGlobalMedicines(q, { limit: 15 });
+      for (const r of rows) {
+        const n = r.product_name || r.name || "";
+        if (!seen.has(n.toLowerCase())) seen.set(n.toLowerCase(), r);
+      }
+      const strong = [...seen.values()].some((r) => nameSimilarity(name, r.product_name || r.name || "") >= 0.85);
+      if (strong) break;
+    }
+    const scored = [...seen.values()]
       .map((r) => ({ r, sim: nameSimilarity(name, r.product_name || r.name || "") }))
       .filter((x) => x.sim >= 0.5)
       .sort((a, b) => b.sim - a.sim);
@@ -99,6 +136,69 @@ async function globalCandidates(name, limit = 6) {
   } catch {
     return { best: null, list: [] };
   }
+}
+
+// What the search box in a picker card shows as the user types
+async function pickerSearch(ctx, kind, q) {
+  q = String(q || "").trim().slice(0, 80);
+  if (q.length < 2) return { options: [] };
+  if (kind === "supplier") {
+    const r = await resolveSupplier(ctx, q);
+    return { options: r.options.map((o) => ({ source: o.is_global ? "global" : "yours", id: o.id, name: o.name, detail: [o.city, o.gst_no].filter(Boolean).join(" · ") })) };
+  }
+  const catalog = await ctx.db
+    .collection("products")
+    .find({ pharmacy_id: ctx.pharmacyId, ...textMatch(["name"], q) }, { projection: { _id: 0, id: 1, name: 1, manufacturer: 1, units_per_pack: 1 } })
+    .limit(6)
+    .toArray();
+  const seen = new Set(catalog.map((p) => medicineKey(p.name)));
+  const options = catalog.map((p) => ({ source: "catalog", id: p.id, name: p.name, detail: ["In your catalog", p.manufacturer].filter(Boolean).join(" · ") }));
+  let global = [];
+  try {
+    global = await searchGlobalMedicines(q, { limit: 12 });
+  } catch {}
+  // Every word typed has to start a word of the result ("korvantix 5" must
+  // not list everything with a 5 in it)
+  const typed = tokenize(q).filter((t) => /[a-z]/.test(t));
+  const fits = (name) => {
+    const words = tokenize(name);
+    return typed.every((t) => words.some((w) => w.startsWith(t)));
+  };
+  for (const r of global) {
+    const f = globalFacts(r);
+    const k = medicineKey(f.name);
+    if (!f.name || seen.has(k) || !fits(f.name)) continue; // already in the catalog: one entry per medicine
+    seen.add(k);
+    options.push({ source: "global", name: f.name, detail: [f.manufacturer, f.pack_size].filter(Boolean).join(" · ") });
+    if (options.length >= 12) break;
+  }
+  return { options };
+}
+
+// Sound-alike key for names that reach us through Hindi speech: "Neelkanth
+// Pharmaceuticals" and "Nilkanth Pharmaceutical" -> the same key. Every word
+// counts, so "Shiv Shakti Pharma" and "Shiv Shakti Agency" stay different.
+function soundKey(name) {
+  return String(name || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((w) =>
+      w
+        .replace(/s$/, "")
+        .replace(/ph/g, "f")
+        .replace(/ck/g, "k")
+        .replace(/c(?=[eiy])/g, "s")
+        .replace(/[cq]/g, "k")
+        .replace(/w/g, "v")
+        .replace(/z/g, "j")
+        .replace(/sh/g, "s")
+        .replace(/([bcdfgjklmnpqrstvxz])h/g, "$1")
+        .replace(/^(.)(.*)$/, (m, a, rest) => a + rest.replace(/[aeiouy]/g, "")) // vowels vary; keep the first letter
+        .replace(/(.)\1+/g, "$1")
+    )
+    .join(" ");
 }
 
 // Supplier by name/GSTIN: your suppliers first, then the global directory.
@@ -123,11 +223,26 @@ async function resolveSupplier(ctx, text) {
     seen.add(k);
     return true;
   });
+  // Your own suppliers by sound, for spellings the search can't find
+  const said = soundKey(text);
+  if (said) {
+    const mine = await ctx.db
+      .collection("suppliers")
+      .find({ pharmacy_id: ctx.pharmacyId }, { projection: { _id: 0, id: 1, name: 1, city: 1, gst_no: 1 } })
+      .limit(2000)
+      .toArray();
+    for (const m of mine) {
+      if (soundKey(m.name) === said && !seen.has(`l:${m.id}`)) {
+        seen.add(`l:${m.id}`);
+        list.unshift({ ...m, is_local: true, sounds_like: true });
+      }
+    }
+  }
   const t = norm(text);
   const scored = list
     .map((s) => {
       const n = norm(s.name);
-      const exact = n === t || (s.gst_no && norm(s.gst_no) === t);
+      const exact = n === t || (s.gst_no && norm(s.gst_no) === t) || s.sounds_like;
       const prefix = n.length >= 6 && t.length >= 6 && (n.startsWith(t) || t.startsWith(n));
       const starts = n.startsWith(t.slice(0, 6));
       return { s, score: (exact ? 3 : prefix ? 2.6 : starts ? 2 : 1) + (s.is_local === false ? 0 : 0.5) };
@@ -159,4 +274,4 @@ async function resolveCustomer(ctx, { name, mobile }) {
   return { customer: pick, options: pick ? [] : rows };
 }
 
-module.exports = { resolveCatalogProduct, lastPurchaseLine, catalogProduct, globalMedicine, globalCandidates, resolveSupplier, resolveCustomer, norm };
+module.exports = { soundKey, pickerSearch, sameMedicineInCatalog, resolveCatalogProduct, lastPurchaseLine, catalogProduct, globalMedicine, globalCandidates, resolveSupplier, resolveCustomer, norm };

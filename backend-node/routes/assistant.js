@@ -6,6 +6,7 @@
 //   DELETE /api/assistant/conversations/:id
 //   DELETE /api/assistant/conversations           delete all of the user's chats
 //   POST   /api/assistant/messages/:id/feedback   {value: "up"|"down"|null}
+//   GET    /api/assistant/lookup?kind=medicine|supplier&q=   search box of a picker card
 const express = require("express");
 const mongoose = require("mongoose");
 const { auth } = require("../middleware/auth");
@@ -15,6 +16,7 @@ const runtime = require("../services/assistant/runtime");
 const { streamSpeech } = require("../services/assistant/tts");
 const limits = require("../services/assistant/limits");
 const { acceptImages } = require("../services/ai/scanService");
+const { pickerSearch } = require("../services/assistant/tools/lookup");
 
 const router = express.Router();
 const db = () => mongoose.connection.db;
@@ -23,6 +25,16 @@ const db = () => mongoose.connection.db;
 const maybeImages = (req, res, next) => (req.is("multipart/form-data") ? acceptImages(4)(req, res, next) : next());
 
 router.post("/chat", auth, requireSubscription(), maybeImages, (req, res) => runtime.handle({ req, res, db: db() }));
+
+// Catalog + medicine database (or your suppliers + distributors) for a picker card
+router.get("/lookup", auth, requireSubscription(), async (req, res, next) => {
+  try {
+    const ctx = { db: db(), user: req.user, pharmacyId: req.user.pharmacy_id, authorization: req.headers.authorization };
+    res.json(await pickerSearch(ctx, req.query.kind === "supplier" ? "supplier" : "medicine", req.query.q));
+  } catch (err) {
+    next(err);
+  }
+});
 
 // POST /api/assistant/tts {text, language} -> streamed 16-bit PCM, 24 kHz mono
 router.post("/tts", auth, requireSubscription(), async (req, res) => {

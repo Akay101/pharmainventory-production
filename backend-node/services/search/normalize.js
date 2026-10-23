@@ -71,7 +71,49 @@ const queryGrams = (q) =>
     .filter((t) => t.length >= MIN_GRAM || /^\d$/.test(t))
     .map((t) => t.slice(0, MAX_GRAM));
 
+// Invoices print names like "OXALGIN-DP TAB 20S ." or "DOLO 650MG TAB 1X15":
+// pack counts and stray punctuation hide the medicine from catalog/global
+// matching. Strip them; keep brand, strength and form.
+function cleanProductName(name) {
+  let s = String(name || "")
+    .replace(/\(([^)]*)\)/g, (m, inner) => (/^\s*\d+\s*$|\d+\s*('?s|x|\*|tab|cap|strip)/i.test(inner) ? " " : ` ${inner} `))
+    .replace(/\b\d+\s*[xX*]\s*\d+(\s*['’`]?\s*s)?\b/g, " ") // 1X15, 10*10
+    .replace(/\b\d+\s*['’`]?\s*s\b/gi, " ") // 20S, 15'S, 10 S
+    .replace(/\b(strip|pack|box)\s+of\s+\d+\b/gi, " ")
+    .replace(/[.,;:]+(\s|$)/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  // ALL CAPS invoice text reads better in title case ("Oxalgin-DP Tab")
+  if (s && s === s.toUpperCase() && /[A-Z]{3}/.test(s)) {
+    s = s.toLowerCase().replace(/(^|[\s-])([a-z])/g, (m, sep, c) => sep + c.toUpperCase());
+    s = s.replace(/\b(Dp|Ds|Sr|Er|Xr|Cr|Md|Dt|Mr|Od|Lc|Ls|Cv|Ip|Bp|Usp|Ml|Mg)\b/g, (w) => (/^(Ml|Mg)$/.test(w) ? w.toLowerCase() : w.toUpperCase()));
+  }
+  return s;
+}
+
+const FORM_ALIASES = [
+  [/\b(tablets?|tabs?)\b/g, "tab"],
+  [/\b(capsules?|caps?)\b/g, "cap"],
+  [/\b(syrup|syr|syp)\b/g, "syp"],
+  [/\b(injection|inj)\b/g, "inj"],
+  [/\b(suspension|susp)\b/g, "susp"],
+  [/\b(ointment|oint)\b/g, "oint"],
+  [/\b(drops?)\b/g, "drop"],
+];
+
+// One key per medicine for de-duplicating search results: "OXALGIN-DP TAB
+// 20S ." and "Oxalgin DP Tablet" -> "oxalgindptab". Form words are unified,
+// not dropped, so a syrup and a tablet of the same brand stay apart.
+const medicineKey = (name) => {
+  let s = cleanProductName(name).toLowerCase();
+  s = s.replace(/(\d+(?:\.\d+)?)\s*(mg|ml|gm|g|mcg|iu)\b/g, "$1");
+  for (const [re, to] of FORM_ALIASES) s = s.replace(re, to);
+  return s.replace(/[^a-z0-9]/g, "");
+};
+
 module.exports = {
+  cleanProductName,
+  medicineKey,
   MIN_GRAM,
   MAX_GRAM,
   SEARCH_KEYS_VERSION,

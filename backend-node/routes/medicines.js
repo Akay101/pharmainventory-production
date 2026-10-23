@@ -4,6 +4,7 @@ const mongoose = require("mongoose");
 const { auth } = require("../middleware/auth");
 
 const { requireSubscription } = require("../middleware/subscription");
+const { medicineKey } = require("../services/search/normalize");
 
 const {
   searchGlobalMedicines,
@@ -19,14 +20,9 @@ const escapeRegex = (str) => {
 };
 
 // Normalize medicine name for cross-collection deduplication
-const normalizeMedName = (str) => {
-  if (!str) return "";
-  return String(str)
-    .toLowerCase()
-    .trim()
-    .replace(/[^\w\s]/g, "")
-    .replace(/\s+/g, " ");
-};
+// Same medicine, same key: pack counts, punctuation and form spellings
+// ("TAB"/"Tablet") don't make catalog and global results look different
+const normalizeMedName = (str) => medicineKey(str);
 
 // POST & GET /api/medicines/enrich (AI Autofill)
 router.all("/enrich", auth, requireSubscription(), async (req, res, next) => {

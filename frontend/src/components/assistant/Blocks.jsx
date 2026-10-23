@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { AlertTriangle, ArrowUpRight, BarChart3, Check, CheckCircle2, ChevronDown, ClipboardList, Info, Loader2, Receipt, ShoppingCart, Table2, X } from "lucide-react";
-import { inr } from "./assistantClient";
+import { AlertTriangle, ArrowUpRight, BarChart3, Check, CheckCircle2, ChevronDown, ClipboardList, Globe, Info, Loader2, Package, Plus, Receipt, Search, ShoppingCart, Table2, Truck, X } from "lucide-react";
+import { assistantApi, inr } from "./assistantClient";
 
 const BADGE = {
   paid: "bg-emerald-500/10 text-emerald-500 border-emerald-500/25",
@@ -383,5 +383,131 @@ export function ChoicesBlock({ block, onReply, disabled }) {
         </button>
       ))}
     </div>
+  );
+}
+
+// "Which medicine is X?" — closest matches from the catalog, then the medicine
+// database (or your suppliers, then distributors), a search box, and "add as
+// new" last, so new catalog items/suppliers are only created on purpose
+const PICK_GROUPS = {
+  medicine: [
+    { source: "catalog", label: "Your catalog", icon: Package },
+    { source: "global", label: "Medicine database", icon: Globe },
+  ],
+  supplier: [
+    { source: "yours", label: "Your suppliers", icon: Truck },
+    { source: "global", label: "Distributors", icon: Globe },
+  ],
+};
+
+export function PickerBlock({ block, onAction, busy, settled }) {
+  const [q, setQ] = useState(block.query || "");
+  const [options, setOptions] = useState(block.options || []);
+  const [loading, setLoading] = useState(false);
+  const [picked, setPicked] = useState(null);
+  const done = settled || picked;
+
+  useEffect(() => {
+    const term = q.trim();
+    // The card opens with the server's own matches for its query
+    if (term.length < 2 || term === (block.query || "").trim()) return;
+    let alive = true;
+    setLoading(true);
+    const t = setTimeout(() => {
+      assistantApi
+        .lookup(block.kind, term)
+        .then((o) => alive && setOptions(o))
+        .catch(() => {})
+        .finally(() => alive && setLoading(false));
+    }, 250);
+    return () => {
+      alive = false;
+      clearTimeout(t);
+    };
+  }, [q, block.kind, block.query]);
+
+  const choose = (pick) => {
+    setPicked(pick.name);
+    onAction(
+      { type: "op", op: "resolve_purchase_line", draft_id: block.draft_id, target: block.target, line: block.line, pick },
+      pick.source === "new" ? `Add ${pick.name} as new` : `Use ${pick.name}`
+    );
+  };
+  const newName = (q.trim() || block.new_name || "").slice(0, 80);
+  const groups = PICK_GROUPS[block.kind] || PICK_GROUPS.medicine;
+
+  return (
+    <Shell>
+      <div className="flex items-center gap-2 border-b border-border bg-gradient-to-r from-sky-500/10 via-violet-500/5 to-transparent px-3.5 py-2.5">
+        <Search className="h-4 w-4 text-sky-500" />
+        <p className="min-w-0 flex-1 truncate text-sm font-semibold">{block.title}</p>
+        {done && (
+          <span className="shrink-0 rounded-full border border-emerald-500/30 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-500">
+            {picked ? "Picked" : settled}
+          </span>
+        )}
+      </div>
+      {done ? (
+        picked && <p className="px-3.5 py-2.5 text-sm text-muted-foreground">{picked}</p>
+      ) : (
+        <div className="space-y-2 p-3">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder={block.kind === "supplier" ? "Search suppliers and distributors" : "Search your catalog and medicine database"}
+              className="h-10 w-full rounded-xl border border-border bg-background pl-9 pr-9 text-sm outline-none focus:border-orange-500/60 focus:ring-2 focus:ring-orange-500/15"
+            />
+            {loading && <Loader2 className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-muted-foreground" />}
+          </div>
+          <div className="max-h-72 space-y-2 overflow-y-auto">
+            {groups.map((g) => {
+              const list = options.filter((o) => o.source === g.source);
+              if (!list.length) return null;
+              const Icon = g.icon;
+              return (
+                <div key={g.source}>
+                  <p className="mb-1 flex items-center gap-1.5 px-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    <Icon className="h-3 w-3" /> {g.label}
+                  </p>
+                  <div className="overflow-hidden rounded-xl border border-border">
+                    {list.map((o, i) => (
+                      <button
+                        key={`${o.source}:${o.id || o.name}:${i}`}
+                        type="button"
+                        disabled={busy}
+                        onClick={() => choose({ source: o.source, id: o.id, name: o.name })}
+                        className="flex w-full items-center gap-3 border-b border-border px-3 py-2 text-left last:border-b-0 hover:bg-muted/60 disabled:opacity-50"
+                      >
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm font-medium">{o.name}</span>
+                          {o.detail && <span className="block truncate text-xs text-muted-foreground">{o.detail}</span>}
+                        </span>
+                        <Check className="h-4 w-4 shrink-0 text-muted-foreground/40" />
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+            {!loading && !options.length && <p className="px-1 py-2 text-xs text-muted-foreground">No match in your catalog or the database.</p>}
+          </div>
+          {newName && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => choose({ source: "new", name: newName })}
+              className="flex w-full items-center gap-2 rounded-xl border border-dashed border-orange-500/40 bg-orange-500/5 px-3 py-2 text-left text-sm font-semibold text-orange-500 hover:bg-orange-500/10 disabled:opacity-50"
+            >
+              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+              <span className="min-w-0 truncate">
+                Add "{newName}" as a new {block.kind === "supplier" ? "supplier" : "item"}
+              </span>
+            </button>
+          )}
+        </div>
+      )}
+    </Shell>
   );
 }

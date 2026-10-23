@@ -66,6 +66,7 @@ export const assistantApi = {
   remove: (id) => axios.delete(`${API}/assistant/conversations/${id}`),
   removeAll: () => axios.delete(`${API}/assistant/conversations`),
   feedback: (messageId, value) => axios.post(`${API}/assistant/messages/${messageId}/feedback`, { value }),
+  lookup: (kind, q) => axios.get(`${API}/assistant/lookup`, { params: { kind, q } }).then((r) => r.data.options || []),
 };
 
 export const AGENT_META = {

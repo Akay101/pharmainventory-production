@@ -6,6 +6,7 @@ const { auth } = require("../middleware/auth");
 const { requireSubscription } = require("../middleware/subscription");
 const { thresholds: dashThresholds } = require("../services/dashboard");
 const { logActivity } = require("../utils/activityLogger");
+const { cleanProductName } = require("../services/search/normalize");
 const {
   searchGlobalMedicines,
   tenantTokenMatch,
@@ -16,12 +17,15 @@ const {
 // Medicine normalization for deduplicating inventory vs global products
 const normalizeMedKey = (str) => {
   if (!str) return "";
-  return String(str)
+  // Pack counts ("20S", "1X15") and hyphens/spacing must not make the same
+  // medicine look different ("OXALGIN-DP TAB 20S" vs "Oxalgin DP Tablet")
+  return String(cleanProductName(str))
     .toLowerCase()
     .replace(/\b(tablet|tablets|tab|capsule|capsules|cap|syrup|syr|suspension|susp|injection|inj|drops|drop|ointment|gel|cream)\b/g, "")
     .replace(/(\d+)\s*(mg|ml|gm|g|mcg|iu)\b/g, "$1")
     .replace(/[^\w\s]/g, "")
     .replace(/\s+/g, " ")
+    .replace(/\s+/g, "")
     .trim();
 };
 
