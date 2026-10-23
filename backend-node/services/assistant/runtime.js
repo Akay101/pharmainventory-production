@@ -13,7 +13,9 @@ const { v4: uuidv4 } = require("uuid");
 const store = require("./store");
 const llm = require("./llm");
 const { route } = require("./router");
-const { AGENTS, systemPrompt, COMMIT, OPS } = require("./agents");
+const { AGENTS, systemPrompt, turnContext, COMMIT, SAVE_AS_DRAFT, OPS } = require("./agents");
+const credits = require("../credits");
+const crypto = require("crypto");
 const limits = require("./limits");
 const { say, todayIst } = require("./tools/shared");
 const attachments = require("./attachments");
@@ -99,22 +101,92 @@ function stampActions(block) {
 }
 
 // Stored messages -> compact model history (text plus what was shown)
+// Tool results go back to the model as input tokens: long lists are cut to
+// what it needs to answer (the full table is already on screen)
+const RESULT_CHAR_BUDGET = 9000;
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+// "08/27" reads as a date to a model; expiries go out as "Aug 2027"
+function readableExpiry(v) {
+  const s = String(v || "").trim();
+  let m;
+  if ((m = s.match(/^(\d{1,2})\/(\d{2})$/))) return +m[1] >= 1 && +m[1] <= 12 ? `${MONTHS[+m[1] - 1]} 20${m[2]}` : v;
+  if ((m = s.match(/^(\d{4})-(\d{2})(?:-\d{2})?$/))) return +m[2] >= 1 && +m[2] <= 12 ? `${MONTHS[+m[2] - 1]} ${m[1]}` : v;
+  return v;
+}
+function withReadableDates(v, key = "") {
+  if (Array.isArray(v)) return v.map((x) => withReadableDates(x, key));
+  if (v && typeof v === "object") return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, withReadableDates(x, k)]));
+  return /expir/i.test(key) && typeof v === "string" ? readableExpiry(v) : v;
+}
+function compactResult(raw) {
+  const result = withReadableDates(raw);
+  let json;
+  try {
+    json = JSON.stringify(result);
+  } catch {
+    return result;
+  }
+  if (!json || json.length <= RESULT_CHAR_BUDGET) return result;
+  const trim = (v, depth = 0) => {
+    if (Array.isArray(v)) {
+      const keep = v.slice(0, depth ? 10 : 30).map((x) => trim(x, depth + 1));
+      return v.length > keep.length ? [...keep, { note: `${v.length - keep.length} more not shown here (visible to the user)` }] : keep;
+    }
+    if (v && typeof v === "object") return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, trim(x, depth + 1)]));
+    if (typeof v === "string" && v.length > 400) return `${v.slice(0, 400)}…`;
+    return v;
+  };
+  const out = trim(result);
+  const again = JSON.stringify(out);
+  return again.length <= RESULT_CHAR_BUDGET * 1.5 ? out : { summary: again.slice(0, RESULT_CHAR_BUDGET), truncated: true };
+}
+
+// The reply when a turn can't run for lack of credits
+function noCreditsReply(reason, lang, cfg) {
+  if (reason === "PHOTO_NEEDS_CREDITS") {
+    return {
+      card: "Reading photos needs AI credits.",
+      text: say(lang, {
+        en: "Reading photos needs AI credits, and you're out of credits right now. Buy credits from the Credits button at the top, or use the Scan page once you have credits.",
+        hinglish: "Photo padhne ke liye AI credits chahiye, aur abhi credits khatam hain. Upar Credits button se credits le lijiye.",
+        hi: "फ़ोटो पढ़ने के लिए AI क्रेडिट चाहिए, और अभी क्रेडिट खत्म हैं। ऊपर Credits बटन से क्रेडिट ले लीजिए।",
+      }),
+    };
+  }
+  const n = Number(cfg?.free_mode?.messages_per_day) || 0;
+  return {
+    card: "Today's free messages are used up.",
+    text: say(lang, {
+      en: `You're out of AI credits and today's ${n} free messages are used up. Buy credits from the Credits button at the top to keep going; everything else in the app works as usual.`,
+      hinglish: `AI credits khatam hain aur aaj ke ${n} free messages bhi ho gaye. Aage chalane ke liye upar Credits button se credits le lijiye; app ka baaki sab kaam normal chalega.`,
+      hi: `AI क्रेडिट खत्म हैं और आज के ${n} मुफ़्त संदेश भी हो गए। आगे चलाने के लिए ऊपर Credits बटन से क्रेडिट ले लीजिए; ऐप का बाकी सब काम सामान्य चलेगा।`,
+    }),
+  };
+}
+
+// Older messages are shortened: the last few exchanges carry the detail, the
+// rest only needs to say what was discussed
+const FULL_RECENT = 6;
+const OLD_TEXT_CHARS = 500;
 function toHistory(messages) {
   const turns = [];
-  for (const m of messages.slice(-HISTORY_TURNS * 2)) {
+  const recent = messages.slice(-HISTORY_TURNS * 2);
+  recent.forEach((m, idx) => {
+    const old = idx < recent.length - FULL_RECENT;
     let text = String(m.text || "");
+    if (old && text.length > OLD_TEXT_CHARS) text = `${text.slice(0, OLD_TEXT_CHARS)}…`;
     if (m.role === "assistant" && m.blocks?.length) {
       const notes = m.blocks
-        .map((b) => (b.type === "table" ? `table "${b.title}" (${b.rows?.length || 0} rows)` : b.type === "draft" ? `${b.kind} draft ${b.draft_id}` : b.type === "result" ? `result: ${b.title}${b.text ? ` – ${b.text}` : ""}` : b.type === "confirm" ? `confirm card: ${b.title}` : b.type === "stats" ? `stats: ${(b.items || []).map((i) => `${i.label} ${i.value}`).join(", ")}` : b.type === "chart" ? `${b.chart} chart "${b.title}" (${b.subtitle || ""}; ${(b.kpis || []).map((k) => `${k.label} ${k.value}`).join(", ")})` : null))
+        .map((b) => (b.type === "table" ? `table "${b.title}" (${b.rows?.length || 0} rows)` : b.type === "draft" ? `${b.kind} draft ${b.draft_id}` : b.type === "result" ? `result: ${b.title}${b.text ? ` – ${b.text}` : ""}` : b.type === "confirm" ? `confirm card: ${b.title}` : b.type === "picker" ? `picker card: ${b.title}` : b.type === "stats" ? `stats: ${(b.items || []).map((i) => `${i.label} ${i.value}`).join(", ")}` : b.type === "chart" ? `${b.chart} chart "${b.title}" (${b.subtitle || ""}; ${(b.kpis || []).map((k) => `${k.label} ${k.value}`).join(", ")})` : null))
         .filter(Boolean);
       if (notes.length) text += `\n<ui>${notes.join("; ")}</ui>`;
     }
-    if (!text.trim()) continue;
+    if (!text.trim()) return;
     const role = m.role === "user" ? "user" : "model";
     const prev = turns[turns.length - 1];
     if (prev && prev.role === role) prev.parts[0].text += `\n${text}`;
     else turns.push({ role, parts: [{ text }] });
-  }
+  });
   while (turns.length && turns[0].role !== "user") turns.shift();
   return turns;
 }
@@ -145,7 +217,7 @@ async function handle({ req, res, db }) {
     lock = await limits.lock(conversation.id);
     stream.send("meta", { conversation_id: conversation.id, title: conversation.title });
 
-    const pharmacy = await db.collection("pharmacies").findOne({ id: user.pharmacy_id }, { projection: { name: 1 } });
+    const pharmacy = await db.collection("pharmacies").findOne({ id: user.pharmacy_id }, { projection: { _id: 0, id: 1, name: 1, subscription: 1 } });
     const state = conversation.state || { drafts: {} };
     const language = state.language || "en";
     const shown = [];
@@ -155,6 +227,7 @@ async function handle({ req, res, db }) {
       pharmacyId: user.pharmacy_id,
       authorization: req.headers.authorization,
       language,
+      voice: body.voice,
       drafts: { ...(state.drafts || {}) },
       emit: (block) => {
         const b = stampActions(block);
@@ -168,6 +241,10 @@ async function handle({ req, res, db }) {
       saveDraft: async (d) => {
         ctx.drafts[d.id] = d;
         await store.setDraft(db, conversation.id, d);
+      },
+      removeDraft: async (id) => {
+        delete ctx.drafts[id];
+        await store.removeDraft(db, conversation.id, id);
       },
     };
 
@@ -187,6 +264,28 @@ async function handle({ req, res, db }) {
     }
     if (!message) throw Object.assign(new Error("Type a message"), { status: 400 });
     await store.addMessage(db, conversation.id, { role: "user", text: message, ...(thumbs.length ? { images: thumbs } : {}), ...(body.voice ? { voice: true } : {}) });
+
+    // 0. Credits: full (credits), free light mode, or blocked
+    const creditCfg = await credits.config.getConfig(db);
+    const wanted = ["pro", "swift"].includes(body.engine) ? body.engine : (await db.collection("users").findOne({ id: user.id }, { projection: { assistant_engine: 1 } }))?.assistant_engine || "pro";
+    const decision = await credits.policy.decideTurn(db, creditCfg, { pharmacy: pharmacy || { id: user.pharmacy_id }, engine: wanted, hasPhotos: !!ctx.images?.length });
+    if (decision.mode === "blocked") {
+      // No router call here: the message's own script/words tell the language
+      const letters = message.replace(/[^\p{L}]/gu, "");
+      const deva = (message.match(/[\u0900-\u097F]/g) || []).length;
+      const replyLang = letters.length && deva / letters.length > 0.5 ? "hi" : hinglishWords(message) >= 2 ? "hinglish" : language;
+      const reply = noCreditsReply(decision.reason, replyLang, creditCfg);
+      ctx.emit({ type: "credits", reason: decision.reason, text: reply.card });
+      stream.send("delta", { text: reply.text });
+      const savedBlocked = await store.addMessage(db, conversation.id, { role: "assistant", agent: "app", language: replyLang, text: reply.text, blocks: shown });
+      stream.send("done", { message: { ...savedBlocked, expires_at: undefined, _id: undefined }, credits: credits.wallet.view(decision.wallet), mode: "blocked" });
+      return;
+    }
+    ctx.mode = decision.mode;
+    ctx.engine = decision.engine;
+    const turnMeter = credits.meter.createMeter();
+    turnMeter.engine = decision.engine;
+    credits.meter.enter(turnMeter); // every AI call from here on is metered for this turn
     const history = await store.getMessages(db, conversation.id, { limit: HISTORY_TURNS * 2 + 1 });
 
     // 1. Route
@@ -199,12 +298,16 @@ async function handle({ req, res, db }) {
       signal: ctrl.signal,
     });
     const agent = AGENTS[r.agent];
+    // Small model for questions and lookups; the strong one for records, reports and photos
+    const tier = ctx.mode === "free" ? "light" : r.task === "action" || r.task === "report" || ctx.images?.length ? "heavy" : "light";
     // Mostly-Devanagari input is Hindi, whatever the router guessed
     const letters = message.replace(/[^\p{L}]/gu, "");
     const deva = (message.match(/[\u0900-\u097F]/g) || []).length;
     ctx.language = letters.length && deva / letters.length > 0.5 ? "hi" : r.language || language;
     // Hindi written in English letters is Hinglish even if the router said English
     if (ctx.language === "en" && hinglishWords(message) >= 2) ctx.language = "hinglish";
+    // ...and is never answered in Devanagari, even if the router said Hindi
+    if (ctx.language === "hi" && !deva && hinglishWords(message) >= 1) ctx.language = "hinglish";
     stream.send("route", { agent: agent.id, label: agent.label[ctx.language] || agent.label.en, loader: r.loader });
     if (r.title && !conversation.message_count) {
       await store.renameConversation(db, user, conversation.id, { title: r.title });
@@ -214,8 +317,10 @@ async function handle({ req, res, db }) {
 
     // 2. Agent loop
     const todayDate = todayIst();
-    const system = systemPrompt(agent, {
+    const system = systemPrompt(agent, { mode: ctx.mode, engine: ctx.engine });
+    const context = turnContext({
       ...ctx,
+      languageName: LANG_NAMES[ctx.language] || "English",
       pharmacyName: pharmacy?.name || "the pharmacy",
       userName: user.name || "the user",
       today: todayDate,
@@ -230,23 +335,37 @@ async function handle({ req, res, db }) {
         lastUser.parts.push(...ctx.images.map((img) => ({ inline_data: { mime_type: img.mimeType, data: img.data.toString("base64") } })));
         lastUser.parts.push({ text: `<attachments>${ctx.images.length} photo(s) attached to this message</attachments>` });
       }
-      lastUser.parts.push({ text: `<reply-language>${LANG_NAMES[ctx.language] || "English"}</reply-language>` });
+      lastUser.parts.push({ text: context });
     }
-    const toolMap = Object.fromEntries(agent.tools.map((t) => [t.name, t]));
+    // Chart/report tools only when a report was asked for (~700 tokens a call otherwise)
+    const REPORT_TOOLS = new Set(["build_report", "show_chart"]);
+    const forTask = r.task === "report" || r.task === "action" ? agent.tools : agent.tools.filter((t) => !REPORT_TOOLS.has(t.name));
+    const tools = credits.policy.allowedTools(forTask, ctx.mode);
+    const toolMap = Object.fromEntries(tools.map((t) => [t.name, t]));
     let text = "";
     const toolLog = [];
     const filter = choicesFilter((t) => stream.send("delta", { text: t }));
 
+    // When the chosen engine can't answer the other one takes over: the app is
+    // told (and warned when the slow last resort answers), the reply labelled
+    let stepEngine = ctx.engine;
+    let answered = null;
+    let lastNote = null;
+    const onSwitch = (s) => {
+      if (lastNote === s.provider) return;
+      lastNote = s.provider;
+      stream.send("engine", s);
+    };
+    const agentTurn = async (withTools, forceTool = false) => {
+      const out = await llm.turn({ role: "agent", engine: stepEngine, tier, system, contents, ...(withTools ? { tools, forceTool } : {}), thinking: "low", signal: ctrl.signal, onText: (t) => filter.push(t), onSwitch });
+      answered = { engine: out.engine, provider: out.provider };
+      // Stay on the engine that answered for the rest of the turn (not on the last resort)
+      if (out.provider !== "nvidia") stepEngine = out.engine;
+      return out;
+    };
+
     for (let step = 0; step < MAX_STEPS; step++) {
-      const out = await llm.turn({
-        role: "agent",
-        system,
-        contents,
-        tools: agent.tools,
-        thinking: "low",
-        signal: ctrl.signal,
-        onText: (t) => filter.push(t),
-      });
+      const out = await agentTurn(true, step === 0 && r.task === "action");
       contents.push(out.content);
       if (!out.calls.length) break;
 
@@ -254,7 +373,7 @@ async function handle({ req, res, db }) {
       for (const call of out.calls) {
         const t = toolMap[call.name];
         let result;
-        if (!t) result = { error: `Unknown tool ${call.name}` };
+        if (!t) result = credits.policy.PAID_TOOLS.has(call.name) ? { error: "Needs AI credits: tell the user this action needs credits (Credits button at the top) or can be done on the app's page." } : { error: `Unknown tool ${call.name}` };
         else {
           const label = t.status?.(call.args || {}, ctx.language);
           if (label) stream.send("status", { text: label, tool: call.name });
@@ -267,28 +386,60 @@ async function handle({ req, res, db }) {
           }
           toolLog.push({ tool: call.name, ms: Date.now() - started, ok: !result?.error });
         }
-        responses.push({ functionResponse: { name: call.name, response: { result } } });
+        responses.push({ functionResponse: { ...(call.id ? { id: call.id } : {}), name: call.name, response: { result: compactResult(result) } } });
       }
       contents.push({ role: "user", parts: responses });
       if (step === MAX_STEPS - 1) {
         // Out of steps: ask for a final answer without tools
-        const final = await llm.turn({ role: "agent", system, contents, thinking: "low", signal: ctrl.signal, onText: (t) => filter.push(t) });
+        const final = await agentTurn(false);
         contents.push(final.content);
       }
     }
 
     const parsed = filter.finish();
-    text = parsed.text.replace(/<\/?(ui|reply-language|attachments)>/g, "").trim();
+    text = parsed.text.replace(/<\/?(ui|reply-language|attachments|context)>/g, "").trim();
     if (parsed.choices) ctx.emit(parsed.choices);
-    const saved = await store.addMessage(db, conversation.id, { role: "assistant", agent: agent.id, language: ctx.language, text, blocks: shown, tools: toolLog });
-    stream.send("done", { message: { ...saved, expires_at: undefined, _id: undefined } });
+
+    // Charge for what this turn used (a failed or stopped turn isn't charged)
+    const usedEngine = answered?.engine || ctx.engine;
+    let usage = {
+      mode: ctx.mode,
+      engine: usedEngine,
+      ...(usedEngine !== ctx.engine ? { switched_from: ctx.engine } : {}),
+      ...(answered?.provider === "nvidia" ? { slow: true } : {}),
+      tier,
+      task: r.task,
+      credits: 0,
+    };
+    let walletAfter = decision.wallet;
+    try {
+      const charged = await credits.settle(db, pharmacy || { id: user.pharmacy_id }, turnMeter, {
+        ref: `turn:${conversation.id}:${crypto.randomUUID()}`,
+        task: ctx.images?.length ? "photo" : r.task,
+        engine: usedEngine,
+        userId: user.id,
+        label: String(message).slice(0, 80),
+        free: ctx.mode === "free",
+      });
+      usage.credits = charged.credits;
+      if (charged.wallet) walletAfter = charged.wallet;
+    } catch (err) {
+      console.error("[assistant] charging credits failed:", err.message);
+    }
+    if (ctx.mode === "free") walletAfter = await credits.wallet.getWallet(db, creditCfg, pharmacy || { id: user.pharmacy_id });
+    const saved = await store.addMessage(db, conversation.id, { role: "assistant", agent: agent.id, language: ctx.language, text, blocks: shown, tools: toolLog, usage });
+    stream.send("done", { message: { ...saved, expires_at: undefined, _id: undefined }, credits: credits.wallet.view(walletAfter), mode: ctx.mode });
   } catch (err) {
     if (err.category === "cancelled") return;
     console.error("[assistant] turn failed:", err.message);
     const detail =
-      err.category === "network" || err.category === "timeout"
+      err.category === "all_busy"
+        ? err.message
+        : err.category === "network" || err.category === "timeout"
         ? "Couldn't reach the AI service just now. Please try again."
         : err.category === "blocked"
+        ? err.message
+        : err.category === "all_busy"
         ? err.message
         : err.status === 429 || err.category === "rate_limit"
         ? err.message || "Too many requests. Please wait a moment."
@@ -354,6 +505,29 @@ async function handleAction({ body, ctx, conversation, state, stream, db, shown 
       } catch (err) {
         ctx.emit({ type: "notice", tone: "danger", text: err.data?.detail || err.message });
         text = say(lang, { en: "I couldn't save it. Fix the issue above and tap Save again.", hinglish: "Save nahi ho paya. Upar wali problem theek karke dobara Save dabaiye.", hi: "सेव नहीं हो पाया। ऊपर की समस्या ठीक करके दोबारा सेव दबाइए।" });
+      }
+    }
+  } else if (a.type === "save_draft") {
+    const draft = ctx.drafts[a.draft_id];
+    if (!draft || !SAVE_AS_DRAFT[draft.kind]) {
+      text = say(lang, { en: "This draft was already saved or discarded.", hinglish: "Ye draft pehle hi save ya cancel ho chuka hai.", hi: "यह ड्राफ्ट पहले ही सेव या रद्द हो चुका है।" });
+    } else {
+      stream.send("status", { text: say(lang, { en: "Saving as a draft", hinglish: "Draft mein save kar raha hoon", hi: "ड्राफ्ट में सेव कर रहा हूँ" }) });
+      try {
+        const r = await SAVE_AS_DRAFT[draft.kind](draft, ctx);
+        await markUsed();
+        delete ctx.drafts[draft.id];
+        await store.removeDraft(db, conversation.id, draft.id);
+        ctx.emit(r.block);
+        agentId = "purchase";
+        text = say(lang, {
+          en: `Saved as draft ${r.summary.draft_no}. Stock isn't added yet: review it on the Purchases page (Draft Purchases), edit anything, then save.`,
+          hinglish: `Draft ${r.summary.draft_no} save ho gaya. Stock abhi add nahi hua: Purchases page pe Draft Purchases mein check karke, zarurat ho to edit karke save kar dijiye.`,
+          hi: `ड्राफ्ट ${r.summary.draft_no} सेव हो गया। स्टॉक अभी नहीं जुड़ा: Purchases पेज पर Draft Purchases में देखकर, ज़रूरत हो तो बदलकर सेव कर दीजिए।`,
+        });
+      } catch (err) {
+        ctx.emit({ type: "notice", tone: "danger", text: err.data?.detail || err.message });
+        text = say(lang, { en: "I couldn't save the draft.", hinglish: "Draft save nahi ho paya.", hi: "ड्राफ्ट सेव नहीं हो पाया।" });
       }
     }
   } else if (a.type === "discard") {

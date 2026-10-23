@@ -24,6 +24,7 @@ import AnalyticsFunnelPage from "./pages/AnalyticsFunnelPage";
 import TeamManagementPage from "./pages/TeamManagementPage";
 import PricingPage from "./pages/PricingPage";
 import SubscriptionsPage from "./pages/SubscriptionsPage";
+import CreditsPage from "./pages/CreditsPage";
 
 function MainDashboard() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -347,6 +348,8 @@ function MainDashboard() {
           {activeTab === "subscriptions" && <SubscriptionsPage activeEnv={activeEnv} />}
 
           {activeTab === "pricing" && <PricingPage activeEnv={activeEnv} />}
+
+          {activeTab === "credits" && <CreditsPage activeEnv={activeEnv} />}
         </main>
       </div>
 

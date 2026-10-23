@@ -1,6 +1,7 @@
 // Checkout and payment finalisation.
 //
 // payment_orders.status: CREATED → PAID | EXPIRED | SUPERSEDED | AMOUNT_MISMATCH
+// payment_orders.purpose: (none) = plan subscription, "CREDITS" = AI credit pack
 // finalizeOrder() is the only place that activates a paid plan. It always
 // re-reads the order from Cashfree, checks the amount against our snapshot,
 // and flips the status atomically, so webhook + return page + reconcile can
@@ -11,6 +12,8 @@ const pricing = require("./pricing");
 const promos = require("./promos");
 const subscriptions = require("./subscriptions");
 const cashfree = require("./cashfree");
+const creditConfig = require("../credits/config");
+const creditWallet = require("../credits/wallet");
 
 const ORDER_TTL_MS = 30 * 60 * 1000;
 
@@ -62,10 +65,11 @@ async function quote(db, { pharmacy, planCode, promoCode }) {
   };
 }
 
-async function supersedeOpenOrders(db, pharmacyId) {
+// A new checkout replaces an unfinished one of the same kind (plan or credits)
+async function supersedeOpenOrders(db, pharmacyId, purpose = null) {
   const open = await db
     .collection("payment_orders")
-    .find({ pharmacy_id: pharmacyId, status: "CREATED" }, { projection: { order_id: 1 } })
+    .find({ pharmacy_id: pharmacyId, status: "CREATED", purpose: purpose ? purpose : { $ne: "CREDITS" } }, { projection: { order_id: 1 } })
     .toArray();
   for (const o of open) {
     const res = await db
@@ -151,8 +155,81 @@ async function createCheckout(db, { user, pharmacy, planCode, promoCode }) {
   }
 }
 
+// Checkout for an AI credit pack. The pack (price and credits) is snapshotted
+// on the order, so later price changes don't affect a payment in flight.
+async function createCreditCheckout(db, { user, pharmacy, packId }) {
+  if (user.role !== "ADMIN") throw new BillingError("OWNER_ONLY", "Only the pharmacy admin can buy credits. Ask your admin to top up.", 403);
+  const cfg = await creditConfig.getConfig(db);
+  const pack = (cfg.packs || []).find((p) => p.id === packId && p.active !== false);
+  if (!pack) throw new BillingError("PACK_NOT_FOUND", "That credit pack isn't available any more. Refresh and pick another.", 404);
+  if (!(pack.price_paise >= 100)) throw new BillingError("PACK_NOT_FOUND", "That credit pack isn't available", 404);
+  const phone = customerPhone(user.mobile);
+  await supersedeOpenOrders(db, pharmacy.id, "CREDITS");
+
+  const now = new Date();
+  const orderId = newOrderId();
+  const creditsGiven = creditConfig.packCredits(cfg, pack);
+  const order = {
+    order_id: orderId,
+    purpose: "CREDITS",
+    pharmacy_id: pharmacy.id,
+    user_id: user.id,
+    plan: null,
+    pack_snapshot: { id: pack.id, label: pack.label, price_paise: pack.price_paise, credits: creditsGiven, bonus_credits: pack.bonus_credits || 0, gst_percent: cfg.gst_percent },
+    amount_paise: pack.price_paise,
+    status: "CREATED",
+    gateway: "CASHFREE",
+    created_at: now,
+    updated_at: now,
+    expires_at: new Date(now.getTime() + ORDER_TTL_MS),
+  };
+  await db.collection("payment_orders").insertOne(order);
+  try {
+    const cf = await cashfree.createOrder({
+      orderId,
+      amountPaise: pack.price_paise,
+      customer: { customer_id: user.id, customer_email: user.email, customer_phone: phone, customer_name: user.name || undefined },
+      returnUrl: `${trimUrl(process.env.FRONTEND_URL)}/payment-success?order_id={order_id}`,
+      notifyUrl: process.env.BACKEND_URL ? `${trimUrl(process.env.BACKEND_URL)}/api/webhook/cashfree` : undefined,
+      tags: { purpose: "CREDITS", pack: pack.id, pharmacy_id: pharmacy.id },
+      expiresAt: order.expires_at,
+    });
+    await db.collection("payment_orders").updateOne(
+      { order_id: orderId },
+      { $set: { cf_order_id: cf.cf_order_id, payment_session_id: cf.payment_session_id, updated_at: new Date() } }
+    );
+    return { order_id: orderId, payment_session_id: cf.payment_session_id, mode: cashfree.mode(), amount_paise: pack.price_paise, credits: creditsGiven };
+  } catch (err) {
+    console.error("[Billing] Cashfree create order (credits) failed:", err.response?.data || err.message);
+    await db.collection("payment_orders").updateOne(
+      { order_id: orderId },
+      { $set: { status: "GATEWAY_ERROR", gateway_error: err.response?.data?.message || err.message, updated_at: new Date() } }
+    );
+    throw new BillingError("GATEWAY_ERROR", "Could not start the payment. Please try again in a moment.", 502);
+  }
+}
+
+// Add a paid credit pack to the wallet (idempotent on the order)
+async function settleCredits(db, order, { source, paymentId }) {
+  const snap = order.pack_snapshot;
+  const r = await creditWallet.credit(db, order.pharmacy_id, {
+    milli: creditWallet.toMilli(snap.credits),
+    type: "PURCHASE",
+    ref: `order:${order.order_id}`,
+    userId: order.user_id,
+    note: `${snap.label} pack: ${snap.credits} credits`,
+    meta: { order_id: order.order_id, payment_id: paymentId, source, price_paise: snap.price_paise },
+  });
+  await db.collection("payment_orders").updateOne(
+    { order_id: order.order_id },
+    { $set: { status: "PAID", activated: true, paid_at: order.paid_at || new Date(), payment_id: paymentId, finalized_by: source, updated_at: new Date() } }
+  );
+  return { wallet: r.wallet };
+}
+
 // Activate the plan for a paid order (idempotent; safe to retry).
 async function settlePaid(db, order, { source, paymentId }) {
+  if (order.purpose === "CREDITS") return settleCredits(db, order, { source, paymentId });
   const snap = order.plan_snapshot;
   const result = await subscriptions.activate(db, {
     pharmacyId: order.pharmacy_id,
@@ -179,8 +256,9 @@ async function settlePaid(db, order, { source, paymentId }) {
 async function finalizeOrder(db, orderId, { source }) {
   const order = await db.collection("payment_orders").findOne({ order_id: orderId });
   if (!order) return { status: "NOT_FOUND" };
-  if (order.status === "PAID" && order.activated) return { status: "PAID", plan: order.plan, already: true };
-  if (order.gateway !== "CASHFREE") return { status: order.status, plan: order.plan };
+  const kind = { purpose: order.purpose || "PLAN", credits: order.pack_snapshot?.credits || null };
+  if (order.status === "PAID" && order.activated) return { status: "PAID", plan: order.plan, already: true, ...kind };
+  if (order.gateway !== "CASHFREE") return { status: order.status, plan: order.plan, ...kind };
 
   const cf = await cashfree.fetchOrder(orderId);
 
@@ -192,7 +270,7 @@ async function finalizeOrder(db, orderId, { source }) {
         { $set: { status: "AMOUNT_MISMATCH", cf_amount: cf.order_amount, updated_at: new Date() } }
       );
       console.error(`[Billing] Amount mismatch on ${orderId}: expected ${order.amount_paise}p, Cashfree says ${cf.order_amount}`);
-      return { status: "FAILED", plan: order.plan, reason: "AMOUNT_MISMATCH" };
+      return { status: "FAILED", plan: order.plan, reason: "AMOUNT_MISMATCH", ...kind };
     }
 
     // Claim the transition; whoever wins activates. A PAID-but-not-activated
@@ -202,12 +280,12 @@ async function finalizeOrder(db, orderId, { source }) {
       { $set: { status: "PAID", paid_at: new Date(), updated_at: new Date() } },
       { returnDocument: "after" }
     );
-    if (!claimed) return { status: "PAID", plan: order.plan, already: true };
+    if (!claimed) return { status: "PAID", plan: order.plan, already: true, ...kind };
 
     const payments = await cashfree.fetchPayments(orderId).catch(() => []);
     const success = payments.find((p) => p.payment_status === "SUCCESS");
     const result = await settlePaid(db, claimed, { source, paymentId: success?.cf_payment_id ? String(success.cf_payment_id) : null });
-    return { status: "PAID", plan: order.plan, subscription: result.subscription };
+    return { status: "PAID", plan: order.plan, subscription: result.subscription, ...kind };
   }
 
   if (["EXPIRED", "TERMINATED"].includes(cf.order_status)) {
@@ -216,7 +294,7 @@ async function finalizeOrder(db, orderId, { source }) {
       { $set: { status: "EXPIRED", updated_at: new Date() } }
     );
     if (res.modifiedCount) await promos.releaseForOrder(db, orderId);
-    return { status: "EXPIRED", plan: order.plan };
+    return { status: "EXPIRED", plan: order.plan, ...kind };
   }
 
   // Order still ACTIVE at Cashfree: report the latest attempt, if any.
@@ -227,9 +305,9 @@ async function finalizeOrder(db, orderId, { source }) {
     await db.collection("payment_orders").updateOne({ order_id: orderId }, { $set: { last_payment_status: last, updated_at: new Date() } });
   }
   if (last === "FAILED" || last === "USER_DROPPED" || last === "CANCELLED") {
-    return { status: "FAILED", plan: order.plan, reason: last };
+    return { status: "FAILED", plan: order.plan, reason: last, ...kind };
   }
-  return { status: "PENDING", plan: order.plan };
+  return { status: "PENDING", plan: order.plan, ...kind };
 }
 
 // Cron: catch missed webhooks and close abandoned orders.
@@ -266,4 +344,4 @@ async function reconcile(db) {
   return { checked: candidates.length, activated: changed };
 }
 
-module.exports = { quote, createCheckout, finalizeOrder, reconcile, settlePaid };
+module.exports = { quote, createCheckout, createCreditCheckout, finalizeOrder, reconcile, settlePaid };

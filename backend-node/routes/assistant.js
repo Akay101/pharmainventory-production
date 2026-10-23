@@ -17,6 +17,7 @@ const { streamSpeech } = require("../services/assistant/tts");
 const limits = require("../services/assistant/limits");
 const { acceptImages } = require("../services/ai/scanService");
 const { pickerSearch } = require("../services/assistant/tools/lookup");
+const credits = require("../services/credits");
 
 const router = express.Router();
 const db = () => mongoose.connection.db;
@@ -45,6 +46,13 @@ router.post("/tts", auth, requireSubscription(), async (req, res) => {
   } catch (err) {
     return res.status(429).json({ detail: err.message });
   }
+  // Spoken replies use credits
+  const pharmacy = await db().collection("pharmacies").findOne({ id: req.user.pharmacy_id }, { projection: { _id: 0, id: 1, subscription: 1 } });
+  const cfg = await credits.config.getConfig(db());
+  const gate = await credits.policy.canSpend(db(), cfg, pharmacy || { id: req.user.pharmacy_id });
+  if (!gate.ok) return res.status(402).json({ detail: "Spoken replies need AI credits", code: "NO_CREDITS" });
+  const voiceMeter = credits.meter.createMeter();
+  credits.meter.enter(voiceMeter);
   const ctrl = new AbortController();
   res.on("close", () => !res.writableFinished && ctrl.abort());
   res.setHeader("Content-Type", "audio/L16; rate=24000; channels=1");
@@ -53,6 +61,9 @@ router.post("/tts", auth, requireSubscription(), async (req, res) => {
   try {
     await streamSpeech({ text, language: req.body?.language, signal: ctrl.signal, onChunk: (b) => res.write(b) });
     res.end();
+    await credits
+      .settle(db(), pharmacy || { id: req.user.pharmacy_id }, voiceMeter, { ref: `voice:${req.user.id}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`, task: "voice", engine: "pro", userId: req.user.id, label: "Spoken reply" })
+      .catch((err) => console.error("[assistant tts] charging credits failed:", err.message));
   } catch (err) {
     console.warn("[assistant tts]", err.message);
     if (!res.headersSent && err.code === "VOICE_QUOTA") {

@@ -259,6 +259,16 @@ export const AdminAPI = {
   changePlan: (pharmacyId, data) =>
     api.post(`/subscriptions/${pharmacyId}/change-plan`, data),
 
+  // AI credits
+  getCreditConfig: () => api.get("/credits/config"),
+  updateCreditConfig: (data) => api.put("/credits/config", data),
+  getCreditSummary: (params) => api.get("/credits/summary", { params }),
+  getCreditWallets: (params) => api.get("/credits/wallets", { params }),
+  getCreditWallet: (pharmacyId) => api.get(`/credits/wallets/${pharmacyId}`),
+  grantCredits: (pharmacyId, data) => api.post(`/credits/wallets/${pharmacyId}/grant`, data),
+  removeCredits: (pharmacyId, data) => api.post(`/credits/wallets/${pharmacyId}/remove`, data),
+  setDailyCredits: (pharmacyId, data) => api.put(`/credits/wallets/${pharmacyId}/daily`, data),
+
   // Analytics & Traffic
   getFunnel: () => api.get("/analytics/funnel"),
   getActivityFeed: () => api.get("/analytics/activity-feed"),

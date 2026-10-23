@@ -214,7 +214,8 @@ const tools = [
           })
         : prevInputs;
 
-      for (const it of lines) {
+      // Lines are independent: match them side by side, keeping their order
+      const matchLine = async (it) => {
         const m = await matchForBilling(ctx.db, ctx.pharmacyId, { product_name: it.product, batch_no: it.batch_no || "" });
         let item = m.matched_item;
         if (it.inventory_id && item.available_batches?.length) {
@@ -224,7 +225,7 @@ const tools = [
         const upp = item.units_per_pack || 1;
         const qty = Math.max(1, Math.round((Number(it.quantity) || 1) * (it.unit === "packs" ? upp : 1)));
         const disc = Number(it.discount_percent) || 0;
-        draft.items.push({
+        return {
           input: it,
           inventory_id: item.inventory_id || null,
           product_name: item.product_name,
@@ -243,8 +244,9 @@ const tools = [
           match_type: m.match_type,
           alternatives: m.alternatives,
           total: round2(qty * (Number(item.mrp) || Number(it.mrp_per_unit) || 0) * (1 - disc / 100)),
-        });
-      }
+        };
+      };
+      draft.items = await S.mapLimit(lines, 6, matchLine);
 
       const subtotal = draft.items.reduce((s, i) => s + i.total, 0);
       draft.total = round2(subtotal * (1 - (draft.bill_discount_percent || 0) / 100));

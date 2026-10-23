@@ -132,7 +132,7 @@ export function StatsBlock({ block }) {
   );
 }
 
-function ActionButton({ a, onAction, busy, done }) {
+function ActionButton({ a, onAction, busy, done, locked }) {
   const style =
     a.style === "primary"
       ? "bg-gradient-to-r from-orange-500 to-pink-500 text-white shadow-md shadow-orange-500/20"
@@ -144,7 +144,8 @@ function ActionButton({ a, onAction, busy, done }) {
   return (
     <button
       type="button"
-      disabled={a.disabled || busy || done}
+      disabled={a.disabled || busy || done || locked}
+      title={locked ? "Wait for the reply to finish" : undefined}
       onClick={() => onAction(a.action, a.label)}
       className={`h-9 rounded-xl px-3.5 text-sm font-semibold transition active:scale-[0.98] disabled:opacity-40 ${style}`}
     >
@@ -153,7 +154,7 @@ function ActionButton({ a, onAction, busy, done }) {
   );
 }
 
-function Actions({ actions = [], onAction, busy, settled }) {
+function Actions({ actions = [], onAction, busy, settled, locked }) {
   if (!actions.length) return null;
   if (settled) {
     return (
@@ -165,21 +166,44 @@ function Actions({ actions = [], onAction, busy, settled }) {
   return (
     <div className="flex flex-wrap items-center gap-2">
       {actions.map((a) => (
-        <ActionButton key={a.label} a={a} onAction={onAction} busy={busy} />
+        <ActionButton key={a.label} a={a} onAction={onAction} busy={busy} locked={locked} />
       ))}
       {busy && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
     </div>
   );
 }
 
-export function DraftBlock({ block, onAction, busy, settled }) {
+// Lines still to pick are listed once, as a count: the picker cards below say which
+function MissingChips({ missing }) {
+  const toPick = missing.filter((m) => /not found/.test(m));
+  const offline = toPick.some((m) => /unreachable/.test(m));
+  const rest = missing.filter((m) => !/not found/.test(m));
+  const chips = [
+    ...(toPick.length
+      ? [toPick.length === 1 ? toPick[0].replace(/ \(medicine database unreachable.*?\)/, "") : `${toPick.length} items to pick or add (cards below)`]
+      : []),
+    ...(offline ? ["Medicine database unreachable right now, so those couldn't be checked"] : []),
+    ...rest,
+  ];
+  return (
+    <div className="flex flex-wrap gap-1.5 border-t border-border px-3.5 py-2.5">
+      {chips.map((m) => (
+        <span key={m} className="inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[11px] text-amber-500">
+          <AlertTriangle className="h-3 w-3 shrink-0" /> {m}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+export function DraftBlock({ block, onAction, busy, settled, locked }) {
   const Icon = block.kind === "bill" ? Receipt : ShoppingCart;
   return (
     <Shell className="ai-glow-border">
       <div className="flex items-center gap-2 border-b border-border bg-gradient-to-r from-orange-500/10 via-pink-500/5 to-transparent px-3.5 py-2.5">
         <Icon className="h-4 w-4 text-orange-500" />
         <p className="text-sm font-semibold">{block.title}</p>
-        <span className={`ml-auto rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${settled === "Saved" ? "border-emerald-500/30 text-emerald-500" : "border-border text-muted-foreground"}`}>
+        <span className={`ml-auto rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${settled === "Saved" || settled === "Saved as draft" ? "border-emerald-500/30 text-emerald-500" : "border-border text-muted-foreground"}`}>
           {settled || "Not saved yet"}
         </span>
       </div>
@@ -215,15 +239,7 @@ export function DraftBlock({ block, onAction, busy, settled }) {
           </tbody>
         </table>
       </div>
-      {block.missing?.length > 0 && !settled && (
-        <div className="flex flex-wrap gap-1.5 border-t border-border px-3.5 py-2.5">
-          {block.missing.map((m) => (
-            <span key={m} className="inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[11px] text-amber-500">
-              <AlertTriangle className="h-3 w-3" /> {m}
-            </span>
-          ))}
-        </div>
-      )}
+      {block.missing?.length > 0 && !settled && <MissingChips missing={block.missing} />}
       <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border px-3.5 py-3">
         <div className="text-sm">
           {block.totals?.map((t) => (
@@ -233,13 +249,13 @@ export function DraftBlock({ block, onAction, busy, settled }) {
             </span>
           ))}
         </div>
-        <Actions actions={block.actions} onAction={onAction} busy={busy} settled={settled} />
+        <Actions actions={block.actions} onAction={onAction} busy={busy} settled={settled} locked={locked} />
       </div>
     </Shell>
   );
 }
 
-export function ConfirmBlock({ block, onAction, busy, settled }) {
+export function ConfirmBlock({ block, onAction, busy, settled, locked }) {
   const danger = block.tone === "danger";
   return (
     <Shell className={danger ? "border-rose-500/30" : ""}>
@@ -289,7 +305,7 @@ export function ConfirmBlock({ block, onAction, busy, settled }) {
         </div>
       )}
       <div className="border-t border-border px-3.5 py-2.5">
-        <Actions actions={block.actions} onAction={onAction} busy={busy} settled={settled} />
+        <Actions actions={block.actions} onAction={onAction} busy={busy} settled={settled} locked={locked} />
       </div>
     </Shell>
   );
@@ -400,47 +416,61 @@ const PICK_GROUPS = {
   ],
 };
 
-export function PickerBlock({ block, onAction, busy, settled }) {
+export function PickerBlock({ block, onAction, busy, settled, locked }) {
   const [q, setQ] = useState(block.query || "");
   const [options, setOptions] = useState(block.options || []);
-  const [loading, setLoading] = useState(false);
+  const [offline, setOffline] = useState(!!block.offline);
+  const [state, setState] = useState("idle"); // idle | loading | error
+  const [retry, setRetry] = useState(0);
   const [picked, setPicked] = useState(null);
   const done = settled || picked;
 
   useEffect(() => {
     const term = q.trim();
-    // The card opens with the server's own matches for its query
-    if (term.length < 2 || term === (block.query || "").trim()) return;
+    // Empty box or the card's own query: the server's matches for it
+    if (term.length < 2 || term === (block.query || "").trim()) {
+      setOptions(block.options || []);
+      setState("idle");
+      return;
+    }
     let alive = true;
-    setLoading(true);
+    setState("loading");
     const t = setTimeout(() => {
       assistantApi
         .lookup(block.kind, term)
-        .then((o) => alive && setOptions(o))
-        .catch(() => {})
-        .finally(() => alive && setLoading(false));
+        .then((r) => {
+          if (!alive) return;
+          setOptions(r.options || []);
+          if (block.kind === "medicine") setOffline(!!r.medicine_db_offline);
+          setState("idle");
+        })
+        .catch(() => alive && setState("error"));
     }, 250);
     return () => {
       alive = false;
       clearTimeout(t);
     };
-  }, [q, block.kind, block.query]);
+  }, [q, block.kind, block.query, block.options, retry]);
 
   const choose = (pick) => {
+    if (locked || busy) return;
     setPicked(pick.name);
     onAction(
       { type: "op", op: "resolve_purchase_line", draft_id: block.draft_id, target: block.target, line: block.line, pick },
-      pick.source === "new" ? `Add ${pick.name} as new` : `Use ${pick.name}`
+      pick.source === "new" ? `Add ${pick.name} as new` : `Use ${pick.name}`,
+      (ok) => !ok && setPicked(null) // didn't go through: let them pick again
     );
   };
   const newName = (q.trim() || block.new_name || "").slice(0, 80);
   const groups = PICK_GROUPS[block.kind] || PICK_GROUPS.medicine;
+  const disabled = busy || locked;
+  const loading = state === "loading";
 
   return (
     <Shell>
       <div className="flex items-center gap-2 border-b border-border bg-gradient-to-r from-sky-500/10 via-violet-500/5 to-transparent px-3.5 py-2.5">
-        <Search className="h-4 w-4 text-sky-500" />
-        <p className="min-w-0 flex-1 truncate text-sm font-semibold">{block.title}</p>
+        <Search className="h-4 w-4 shrink-0 text-sky-500" />
+        <p className="min-w-0 flex-1 truncate text-sm font-semibold" title={block.title}>{block.title}</p>
         {done && (
           <span className="shrink-0 rounded-full border border-emerald-500/30 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-500">
             {picked ? "Picked" : settled}
@@ -448,9 +478,20 @@ export function PickerBlock({ block, onAction, busy, settled }) {
         )}
       </div>
       {done ? (
-        picked && <p className="px-3.5 py-2.5 text-sm text-muted-foreground">{picked}</p>
+        picked && (
+          <p className="flex items-center gap-2 px-3.5 py-2.5 text-sm text-muted-foreground">
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4 text-emerald-500" />}
+            {picked}
+          </p>
+        )
       ) : (
         <div className="space-y-2 p-3">
+          {offline && block.kind === "medicine" && (
+            <p className="flex items-start gap-1.5 rounded-xl border border-amber-500/30 bg-amber-500/10 px-2.5 py-2 text-xs text-amber-600 dark:text-amber-400">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              The medicine database can't be reached right now, so only your catalog is searched. If you're unsure, save the purchase as a draft and finish it later.
+            </p>
+          )}
           <div className="relative">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <input
@@ -459,9 +500,9 @@ export function PickerBlock({ block, onAction, busy, settled }) {
               placeholder={block.kind === "supplier" ? "Search suppliers and distributors" : "Search your catalog and medicine database"}
               className="h-10 w-full rounded-xl border border-border bg-background pl-9 pr-9 text-sm outline-none focus:border-orange-500/60 focus:ring-2 focus:ring-orange-500/15"
             />
-            {loading && <Loader2 className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-muted-foreground" />}
+            {loading && <Loader2 className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-orange-500" />}
           </div>
-          <div className="max-h-72 space-y-2 overflow-y-auto">
+          <div className={`max-h-72 space-y-2 overflow-y-auto transition-opacity ${loading ? "opacity-50" : ""}`}>
             {groups.map((g) => {
               const list = options.filter((o) => o.source === g.source);
               if (!list.length) return null;
@@ -476,7 +517,7 @@ export function PickerBlock({ block, onAction, busy, settled }) {
                       <button
                         key={`${o.source}:${o.id || o.name}:${i}`}
                         type="button"
-                        disabled={busy}
+                        disabled={disabled}
                         onClick={() => choose({ source: o.source, id: o.id, name: o.name })}
                         className="flex w-full items-center gap-3 border-b border-border px-3 py-2 text-left last:border-b-0 hover:bg-muted/60 disabled:opacity-50"
                       >
@@ -491,21 +532,41 @@ export function PickerBlock({ block, onAction, busy, settled }) {
                 </div>
               );
             })}
-            {!loading && !options.length && <p className="px-1 py-2 text-xs text-muted-foreground">No match in your catalog or the database.</p>}
+            {loading && !options.length && (
+              <div className="space-y-1.5">
+                {[0, 1, 2].map((i) => (
+                  <div key={i} className="h-11 animate-pulse rounded-xl bg-muted/60" />
+                ))}
+              </div>
+            )}
+            {state === "error" && (
+              <p className="flex items-center gap-2 px-1 py-2 text-xs text-rose-500">
+                Search failed.
+                <button type="button" onClick={() => setRetry((n) => n + 1)} className="font-semibold underline">
+                  Try again
+                </button>
+              </p>
+            )}
+            {state === "idle" && !options.length && (
+              <p className="px-1 py-2 text-xs text-muted-foreground">
+                {offline && block.kind === "medicine" ? "Not in your catalog." : `No match in your ${block.kind === "supplier" ? "suppliers or the distributor directory" : "catalog or the medicine database"}.`}
+              </p>
+            )}
           </div>
           {newName && (
             <button
               type="button"
-              disabled={busy}
+              disabled={disabled}
               onClick={() => choose({ source: "new", name: newName })}
               className="flex w-full items-center gap-2 rounded-xl border border-dashed border-orange-500/40 bg-orange-500/5 px-3 py-2 text-left text-sm font-semibold text-orange-500 hover:bg-orange-500/10 disabled:opacity-50"
             >
-              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+              <Plus className="h-4 w-4 shrink-0" />
               <span className="min-w-0 truncate">
                 Add "{newName}" as a new {block.kind === "supplier" ? "supplier" : "item"}
               </span>
             </button>
           )}
+          {locked && <p className="px-1 text-[11px] text-muted-foreground">You can pick once the reply finishes.</p>}
         </div>
       )}
     </Shell>

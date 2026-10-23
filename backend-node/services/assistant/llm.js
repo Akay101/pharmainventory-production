@@ -7,11 +7,56 @@
 const ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models";
 
 const apiKey = () => process.env.GEMINI_API_KEY || process.env.EMERGENT_LLM_KEY || "";
+const groq = require("./groq");
+const meter = require("../credits/meter");
+
+// Two engines, each with a cheap model for light work and a strong one for
+// real work:
+//   pro   ("Precision" in the app): Gemini
+//   swift ("Swift"): Groq (much cheaper)
+// When the chosen engine can't answer, the other one does (and the reply says
+// so); NVIDIA's Nemotron is the last resort, shown as Swift. Each answer is
+// labelled with the engine that really gave it.
 const MODELS = {
   agent: () => process.env.ASSISTANT_MODEL || "gemini-3.5-flash",
+  light: () => process.env.ASSISTANT_LIGHT_MODEL || "gemini-3.1-flash-lite",
   router: () => process.env.ASSISTANT_ROUTER_MODEL || "gemini-3.1-flash-lite",
   fallback: () => process.env.GEMINI_FALLBACK_MODEL || "gemini-2.5-flash",
+  swiftAgent: () => process.env.SWIFT_AGENT_MODEL || "openai/gpt-oss-120b",
+  swiftLight: () => process.env.SWIFT_LIGHT_MODEL || "openai/gpt-oss-20b",
+  lastResort: () => process.env.LAST_RESORT_MODEL || "nvidia/nemotron-3.5-super-vl-120b-a12b",
 };
+const ENGINE_OF = { gemini: "pro", groq: "swift", nvidia: "swift" };
+const ALL_BUSY = "Due to high demand, our agents will be back in a few moments. Please check back later.";
+
+// Gemini models that just hit a quota or outage are skipped for a while, so
+// every step of a turn doesn't wait on the same failure (Groq/NVIDIA keep their own)
+const geminiCooling = new Map();
+const usable = (link) =>
+  link.provider === "gemini" ? !!apiKey() && (geminiCooling.get(link.model) || 0) <= Date.now() : groq.available(link.model, link.provider);
+
+// Whether an engine can run here at all (its key is set)
+const engineReady = (engine) => (engine === "swift" ? groq.available(null, "groq") : !!apiKey());
+
+function engineLinks(engine, role, tier) {
+  const g = (model) => ({ provider: "gemini", model });
+  const q = (model) => ({ provider: "groq", model });
+  // Swift record work never uses the small model (it can skip the tools and
+  // only describe a draft)
+  if (engine === "swift") return role === "router" || tier === "light" ? [q(MODELS.swiftLight()), q(MODELS.swiftAgent())] : [q(MODELS.swiftAgent())];
+  if (role === "router") return [g(MODELS.router())];
+  return tier === "light" ? [g(MODELS.light()), g(MODELS.fallback())] : [g(MODELS.agent()), g(MODELS.fallback())];
+}
+
+// Which models to try, in order: the chosen engine, then the other engine, then Nemotron
+function chainFor({ role = "agent", engine = "pro", tier = "heavy" }) {
+  const other = engine === "swift" ? "pro" : "swift";
+  const chain = [...engineLinks(engine, role, tier), ...engineLinks(other, role, tier), { provider: "nvidia", model: MODELS.lastResort() }];
+  const seen = new Set();
+  const live = chain.filter((c) => !seen.has(c.provider + c.model) && seen.add(c.provider + c.model) && usable(c));
+  if (!live.length) throw new LlmError(ALL_BUSY, { category: "all_busy", status: 503 });
+  return live;
+}
 
 class LlmError extends Error {
   constructor(message, { status = null, retryable = false, category = "llm" } = {}) {
@@ -146,27 +191,22 @@ async function streamTurn({ model, body, onText, signal, timeoutMs = 60000 }) {
   };
 }
 
-// Model turn with retries for transient errors and fallback for a retired model
-async function turn({ role = "agent", system, contents, tools, schema, thinking, maxOutputTokens, temperature, onText, signal, timeoutMs }) {
-  let model = MODELS[role]();
+// One Gemini model, with a quick retry for a blip and a switch for a retired model
+async function geminiTurn({ model, system, contents, tools, schema, thinking, maxOutputTokens, temperature, onText, signal, timeoutMs }) {
   let lastErr;
+  let sent = false;
+  const relay = (t) => {
+    sent = true;
+    onText?.(t);
+  };
   for (let attempt = 0; attempt < 3; attempt++) {
-    let streamed = false;
     try {
       const body = buildBody({ system, contents, tools, schema, model, thinking, maxOutputTokens, temperature });
-      return await streamTurn({
-        model,
-        body,
-        signal,
-        timeoutMs,
-        onText: (t) => {
-          streamed = true;
-          onText?.(t);
-        },
-      });
+      const out = await streamTurn({ model, body, signal, timeoutMs, onText: relay });
+      return { ...out, model, provider: "gemini" };
     } catch (err) {
       lastErr = err;
-      if (err.category === "cancelled" || streamed) throw err; // can't un-send streamed text
+      if (err.category === "cancelled" || sent) throw err; // text already shown: can't retry
       if (err.status === 404 && model !== MODELS.fallback()) {
         model = MODELS.fallback();
         continue;
@@ -175,16 +215,83 @@ async function turn({ role = "agent", system, contents, tools, schema, thinking,
         thinking = "low";
         continue;
       }
-      if (!err.retryable) throw err;
-      await new Promise((r) => setTimeout(r, 500 * 2 ** attempt + Math.random() * 300));
+      // Quota / billing / rate limits: no point hammering, let the next provider answer
+      if (!err.retryable || err.status === 429 || attempt >= 1) throw err;
+      await new Promise((r) => setTimeout(r, 400 + Math.random() * 300));
     }
   }
   throw lastErr;
 }
 
+/**
+ * One model turn on the engine's chain: the first model that answers wins.
+ * Usage is recorded on the request's meter (see credits/meter) for billing.
+ *   role:   "agent" | "router" (router also serves small JSON jobs)
+ *   engine: "pro" | "swift"     tier: "light" | "heavy"
+ */
+async function turn({ role = "agent", engine, tier = "heavy", purpose, system, contents, tools, schema, thinking, maxOutputTokens, temperature, onText, onSwitch, forceTool, signal, timeoutMs }) {
+  // Calls that don't name an engine (router, name cleanup) follow the turn's
+  engine = engine || meter.current()?.engine || "pro";
+  const chain = chainFor({ role, engine, tier });
+  let lastErr;
+  for (let i = 0; i < chain.length; i++) {
+    const link = chain[i];
+    let streamed = false;
+    const relay = (t) => {
+      streamed = true;
+      onText?.(t);
+    };
+    // Tell the user before another engine (or the slow last resort) answers
+    if (ENGINE_OF[link.provider] !== engine || link.provider === "nvidia") onSwitch?.({ engine: ENGINE_OF[link.provider], provider: link.provider, from: engine, slow: link.provider === "nvidia" });
+    try {
+      let out;
+      if (link.provider !== "gemini") {
+        const timeout = link.provider === "nvidia" && role !== "router" ? Math.max(timeoutMs || 60000, 90000) : timeoutMs;
+        // Nemotron tends to describe a record instead of making it: on a record
+        // request its first step must call a tool
+        const force = !!forceTool && link.provider === "nvidia" && !!tools?.length;
+        try {
+          out = await groq.groqTurn({ provider: link.provider, model: link.model, system, contents, tools, schema, forceTool: force, maxOutputTokens, temperature, onText: relay, signal, timeoutMs: timeout });
+        } catch (err) {
+          // One retry for a blip or a garbled tool call, unless text already went out
+          if (streamed || err.category === "cancelled" || !err.retryable || err.status === 429) throw err;
+          out = await groq.groqTurn({ provider: link.provider, model: link.model, system, contents, tools, schema, forceTool: force, maxOutputTokens, temperature, onText: relay, signal, timeoutMs: timeout });
+        }
+        meter.record(meter.fromOpenAi(link.model, purpose || role, out.usage, { provider: link.provider, fallback: i > 0 }));
+        // gpt-oss sometimes stops silently after reading a tool result: nudge it once
+        if (!schema && !String(out.text || "").trim() && !out.calls?.length) {
+          const nudged = [...contents, { role: "user", parts: [{ text: "(Now reply to the user in text, in the reply language.)" }] }];
+          out = await groq.groqTurn({ provider: link.provider, model: link.model, system, contents: nudged, tools, schema, maxOutputTokens, temperature, onText: relay, signal, timeoutMs: timeout });
+          meter.record(meter.fromOpenAi(link.model, purpose || role, out.usage, { provider: link.provider, fallback: i > 0 }));
+        }
+      } else {
+        out = await geminiTurn({ model: link.model, system, contents, tools, schema, thinking, maxOutputTokens, temperature, onText: relay, signal, timeoutMs });
+        meter.record(meter.fromGemini(out.model, purpose || role, out.usage, { fallback: i > 0 }));
+      }
+      // Nothing said and no tool asked for: treat as a failure, the next model answers
+      if (!schema && !String(out.text || "").trim() && !out.calls?.length) {
+        throw new LlmError(`${link.model} returned an empty answer`, { retryable: true, category: "empty" });
+      }
+      if (i > 0) console.warn(`[assistant] ${role} (${engine}) answered by fallback ${link.provider}/${out.model} (${lastErr?.message?.slice(0, 120)})`);
+      return { ...out, engine: ENGINE_OF[link.provider], fallback: i > 0 };
+    } catch (err) {
+      if (err.category === "cancelled" || streamed) throw err; // can't un-send streamed text
+      if (err.category === "blocked") throw err;
+      if (link.provider === "gemini") {
+        const badKey = err.status === 401 || err.status === 403 || (err.status === 400 && /api key/i.test(err.message));
+        if (badKey || err.status === 429 || err.status >= 500) geminiCooling.set(link.model, Date.now() + (badKey ? 300000 : err.status === 429 ? 60000 : 15000));
+      }
+      console.warn(`[assistant] ${role} ${link.provider}/${link.model} failed: ${String(err.message).slice(0, 160)}`);
+      lastErr = err;
+    }
+  }
+  // Every engine failed: the same calm message whatever went wrong
+  throw new LlmError(ALL_BUSY, { category: "all_busy", status: lastErr?.status || 503 });
+}
+
 // Structured JSON answer (router, titles)
-async function json({ role = "router", system, contents, schema, signal, timeoutMs = 15000, thinking = "minimal" }) {
-  const out = await turn({ role, system, contents, schema, thinking, signal, timeoutMs, maxOutputTokens: 1024, temperature: 0 });
+async function json({ role = "router", engine, purpose, system, contents, schema, signal, timeoutMs = 15000, thinking = "minimal" }) {
+  const out = await turn({ role, engine, purpose, system, contents, schema, thinking, signal, timeoutMs, maxOutputTokens: 1024, temperature: 0 });
   try {
     return JSON.parse(out.text);
   } catch {
@@ -192,4 +299,4 @@ async function json({ role = "router", system, contents, schema, signal, timeout
   }
 }
 
-module.exports = { turn, json, LlmError, MODELS, apiKey };
+module.exports = { turn, json, LlmError, MODELS, apiKey, chainFor, engineReady, ENGINE_OF };

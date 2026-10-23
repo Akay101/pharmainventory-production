@@ -931,6 +931,11 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
 
     await db.collection("purchases").insertOne(purchaseData, { session });
 
+    // Saved from a draft: the draft is done (same transaction)
+    if (req.body.draft_id) {
+      await db.collection("purchase_drafts").deleteOne({ id: String(req.body.draft_id), pharmacy_id: req.user.pharmacy_id }, { session });
+    }
+
     await logActivity(
       db,
       req.user.pharmacy_id,
@@ -954,6 +959,99 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
   } catch (error) {
     await session.abortTransaction();
     session.endSession();
+    next(error);
+  }
+});
+
+// ============ PURCHASE DRAFTS ============
+// A purchase kept for review before it touches stock: from the AI chat, the
+// scanner, or saved by hand. Same body as POST /api/purchases.
+const DRAFT_SOURCES = ["assistant", "scanner", "manual"];
+const draftTotal = (items = []) =>
+  Math.round(
+    items.reduce((s, i) => {
+      const packs = parseFloat(i.pack_quantity) || 0;
+      const rate = parseFloat(i.pack_price) || 0;
+      const disc = parseFloat(i.discount) || 0;
+      const gst = (parseFloat(i.cgst) || 0) + (parseFloat(i.sgst) || 0);
+      return s + packs * rate * (1 - disc / 100) * (1 + gst / 100);
+    }, 0) * 100
+  ) / 100;
+const draftFields = (b) => ({
+  supplier_id: b.supplier_id || null,
+  supplier_name: b.supplier_name || "",
+  supplier_data: b.supplier_data || null,
+  invoice_no: b.invoice_no || "",
+  purchase_date: b.purchase_date || new Date().toISOString().slice(0, 10),
+  payment_status: b.payment_status || "Unpaid",
+  amount_paid: b.amount_paid || 0,
+  payment_mode: b.payment_mode || null,
+  items: Array.isArray(b.items) ? b.items.slice(0, 300) : [],
+  note: b.note ? String(b.note).slice(0, 300) : "",
+});
+
+// GET /api/purchases/drafts
+router.get("/drafts", auth, requireSubscription(), async (req, res, next) => {
+  try {
+    const drafts = await mongoose.connection.db
+      .collection("purchase_drafts")
+      .find({ pharmacy_id: req.user.pharmacy_id }, { projection: { _id: 0 } })
+      .sort({ updated_at: -1 })
+      .limit(200)
+      .toArray();
+    res.json({ drafts });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// POST /api/purchases/drafts {...purchase body, source}
+router.post("/drafts", auth, requireSubscription(), async (req, res, next) => {
+  try {
+    const fields = draftFields(req.body);
+    if (!fields.items.length) return res.status(400).json({ detail: "Add at least one item to save a draft" });
+    const now = new Date().toISOString();
+    const draft = {
+      id: uuidv4(),
+      draft_no: `PD-${Date.now().toString().slice(-6)}`,
+      pharmacy_id: req.user.pharmacy_id,
+      source: DRAFT_SOURCES.includes(req.body.source) ? req.body.source : "manual",
+      ...fields,
+      total: draftTotal(fields.items),
+      created_by: req.user.id,
+      created_by_name: req.user.name || "",
+      created_at: now,
+      updated_at: now,
+    };
+    await mongoose.connection.db.collection("purchase_drafts").insertOne({ ...draft });
+    res.status(201).json({ message: "Purchase draft saved", draft });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// PUT /api/purchases/drafts/:draft_id
+router.put("/drafts/:draft_id", auth, requireSubscription(), async (req, res, next) => {
+  try {
+    const fields = draftFields(req.body);
+    if (!fields.items.length) return res.status(400).json({ detail: "Add at least one item to save a draft" });
+    const col = mongoose.connection.db.collection("purchase_drafts");
+    const q = { id: req.params.draft_id, pharmacy_id: req.user.pharmacy_id };
+    const r = await col.updateOne(q, { $set: { ...fields, total: draftTotal(fields.items), updated_at: new Date().toISOString() } });
+    if (!r.matchedCount) return res.status(404).json({ detail: "Draft not found" });
+    res.json({ message: "Purchase draft updated", draft: await col.findOne(q, { projection: { _id: 0 } }) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// DELETE /api/purchases/drafts/:draft_id
+router.delete("/drafts/:draft_id", auth, requireSubscription(), async (req, res, next) => {
+  try {
+    const r = await mongoose.connection.db.collection("purchase_drafts").deleteOne({ id: req.params.draft_id, pharmacy_id: req.user.pharmacy_id });
+    if (!r.deletedCount) return res.status(404).json({ detail: "Draft not found" });
+    res.json({ message: "Purchase draft deleted" });
+  } catch (error) {
     next(error);
   }
 });

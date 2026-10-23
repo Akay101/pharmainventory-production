@@ -4,6 +4,7 @@
 // (OCR-style extraction doesn't benefit from it and it adds seconds), the
 // response is constrained to a JSON schema, and transient failures
 // (429/5xx/timeouts) are retried with jittered backoff.
+const meter = require("../credits/meter");
 const ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models";
 
 const apiKey = () => process.env.GEMINI_API_KEY || process.env.EMERGENT_LLM_KEY || "";
@@ -83,6 +84,8 @@ async function callOnce({ model, body, timeoutMs, signal }) {
     });
   }
   const out = (cand.content?.parts || []).map((p) => p.text || "").join("").trim();
+  // Billed whether or not the JSON parses
+  meter.record(meter.fromGemini(model, "photo", json.usageMetadata));
   try {
     return { data: JSON.parse(out), finishReason: cand.finishReason, usage: json.usageMetadata };
   } catch {

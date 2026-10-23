@@ -155,6 +155,7 @@ app.get("/api/plans", async (req, res, next) => {
   }
 });
 app.use("/api/billing", require("./routes/billing"));
+app.use("/api/credits", require("./routes/credits"));
 app.use("/api/webhook", require("./routes/webhook"));
 app.use("/api/assistant", require("./routes/assistant"));
 

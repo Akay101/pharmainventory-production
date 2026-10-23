@@ -40,6 +40,17 @@ const TENANT_INDEXES = {
     { key: { pharmacy_id: 1, supplier_id: 1 }, options: { name: "tenant_supplier" } },
     { key: { id: 1 }, options: { name: "id" } },
   ],
+  // AI credits: one wallet per pharmacy; every ledger row has a unique ref (idempotency)
+  credit_wallets: [{ key: { pharmacy_id: 1 }, options: { name: "pharmacy", unique: true } }],
+  credit_transactions: [
+    { key: { ref: 1 }, options: { name: "ref", unique: true } },
+    { key: { pharmacy_id: 1, created_at: -1 }, options: { name: "tenant_created" } },
+    { key: { type: 1, created_at: -1 }, options: { name: "type_created" } },
+  ],
+  purchase_drafts: [
+    { key: { pharmacy_id: 1, updated_at: -1 }, options: { name: "tenant_updated" } },
+    { key: { id: 1 }, options: { name: "id" } },
+  ],
   suppliers: [
     { key: { pharmacy_id: 1, name: 1 }, options: { name: "tenant_name" } },
     // $lookup from inventory/purchases joins on suppliers.id.

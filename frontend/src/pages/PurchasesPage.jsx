@@ -1771,6 +1771,134 @@ export default function PurchasesPage() {
     _is_auto_filled_rate: true, // Prevent price history ping until manually edited
   };
 
+  // ============ PURCHASE DRAFTS (server) ============
+  // Kept for review before stock is added: from the AI chat, the scanner, or
+  // "Save as draft" here. Opening one puts it in its own tab; saving that tab
+  // as a purchase removes the draft.
+  const [purchaseDrafts, setPurchaseDrafts] = useState([]);
+  const [showPurchaseDrafts, setShowPurchaseDrafts] = useState(false);
+  const [purchaseDraftsLoading, setPurchaseDraftsLoading] = useState(false);
+  const [savingDraft, setSavingDraft] = useState(false);
+  const activeServerDraftId = tabs.find((t) => t.id === activeTabId)?.serverDraftId || null;
+
+  const fetchPurchaseDrafts = useCallback(async () => {
+    try {
+      setPurchaseDraftsLoading(true);
+      const res = await axios.get(`${API}/purchases/drafts`);
+      setPurchaseDrafts(res.data.drafts || []);
+      return res.data.drafts || [];
+    } catch {
+      return [];
+    } finally {
+      setPurchaseDraftsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchPurchaseDrafts();
+  }, [fetchPurchaseDrafts]);
+
+  const handleOpenPurchaseDraft = (d) => {
+    const open = tabs.find((t) => t.serverDraftId === d.id);
+    setShowPurchaseDrafts(false);
+    if (open) return switchTab(open.id);
+    if (tabs.length >= 10) return toast.error("Maximum 10 tabs allowed");
+    if (d.supplier_id && !suppliers.some((s) => s.id === d.supplier_id)) {
+      setSuppliers((prev) => [{ ...(d.supplier_data || {}), id: d.supplier_id, name: d.supplier_name }, ...prev]);
+    }
+    const rows = (d.items || []).map((item, idx) => ({
+      ...emptyItem,
+      id: `draft-${Date.now()}-${idx}`,
+      product_id: item.selected_product_id || item.product_id || "",
+      product_name: item.product_name || "",
+      manufacturer: item.manufacturer || "",
+      salt_composition: item.salt_composition || "",
+      pack_type: item.pack_type || "Strip",
+      batch_no: item.batch_no || "",
+      hsn_no: item.hsn_no || "",
+      expiry_date: item.expiry_date ? formatExpiry(item.expiry_date) : "",
+      quantity: String(item.pack_quantity || 1),
+      units: String(item.units_per_pack || 1),
+      rate_pack: item.pack_price ? String(item.pack_price) : "",
+      mrp_pack: item.mrp_per_unit ? String(+((item.mrp_per_unit || 0) * (item.units_per_pack || 1)).toFixed(2)) : "",
+      total_amount: (
+        (item.pack_quantity || 1) *
+        (item.pack_price || 0) *
+        (1 - (parseFloat(item.discount) || 0) / 100) *
+        (1 + ((parseFloat(item.cgst) || 0) + (parseFloat(item.sgst) || 0)) / 100)
+      ).toFixed(2),
+      cgst: item.cgst !== undefined ? item.cgst : "",
+      sgst: item.sgst !== undefined ? item.sgst : "",
+      discount: item.discount !== undefined ? item.discount : "",
+      scheme: item.scheme ? String(item.scheme) : "",
+    }));
+    const data = {
+      selectedSupplier: d.supplier_id || "",
+      invoiceNo: d.invoice_no || "",
+      purchaseDate: d.purchase_date || new Date().toISOString().slice(0, 10),
+      purchaseItems: rows.length ? rows : [{ ...emptyItem, id: `temp-${Date.now()}` }],
+      paymentStatus: d.payment_status || "Unpaid",
+      amountPaid: d.amount_paid ? String(d.amount_paid) : "",
+      paymentMode: d.payment_mode || "",
+    };
+    const newId = uuidv4();
+    setTabs((prev) => [...prev, { id: newId, serverDraftId: d.id, data }]);
+    setActiveTabId(newId);
+    setSelectedSupplier(data.selectedSupplier);
+    setInvoiceNo(data.invoiceNo);
+    setPurchaseDate(data.purchaseDate);
+    setPurchaseItems(data.purchaseItems);
+    setPaymentStatus(data.paymentStatus);
+    setAmountPaid(data.amountPaid);
+    setPaymentMode(data.paymentMode);
+    setShowNewPurchase(true);
+    toast.success(`Opened draft ${d.draft_no}. Review, edit and save it.`);
+    if (!d.supplier_id && d.supplier_name) toast.info(`Pick or add the supplier "${d.supplier_name}"`);
+  };
+
+  const handleDeletePurchaseDraft = async (d) => {
+    try {
+      await axios.delete(`${API}/purchases/drafts/${d.id}`);
+      setTabs((prev) => prev.map((t) => (t.serverDraftId === d.id ? { ...t, serverDraftId: null } : t)));
+      toast.success(`Draft ${d.draft_no} deleted`);
+      fetchPurchaseDrafts();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Couldn't delete the draft");
+    }
+  };
+
+  // The open tab, kept as a draft (updates the draft it came from)
+  const handleSaveAsDraft = async () => {
+    const validItems = purchaseItems.filter((i) => i.product_name && i.product_name.trim());
+    if (!validItems.length) return toast.error("Add at least one item to save a draft");
+    const supplier = suppliers.find((s) => s.id === selectedSupplier);
+    const body = { ...purchaseBody(validItems, supplier), supplier_id: selectedSupplier || null, supplier_name: supplier?.name || "", source: "manual" };
+    setSavingDraft(true);
+    try {
+      if (activeServerDraftId) await axios.put(`${API}/purchases/drafts/${activeServerDraftId}`, body);
+      else await axios.post(`${API}/purchases/drafts`, body);
+      toast.success(activeServerDraftId ? "Draft updated" : "Saved to Draft Purchases. Stock is added when you save the purchase.");
+      clearDraft();
+      fetchPurchaseDrafts();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Couldn't save the draft");
+    } finally {
+      setSavingDraft(false);
+    }
+  };
+
+  // "Review draft" from the AI chat or the scanner
+  useEffect(() => {
+    const id = location.state?.openPurchaseDraft;
+    if (!id) return;
+    window.history.replaceState({}, document.title);
+    fetchPurchaseDrafts().then((list) => {
+      const d = list.find((x) => x.id === id);
+      if (d) handleOpenPurchaseDraft(d);
+      else toast.error("That draft was already saved or deleted");
+    });
+  }, [location.state?.openPurchaseDraft]);
+
   // ============ MULTI-TAB DRAFTS ============
 
   useEffect(() => {
@@ -3286,6 +3414,66 @@ export default function PurchasesPage() {
     }
   };
 
+  // The purchase API body; also what a purchase draft stores
+  const purchaseBody = (itemsToProcess, supplier) => ({
+    supplier_id: selectedSupplier,
+    supplier_name: supplier?.name || "Unknown",
+    supplier_data: supplier
+      ? {
+          name: supplier.name,
+          phone: supplier.phone || supplier.contact,
+          gst_no: supplier.gstin || supplier.gst_no,
+          address: supplier.address,
+          city: supplier.city,
+          state: supplier.state,
+          global_id: supplier.global_id || supplier.id,
+        }
+      : null,
+    invoice_no: invoiceNo || null,
+    purchase_date: purchaseDate,
+    items: itemsToProcess.map((item) => ({
+      product_id: item.product_id,
+      product_name: item.product_name,
+      batch_no: item.batch_no || null,
+      expiry_date: item.expiry_date ? expiryToIso(item.expiry_date) || item.expiry_date : null,
+      manufacturer: item.manufacturer || null,
+      salt_composition: item.salt_composition || null,
+      pack_type: item.pack_type || "Strip",
+      pack_quantity: parseInt(item.quantity) || 1,
+      units_per_pack: parseInt(item.units) || 1,
+      pack_price: parseFloat(item.rate_pack) || 0,
+      mrp_per_unit:
+        (parseFloat(item.mrp_pack) || 0) > 0 && (parseInt(item.units) || 1) > 0
+          ? parseFloat(
+              (
+                (parseFloat(item.mrp_pack) || 0) /
+                (parseInt(item.units) || 1)
+              ).toFixed(2)
+            )
+          : 0,
+      hsn_no: item.hsn_no || null,
+      cgst: parseFloat(item.cgst) || 0,
+      sgst: parseFloat(item.sgst) || 0,
+      discount: parseFloat(item.discount) || 0,
+      scheme: parseInt(item.scheme) || 0,
+      shortage_threshold:
+        item.shortage_threshold !== "" &&
+        item.shortage_threshold !== undefined &&
+        item.shortage_threshold !== null
+          ? Number(item.shortage_threshold)
+          : null,
+    })),
+    payment_status: paymentStatus,
+    amount_paid:
+      paymentStatus === "Partial"
+        ? parseFloat(amountPaid) || 0
+        : paymentStatus === "Paid"
+          ? undefined /* backend handles total */
+          : 0,
+    payment_mode:
+      paymentMode && paymentMode !== "none" ? paymentMode : null,
+  });
+
   const handleSubmitPurchase = async () => {
     if (!selectedSupplier) {
       toast.error("Please select a supplier");
@@ -3372,62 +3560,8 @@ export default function PurchasesPage() {
       }
 
       const payload = {
-        supplier_id: selectedSupplier,
-        supplier_name: supplier?.name || "Unknown",
-        supplier_data: supplier
-          ? {
-              name: supplier.name,
-              phone: supplier.phone || supplier.contact,
-              gst_no: supplier.gstin || supplier.gst_no,
-              address: supplier.address,
-              city: supplier.city,
-              state: supplier.state,
-              global_id: supplier.global_id || supplier.id,
-            }
-          : null,
-        invoice_no: invoiceNo || null,
-        purchase_date: purchaseDate,
-        items: itemsToProcess.map((item) => ({
-          product_id: item.product_id,
-          product_name: item.product_name,
-          batch_no: item.batch_no || null,
-          expiry_date: item.expiry_date ? expiryToIso(item.expiry_date) || item.expiry_date : null,
-          manufacturer: item.manufacturer || null,
-          salt_composition: item.salt_composition || null,
-          pack_type: item.pack_type || "Strip",
-          pack_quantity: parseInt(item.quantity) || 1,
-          units_per_pack: parseInt(item.units) || 1,
-          pack_price: parseFloat(item.rate_pack) || 0,
-          mrp_per_unit:
-            (parseFloat(item.mrp_pack) || 0) > 0 && (parseInt(item.units) || 1) > 0
-              ? parseFloat(
-                  (
-                    (parseFloat(item.mrp_pack) || 0) /
-                    (parseInt(item.units) || 1)
-                  ).toFixed(2)
-                )
-              : 0,
-          hsn_no: item.hsn_no || null,
-          cgst: parseFloat(item.cgst) || 0,
-          sgst: parseFloat(item.sgst) || 0,
-          discount: parseFloat(item.discount) || 0,
-          scheme: parseInt(item.scheme) || 0,
-          shortage_threshold:
-            item.shortage_threshold !== "" &&
-            item.shortage_threshold !== undefined &&
-            item.shortage_threshold !== null
-              ? Number(item.shortage_threshold)
-              : null,
-        })),
-        payment_status: paymentStatus,
-        amount_paid:
-          paymentStatus === "Partial"
-            ? parseFloat(amountPaid) || 0
-            : paymentStatus === "Paid"
-              ? undefined /* backend handles total */
-              : 0,
-        payment_mode:
-          paymentMode && paymentMode !== "none" ? paymentMode : null,
+        ...purchaseBody(itemsToProcess, supplier),
+        ...(activeServerDraftId && !editingPurchaseId ? { draft_id: activeServerDraftId } : {}),
       };
 
       if (editingPurchaseId) {
@@ -3439,6 +3573,7 @@ export default function PurchasesPage() {
       } else {
         const res = await axios.post(`${API}/purchases`, payload);
         toast.success("Purchase recorded successfully");
+        if (payload.draft_id) fetchPurchaseDrafts();
 
         if (res.data?.created_supplier) {
           const newSup = res.data.created_supplier;
@@ -6676,6 +6811,20 @@ export default function PurchasesPage() {
                 </Button>
 
                 <Button
+                  variant="outline"
+                  size="sm"
+                  className={`h-8 text-xs font-bold rounded-xl cursor-pointer ${showPurchaseDrafts ? "border-orange-500/50 bg-orange-500/10 text-orange-600 dark:text-orange-400" : "border-border/70"}`}
+                  onClick={() => setShowPurchaseDrafts((v) => !v)}
+                  data-testid="purchase-drafts-btn"
+                >
+                  <FileText className="w-3.5 h-3.5 mr-1.5 text-orange-500" />
+                  Drafts
+                  {purchaseDrafts.length > 0 && (
+                    <span className="ml-1.5 rounded-full bg-orange-500 px-1.5 text-[10px] font-black text-white">{purchaseDrafts.length}</span>
+                  )}
+                </Button>
+
+                <Button
                   size="sm"
                   className="h-8 px-3.5 text-xs font-extrabold bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white rounded-xl shadow-xs border-none"
                   onClick={handleStartNewPurchase}
@@ -6686,6 +6835,69 @@ export default function PurchasesPage() {
                 </Button>
               </div>
             </div>
+
+            {showPurchaseDrafts && (
+              <div className="rounded-2xl border border-orange-500/25 bg-orange-500/5 p-3 space-y-2" data-testid="purchase-drafts-panel">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-sm font-extrabold">
+                    Draft purchases
+                    <span className="ml-2 text-xs font-semibold text-muted-foreground">Stock is added only when you open one and save it</span>
+                  </p>
+                  <Button variant="ghost" size="sm" className="h-7 w-7 p-0 rounded-lg" onClick={() => setShowPurchaseDrafts(false)} title="Close">
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
+                {purchaseDraftsLoading && !purchaseDrafts.length ? (
+                  <div className="flex items-center gap-2 py-4 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading drafts…</div>
+                ) : !purchaseDrafts.length ? (
+                  <p className="py-4 text-center text-sm text-muted-foreground">No drafts. Use "Save as draft" while entering a purchase, in the scanner, or in DavaDesk AI.</p>
+                ) : (
+                  <Table mobileCards>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead data-card="title">Draft</TableHead>
+                        <TableHead data-card="full">Supplier</TableHead>
+                        <TableHead>From</TableHead>
+                        <TableHead className="text-center">Items</TableHead>
+                        <TableHead className="text-right">Amount</TableHead>
+                        <TableHead className="text-right" data-card="actions">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {purchaseDrafts.map((d) => (
+                        <TableRow key={d.id}>
+                          <TableCell>
+                            <div className="font-bold font-mono text-sm">{d.draft_no}</div>
+                            <div className="text-[11px] text-muted-foreground">
+                              {new Date(d.updated_at || d.created_at).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", hour12: true })}
+                              {d.invoice_no ? ` · Inv ${d.invoice_no}` : ""}
+                            </div>
+                          </TableCell>
+                          <TableCell className="font-semibold">{d.supplier_name || <span className="text-amber-500">Supplier to pick</span>}</TableCell>
+                          <TableCell>
+                            <Badge variant="outline" className="rounded-md text-[10px] font-bold uppercase">
+                              {d.source === "assistant" ? "DavaDesk AI" : d.source === "scanner" ? "Scanner" : "Manual"}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-center">{d.items?.length || 0}</TableCell>
+                          <TableCell className="text-right font-mono font-bold">₹{Number(d.total || 0).toFixed(2)}</TableCell>
+                          <TableCell>
+                            <div className="flex justify-end gap-1.5">
+                              <Button size="sm" className="h-8 rounded-xl btn-primary text-xs font-bold" onClick={() => handleOpenPurchaseDraft(d)}>
+                                Review &amp; save
+                              </Button>
+                              <Button variant="ghost" size="icon" className="h-8 w-8 rounded-xl text-muted-foreground hover:text-destructive hover:bg-destructive/10" onClick={() => handleDeletePurchaseDraft(d)} title="Delete draft">
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </div>
+            )}
 
             {/* Line 2: Search Input + Supplier & Date Filters */}
             <div className="flex flex-col md:flex-row items-center gap-3 pt-1">
@@ -7845,6 +8057,20 @@ export default function PurchasesPage() {
               >
                 Cancel<span className="max-md:hidden">&nbsp;(Esc)</span>
               </Button>
+
+              {!editingPurchaseId && (
+                <Button
+                  variant="outline"
+                  onClick={handleSaveAsDraft}
+                  disabled={savingDraft || submitting || purchaseItems.filter((i) => i.product_name).length === 0}
+                  className="border-orange-500/40 text-orange-600 dark:text-orange-400 hover:bg-orange-500/10 max-md:flex-1"
+                  title="Keep it in Draft Purchases to review later; stock is not added yet"
+                  data-testid="save-purchase-draft-btn"
+                >
+                  {savingDraft ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <FileText className="w-4 h-4 mr-1.5" />}
+                  {activeServerDraftId ? "Update draft" : "Save as draft"}
+                </Button>
+              )}
 
               <Button
                 onClick={handleSubmitPurchase}

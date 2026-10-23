@@ -1,7 +1,8 @@
 // Cross-module lookups: catalog products, suppliers, customers, global
 // medicine facts. Used by several agents to resolve what the user named.
-const { matchForPurchase, nameSimilarity } = require("../../ai/inventoryMatch");
+const { matchForPurchase, nameSimilarity, coreTokens, strengthsOf } = require("../../ai/inventoryMatch");
 const { searchGlobalMedicines } = require("../../search/medicineSearch");
+const { isMedicineDbAvailable, getGlobalMedicinesCollection } = require("../../../utils/globalDb");
 const { escapeRegex, api, textMatch } = require("./shared");
 const { tokenize, cleanProductName, medicineKey } = require("../../search/normalize");
 
@@ -103,10 +104,35 @@ const globalFacts = (r) => ({
   dosage_form: r.dosage_form || "",
 });
 
-// Ranked matches from the global medicine database. `confident` when the top
-// one is a clear match for what was said (same brand and strength, nothing
-// else as close), so it can be used without asking.
+// What a medicine name says: brand/variant words, strengths, dosage form
+const FORM_OF = { tab: "tab", tabs: "tab", tablet: "tab", tablets: "tab", cap: "cap", caps: "cap", capsule: "cap", capsules: "cap", syp: "liquid", syr: "liquid", syrup: "liquid", susp: "liquid", suspension: "liquid", inj: "inj", injection: "inj", drop: "drop", drops: "drop", cream: "topical", gel: "topical", oint: "topical", ointment: "topical", lotion: "topical", powder: "powder", sachet: "powder" };
+function describe(name) {
+  const clean = cleanProductName(name);
+  const words = coreTokens(clean).filter((t) => /[a-z]/.test(t));
+  const form = tokenize(clean).map((t) => FORM_OF[t]).find(Boolean) || null;
+  return { words: [...new Set(words)].sort().join(" "), strengths: strengthsOf(clean), form };
+}
+
+// The one database entry that is clearly this medicine: exactly the same
+// brand and variant words, the same strengths ("Amlokind 2.5" is not
+// "Amlokind 5"; "Naprosyn 250" is not "Naprosyn D 250"), and the dosage form
+// when one was said. Anything less goes to the user to pick.
+function exactGlobalMatch(name, rows) {
+  const q = describe(name);
+  if (!q.words) return null;
+  let hits = rows
+    .map((r) => ({ r, c: describe(r.product_name || r.name || "") }))
+    .filter(({ c }) => c.words === q.words && [...q.strengths].sort().join() === [...c.strengths].sort().join());
+  if (q.form) hits = hits.filter(({ c }) => c.form === q.form);
+  // Pack-size copies of one medicine count once
+  const kinds = new Set(hits.map(({ c }) => `${[...c.strengths].sort().join(",")}|${c.form}`));
+  return kinds.size === 1 ? globalFacts(hits[0].r) : null;
+}
+
+// Ranked matches from the global medicine database; `best` only when one
+// entry is exactly the medicine said (see exactGlobalMatch).
 async function globalCandidates(rawName, limit = 6) {
+  if (!(await isMedicineDbAvailable())) return { best: null, list: [], offline: true };
   try {
     const name = cleanProductName(rawName) || rawName;
     // Search the full name, then brand + strength, then the brand alone when
@@ -130,9 +156,7 @@ async function globalCandidates(rawName, limit = 6) {
       .filter((x) => x.sim >= 0.5)
       .sort((a, b) => b.sim - a.sim);
     const list = scored.slice(0, limit).map((x) => ({ ...globalFacts(x.r), similarity: Math.round(x.sim * 100) / 100 }));
-    const [top, second] = scored;
-    const confident = !!top && top.sim >= 0.75 && (!second || second.sim <= top.sim - 0.08);
-    return { best: confident ? list[0] : null, list };
+    return { best: exactGlobalMatch(name, scored.map((x) => x.r)), list };
   } catch {
     return { best: null, list: [] };
   }
@@ -151,12 +175,27 @@ async function pickerSearch(ctx, kind, q) {
     .find({ pharmacy_id: ctx.pharmacyId, ...textMatch(["name"], q) }, { projection: { _id: 0, id: 1, name: 1, manufacturer: 1, units_per_pack: 1 } })
     .limit(6)
     .toArray();
+  const offline = !(await isMedicineDbAvailable());
   const seen = new Set(catalog.map((p) => medicineKey(p.name)));
   const options = catalog.map((p) => ({ source: "catalog", id: p.id, name: p.name, detail: ["In your catalog", p.manufacturer].filter(Boolean).join(" · ") }));
   let global = [];
-  try {
-    global = await searchGlobalMedicines(q, { limit: 12 });
-  } catch {}
+  if (!offline) {
+    try {
+      global = await searchGlobalMedicines(q, { limit: 12 });
+    } catch {}
+    // Half-typed names ("Azithra") when the word index has nothing: names that start with it
+    if (global.length < 4 && q.length >= 3) {
+      try {
+        const col = await getGlobalMedicinesCollection();
+        const more = await col
+          .find({ product_name: { $regex: `^${escapeRegex(q)}`, $options: "i" } }, { projection: { _id: 0 } })
+          .limit(12)
+          .maxTimeMS(1500)
+          .toArray();
+        global = [...global, ...more];
+      } catch {}
+    }
+  }
   // Every word typed has to start a word of the result ("korvantix 5" must
   // not list everything with a 5 in it)
   const typed = tokenize(q).filter((t) => /[a-z]/.test(t));
@@ -172,7 +211,7 @@ async function pickerSearch(ctx, kind, q) {
     options.push({ source: "global", name: f.name, detail: [f.manufacturer, f.pack_size].filter(Boolean).join(" · ") });
     if (options.length >= 12) break;
   }
-  return { options };
+  return { options, medicine_db_offline: offline };
 }
 
 // Sound-alike key for names that reach us through Hindi speech: "Neelkanth
@@ -232,9 +271,15 @@ async function resolveSupplier(ctx, text) {
       .limit(2000)
       .toArray();
     for (const m of mine) {
-      if (soundKey(m.name) === said && !seen.has(`l:${m.id}`)) {
+      if (seen.has(`l:${m.id}`)) continue;
+      const k = soundKey(m.name);
+      if (k === said) {
         seen.add(`l:${m.id}`);
         list.unshift({ ...m, is_local: true, sounds_like: true });
+      } else if (said.length >= 3 && k.startsWith(said)) {
+        // "nilkanth" while typing: offer it, but don't treat it as certain
+        seen.add(`l:${m.id}`);
+        list.push({ ...m, is_local: true });
       }
     }
   }

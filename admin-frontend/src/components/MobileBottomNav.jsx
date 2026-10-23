@@ -6,6 +6,7 @@ import {
   Ticket,
   ShieldCheck,
   CalendarClock,
+  Coins,
 } from "lucide-react";
 
 export default function MobileBottomNav({ activeTab, onTabChange, leadCount = 0 }) {
@@ -19,6 +20,7 @@ export default function MobileBottomNav({ activeTab, onTabChange, leadCount = 0 
       badge: leadCount > 0 ? leadCount : null,
     },
     { id: "subscriptions", label: "Plans", icon: CalendarClock },
+    { id: "credits", label: "Credits", icon: Coins },
     { id: "promos", label: "Promos", icon: Ticket },
     { id: "team", label: "Team", icon: ShieldCheck },
   ];

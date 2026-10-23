@@ -79,4 +79,18 @@ async function api(ctx, method, path, body) {
 // Message in the user's language: en / hi (Devanagari) / hinglish
 const say = (lang, { en, hi, hinglish }) => (lang === "hi" ? hi || hinglish || en : lang === "hinglish" ? hinglish || en : en);
 
-module.exports = { todayIst, addDays, isYmd, dateRange, round2, inr, fmtDate, fmtExpiry, textMatch, clampLimit, blocks, cols, api, say, escapeRegex, tokenize };
+// Run fn over items with at most `limit` in flight; results keep input order
+async function mapLimit(items, limit, fn) {
+  const out = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i], i);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return out;
+}
+
+module.exports = { todayIst, addDays, isYmd, dateRange, round2, inr, fmtDate, fmtExpiry, textMatch, clampLimit, blocks, cols, api, say, escapeRegex, tokenize, mapLimit };

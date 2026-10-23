@@ -188,7 +188,24 @@ async function getGlobalDistributorsCollection() {
   return db.collection("global_distributors");
 }
 
+// Whether medicine searches can actually see the medicine database: the
+// global DB is connected, or the fallback DB carries a copy of it. When
+// neither, "not found" means "couldn't check", and callers say so.
+let fallbackHasMedicines = { at: 0, value: false };
+async function isMedicineDbAvailable() {
+  await initialConnection;
+  if (globalClient) return true;
+  if (Date.now() - fallbackHasMedicines.at < 60 * 1000) return fallbackHasMedicines.value;
+  let value = false;
+  try {
+    value = (await getGlobalDb().collection("global_medicines").estimatedDocumentCount()) > 0;
+  } catch {}
+  fallbackHasMedicines = { at: Date.now(), value };
+  return value;
+}
+
 module.exports = {
+  isMedicineDbAvailable,
   getGlobalDb,
   getGlobalMedicinesCollection,
   getGlobalDoctorsCollection,

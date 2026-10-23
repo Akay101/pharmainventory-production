@@ -8,6 +8,7 @@ const SAMPLE_RATE = 24000;
 let sharedCtx = null;
 let current = null; // { abort, sources: [] }
 let quotaNoticeShown = false;
+let creditsNoticeShown = false;
 const listeners = new Set();
 const notify = () => listeners.forEach((fn) => fn(!!current));
 
@@ -98,6 +99,10 @@ export async function speakReply(text, language) {
     if (res.status === 401) {
       await refreshAccessToken();
       res = await send();
+    }
+    if (res.status === 402 && !creditsNoticeShown) {
+      creditsNoticeShown = true;
+      toast.info("Spoken replies need AI credits", { description: "Replies still appear on screen. Buy credits from the Credits button." });
     }
     if (res.status === 429) {
       const body = await res.json().catch(() => ({}));

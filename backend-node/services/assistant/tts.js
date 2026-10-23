@@ -9,6 +9,7 @@
 //      a male-sounding read). Kept on one model, and every take's pitch is
 //      checked before it plays; a drifted take is regenerated.
 const { medianPitch } = require("./pitch");
+const meter = require("../credits/meter");
 const ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models";
 const apiKey = () => process.env.GEMINI_API_KEY || process.env.EMERGENT_LLM_KEY || "";
 
@@ -164,6 +165,8 @@ async function geminiSpeech(spoken, signal, onChunk) {
     const onAbort = () => ctl.abort();
     signal?.addEventListener("abort", onAbort);
     let sent = 0;
+    let voiceUsage = null; // what this take cost, for credits (drifted takes cost too)
+    let audioBytes = 0;
     let held = []; // audio kept back until the voice is checked
     let heldBytes = 0;
     let verdict = null; // "ok" once checked
@@ -229,13 +232,16 @@ async function geminiSpeech(spoken, signal, onChunk) {
         if (!line) return;
         let part;
         try {
-          part = JSON.parse(line.slice(5)).candidates?.[0]?.content?.parts?.find((p) => p.inlineData);
+          const j = JSON.parse(line.slice(5));
+          if (j.usageMetadata) voiceUsage = j.usageMetadata;
+          part = j.candidates?.[0]?.content?.parts?.find((p) => p.inlineData);
         } catch {
           return;
         }
         if (!part) return;
         let pcm = Buffer.from(part.inlineData.data, "base64");
         if (/wav/i.test(part.inlineData.mimeType) && pcm.slice(0, 4).toString() === "RIFF") pcm = pcm.slice(44);
+        audioBytes += pcm.length;
         if (verdict === "ok") {
           sent += pcm.length;
           onChunk(pcm);
@@ -279,6 +285,9 @@ async function geminiSpeech(spoken, signal, onChunk) {
       if (sent) return sent; // partial audio already played
     } finally {
       signal?.removeEventListener("abort", onAbort);
+      // Google reports usage at the end; a take we stopped early is estimated from its audio (~25 tokens/s)
+      if (voiceUsage) meter.record(meter.fromGemini(model, "voice", voiceUsage));
+      else if (audioBytes) meter.record({ provider: "gemini", model, purpose: "voice", input_tokens: Math.ceil(spoken.length / 3), output_tokens: Math.ceil((audioBytes / (SAMPLE_RATE * 2)) * 25), estimated: true });
     }
   }
   throw lastErr || new Error("Speech unavailable");

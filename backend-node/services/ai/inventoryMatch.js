@@ -11,20 +11,25 @@
 //
 // All lookups run in Mongo against indexed, pharmacy-scoped queries; nothing
 // loads the whole inventory.
-const { tokenize, escapeRegex } = require("../search/normalize");
+const { tokenize, escapeRegex, cleanProductName } = require("../search/normalize");
 
 const FORM_WORDS = new Set([
   "tab", "tabs", "tablet", "tablets", "cap", "caps", "capsule", "capsules", "syp", "syrup", "susp", "suspension",
   "inj", "injection", "cream", "gel", "oint", "ointment", "drops", "drop", "lotion", "solution", "sol", "powder",
   "sachet", "strip", "bottle", "ip", "bp", "usp", "mg", "ml", "mcg", "gm", "g", "w", "v", "of", "and", "the", "for",
-  "sr", "er", "xr", "cr", "ds", "plus", "forte", "kid", "kids", "oral", "dry", "film", "coated", "dt", "md",
+  "oral", "dry", "film", "coated",
+  // Variant markers (SR, DS, Forte, Plus, MD, DT, Kid) are NOT filler: "Dolo"
+  // and "Dolo DS", "Meftagesic" and "Meftagesic DS" are different products.
 ]);
 
 // Brand words and strengths, without form/filler words
 function coreTokens(name) {
   return tokenize(name).filter((t) => !FORM_WORDS.has(t));
 }
-const numbersOf = (tokens) => tokens.filter((t) => /^\d/.test(t));
+// Strengths as written, decimals kept ("2.5" is not "5"). Pack counts and pack
+// quantities (100ml, 30gm) are not strengths: they're the same medicine.
+const strengthsOf = (name) =>
+  (cleanProductName(name).replace(/\d+(?:\.\d+)?\s*(ml|gm|g|kg|ltr|l)\b/gi, " ").match(/\d+(?:\.\d+)?/g) || []).map((n) => String(parseFloat(n)));
 const wordsOf = (tokens) => tokens.filter((t) => !/^\d/.test(t));
 
 function editDistance(a, b) {
@@ -59,7 +64,7 @@ function nameSimilarity(scanned, stored) {
   const b = coreTokens(stored);
   if (!a.length || !b.length) return 0;
   const aw = wordsOf(a), bw = wordsOf(b);
-  const an = numbersOf(a), bn = numbersOf(b);
+  const an = strengthsOf(scanned), bn = strengthsOf(stored);
   if (!aw.length || !bw.length) return 0;
 
   if (!brandsAgree(aw[0], bw[0])) return 0;
@@ -348,4 +353,4 @@ async function matchForPurchase(db, pharmacyId, item) {
   };
 }
 
-module.exports = { matchForBilling, matchForPurchase, nameSimilarity, batchKey, batchRegex, coreTokens };
+module.exports = { matchForBilling, matchForPurchase, nameSimilarity, batchKey, batchRegex, coreTokens, strengthsOf };

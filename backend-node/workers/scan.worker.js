@@ -7,6 +7,7 @@ dotenv.config({ path: path.join(__dirname, "../.env") });
 
 const { Worker } = require("bullmq");
 const mongoose = require("mongoose");
+const credits = require("../services/credits");
 
 const { connection } = require("../services/ai/queue");
 const ScanJob = require("../models/scanJob");
@@ -66,6 +67,9 @@ async function processJob(job) {
   }
 
   const db = mongoose.connection.db;
+  // What the AI reads cost, charged to the pharmacy when the scan is done
+  const m = credits.meter.createMeter();
+  credits.meter.enter(m);
   let result;
   if (type === "bill") {
     const bill = await extractBill(images);
@@ -82,6 +86,12 @@ async function processJob(job) {
 
   await ScanJob.updateOne({ jobId }, { status: "completed", result });
   if (pharmacyId && hash) await setCached(pharmacyId, type, hash, result);
+  if (pharmacyId && db) {
+    const pharmacy = await db.collection("pharmacies").findOne({ id: pharmacyId }, { projection: { _id: 0, id: 1, subscription: 1 } });
+    await credits
+      .settle(db, pharmacy || { id: pharmacyId }, m, { ref: `scan:${jobId}`, task: "scan", engine: "pro", userId: job.data.userId || null, label: type === "bill" ? "Invoice scan" : "Pack scan" })
+      .catch((err) => console.error(`[Worker] charging credits for ${jobId} failed:`, err.message));
+  }
   await job.updateProgress(100);
   return { ok: true };
 }

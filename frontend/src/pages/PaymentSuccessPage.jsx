@@ -38,14 +38,16 @@ export default function PaymentSuccessPage() {
         try {
           const res = await axios.post(`${API}/billing/orders/${orderId}/confirm`);
           const { status, reason } = res.data;
+          const isCredits = res.data.purpose === "CREDITS";
           if (status === "PAID") {
-            await fetchUser().catch(() => {});
-            setState({ status: "success", subscription: res.data.subscription });
+            if (!isCredits) await fetchUser().catch(() => {});
+            setState({ status: "success", subscription: res.data.subscription, credits: isCredits ? res.data.credits : null, wallet: res.data.credit_wallet, isCredits });
             return;
           }
           if (status === "FAILED") {
             setState({
               status: "failed",
+              isCredits,
               message:
                 reason === "USER_DROPPED" || reason === "CANCELLED"
                   ? "The payment was cancelled. No money was taken."
@@ -54,7 +56,7 @@ export default function PaymentSuccessPage() {
             return;
           }
           if (status === "EXPIRED" || status === "SUPERSEDED") {
-            setState({ status: "failed", message: "This checkout has expired. Please start again from the plans page." });
+            setState({ status: "failed", isCredits, message: isCredits ? "This checkout has expired. Please buy the credits again from DavaDesk AI." : "This checkout has expired. Please start again from the plans page." });
             return;
           }
         } catch (err) {
@@ -76,12 +78,12 @@ export default function PaymentSuccessPage() {
   useEffect(() => {
     if (state.status !== "success") return undefined;
     const timer = setInterval(() => setCountdown((c) => (c > 0 ? c - 1 : 0)), 1000);
-    const redirect = setTimeout(() => navigate("/dashboard", { replace: true }), 5000);
+    const redirect = setTimeout(() => navigate(state.isCredits ? "/assistant" : "/dashboard", { replace: true }), 5000);
     return () => {
       clearInterval(timer);
       clearTimeout(redirect);
     };
-  }, [state.status, navigate]);
+  }, [state.status, state.isCredits, navigate]);
 
   if (authLoading) return <Loader fullScreen text="Confirming your payment..." />;
   if (!user) return <Navigate to="/login" state={{ from: location }} replace />;
@@ -95,14 +97,16 @@ export default function PaymentSuccessPage() {
     success: {
       icon: <CheckCircle2 className="w-14 h-14 text-emerald-500" />,
       title: "Payment successful",
-      body: state.subscription?.plan
+      body: state.isCredits
+        ? `${Number(state.credits || 0).toLocaleString("en-IN")} AI credits were added${state.wallet ? `; you now have ${Number(state.wallet.available).toLocaleString("en-IN", { maximumFractionDigits: 1 })}` : ""}. Taking you back to DavaDesk AI in ${countdown}s.`
+        : state.subscription?.plan
         ? `Your ${state.subscription.plan} plan is active until ${new Date(state.subscription.ends_at).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}. Taking you to your dashboard in ${countdown}s.`
         : `Your plan is active. Taking you to your dashboard in ${countdown}s.`,
     },
     pending: {
       icon: <Clock className="w-14 h-14 text-amber-500" />,
       title: "Payment is still processing",
-      body: "Your bank hasn't confirmed it yet. Your plan will activate automatically as soon as it does, so please don't pay again. If it doesn't go through, any amount debited is returned by your bank.",
+      body: "Your bank hasn't confirmed it yet. It will be applied automatically as soon as it does, so please don't pay again. If it doesn't go through, any amount debited is returned by your bank.",
     },
     failed: {
       icon: <XCircle className="w-14 h-14 text-rose-500" />,
@@ -128,14 +132,14 @@ export default function PaymentSuccessPage() {
           {(state.status === "success" || state.status === "pending") && (
             <Button
               className="h-11 rounded-xl font-bold text-white bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600"
-              onClick={() => navigate("/dashboard", { replace: true })}
+              onClick={() => navigate(state.isCredits ? "/assistant" : "/dashboard", { replace: true })}
             >
-              Go to dashboard <ArrowRight className="w-4 h-4 ml-2" />
+              {state.isCredits ? "Back to DavaDesk AI" : "Go to dashboard"} <ArrowRight className="w-4 h-4 ml-2" />
             </Button>
           )}
           {(state.status === "failed" || state.status === "error" || state.status === "pending") && (
-            <Button variant="outline" className="h-11 rounded-xl font-bold" onClick={() => navigate("/upgrade", { replace: true })}>
-              Back to plans
+            <Button variant="outline" className="h-11 rounded-xl font-bold" onClick={() => navigate(state.isCredits ? "/assistant" : "/upgrade", { replace: true })}>
+              {state.isCredits ? "Back to DavaDesk AI" : "Back to plans"}
             </Button>
           )}
         </div>

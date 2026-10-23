@@ -36,6 +36,7 @@ function makePhotoTools({ purchaseTools, billingTools }) {
       if (!bill.items.length) return { error: "No product lines found. If this is a single medicine pack, use read_product_photo_for_purchase instead." };
       const result = await draftPurchase.run(
         {
+          origin: "photo",
           supplier: bill.supplier_name || undefined,
           invoice_no: bill.invoice_no || undefined,
           purchase_date: bill.invoice_date || undefined,
@@ -94,7 +95,7 @@ function makePhotoTools({ purchaseTools, billingTools }) {
           rate_per_pack: a.rate_per_pack,
         },
       ];
-      const result = await draftPurchase.run({ draft_id: a.draft_id, supplier: a.supplier, items }, ctx);
+      const result = await draftPurchase.run({ draft_id: a.draft_id, supplier: a.supplier, items, origin: "photo" }, ctx);
       return { ...result, read_from_photo: { name: p.product_name, batch: p.batch_no, batch_clearly_readable: p.batch_legible, expiry: p.expiry_date, mrp_per_pack: p.mrp_pack, units_per_pack: p.units_per_pack } };
     },
   };

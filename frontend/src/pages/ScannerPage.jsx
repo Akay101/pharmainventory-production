@@ -449,6 +449,7 @@ export default function ScannerPage() {
   const [paid, setPaid] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [drafting, setDrafting] = useState(false);
   const ctrlRef = useRef(null);
   const step = useScanSteps(scanning, mode === "bill" ? [700, 3500] : [600, 2200]);
 
@@ -493,50 +494,68 @@ export default function ScannerPage() {
     }
   };
 
+  // The purchase API body (a purchase draft stores the same)
+  const purchaseBody = () => ({
+    supplier_id: supplier?.id || null,
+    supplier_name: supplier?.name || detectedSupplier?.name || "",
+    ...(supplier?.isNew ? { supplier_data: { name: supplier.name, gst_no: supplier.gst_no || "" } } : {}),
+    purchase_date: invoiceDate || todayIst(),
+    payment_status: paid ? "Paid" : "Unpaid",
+    items: items.map((it) => {
+      const unitsPerPack = parseInt(it.units_per_pack) || 1;
+      const linked = it.selected_product_id && it.selected_product_id !== "NEW";
+      const gst = num(it.gst_percent);
+      return {
+        product_id: linked ? it.selected_product_id : `scanned_${uid()}`,
+        selected_product_id: linked ? it.selected_product_id : undefined,
+        product_name: linked && it.selected_product_name ? it.selected_product_name : it.product_name,
+        manufacturer: it.manufacturer || null,
+        salt_composition: it.salt_composition || null,
+        pack_type: it.pack_type || "Strip",
+        batch_no: it.batch_no || null,
+        hsn_no: it.hsn_no || null,
+        expiry_date: it.expiry_date || null,
+        pack_quantity: parseInt(it.pack_quantity) || 1,
+        scheme: parseInt(it.free_quantity) || 0,
+        units_per_pack: unitsPerPack,
+        pack_price: num(it.rate_pack),
+        mrp_per_unit: unitsPerPack > 0 ? num(it.mrp_pack) / unitsPerPack : num(it.mrp_pack),
+        discount: num(it.discount),
+        cgst: gst / 2,
+        sgst: gst / 2,
+      };
+    }),
+  });
+
   const createPurchase = async () => {
     if (!supplier) return toast.error("Choose a supplier");
     const bad = items.findIndex((it) => !it.product_name || num(it.pack_quantity) <= 0);
     if (bad >= 0) return toast.error(`Line ${bad + 1} needs a name and quantity`);
     setSubmitting(true);
     try {
-      await axios.post(`${API}/purchases`, {
-        supplier_id: supplier.id || null,
-        supplier_name: supplier.name,
-        ...(supplier.isNew ? { supplier_data: { name: supplier.name, gst_no: supplier.gst_no || "" } } : {}),
-        invoice_no: invoiceNo || `SCAN-${Date.now()}`,
-        purchase_date: invoiceDate || todayIst(),
-        payment_status: paid ? "Paid" : "Unpaid",
-        items: items.map((it) => {
-          const unitsPerPack = parseInt(it.units_per_pack) || 1;
-          const linked = it.selected_product_id && it.selected_product_id !== "NEW";
-          const gst = num(it.gst_percent);
-          return {
-            product_id: linked ? it.selected_product_id : `scanned_${uid()}`,
-            selected_product_id: linked ? it.selected_product_id : undefined,
-            product_name: linked && it.selected_product_name ? it.selected_product_name : it.product_name,
-            manufacturer: it.manufacturer || null,
-            salt_composition: it.salt_composition || null,
-            pack_type: it.pack_type || "Strip",
-            batch_no: it.batch_no || null,
-            hsn_no: it.hsn_no || null,
-            expiry_date: it.expiry_date || null,
-            pack_quantity: parseInt(it.pack_quantity) || 1,
-            scheme: parseInt(it.free_quantity) || 0,
-            units_per_pack: unitsPerPack,
-            pack_price: num(it.rate_pack),
-            mrp_per_unit: unitsPerPack > 0 ? num(it.mrp_pack) / unitsPerPack : num(it.mrp_pack),
-            discount: num(it.discount),
-            cgst: gst / 2,
-            sgst: gst / 2,
-          };
-        }),
-      });
+      await axios.post(`${API}/purchases`, { ...purchaseBody(), invoice_no: invoiceNo || `SCAN-${Date.now()}` });
       toast.success("Purchase created and stock added");
       navigate("/purchases");
     } catch (err) {
       toast.error(err.response?.data?.detail || "Couldn't create the purchase");
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  // Keep what was read as a purchase draft to review on the Purchases page;
+  // nothing touches stock until it is saved there
+  const saveDraft = async () => {
+    if (!items.some((it) => it.product_name)) return toast.error("Nothing to save yet");
+    setDrafting(true);
+    try {
+      const res = await axios.post(`${API}/purchases/drafts`, { ...purchaseBody(), invoice_no: invoiceNo || "", source: "scanner" });
+      toast.success(`Saved as draft ${res.data.draft.draft_no}. Review it and save to add stock.`);
+      navigate("/purchases", { state: { openPurchaseDraft: res.data.draft.id } });
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Couldn't save the draft");
+    } finally {
+      setDrafting(false);
     }
   };
 
@@ -669,6 +688,16 @@ export default function ScannerPage() {
                 <p className="text-lg font-bold leading-tight">₹{total.toFixed(2)}</p>
                 <p className="text-[11px] text-muted-foreground">incl. GST · {items.length} line{items.length > 1 ? "s" : ""}</p>
               </div>
+              <button
+                type="button"
+                onClick={saveDraft}
+                disabled={drafting || submitting}
+                title="Review and edit on the Purchases page before stock is added"
+                className="h-11 px-3 rounded-xl border border-orange-500/40 bg-orange-500/5 text-orange-500 text-sm font-semibold flex items-center gap-1.5 disabled:opacity-40"
+                data-testid="scan-save-draft"
+              >
+                {drafting ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />} Save draft
+              </button>
               {sheetOpen ? (
                 <button
                   type="button"

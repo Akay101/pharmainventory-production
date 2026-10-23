@@ -13,6 +13,7 @@ import {
   Shield,
   CalendarClock,
   IndianRupee,
+  Coins,
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 
@@ -74,6 +75,12 @@ export default function Sidebar({
       label: "Pricing & Offers",
       icon: IndianRupee,
       section: "MARKETING & OFFERS",
+    },
+    {
+      id: "credits",
+      label: "AI Credits",
+      icon: Coins,
+      section: "SALES & CRM",
     },
     {
       id: "analytics",

@@ -17,6 +17,19 @@ const { extractProduct } = require("./extract");
 const { matchForBilling } = require("./inventoryMatch");
 const { createSemaphore, GeminiError } = require("./gemini");
 const guard = require("./scanGuard");
+const credits = require("../credits");
+
+class NoCreditsError extends Error {}
+
+// Scans use AI credits: refuse up front when the pharmacy has none
+async function requireCredits(pharmacyId) {
+  const db = mongoose.connection.db;
+  const pharmacy = await db.collection("pharmacies").findOne({ id: pharmacyId }, { projection: { _id: 0, id: 1, subscription: 1 } });
+  const cfg = await credits.config.getConfig(db);
+  const gate = await credits.policy.canSpend(db, cfg, pharmacy || { id: pharmacyId });
+  if (!gate.ok) throw new NoCreditsError("AI scanning needs AI credits. Buy credits from DavaDesk AI (Credits) and scan again.");
+  return pharmacy || { id: pharmacyId };
+}
 
 const IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"]);
 
@@ -43,6 +56,7 @@ const acceptImages = (maxFiles) => (req, res, next) =>
 const geminiSlots = createSemaphore(parseInt(process.env.SCAN_INLINE_CONCURRENCY || "24", 10));
 
 function sendError(res, err) {
+  if (err instanceof NoCreditsError) return res.status(402).json({ success: false, code: "NO_CREDITS", detail: err.message });
   if (err instanceof guard.ScanLimitError) {
     res.set("Retry-After", String(err.retryAfter || 30));
     return res.status(429).json({ success: false, code: "SCAN_LIMIT", detail: err.message });
@@ -71,6 +85,7 @@ async function scanForBilling(req, res) {
   try {
     if (!req.files?.length) return res.status(400).json({ success: false, detail: "Add at least one photo of the product" });
     const pharmacyId = req.user.pharmacy_id;
+    const pharmacy = await requireCredits(pharmacyId);
     await guard.consume({ userId: req.user.id, pharmacyId });
 
     const images = await prepareImages(req.files.map((f) => f.buffer), "product");
@@ -79,8 +94,13 @@ async function scanForBilling(req, res) {
     // The read is cached; the stock match is always fresh
     let extraction = await guard.getCached(pharmacyId, "product-read", hash);
     if (!extraction) {
-      extraction = await geminiSlots(() => extractProduct(images));
+      // A repeat of the same photos comes from cache and isn't charged
+      const m = credits.meter.createMeter();
+      extraction = await credits.meter.run(m, () => geminiSlots(() => extractProduct(images)));
       await guard.setCached(pharmacyId, "product-read", hash, extraction);
+      await credits
+        .settle(mongoose.connection.db, pharmacy, m, { ref: `scan:bill:${hash}:${Date.now()}`, task: "scan", engine: "pro", userId: req.user.id, label: "Scan to bill" })
+        .catch((err) => console.error("[scan] charging credits failed:", err.message));
     }
 
     const match = await matchForBilling(mongoose.connection.db, pharmacyId, extraction.product);
@@ -103,6 +123,7 @@ const enqueueScan = (type) => async (req, res) => {
   try {
     if (!req.files?.length) return res.status(400).json({ success: false, detail: "Add at least one photo" });
     const pharmacyId = req.user.pharmacy_id;
+    await requireCredits(pharmacyId);
     await guard.consume({ userId: req.user.id, pharmacyId });
 
     const images = await prepareImages(req.files.map((f) => f.buffer), type);

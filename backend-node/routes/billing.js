@@ -13,6 +13,7 @@ const orders = require("../services/billing/orders");
 const promos = require("../services/billing/promos");
 const subscriptions = require("../services/billing/subscriptions");
 const { trialEligibility, startFreeTrial } = require("../services/billing/trial");
+const credits = require("../services/credits");
 
 const planSchema = z.object({
   plan: z.enum(pricing.PLAN_CODES),
@@ -95,7 +96,12 @@ router.post("/orders/:orderId/confirm", auth, perUser(30), async (req, res, next
     if (!order) throw new BillingError("ORDER_NOT_FOUND", "Order not found", 404);
     const result = await orders.finalizeOrder(db, orderId, { source: "RETURN_PAGE" });
     const pharmacy = await loadPharmacy(req);
-    res.json({ ...result, subscription: subscriptions.describe(pharmacy.subscription) });
+    const extra = {};
+    if (result.purpose === "CREDITS") {
+      const cfg = await credits.config.getConfig(db);
+      extra.credit_wallet = credits.wallet.view(await credits.wallet.getWallet(db, cfg, pharmacy));
+    }
+    res.json({ ...result, subscription: subscriptions.describe(pharmacy.subscription), ...extra });
   } catch (err) {
     sendBillingError(res, err, next);
   }

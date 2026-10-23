@@ -233,6 +233,8 @@ const tools = [
         supplier: prev?.supplier || null,
         supplier_pending: prev?.supplier_pending || null, // said but not found yet
         supplier_options: prev?.supplier_options || [],
+        // photo / voice drafts are best reviewed on the Purchases page first
+        origin: a.origin || prev?.origin || (ctx.voice ? "voice" : "chat"),
         items: [],
       };
 
@@ -279,7 +281,9 @@ const tools = [
             return same ? { ...same, ...changes } : it;
           })
         : prevInputs;
-      for (const it of lines) {
+      // Lines are independent: resolve them side by side (a 20-line invoice
+      // shouldn't take 20 round trips), keeping their order
+      const resolveLine = async (it) => {
         const input = { ...it };
         let link = null;
         let options = [];
@@ -293,7 +297,7 @@ const tools = [
           options = link ? [] : r.options;
         }
         // Not in the catalog: the global medicine database, like a manual purchase
-        const g = !link ? await L.globalCandidates(it.product_name) : { best: null, list: [] };
+        const g = !link ? await L.globalCandidates(it.product_name) : { best: null, list: [], offline: false };
         // Picked by the user from the medicine database: take that entry
         if (!link && !g.best && it.global_pick) g.best = g.list.find((m) => m.name.toLowerCase() === String(it.product_name).toLowerCase()) || g.list[0] || null;
         let global = g.best;
@@ -318,6 +322,7 @@ const tools = [
           catalog_options: options,
           medicine_options: source === "not_found" ? g.list.map((m) => ({ name: m.name, manufacturer: m.manufacturer, pack: m.pack_size })) : [],
           source,
+          medicine_db_offline: source === "not_found" && !!g.offline,
           is_new_product: !link,
           manufacturer: product?.manufacturer || global?.manufacturer || "",
           salt_composition: product?.salt_composition || global?.salt_composition || "",
@@ -334,8 +339,10 @@ const tools = [
           last_purchase: last ? { date: last.date, supplier: last.supplier, rate_per_pack: last.rate_per_pack, mrp_per_pack: last.mrp_per_pack } : null,
         };
         line.total = round2(line.packs * line.rate_per_pack * (1 - line.discount_percent / 100) * (1 + line.gst_percent / 100));
-        draft.items.push(line);
-      }
+        return line;
+      };
+      draft.items = await S.mapLimit(lines, 6, resolveLine);
+      draft.medicine_db_offline = draft.items.some((i) => i.medicine_db_offline);
 
       draft.total = round2(draft.items.reduce((s, i) => s + i.total, 0));
       draft.missing = [];
@@ -350,7 +357,11 @@ const tools = [
       draft.items.forEach((i, idx) => {
         const n = `${idx + 1}. ${i.product_name}`;
         if (i.source === "not_found") {
-          draft.missing.push(`${n}: not found in your catalog or the medicine database${i.medicine_options.length ? ", pick the right medicine" : ""} or confirm adding it as a new item`);
+          draft.missing.push(
+            i.medicine_db_offline
+              ? `${n}: not found in your catalog (medicine database unreachable, couldn't check it); pick the right item or confirm adding it as a new item`
+              : `${n}: not found in your catalog or the medicine database${i.medicine_options.length ? ", pick the right medicine" : ""} or confirm adding it as a new item`
+          );
         }
         if (hasDevanagari(i.product_name)) draft.missing.push(`${n}: name must be in English`);
         if (!i.packs) draft.missing.push(`${n}: quantity`);
@@ -366,6 +377,8 @@ const tools = [
 
       return {
         draft_id: draft.id,
+        origin: draft.origin,
+        medicine_db_offline: draft.medicine_db_offline || undefined,
         supplier: draft.supplier,
         supplier_not_found: draft.supplier_pending,
         supplier_options: draft.supplier_options.slice(0, 5),
@@ -389,8 +402,29 @@ const tools = [
         })),
         total: draft.total,
         missing: draft.missing,
-        note: "The draft card with Save/Cancel buttons is shown, plus a search picker card under it for every item with source not_found and for supplier_not_found (closest matches from the catalog / medicine database / distributors, a search box and 'Add as new'). Don't repeat those options as choices; just say in one line which ones need picking. In the SAME message ask for anything else missing (batch/expiry/rate/MRP for all lines together). source global = matched in the medicine database, fine to use. Do not claim it is saved.",
+        note: "The draft card with Save/Cancel buttons is shown, plus a search picker card under it for every item with source not_found and for supplier_not_found (closest matches from the catalog / medicine database / distributors, a search box and 'Add as new'). Don't repeat those options as choices; just say in one line which ones need picking. In the SAME message ask for anything else missing (batch/expiry/rate/MRP for all lines together). source global = matched in the medicine database, fine to use. Do not claim it is saved." +
+          (draft.origin === "photo" || draft.origin === "voice"
+            ? ` This draft came from a ${draft.origin}: end by recommending "Save as draft" (the highlighted button) so they can check every line on the Purchases page before stock is added.`
+            : "") +
+          (draft.medicine_db_offline
+            ? " IMPORTANT: the medicine database couldn't be reached right now, so items not in their own catalog could not be checked against it. Say this plainly in one line, do NOT suggest adding them as new items, and recommend saving as a draft and finishing it later on the Purchases page."
+            : ""),
       };
+    },
+  },
+  {
+    name: "save_purchase_as_draft",
+    description:
+      "Keep an open purchase draft from this chat as a purchase draft on the Purchases page (Draft Purchases) for the user to review, edit and save later. Stock is NOT added. Use when the user asks to save it as a draft / 'draft mein rakh do' / 'baad mein karunga'. It works even with missing batch/expiry or unpicked items.",
+    parameters: { type: "object", properties: { draft_id: { type: "string" } }, required: ["draft_id"] },
+    status: (a, lang) => say(lang, { en: "Saving as a draft", hinglish: "Draft mein save kar raha hoon", hi: "ड्राफ्ट में सेव कर रहा हूँ" }),
+    async run(a, ctx) {
+      const draft = ctx.getDraft(a.draft_id);
+      if (!draft) return { error: "That draft is no longer open (already saved or discarded)." };
+      const r = await savePurchaseDraft(draft, ctx);
+      await ctx.removeDraft(draft.id);
+      ctx.emit({ ...r.block, closes_draft: draft.id });
+      return { ...r.summary, note: "Saved as a purchase draft; stock is not added. Tell them where to find it (Purchases page, Drafts) in one line." };
     },
   },
   {
@@ -477,11 +511,20 @@ function purchaseDraftBlock(d) {
     })),
     totals: [{ label: "Total (incl. GST)", value: d.total }],
     missing: d.missing,
-    actions: [
-      { label: "Save purchase", style: "primary", action: { type: "commit", draft_id: d.id }, disabled: d.missing.some((m) => /supplier|items|quantity|rate|higher|batch|expiry|not found|English/.test(m)) },
-      { label: "Discard", style: "ghost", action: { type: "discard", draft_id: d.id } },
-    ],
+    actions: purchaseActions(d),
   };
+}
+
+// Save straight to stock, or keep it as a purchase draft to review and edit on
+// the Purchases page. Drafts read from a photo or voice lead with "draft".
+function purchaseActions(d) {
+  const save = { label: "Save purchase", action: { type: "commit", draft_id: d.id }, disabled: d.missing.some((m) => /supplier|items|quantity|rate|higher|batch|expiry|not found|English/.test(m)) };
+  const keep = { label: "Save as draft", action: { type: "save_draft", draft_id: d.id }, disabled: !d.items.length };
+  const reviewFirst = d.origin === "photo" || d.origin === "voice";
+  return [
+    ...(reviewFirst ? [{ ...keep, label: "Save as draft (recommended)", style: "primary" }, { ...save, style: "secondary" }] : [{ ...save, style: "primary" }, { ...keep, style: "secondary" }]),
+    { label: "Discard", style: "ghost", action: { type: "discard", draft_id: d.id } },
+  ];
 }
 
 // Search picker cards for whatever the draft couldn't place with confidence:
@@ -523,6 +566,7 @@ function purchasePickers(d) {
     out.push({
       type: "picker",
       kind: "medicine",
+      offline: !!i.medicine_db_offline,
       draft_id: d.id,
       target: "line",
       line: idx,
@@ -536,14 +580,10 @@ function purchasePickers(d) {
   return out;
 }
 
-// Saving a confirmed purchase draft through the normal purchase API
-async function commitPurchase(draft, ctx) {
+// The body the purchase API takes, for a saved purchase or a purchase draft
+function purchasePayload(draft) {
   const s = draft.supplier || {};
-  // Last line of defence: never store a record under a Hindi-script or unconfirmed name
-  if (!s.name || hasDevanagari(s.name)) throw new Error("The supplier still needs to be confirmed in English before saving.");
-  const blocked = draft.items.find((i) => i.source === "not_found" || hasDevanagari(i.product_name));
-  if (blocked) throw new Error(`"${blocked.product_name}" still needs to be confirmed before saving.`);
-  const payload = {
+  return {
     supplier_id: s.id || null,
     supplier_name: s.name,
     ...(s.is_new ? { supplier_data: { name: s.name } } : {}),
@@ -569,7 +609,16 @@ async function commitPurchase(draft, ctx) {
       sgst: (i.gst_percent || 0) / 2,
     })),
   };
-  const res = await S.api(ctx, "POST", "/purchases", payload);
+}
+
+// Saving a confirmed purchase draft through the normal purchase API
+async function commitPurchase(draft, ctx) {
+  const s = draft.supplier || {};
+  // Last line of defence: never store a record under a Hindi-script or unconfirmed name
+  if (!s.name || hasDevanagari(s.name)) throw new Error("The supplier still needs to be confirmed in English before saving.");
+  const blocked = draft.items.find((i) => i.source === "not_found" || hasDevanagari(i.product_name));
+  if (blocked) throw new Error(`"${blocked.product_name}" still needs to be confirmed before saving.`);
+  const res = await S.api(ctx, "POST", "/purchases", purchasePayload(draft));
   const p = res.purchase;
   return {
     block: {
@@ -580,6 +629,29 @@ async function commitPurchase(draft, ctx) {
       actions: [{ label: "Open purchases", action: { type: "navigate", to: `/purchases`, state: { highlightId: p.id } } }],
     },
     summary: { saved: "purchase", id: p.id, invoice_no: p.invoice_no, supplier: p.supplier_name, total: p.total_amount, items: p.items.length },
+  };
+}
+
+// Keeping the chat's draft as a purchase draft on the Purchases page. Nothing
+// touches stock; unclear lines and missing batches are fine, the user will
+// review and edit them there before saving.
+async function savePurchaseDraft(draft, ctx) {
+  if (!draft.items.length) throw new Error("Add at least one item first.");
+  const body = purchasePayload(draft);
+  if (!draft.supplier && draft.supplier_pending) body.supplier_name = draft.supplier_pending;
+  // Unconfirmed new items keep the name that was read, not a catalog link
+  body.items = body.items.map((it, i) => (draft.items[i].source === "not_found" ? { ...it, selected_product_id: undefined } : it));
+  const res = await S.api(ctx, "POST", "/purchases/drafts", { ...body, invoice_no: draft.invoice_no || "", source: "assistant" });
+  const d = res.draft;
+  return {
+    block: {
+      type: "result",
+      tone: "success",
+      title: "Saved as purchase draft",
+      text: `${d.draft_no} · ${d.supplier_name || "supplier to pick"} · ${inr(d.total)} · ${d.items.length} item(s) · stock not added yet`,
+      actions: [{ label: "Review draft", action: { type: "navigate", to: "/purchases", state: { openPurchaseDraft: d.id } } }],
+    },
+    summary: { saved: "purchase draft", id: d.id, draft_no: d.draft_no, supplier: d.supplier_name, total: d.total, items: d.items.length },
   };
 }
 
@@ -643,4 +715,4 @@ const ops = {
   },
 };
 
-module.exports = { tools, commitPurchase, ops, purchaseDraftBlock };
+module.exports = { tools, commitPurchase, savePurchaseDraft, ops, purchaseDraftBlock };

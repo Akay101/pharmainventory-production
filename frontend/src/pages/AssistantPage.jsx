@@ -47,6 +47,8 @@ import {
 import { AGENT_META, assistantApi, streamTurn } from "../components/assistant/assistantClient";
 import { ChoicesBlock, ConfirmBlock, DraftBlock, NoticeBlock, PickerBlock, ResultBlock, StatsBlock, TableBlock } from "../components/assistant/Blocks";
 import ChartBlock from "../components/assistant/ChartBlock";
+import ParticleOrb from "../components/assistant/ParticleOrb";
+import { ComposerHint, CreditsBlock, CreditsPill, CreditsSheet, EngineNote, EngineSwitch, UsageChip, useCredits } from "../components/assistant/Credits";
 import { useVoiceInput } from "../components/assistant/useVoice";
 import { onSpeakingChange, primeVoice, speakReply, stopVoice } from "../components/assistant/voicePlayer";
 import { AI_LOGO_SRC, AiAmbient } from "../components/scan/ScanUI";
@@ -114,17 +116,14 @@ function AgentChip({ agent, label }) {
 
 function ThinkingLine({ text }) {
   return (
-    <div className="flex items-center gap-2.5 py-1">
-      <span className="relative flex h-5 w-5 items-center justify-center">
-        <span className="absolute inset-0 animate-ping rounded-full bg-orange-500/30" />
-        <span className="h-2.5 w-2.5 rounded-full bg-gradient-to-br from-orange-500 to-violet-500" />
-      </span>
+    <div className="flex items-center gap-2 py-0.5" role="status" aria-live="polite">
+      <ParticleOrb size={30} />
       <span className="text-sm font-medium ai-shimmer-text">{text || "Thinking…"}</span>
     </div>
   );
 }
 
-function AssistantMessage({ msg, onAction, onReply, busyKey, settled, openDrafts, streaming, onFeedback, latestDraftMsg, isLast }) {
+function AssistantMessage({ msg, onAction, onReply, busyKey, settled, openDrafts, streaming, onFeedback, latestDraftMsg, isLast, onBuyCredits }) {
   const [copied, setCopied] = useState(false);
   const blocks = msg.blocks || [];
   const main = blocks.filter((b) => b.type !== "choices");
@@ -133,16 +132,20 @@ function AssistantMessage({ msg, onAction, onReply, busyKey, settled, openDrafts
 
   return (
     <div className="flex gap-3">
-      <img src={AI_LOGO_SRC} alt="" className="mt-0.5 h-8 w-8 shrink-0 rounded-full ring-1 ring-indigo-500/20" />
+      <span className="relative mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center">
+        {msg.pending && <ParticleOrb size={48} count={34} className="pointer-events-none absolute -inset-2" />}
+        <img src={AI_LOGO_SRC} alt="" className="relative h-8 w-8 rounded-full ring-1 ring-indigo-500/20" />
+      </span>
       <div className="min-w-0 flex-1 space-y-2.5">
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-sm font-semibold">DavaDesk AI</span>
           <AgentChip agent={msg.agent} label={msg.agentLabel} />
         </div>
+        <EngineNote note={msg.pending ? msg.engineNote : null} usage={msg.pending ? null : msg.usage} />
         {showLoader && <ThinkingLine text={msg.status || msg.loader} />}
         {main.map((b, i) => {
           const key = `${msg.id}:${i}`;
-          const props = { block: b, onAction: (a, label) => onAction(a, label, key, b), busy: busyKey === key };
+          const props = { block: b, onAction: (a, label, cb) => onAction(a, label, key, b, cb), busy: busyKey === key, locked: streaming && busyKey !== key };
           if (b.type === "table") return <TableBlock key={key} {...props} />;
           if (b.type === "stats") return <StatsBlock key={key} {...props} />;
           if (b.type === "chart") return <ChartBlock key={key} block={b} />;
@@ -160,6 +163,7 @@ function AssistantMessage({ msg, onAction, onReply, busyKey, settled, openDrafts
           if (b.type === "confirm") return <ConfirmBlock key={key} {...props} settled={settled[key]} />;
           if (b.type === "result") return <ResultBlock key={key} {...props} />;
           if (b.type === "notice") return <NoticeBlock key={key} block={b} />;
+          if (b.type === "credits") return <CreditsBlock key={key} block={b} onBuy={onBuyCredits} />;
           return null;
         })}
         {msg.pending && msg.text && msg.status && !msg.textStarted && <ThinkingLine text={msg.status} />}
@@ -173,7 +177,7 @@ function AssistantMessage({ msg, onAction, onReply, busyKey, settled, openDrafts
         )}
         {msg.error && (
           <div className="flex flex-wrap items-center gap-2">
-            <NoticeBlock block={{ tone: "danger", text: msg.error }} />
+            <NoticeBlock block={{ tone: msg.errorTone || "danger", text: msg.error }} />
             {isLast && msg.retry && (
               <button type="button" disabled={streaming} onClick={msg.retry} className="h-8 rounded-lg border border-border px-3 text-xs font-semibold hover:bg-muted disabled:opacity-40">
                 Retry
@@ -217,6 +221,7 @@ function AssistantMessage({ msg, onAction, onReply, busyKey, settled, openDrafts
                 </button>
               </>
             )}
+            <UsageChip usage={msg.usage} />
           </div>
         )}
       </div>
@@ -299,6 +304,10 @@ export default function AssistantPage() {
   const [messages, setMessages] = useState([]);
   const [title, setTitle] = useState("");
   const [openDrafts, setOpenDrafts] = useState(null);
+  const credits = useCredits();
+  const creditsRef = useRef(credits);
+  creditsRef.current = credits;
+  const [creditsOpen, setCreditsOpen] = useState(false);
   const [loadingChat, setLoadingChat] = useState(false);
   const [streaming, setStreaming] = useState(false);
   const [busyKey, setBusyKey] = useState(null);
@@ -409,6 +418,7 @@ export default function AssistantPage() {
         { id: `local-a-${Date.now()}`, role: "assistant", pending: true, text: "", blocks: [], loader: body.action ? "Working on it…" : "Understanding your request…" },
       ]);
       let ok = false;
+      let failed = false; // the server answered, but with an error notice
       try {
         await streamTurn(
           { ...body, conversation_id: convRef.current || undefined },
@@ -426,15 +436,23 @@ export default function AssistantPage() {
                 if (data.title) setTitle(data.title);
               } else if (name === "route") updatePending({ agent: data.agent, agentLabel: data.label, loader: data.loader, status: null });
               else if (name === "status") updatePending({ status: data.text });
+              else if (name === "engine") updatePending({ engineNote: data });
               else if (name === "block") {
+                if (data.block.type === "notice" && data.block.tone === "danger") failed = true;
                 updatePending((m) => ({ ...m, blocks: [...(m.blocks || []), data.block] }));
                 if (data.block.type === "draft") setOpenDrafts((d) => [...new Set([...(d || []), data.block.draft_id])]);
+                // Saved as a draft by request in words: that chat draft is closed
+                if (data.block.closes_draft) setOpenDrafts((d) => (d || []).filter((x) => x !== data.block.closes_draft));
               } else if (name === "delta") updatePending((m) => ({ ...m, text: (m.text || "") + data.text, textStarted: true, status: null }));
-              else if (name === "error") updatePending({ error: data.detail, retry: body.message ? () => runRef.current?.({ message: body.message }, body.message) : null });
-              else if (name === "done") {
+              else if (name === "error") {
+                // Every engine is down: calm notice, and reload which engines can run
+                if (data.code === "all_busy") creditsRef.current.refresh();
+                updatePending({ error: data.detail, errorTone: data.code === "all_busy" ? "info" : "danger", retry: body.message ? () => runRef.current?.({ message: body.message }, body.message) : null });
+              } else if (name === "done") {
                 ok = true;
-                // Spoken question -> spoken answer
-                if (speak && data.message?.text) speakReply(data.message.text, data.message.language);
+                if (data.credits) creditsRef.current.setWallet(data.credits);
+                // Spoken question -> spoken answer (spoken replies use credits)
+                if (speak && data.message?.text && data.mode === "full") speakReply(data.message.text, data.message.language);
                 updatePending((m) => ({ ...m, ...data.message, blocks: data.message.blocks?.length ? data.message.blocks : m.blocks, agentLabel: m.agentLabel, pending: false }));
               }
             },
@@ -446,7 +464,7 @@ export default function AssistantPage() {
         updatePending((m) => ({ ...m, pending: false }));
         setStreaming(false);
         ctrlRef.current = null;
-        onDone?.(ok);
+        onDone?.(ok && !failed);
         loadChats(search.trim());
       }
     },
@@ -464,24 +482,34 @@ export default function AssistantPage() {
     const previews = photos.map((p) => p.preview);
     setInput("");
     setPhotos([]);
-    run({ message: t, ...(voice ? { voice: true } : {}) }, t || (files.length ? `📷 ${files.length} photo${files.length > 1 ? "s" : ""}` : ""), { files, previews, speak: voice });
+    const engine = creditsRef.current.data?.engine;
+    run({ message: t, ...(voice ? { voice: true } : {}), ...(engine ? { engine } : {}) }, t || (files.length ? `📷 ${files.length} photo${files.length > 1 ? "s" : ""}` : ""), { files, previews, speak: voice });
     if (!voice) inputRef.current?.focus();
   };
 
-  const onAction = (action, label, key, block) => {
+  const onAction = (action, label, key, block, cb) => {
     if (!action) return;
     if (action.type === "navigate") return navigate(action.to, { state: action.state });
     if (action.type === "url") return window.open(action.href, "_blank", "noopener");
-    if (streaming) return;
+    if (streaming) return cb?.(false);
     setBusyKey(key);
     run({ action, label }, label || action.type, {
       onDone: (ok) => {
         setBusyKey(null);
+        cb?.(ok);
         if (!ok) return;
         const outcome =
-          action.type === "commit" ? "Saved" : action.type === "discard" ? "Discarded" : action.type === "dismiss" ? "Cancelled" : "Done";
+          action.type === "commit"
+            ? "Saved"
+            : action.type === "save_draft"
+              ? "Saved as draft"
+              : action.type === "discard"
+                ? "Discarded"
+                : action.type === "dismiss"
+                  ? "Cancelled"
+                  : "Done";
         if (block?.type === "draft" || block?.type === "confirm" || block?.type === "picker") setSettled((s) => ({ ...s, [key]: outcome }));
-        if (block?.draft_id && ["commit", "discard"].includes(action.type)) setOpenDrafts((d) => (d || []).filter((x) => x !== block.draft_id));
+        if (block?.draft_id && ["commit", "save_draft", "discard"].includes(action.type)) setOpenDrafts((d) => (d || []).filter((x) => x !== block.draft_id));
       },
     });
   };
@@ -633,7 +661,15 @@ export default function AssistantPage() {
           <button type="button" onClick={() => navigate("/dashboard")} className="hidden h-9 items-center gap-1.5 rounded-xl px-2.5 text-sm text-muted-foreground hover:bg-muted hover:text-foreground md:flex">
             <ArrowLeft className="h-4 w-4" /> App
           </button>
-          <p className="min-w-0 flex-1 truncate text-center text-sm font-semibold md:text-left md:pl-2">{empty ? "New chat" : title || "Chat"}</p>
+          {/* Which engine answers, top left, switchable any time */}
+          <div className="hidden md:block">
+            <EngineSwitch data={credits.data} onChange={credits.setEngine} disabled={streaming} />
+          </div>
+          <div className="md:hidden">
+            <EngineSwitch data={credits.data} onChange={credits.setEngine} disabled={streaming} compact />
+          </div>
+          <p className="min-w-0 flex-1 truncate text-sm font-semibold md:pl-2">{empty ? "New chat" : title || "Chat"}</p>
+          <CreditsPill wallet={credits.data?.wallet} onOpen={() => setCreditsOpen(true)} />
           <button type="button" onClick={newChat} className="flex h-9 w-9 items-center justify-center rounded-xl hover:bg-muted md:hidden" aria-label="New chat">
             <MessageSquarePlus className="h-5 w-5" />
           </button>
@@ -722,6 +758,7 @@ export default function AssistantPage() {
                       streaming={streaming}
                       latestDraftMsg={latestDraftMsg}
                       isLast={m.id === lastAssistantId}
+                      onBuyCredits={() => setCreditsOpen(true)}
                       onFeedback={async (msg, value) => {
                         setMessages((prev) => prev.map((x) => (x.id === msg.id ? { ...x, feedback: value } : x)));
                         await assistantApi.feedback(msg.id, value).catch(() => {});
@@ -873,9 +910,10 @@ export default function AssistantPage() {
                 </button>
               )}
             </div>
-            <p className="mt-1.5 text-center text-[11px] text-muted-foreground">
-              Nothing is saved until you confirm on a card. AI can make mistakes; check important details.
-            </p>
+            <div className="mt-1.5 space-y-0.5">
+              <ComposerHint data={credits.data} hasPhotos={photos.length > 0} listening={voice.listening} estimate={credits.estimate} />
+              <p className="text-center text-[11px] text-muted-foreground">Nothing is saved until you confirm on a card. AI can make mistakes; check important details.</p>
+            </div>
           </div>
         </div>
       </main>
@@ -912,6 +950,7 @@ export default function AssistantPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      <CreditsSheet open={creditsOpen} onClose={() => setCreditsOpen(false)} data={credits.data} onEngine={credits.setEngine} refresh={credits.refresh} />
     </div>
   );
 }
