@@ -1,26 +1,18 @@
-import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { AI_LOGO_SRC } from "../scan/ScanUI";
+import { formatCombo } from "../../lib/shortcuts";
 
-// Floating button that opens the full-screen assistant (also Ctrl/⌘ + J)
+// Floating button that opens the full-screen assistant (also Alt/⌥ + J, a
+// global shortcut in DashboardLayout; Ctrl/⌘ + J is the browser's Downloads)
 export default function AssistantLauncher() {
   const navigate = useNavigate();
-  useEffect(() => {
-    const onKey = (e) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "j") {
-        e.preventDefault();
-        navigate("/assistant");
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [navigate]);
 
   return (
     <button
       type="button"
       onClick={() => navigate("/assistant")}
-      title="DavaDesk AI (Ctrl/⌘ + J)"
+      title={`DavaDesk AI (${formatCombo("alt+j")})`}
+      data-kbd={formatCombo("alt+j")}
       aria-label="Open DavaDesk AI"
       className="group fixed bottom-5 right-5 z-[60] flex items-center gap-2 rounded-full bg-card p-1 pr-1 shadow-xl shadow-indigo-500/20 ring-1 ring-border transition-all hover:pr-4 sm:bottom-6 sm:right-6"
     >

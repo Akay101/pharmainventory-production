@@ -10,15 +10,17 @@ const apiKey = () => process.env.GEMINI_API_KEY || process.env.EMERGENT_LLM_KEY 
 const groq = require("./groq");
 const meter = require("../credits/meter");
 
-// Two engines, each with a cheap model for light work and a strong one for
-// real work:
-//   pro   ("Precision" in the app): Gemini
-//   swift ("Swift"): Groq (much cheaper)
-// When the chosen engine can't answer, the other one does (and the reply says
-// so); NVIDIA's Nemotron is the last resort, shown as Swift. Each answer is
-// labelled with the engine that really gave it.
+// Two engines:
+//   pro   ("Precision" in the app): Gemini. Flash-Lite does routing, questions,
+//         lookups, records and reports (as accurate as Flash on our tool flows,
+//         faster, a third of the price); Flash is its backup
+//   swift ("Swift"): Groq. gpt-oss-20b for light work, gpt-oss-120b for records
+// The admin's ai_mode decides who answers: "auto" (engine chosen per task, the
+// other engine covers, NVIDIA's Nemotron last, shown as Swift), or one provider
+// for everything with no fallback ("gemini" | "groq" | "nemotron").
 const MODELS = {
   agent: () => process.env.ASSISTANT_MODEL || "gemini-3.5-flash",
+  heavy: () => process.env.ASSISTANT_HEAVY_MODEL || "gemini-3.1-flash-lite",
   light: () => process.env.ASSISTANT_LIGHT_MODEL || "gemini-3.1-flash-lite",
   router: () => process.env.ASSISTANT_ROUTER_MODEL || "gemini-3.1-flash-lite",
   fallback: () => process.env.GEMINI_FALLBACK_MODEL || "gemini-2.5-flash",
@@ -28,6 +30,7 @@ const MODELS = {
 };
 const ENGINE_OF = { gemini: "pro", groq: "swift", nvidia: "swift" };
 const ALL_BUSY = "Due to high demand, our agents will be back in a few moments. Please check back later.";
+const FAILED = "Something went wrong. Please try again.";
 
 // Gemini models that just hit a quota or outage are skipped for a while, so
 // every step of a turn doesn't wait on the same failure (Groq/NVIDIA keep their own)
@@ -35,26 +38,30 @@ const geminiCooling = new Map();
 const usable = (link) =>
   link.provider === "gemini" ? !!apiKey() && (geminiCooling.get(link.model) || 0) <= Date.now() : groq.available(link.model, link.provider);
 
-// Whether an engine can run here at all (its key is set)
-const engineReady = (engine) => (engine === "swift" ? groq.available(null, "groq") : !!apiKey());
+// Whether a provider's key is set here
+const providerReady = (provider) => (provider === "gemini" ? !!apiKey() : groq.available(null, provider));
 
-function engineLinks(engine, role, tier) {
+function providerLinks(provider, role, tier) {
   const g = (model) => ({ provider: "gemini", model });
   const q = (model) => ({ provider: "groq", model });
+  if (provider === "nvidia") return [{ provider: "nvidia", model: MODELS.lastResort() }];
   // Swift record work never uses the small model (it can skip the tools and
   // only describe a draft)
-  if (engine === "swift") return role === "router" || tier === "light" ? [q(MODELS.swiftLight()), q(MODELS.swiftAgent())] : [q(MODELS.swiftAgent())];
+  if (provider === "groq") return role === "router" || tier === "light" ? [q(MODELS.swiftLight()), q(MODELS.swiftAgent())] : [q(MODELS.swiftAgent())];
   if (role === "router") return [g(MODELS.router())];
-  return tier === "light" ? [g(MODELS.light()), g(MODELS.fallback())] : [g(MODELS.agent()), g(MODELS.fallback())];
+  return tier === "light" ? [g(MODELS.light()), g(MODELS.fallback())] : [g(MODELS.heavy()), g(MODELS.agent())];
 }
 
-// Which models to try, in order: the chosen engine, then the other engine, then Nemotron
-function chainFor({ role = "agent", engine = "pro", tier = "heavy" }) {
-  const other = engine === "swift" ? "pro" : "swift";
-  const chain = [...engineLinks(engine, role, tier), ...engineLinks(other, role, tier), { provider: "nvidia", model: MODELS.lastResort() }];
+// Which models to try, in order. auto: the task's engine, the other engine,
+// then Nemotron. A fixed mode: only its provider's models.
+function chainFor({ role = "agent", engine = "pro", tier = "heavy", mode = "auto" }) {
+  const fixed = { gemini: "gemini", groq: "groq", nemotron: "nvidia" }[mode];
+  const chain = fixed
+    ? providerLinks(fixed, role, tier)
+    : [...providerLinks(engine === "swift" ? "groq" : "gemini", role, tier), ...providerLinks(engine === "swift" ? "gemini" : "groq", role, tier), ...providerLinks("nvidia")];
   const seen = new Set();
   const live = chain.filter((c) => !seen.has(c.provider + c.model) && seen.add(c.provider + c.model) && usable(c));
-  if (!live.length) throw new LlmError(ALL_BUSY, { category: "all_busy", status: 503 });
+  if (!live.length) throw fixed ? new LlmError(FAILED, { category: "failed", status: 503 }) : new LlmError(ALL_BUSY, { category: "all_busy", status: 503 });
   return live;
 }
 
@@ -229,10 +236,11 @@ async function geminiTurn({ model, system, contents, tools, schema, thinking, ma
  *   role:   "agent" | "router" (router also serves small JSON jobs)
  *   engine: "pro" | "swift"     tier: "light" | "heavy"
  */
-async function turn({ role = "agent", engine, tier = "heavy", purpose, system, contents, tools, schema, thinking, maxOutputTokens, temperature, onText, onSwitch, forceTool, signal, timeoutMs }) {
+async function turn({ role = "agent", engine, mode, tier = "heavy", purpose, system, contents, tools, schema, thinking, maxOutputTokens, temperature, onText, onSwitch, forceTool, signal, timeoutMs }) {
   // Calls that don't name an engine (router, name cleanup) follow the turn's
   engine = engine || meter.current()?.engine || "pro";
-  const chain = chainFor({ role, engine, tier });
+  mode = mode || meter.current()?.aiMode || "auto";
+  const chain = chainFor({ role, engine, tier, mode });
   let lastErr;
   for (let i = 0; i < chain.length; i++) {
     const link = chain[i];
@@ -270,7 +278,7 @@ async function turn({ role = "agent", engine, tier = "heavy", purpose, system, c
       }
       // Nothing said and no tool asked for: treat as a failure, the next model answers
       if (!schema && !String(out.text || "").trim() && !out.calls?.length) {
-        throw new LlmError(`${link.model} returned an empty answer`, { retryable: true, category: "empty" });
+        throw new LlmError(`${link.model} returned an empty answer (${out.finishReason}, ${out.usage?.completion_tokens ?? "?"} output tokens)`, { retryable: true, category: "empty" });
       }
       if (i > 0) console.warn(`[assistant] ${role} (${engine}) answered by fallback ${link.provider}/${out.model} (${lastErr?.message?.slice(0, 120)})`);
       return { ...out, engine: ENGINE_OF[link.provider], fallback: i > 0 };
@@ -285,13 +293,14 @@ async function turn({ role = "agent", engine, tier = "heavy", purpose, system, c
       lastErr = err;
     }
   }
-  // Every engine failed: the same calm message whatever went wrong
+  // Every model failed: auto has nothing left to try; a fixed mode has no fallback
+  if (mode !== "auto") throw new LlmError(FAILED, { category: "failed", status: lastErr?.status || 503 });
   throw new LlmError(ALL_BUSY, { category: "all_busy", status: lastErr?.status || 503 });
 }
 
 // Structured JSON answer (router, titles)
-async function json({ role = "router", engine, purpose, system, contents, schema, signal, timeoutMs = 15000, thinking = "minimal" }) {
-  const out = await turn({ role, engine, purpose, system, contents, schema, thinking, signal, timeoutMs, maxOutputTokens: 1024, temperature: 0 });
+async function json({ role = "router", engine, mode, purpose, system, contents, schema, signal, timeoutMs = 15000, thinking = "minimal" }) {
+  const out = await turn({ role, engine, mode, purpose, system, contents, schema, thinking, signal, timeoutMs, maxOutputTokens: 1024, temperature: 0 });
   try {
     return JSON.parse(out.text);
   } catch {
@@ -299,4 +308,4 @@ async function json({ role = "router", engine, purpose, system, contents, schema
   }
 }
 
-module.exports = { turn, json, LlmError, MODELS, apiKey, chainFor, engineReady, ENGINE_OF };
+module.exports = { turn, json, LlmError, MODELS, apiKey, chainFor, providerReady, ENGINE_OF };

@@ -1,4 +1,5 @@
 const express = require("express");
+const { stockStatus } = require("../services/returns/notes");
 const router = express.Router();
 const mongoose = require("mongoose");
 const { v4: uuidv4 } = require("uuid");
@@ -200,6 +201,8 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
                 batch_no: "$batch_no",
                 expiry_date: "$expiry_date",
                 available_quantity: "$available_quantity",
+                expired_quantity: "$expired_quantity",
+                returned_quantity: "$returned_quantity",
                 pack_type: "$pack_type",
                 units_per_pack: "$units_per_pack",
                 purchase_price: "$purchase_price",
@@ -294,6 +297,7 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
         batches: Array.isArray(item.batches)
           ? item.batches.map((b) => ({
               ...b,
+              stock_status: stockStatus(b),
               purchase_price:
                 b.purchase_price !== undefined && b.purchase_price !== null
                   ? Math.round(Number(b.purchase_price) * 100) / 100
@@ -465,6 +469,7 @@ router.get(
 
       const formattedBatches = batches.map((b) => ({
         ...b,
+        stock_status: stockStatus(b),
         purchase_price:
           b.purchase_price !== undefined && b.purchase_price !== null
             ? Math.round(Number(b.purchase_price) * 100) / 100
@@ -890,6 +895,39 @@ router.get("/shortage", auth, requireSubscription(), async (req, res, next) => {
     res.json({
       inventory: shortageItems,
       count: shortageItems.length,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// GET /api/inventory/by-code?code=DD1|<id>|...  item from a scanned label (Billing)
+router.get("/by-code", auth, requireSubscription(), async (req, res, next) => {
+  try {
+    const { parseLabel } = require("../services/itemLabels");
+    const code = parseLabel(req.query.code);
+    if (!code) return res.status(400).json({ detail: "This isn't a DavaDesk item label", code: "NOT_A_LABEL" });
+    const db = mongoose.connection.db;
+    const b = await db.collection("inventory").findOne({ id: code.id, pharmacy_id: req.user.pharmacy_id }, { projection: { _id: 0 } });
+    if (!b) return res.status(404).json({ detail: "This label isn't from your stock (or the batch was removed)", code: "NOT_FOUND" });
+    const today = new Date().toISOString().slice(0, 10);
+    const expired = /^\d{4}-\d{2}-\d{2}$/.test(b.expiry_date || "") && b.expiry_date < today;
+    res.json({
+      inventory_id: b.id,
+      product_id: b.product_id || null,
+      product_name: b.product_name,
+      salt_composition: b.salt_composition || "",
+      batch_no: b.batch_no || "",
+      expiry_date: b.expiry_date || "",
+      mrp: Number(b.mrp) || 0,
+      purchase_price: Number(b.purchase_price) || 0,
+      cgst: Number(b.cgst) || 0,
+      sgst: Number(b.sgst) || 0,
+      hsn_no: b.hsn_no || "",
+      units_per_pack: Number(b.units_per_pack) || 1,
+      available_quantity: Math.max(0, Number(b.available_quantity) || 0),
+      expired,
+      returned: b.status === "Returned" || b.status === "Expired & Returned",
     });
   } catch (error) {
     next(error);

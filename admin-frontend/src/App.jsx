@@ -25,6 +25,8 @@ import TeamManagementPage from "./pages/TeamManagementPage";
 import PricingPage from "./pages/PricingPage";
 import SubscriptionsPage from "./pages/SubscriptionsPage";
 import CreditsPage from "./pages/CreditsPage";
+import SupportPage from "./pages/SupportPage";
+import OfferLeadsPage from "./pages/OfferLeadsPage";
 
 function MainDashboard() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -54,6 +56,29 @@ function MainDashboard() {
 
   const [promoModalOpen, setPromoModalOpen] = useState(false);
   const [selectedUserId, setSelectedUserId] = useState(null);
+  const [supportUnread, setSupportUnread] = useState(0);
+  const [offerPending, setOfferPending] = useState(0);
+  const onOfferSummary = useCallback((s) => setOfferPending(s?.not_sent || 0), []);
+
+  // 50-50 registrations still waiting for their code (sidebar badge)
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    AdminAPI.getOfferLeads({ limit: 1 })
+      .then((r) => setOfferPending(r.data?.summary?.not_sent || 0))
+      .catch(() => {});
+  }, [isAuthenticated, activeEnv]);
+
+  // Unread support queries for the sidebar badge
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const check = () =>
+      AdminAPI.getSupportTickets({ unread: 1, limit: 1 })
+        .then((r) => setSupportUnread(r.data?.counts?.unread || 0))
+        .catch(() => {});
+    check();
+    const t = setInterval(check, 2 * 60 * 1000);
+    return () => clearInterval(t);
+  }, [isAuthenticated, activeEnv]);
 
   // Fetch connection status
   const checkStatus = useCallback(async () => {
@@ -85,7 +110,7 @@ function MainDashboard() {
         AdminAPI.getTrends(),
         AdminAPI.getLeads({ limit: 100 }),
         AdminAPI.getPharmacies({ limit: 100 }),
-        AdminAPI.getUsers({ limit: 100 }),
+        AdminAPI.getUsers({ limit: 1000 }), // the Users page filters client-side (incl. 50-50 users)
         AdminAPI.getPromos(),
         AdminAPI.getFunnel(),
       ]);
@@ -261,6 +286,8 @@ function MainDashboard() {
         onTabChange={(tab) => setActiveTab(tab)}
         leadCount={leadsData.summary?.fresh_uncontacted || 0}
         promoCount={promosData.summary?.active || 0}
+        supportCount={supportUnread}
+        offerCount={offerPending}
         activeEnv={activeEnv}
         envStatus={envStatus}
         isOpen={mobileMenuOpen}
@@ -293,6 +320,10 @@ function MainDashboard() {
               activeEnv={activeEnv}
             />
           )}
+
+          {activeTab === "support" && <SupportPage activeEnv={activeEnv} onUnreadChange={setSupportUnread} />}
+
+          {activeTab === "offer5050" && <OfferLeadsPage activeEnv={activeEnv} onOpenUser={setSelectedUserId} onSummary={onOfferSummary} />}
 
           {activeTab === "leads" && (
             <LeadsCRM

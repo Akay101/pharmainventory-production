@@ -2,6 +2,7 @@
 const S = require("./shared");
 const L = require("./lookup");
 const { overview } = require("../../dashboard");
+const { pharmacyUpiQr } = require("../../../utils/upi");
 
 const { blocks, cols, inr, say, textMatch } = S;
 
@@ -123,6 +124,43 @@ const appTools = [
   },
 ];
 
+// Shared by the billing and app agents: "250 ka QR do", "generate a QR for ₹250"
+const upiQrTool = {
+  name: "upi_payment_qr",
+  description: "Show a scannable UPI payment QR for an amount, paid to the pharmacy's UPI ID (from Settings). Use for 'QR do / QR banao / payment QR for ₹250 / UPI se lena hai'. Optional note, e.g. a bill number.",
+  parameters: {
+    type: "object",
+    properties: {
+      amount: { type: "number", description: "Rupees, e.g. 250 or 199.50" },
+      note: { type: "string", description: "Optional payment note shown in the payer's app, e.g. 'Bill 1024'" },
+    },
+    required: ["amount"],
+  },
+  status: (a, lang) => say(lang, { en: "Making the payment QR", hinglish: "Payment QR bana raha hoon", hi: "पेमेंट QR बना रहा हूँ" }),
+  async run(a, ctx) {
+    const pharmacy = await ctx.db.collection("pharmacies").findOne({ id: ctx.pharmacyId }, { projection: { _id: 0, name: 1, upi_id: 1 } });
+    try {
+      const q = await pharmacyUpiQr(pharmacy, { amount: a.amount, note: a.note });
+      ctx.emit({ type: "qr", title: `Scan to pay ${inr(q.amount)}`, amount: q.amount, upi_id: q.upi_id, payee_name: q.payee_name, note: q.note, upi_uri: q.upi_uri, image: q.qr });
+      return { shown: true, amount: q.amount, upi_id: q.upi_id, payee: q.payee_name };
+    } catch (err) {
+      if (err.code === "NO_UPI_ID" || err.code === "BAD_UPI_ID") {
+        const admin = ctx.user.role === "ADMIN";
+        ctx.emit({
+          type: "result",
+          tone: "info",
+          title: err.code === "NO_UPI_ID" ? "No UPI ID set yet" : "UPI ID needs fixing",
+          text: admin ? "Add your pharmacy's UPI ID in Settings → Pharmacy, then ask again." : "Ask the pharmacy admin to add the UPI ID in Settings.",
+          actions: admin ? [{ label: "Open Settings", action: { type: "navigate", to: "/settings" } }] : [],
+        });
+        return { error: err.message, needs_upi_id: true };
+      }
+      if (err.code === "BAD_AMOUNT") return { error: err.message, ask_user_for_amount: true };
+      throw err;
+    }
+  },
+};
+
 const mediTools = [
   {
     name: "medicine_facts",
@@ -166,4 +204,4 @@ const ops = {
   },
 };
 
-module.exports = { appTools, mediTools, ops, PAGES };
+module.exports = { appTools, mediTools, upiQrTool, ops, PAGES };

@@ -24,10 +24,12 @@ const configSchema = z.object({
   usd_inr: z.number().min(10).max(500),
   gst_percent: z.number().min(0).max(40),
   min_charge_credits: z.number().min(0).max(100),
-  daily_credits: z.object(Object.fromEntries(PLAN_CODES.map((p) => [p, z.number().min(0).max(100000)]))),
+  ai_mode: z.enum(C.AI_MODES),
+  plan_budget_inr: z.object(Object.fromEntries(PLAN_CODES.map((p) => [p, z.number().min(0).max(1_000_000)]))),
+  budget_daily_cap_factor: z.number().min(1).max(30),
+  daily_credits: z.object(Object.fromEntries(PLAN_CODES.map((p) => [p, z.number().min(0).max(100000)]))).optional(),
   trial_daily_credits: z.number().min(0).max(100000),
   free_mode: z.object({ enabled: z.boolean(), messages_per_day: z.number().int().min(0).max(1000) }),
-  engines: z.object({ pro: z.object({ enabled: z.boolean() }), swift: z.object({ enabled: z.boolean() }) }).refine((e) => e.pro.enabled || e.swift.enabled, { message: "Keep at least one engine on" }),
   packs: z
     .array(
       z.object({
@@ -143,6 +145,11 @@ router.get("/wallets", async (req, res, next) => {
         daily_remaining: fresh ? W.toCredits(Math.max(0, w.daily.remaining_milli)) : allowance,
         daily_override: w?.daily_override_credits ?? null,
         free_used_today: w?.free?.date === today ? w.free.used || 0 : 0,
+        // Our AI cost on what the plan includes, this plan year, against its budget
+        plan_year: (() => {
+          const b = W.planBudget(cfg, p.subscription, w);
+          return b ? { budget_inr: Math.round(b.budget * 100) / 100, spent_inr: Math.round(b.spent * 100) / 100, ends: b.end, days_left: b.daysLeft } : null;
+        })(),
         stats: stats[p.id] || { used_credits: 0, cost_inr: 0, free_cost_inr: 0, purchased_credits: 0, requests: 0, free_requests: 0 },
       };
     });

@@ -527,6 +527,7 @@ export default function CustomersPage() {
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4.5 h-4.5 text-muted-foreground/60" />
               <Input
                 placeholder="Search customers by name, mobile or email..."
+                data-shortcut="search"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 className="pl-10 h-11 bg-background/30 border-border/60 focus-visible:ring-primary focus-visible:ring-offset-0 rounded-xl transition-all"

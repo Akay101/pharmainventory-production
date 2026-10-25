@@ -9,7 +9,7 @@ const PLAN_CODES = ["BASIC", "ADVANCED", "AGENTIC"];
 const rupees = (n, d = 2) => `₹${(Number(n) || 0).toLocaleString("en-IN", { maximumFractionDigits: d, minimumFractionDigits: d > 2 ? 0 : 0 })}`;
 const cr = (n) => (Number(n) || 0).toLocaleString("en-IN", { maximumFractionDigits: 1 });
 const fmtDateTime = (d) => (d ? new Date(d).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "—");
-const TASK_LABEL = { question: "Questions", lookup: "Lookups", report: "Reports", action: "Records", photo: "Photos in chat", voice: "Voice replies", scan: "Scans" };
+const TASK_LABEL = { question: "Questions", lookup: "Lookups", report: "Reports", action: "Records", photo: "Photos in chat", voice: "Voice replies", scan: "Scans", dictation: "Voice typing" };
 const ENGINE_LABEL = { pro: "Precision", swift: "Swift" };
 const TYPE_LABEL = {
   DAILY: "Daily credits",
@@ -22,6 +22,19 @@ const TYPE_LABEL = {
 };
 
 const inputCls = "w-full h-9 px-3 rounded-xl border border-slate-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/30 disabled:bg-slate-50";
+const AI_MODE_OPTIONS = [
+  { id: "auto", label: "Auto", tag: "Recommended", hint: "Swift for questions and lookups, Precision for records, reports and photos. Each covers for the other; Nemotron last (slow warning)." },
+  { id: "gemini", label: "Gemini only", hint: "Precision for everything. No fallback: if Gemini fails, users see “Something went wrong”." },
+  { id: "groq", label: "Groq only", hint: "Swift for everything (cheapest). No fallback." },
+  { id: "nemotron", label: "Nemotron only", hint: "NVIDIA Nemotron for everything, shown as Swift. Every reply shows a slow-response warning. No fallback." },
+];
+
+// Credits a day from a yearly budget (our cost per credit = value ÷ (1 + margin))
+const evenDaily = (cfg, budget) => {
+  const perCredit = Number(cfg.credit_value_paise) / 100 / (1 + Number(cfg.margin_percent) / 100);
+  return perCredit > 0 ? Math.round((Number(budget) / 365 / perCredit) * 10) / 10 : 0;
+};
+
 function Field({ label, hint, children }) {
   return (
     <label className="block">
@@ -184,7 +197,9 @@ function Settings({ canEdit, activeEnv }) {
         gst_percent: Number(cfg.gst_percent),
         min_charge_credits: Number(cfg.min_charge_credits),
         trial_daily_credits: Number(cfg.trial_daily_credits),
-        daily_credits: Object.fromEntries(PLAN_CODES.map((p) => [p, Number(cfg.daily_credits[p]) || 0])),
+        plan_budget_inr: Object.fromEntries(PLAN_CODES.map((p) => [p, Number(cfg.plan_budget_inr[p]) || 0])),
+        budget_daily_cap_factor: Number(cfg.budget_daily_cap_factor) || 2,
+        daily_credits: Object.fromEntries(PLAN_CODES.map((p) => [p, Number(cfg.daily_credits?.[p]) || 0])),
         free_mode: { enabled: !!cfg.free_mode.enabled, messages_per_day: Number(cfg.free_mode.messages_per_day) || 0 },
         packs: cfg.packs.map((p) => ({
           id: String(p.id).trim(),
@@ -199,6 +214,7 @@ function Settings({ canEdit, activeEnv }) {
         ),
       };
       delete payload._id;
+      delete payload.engines; // replaced by ai_mode
       delete payload.updated_at;
       delete payload.updated_by;
       await AdminAPI.updateCreditConfig(payload);
@@ -256,14 +272,40 @@ function Settings({ canEdit, activeEnv }) {
         </div>
 
         <div>
-          <h4 className="text-xs font-black text-slate-800 mb-2">Daily credits (refilled every day, India time; unused don't carry over)</h4>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <h4 className="text-xs font-black text-slate-800 mb-1">Who answers in the app</h4>
+          <p className="text-[11px] text-slate-500 mb-2">Applies to every pharmacy within 30 seconds. The app shows Precision (Gemini) or Swift (Groq / Nemotron) as it answers.</p>
+          <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-2">
+            {AI_MODE_OPTIONS.map((m) => (
+              <label
+                key={m.id}
+                className={`rounded-xl border-2 p-3 cursor-pointer ${cfg.ai_mode === m.id ? "border-brand-500 bg-brand-50" : "border-slate-200 hover:border-slate-300"} ${dis ? "cursor-not-allowed opacity-70" : ""}`}
+              >
+                <span className="flex items-center gap-2 text-sm font-black text-slate-900">
+                  <input type="radio" name="ai_mode" disabled={dis} checked={cfg.ai_mode === m.id} onChange={() => set("ai_mode", m.id)} />
+                  {m.label}
+                  {m.tag && <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 rounded px-1.5">{m.tag}</span>}
+                </span>
+                <span className="block text-[11px] text-slate-500 mt-1">{m.hint}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+
+        <div>
+          <h4 className="text-xs font-black text-slate-800 mb-1">Yearly AI budget per pharmacy (our cost, ₹)</h4>
+          <p className="text-[11px] text-slate-500 mb-2">
+            What a plan includes (daily credits + light mode) never costs us more than this per plan year. Daily credits = what's left ÷ days left, at most {cfg.budget_daily_cap_factor}× the even share. Credits you grant, buy-ins and custom daily amounts are separate.
+          </p>
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
             {PLAN_CODES.map((p) => (
-              <Field key={p} label={`${p} plan`}>
-                <input type="number" className={inputCls} disabled={dis} value={cfg.daily_credits[p]} onChange={(e) => set(`daily_credits.${p}`, num(e.target.value))} />
+              <Field key={p} label={`${p} plan`} hint={`≈ ${evenDaily(cfg, cfg.plan_budget_inr[p])} credits/day`}>
+                <input type="number" className={inputCls} disabled={dis} value={cfg.plan_budget_inr[p]} onChange={(e) => set(`plan_budget_inr.${p}`, num(e.target.value))} />
               </Field>
             ))}
-            <Field label="Free trial">
+            <Field label="Catch-up limit" hint="× the even daily share">
+              <input type="number" step="0.5" className={inputCls} disabled={dis} value={cfg.budget_daily_cap_factor} onChange={(e) => set("budget_daily_cap_factor", num(e.target.value))} />
+            </Field>
+            <Field label="Free trial" hint="Credits per day">
               <input type="number" className={inputCls} disabled={dis} value={cfg.trial_daily_credits} onChange={(e) => set("trial_daily_credits", num(e.target.value))} />
             </Field>
           </div>
@@ -274,20 +316,11 @@ function Settings({ canEdit, activeEnv }) {
             <h4 className="text-xs font-black text-slate-800">When credits run out</h4>
             <label className="flex items-center gap-2 text-sm">
               <input type="checkbox" disabled={dis} checked={!!cfg.free_mode.enabled} onChange={(e) => set("free_mode.enabled", e.target.checked)} />
-              Allow light mode (questions, lookups, reports on Swift)
+              Allow light mode (questions, lookups, reports; cost comes out of the plan budget)
             </label>
             <Field label="Free light messages per day, per pharmacy">
               <input type="number" className={inputCls} disabled={dis || !cfg.free_mode.enabled} value={cfg.free_mode.messages_per_day} onChange={(e) => set("free_mode.messages_per_day", num(e.target.value))} />
             </Field>
-          </div>
-          <div className="rounded-xl border border-slate-200 p-3 space-y-2">
-            <h4 className="text-xs font-black text-slate-800">Engines users can pick</h4>
-            {["pro", "swift"].map((e) => (
-              <label key={e} className="flex items-center gap-2 text-sm">
-                <input type="checkbox" disabled={dis} checked={cfg.engines[e].enabled !== false} onChange={(ev) => set(`engines.${e}.enabled`, ev.target.checked)} />
-                <b>{ENGINE_LABEL[e]}</b> <span className="text-slate-400 text-xs">({e === "pro" ? "Gemini first, Groq fallback" : "Groq first, Gemini fallback"})</span>
-              </label>
-            ))}
           </div>
         </div>
 
@@ -537,13 +570,14 @@ export default function CreditsPage({ activeEnv }) {
           </div>
         ) : (
           <div className="overflow-x-auto border border-slate-200 rounded-xl">
-            <table className="w-full text-xs min-w-[860px]">
+            <table className="w-full text-xs min-w-[960px]">
               <thead className="bg-slate-50 text-slate-500 uppercase text-[10px]">
                 <tr>
                   <th className="text-left p-2">Pharmacy</th>
                   <th className="text-left p-2">Plan</th>
                   <th className="text-right p-2">Balance</th>
                   <th className="text-right p-2">Today (daily)</th>
+                  <th className="text-right p-2">Plan budget</th>
                   <th className="text-right p-2">Used {days}d</th>
                   <th className="text-right p-2">AI cost {days}d</th>
                   <th className="text-right p-2">Free msgs today</th>
@@ -553,7 +587,7 @@ export default function CreditsPage({ activeEnv }) {
               <tbody className="divide-y divide-slate-100">
                 {rows.length === 0 && (
                   <tr>
-                    <td colSpan={8} className="p-4 text-center text-slate-400">
+                    <td colSpan={9} className="p-4 text-center text-slate-400">
                       No pharmacies found.
                     </td>
                   </tr>
@@ -573,6 +607,16 @@ export default function CreditsPage({ activeEnv }) {
                     <td className="p-2 text-right">
                       {cr(r.daily_remaining)} / {cr(r.daily_allowance)}
                       {r.daily_override !== null && <span className="block text-[10px] text-brand-600">custom {cr(r.daily_override)}/day</span>}
+                    </td>
+                    <td className="p-2 text-right">
+                      {r.plan_year ? (
+                        <>
+                          {rupees(r.plan_year.spent_inr, 2)} / {rupees(r.plan_year.budget_inr, 0)}
+                          <span className="block text-[10px] text-slate-400">{r.plan_year.days_left} days left</span>
+                        </>
+                      ) : (
+                        "—"
+                      )}
                     </td>
                     <td className="p-2 text-right">{cr(r.stats.used_credits)}</td>
                     <td className="p-2 text-right">{rupees(r.stats.cost_inr + r.stats.free_cost_inr, 2)}</td>

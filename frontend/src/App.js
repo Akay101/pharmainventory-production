@@ -28,6 +28,8 @@ import BillingScannerPage from "./pages/BillingScannerPage";
 import AssistantPage from "./pages/AssistantPage";
 import ExpiryPage from "./pages/ExpiryPage";
 import ReturnsPage from "./pages/ReturnsPage";
+import SupportPage from "./pages/SupportPage";
+import ShortBookPage from "./pages/ShortBookPage";
 
 // Layout
 import DashboardLayout from "./components/DashboardLayout";
@@ -469,6 +471,8 @@ function App() {
             />
             <Route path="settings" element={<SettingsPage />} />
             <Route path="reports" element={<ReportsPage />} />
+            <Route path="support" element={<SupportPage />} />
+            <Route path="short-book" element={<ShortBookPage />} />
           </Route>
 
           {/* Catch all */}

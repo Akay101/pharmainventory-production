@@ -26,7 +26,9 @@ const packLabel = (qty, perPack, packType) => {
 
 const money = (n) => (Math.round((Number(n) || 0) * 100) / 100).toFixed(2);
 
-const generateBillPDF = async (bill, pharmacy) => {
+// options.upiQr: true = UPI QR for the amount due (the bill total when it's
+// already paid), false = no QR, undefined = QR only while something is due.
+const generateBillPDF = async (bill, pharmacy, options = {}) => {
   return new Promise(async (resolve, reject) => {
     try {
       const https = require("https");
@@ -124,11 +126,14 @@ const generateBillPDF = async (bill, pharmacy) => {
         }
       }
 
-      // Scannable UPI QR for whatever is still due
+      // Scannable UPI QR (see options.upiQr)
       const upiId = (pharmacy?.upi_id || "").trim();
+      const { isValidUpiId, buildUpiUri } = require("../utils/upi");
+      const wantQr = options.upiQr === undefined ? balance > 0 : !!options.upiQr;
+      const qrAmount = balance > 0 ? balance : grandTotal;
       let qrBuffer = null;
-      if (upiId && balance > 0) {
-        const upi = `upi://pay?pa=${encodeURIComponent(upiId)}&pn=${encodeURIComponent(pharmacy?.name || "")}&am=${money(balance)}&cu=INR&tn=${encodeURIComponent(bill.bill_no || "")}`;
+      if (wantQr && isValidUpiId(upiId) && qrAmount > 0) {
+        const upi = buildUpiUri({ upiId, payeeName: pharmacy?.name, amount: Math.min(qrAmount, 100000), note: bill.bill_no || "" });
         try {
           qrBuffer = await QRCode.toBuffer(upi, { margin: 0, width: 160, errorCorrectionLevel: "M" });
         } catch (qrErr) {
@@ -451,7 +456,7 @@ const generateBillPDF = async (bill, pharmacy) => {
           doc
             .font("Helvetica")
             .fontSize(5.5)
-            .text(`Rs ${money(balance)}`, 395, 370, { width: 65, align: "center" });
+            .text(`Rs ${money(qrAmount)}`, 395, 370, { width: 65, align: "center" });
         } else if (isLastPage && balance <= 0.004 && grandTotal > 0) {
           doc.lineWidth(1.2).strokeColor("#16a34a").roundedRect(405, 334, 46, 18, 3).stroke();
           doc

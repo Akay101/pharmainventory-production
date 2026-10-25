@@ -222,6 +222,21 @@ const tools = [
     },
     status: (a, lang) => say(lang, { en: a.draft_id ? "Updating the purchase draft" : "Preparing the purchase draft", hinglish: a.draft_id ? "Draft update kar raha hoon" : "Purchase ka draft bana raha hoon", hi: "खरीद का ड्राफ्ट बना रहा हूँ" }),
     async run(a, ctx) {
+      // Some models name the field differently or leave it out: take the usual
+      // aliases, and send back anything still unnamed instead of drafting it
+      const pick = (it, ...keys) => keys.map((k) => it[k]).find((v) => v !== undefined && v !== null && v !== "");
+      a.items = (a.items || []).map((it) => ({
+        ...it,
+        product_name: pick(it, "product_name", "product", "name", "medicine") ?? null,
+        batch_no: pick(it, "batch_no", "batch", "batch_number"),
+        expiry: pick(it, "expiry", "expiry_date", "exp"),
+        packs: pick(it, "packs", "quantity", "qty", "strips"),
+        rate_per_pack: pick(it, "rate_per_pack", "rate", "price", "purchase_rate"),
+        mrp_per_pack: pick(it, "mrp_per_pack", "mrp"),
+      }));
+      if (a.items.some((it) => !it.product_name && !it.catalog_product_id && !it.global_medicine_id)) {
+        return { error: "Every item needs product_name (the medicine name). Call draft_purchase again with product_name set for each item." };
+      }
       const prev = a.draft_id ? ctx.getDraft(a.draft_id) : null;
       const draft = {
         id: prev?.id || `pd_${uuidv4().slice(0, 8)}`,

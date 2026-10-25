@@ -258,7 +258,7 @@ export default function InventoryPage() {
         batch_no: batch.batch_no,
         product_name: detailProduct?.name || batch.product_name,
       });
-      toast.success(`Batch ${batch.batch_no} moved to Expiry`);
+      toast.success(`Batch ${batch.batch_no} moved to the expiry list`);
       await fetchData();
       if (detailProduct?.name) {
         const res = await axios.get(`${API}/inventory?grouped=true&search=${encodeURIComponent(detailProduct.name)}`);
@@ -266,7 +266,7 @@ export default function InventoryPage() {
         if (matched?.batches) setDetailBatches(matched.batches);
       }
     } catch (e) {
-      toast.error("Failed to move batch to expiry");
+      toast.error(e.response?.data?.detail || "Failed to move batch to expiry");
     }
   };
 
@@ -277,7 +277,7 @@ export default function InventoryPage() {
         batch_no: batch.batch_no,
         product_name: detailProduct?.name || batch.product_name,
       });
-      toast.success(`Batch ${batch.batch_no} moved to Returns`);
+      toast.success(`Batch ${batch.batch_no} marked for return`);
       await fetchData();
       if (detailProduct?.name) {
         const res = await axios.get(`${API}/inventory?grouped=true&search=${encodeURIComponent(detailProduct.name)}`);
@@ -285,7 +285,7 @@ export default function InventoryPage() {
         if (matched?.batches) setDetailBatches(matched.batches);
       }
     } catch (e) {
-      toast.error("Failed to move batch to returns");
+      toast.error(e.response?.data?.detail || "Failed to mark batch for return");
     }
   };
 
@@ -542,6 +542,7 @@ export default function InventoryPage() {
             onClick={() => setProductDialog(true)}
             className="h-9 px-3.5 text-xs font-extrabold bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white rounded-xl shadow-xs border-none flex items-center gap-1.5 cursor-pointer"
             data-testid="add-product-btn"
+            data-shortcut="new"
           >
             <Plus className="w-3.5 h-3.5 stroke-[3]" />
             Add Product
@@ -561,6 +562,7 @@ export default function InventoryPage() {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
             placeholder="Search by product name or batch..."
+            data-shortcut="search"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="pl-9 h-9 text-xs font-medium rounded-xl border-border/70 bg-card/60 backdrop-blur-md"
@@ -1248,43 +1250,39 @@ export default function InventoryPage() {
                     </div>
                   ) : (
                     detailBatches.map((batch) => {
-                      const isExpired = batch.expiry_date && batch.expiry_date !== "-" && new Date(batch.expiry_date) < new Date();
-                      const isExpiryMoved = batch.expiry_status === "Moved to Expiry" || batch.expiry_status === "Picked";
-                      const isExpiryReturned = batch.expiry_status === "Expired & Returned";
-                      const isReturnMoved = batch.return_status === "Moved to Returns" || batch.return_status === "Picked";
-                      const isGeneralReturned = batch.return_status === "Returned";
+                      const stockStatus = batch.stock_status || "In Stock";
+                      const isExpired = stockStatus.startsWith("Expired");
+                      const isExpiryMoved = stockStatus === "Expired · In Expiry List" || stockStatus === "Expired · In Return Note";
+                      const isExpiryReturned = stockStatus === "Expired & Returned" || stockStatus === "Expired · Partly Returned";
+                      const isReturnMoved = stockStatus === "Marked for Return" || stockStatus === "In Return Note";
+                      const isGeneralReturned = stockStatus === "Returned";
 
                       const shortageThresh = detailProduct?.shortage_threshold !== undefined && detailProduct?.shortage_threshold !== null ? Number(detailProduct.shortage_threshold) : (settings?.shortage_threshold || 10);
                       const isShortage = batch.available_quantity <= shortageThresh;
                       const isLowStock = batch.available_quantity <= (detailProduct?.low_stock_threshold || 10);
-                      
-                      let statusLabel = "In Stock";
-                      let statusColor = "bg-emerald-500/15 text-emerald-400 border-emerald-500/30";
 
-                      if (isExpiryReturned) {
-                        statusLabel = "Expired & Returned";
-                        statusColor = "bg-emerald-500/15 text-emerald-400 border-emerald-500/30";
-                      } else if (isExpiryMoved) {
-                        statusLabel = "Moved to Expiry";
-                        statusColor = "bg-amber-500/15 text-amber-400 border-amber-500/30";
-                      } else if (isGeneralReturned) {
-                        statusLabel = "Returned";
-                        statusColor = "bg-emerald-500/15 text-emerald-400 border-emerald-500/30";
-                      } else if (isReturnMoved) {
-                        statusLabel = "Moved to Returns";
-                        statusColor = "bg-blue-500/15 text-blue-400 border-blue-500/30";
-                      } else if (isExpired) {
-                        statusLabel = "Expired";
-                        statusColor = "bg-rose-500/15 text-rose-400 border-rose-500/30";
-                      } else if (batch.available_quantity <= 0) {
-                        statusLabel = "Out of Stock";
-                        statusColor = "bg-rose-500/15 text-rose-400 border-rose-500/30";
-                      } else if (isShortage) {
-                        statusLabel = "Shortage";
-                        statusColor = "bg-orange-500/15 text-orange-400 border-orange-500/30";
-                      } else if (isLowStock) {
-                        statusLabel = "Low Stock";
-                        statusColor = "bg-amber-500/15 text-amber-400 border-amber-500/30";
+                      // Return/expiry states come from the server; stock levels only matter for live stock
+                      let statusLabel = stockStatus;
+                      let statusColor = "bg-emerald-500/15 text-emerald-500 border-emerald-500/30";
+                      if (stockStatus === "Expired") {
+                        statusColor = "bg-rose-500/15 text-rose-500 border-rose-500/30";
+                      } else if (isExpiryMoved || stockStatus === "Marked for Return") {
+                        statusColor = "bg-amber-500/15 text-amber-500 border-amber-500/30";
+                      } else if (stockStatus === "In Return Note") {
+                        statusColor = "bg-blue-500/15 text-blue-500 border-blue-500/30";
+                      } else if (stockStatus.includes("Partly Returned")) {
+                        statusColor = "bg-teal-500/15 text-teal-500 border-teal-500/30";
+                      } else if (stockStatus === "In Stock") {
+                        if (batch.available_quantity <= 0) {
+                          statusLabel = "Out of Stock";
+                          statusColor = "bg-rose-500/15 text-rose-500 border-rose-500/30";
+                        } else if (isShortage) {
+                          statusLabel = "Shortage";
+                          statusColor = "bg-orange-500/15 text-orange-500 border-orange-500/30";
+                        } else if (isLowStock) {
+                          statusLabel = "Low Stock";
+                          statusColor = "bg-amber-500/15 text-amber-500 border-amber-500/30";
+                        }
                       }
 
                       return (
@@ -1309,6 +1307,13 @@ export default function InventoryPage() {
                             <div>
                               <p className="text-[10px] font-bold text-muted-foreground uppercase">Stock</p>
                               <p className="font-mono font-extrabold text-orange-500 text-xs mt-0.5">{batch.available_quantity || 0} units</p>
+                              {(batch.expired_quantity > 0 || batch.returned_quantity > 0) && (
+                                <p className="text-[10px] font-semibold text-muted-foreground mt-0.5">
+                                  {batch.expired_quantity > 0 ? `${batch.expired_quantity} in expiry list` : ""}
+                                  {batch.expired_quantity > 0 && batch.returned_quantity > 0 ? " · " : ""}
+                                  {batch.returned_quantity > 0 ? `${batch.returned_quantity} returned` : ""}
+                                </p>
+                              )}
                             </div>
                             <div>
                               <p className="text-[10px] font-bold text-muted-foreground uppercase">Cost / MRP</p>
@@ -1323,33 +1328,33 @@ export default function InventoryPage() {
 
                             <div className="flex items-center gap-1">
                               {/* Move to Expiry or Returns Action */}
-                              {isExpired && !isExpiryMoved && !isExpiryReturned && (
+                              {stockStatus === "Expired" && batch.available_quantity > 0 && (
                                 <Button
                                   variant="outline"
                                   size="sm"
                                   className="h-6 px-2 text-[10px] font-bold border-rose-500/30 text-rose-500 hover:bg-rose-500/10 rounded-md cursor-pointer"
                                   onClick={() => handleMoveBatchToExpiry(batch)}
-                                  title="Move this expired batch to Expiry management"
+                                  title="Take these expired units off the shelf into the expiry list"
                                 >
                                   <CalendarX className="w-3 h-3 mr-1" />
-                                  Move to Expiry
+                                  Mark expired
                                 </Button>
                               )}
 
-                              {!isExpired && !isReturnMoved && !isGeneralReturned && batch.available_quantity > 0 && (
+                              {(stockStatus === "In Stock" || stockStatus === "Partly Returned") && batch.available_quantity > 0 && (
                                 <Button
                                   variant="outline"
                                   size="sm"
                                   className="h-6 px-2 text-[10px] font-bold border-blue-500/30 text-blue-500 hover:bg-blue-500/10 rounded-md cursor-pointer"
                                   onClick={() => handleMoveBatchToReturns(batch)}
-                                  title="Move this batch to Returns management"
+                                  title="Flag this batch to return to the supplier"
                                 >
                                   <RotateCcw className="w-3 h-3 mr-1" />
-                                  Move to Returns
+                                  Mark for return
                                 </Button>
                               )}
 
-                              {isExpiryMoved && (
+                              {(isExpiryMoved || isExpiryReturned) && (
                                 <Button
                                   variant="ghost"
                                   size="sm"
@@ -1362,7 +1367,7 @@ export default function InventoryPage() {
                                 </Button>
                               )}
 
-                              {isReturnMoved && (
+                              {(isReturnMoved || isGeneralReturned || stockStatus === "Partly Returned") && (
                                 <Button
                                   variant="ghost"
                                   size="sm"

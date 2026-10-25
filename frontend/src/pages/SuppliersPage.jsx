@@ -774,7 +774,7 @@ export default function SuppliersPage() {
             }}
           >
             <DialogTrigger asChild>
-              <Button className="btn-primary flex items-center gap-2 rounded-xl h-10" data-testid="add-supplier-btn">
+              <Button className="btn-primary flex items-center gap-2 rounded-xl h-10" data-testid="add-supplier-btn" data-shortcut="new">
                 <Plus className="w-4 h-4" />
                 Add Supplier
               </Button>
@@ -1311,6 +1311,7 @@ export default function SuppliersPage() {
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4.5 h-4.5 text-muted-foreground/60" />
                   <Input
                     placeholder="Search suppliers by name, phone, email or GST..."
+                    data-shortcut="search"
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
                     className="pl-10 h-11 bg-background/30 border-border/60 focus-visible:ring-primary focus-visible:ring-offset-0 rounded-xl transition-all"

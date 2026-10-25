@@ -49,18 +49,28 @@ function sse(res) {
 // options. This filter streams the text but holds back that trailer, then
 // parses it into a choices block.
 const MARKER = "::choices";
+// Notes the model sometimes copies from the history (<ui>…</ui>, <context>…</context>)
+// are internal: never shown
+const INTERNAL = /<(ui|context)>[\s\S]*?<\/\1>/g;
+const INTERNAL_OPEN = /<(ui|context)>(?![\s\S]*<\/\1>)/;
 function choicesFilter(send) {
+  let raw = "";
   let full = "";
   let sent = 0;
   return {
     push(t) {
-      full += t;
+      raw += t;
+      full = raw.replace(INTERNAL, "");
       const at = full.indexOf(MARKER);
       let safeEnd = at >= 0 ? at : full.length;
-      if (at < 0) {
-        // Hold back a tail that could be the start of the marker
+      // An internal note still open: hold everything from its start
+      const open = full.search(INTERNAL_OPEN);
+      if (open >= 0) safeEnd = Math.min(safeEnd, open);
+      if (at < 0 && open < 0) {
+        // Hold back a tail that could be the start of the marker or a note
         for (let k = Math.min(MARKER.length - 1, full.length); k > 0; k--) {
-          if (MARKER.startsWith(full.slice(-k))) {
+          const tail = full.slice(-k);
+          if (MARKER.startsWith(tail) || "<context>".startsWith(tail) || "<ui>".startsWith(tail)) {
             safeEnd = full.length - k;
             break;
           }
@@ -72,6 +82,7 @@ function choicesFilter(send) {
       }
     },
     finish() {
+      full = full.replace(/<(ui|context)>[\s\S]*$/, ""); // a note that never closed
       const at = full.indexOf(MARKER);
       if (at < 0) {
         if (full.length > sent) send(full.slice(sent));
@@ -267,8 +278,7 @@ async function handle({ req, res, db }) {
 
     // 0. Credits: full (credits), free light mode, or blocked
     const creditCfg = await credits.config.getConfig(db);
-    const wanted = ["pro", "swift"].includes(body.engine) ? body.engine : (await db.collection("users").findOne({ id: user.id }, { projection: { assistant_engine: 1 } }))?.assistant_engine || "pro";
-    const decision = await credits.policy.decideTurn(db, creditCfg, { pharmacy: pharmacy || { id: user.pharmacy_id }, engine: wanted, hasPhotos: !!ctx.images?.length });
+    const decision = await credits.policy.decideTurn(db, creditCfg, { pharmacy: pharmacy || { id: user.pharmacy_id }, hasPhotos: !!ctx.images?.length });
     if (decision.mode === "blocked") {
       // No router call here: the message's own script/words tell the language
       const letters = message.replace(/[^\p{L}]/gu, "");
@@ -282,9 +292,12 @@ async function handle({ req, res, db }) {
       return;
     }
     ctx.mode = decision.mode;
-    ctx.engine = decision.engine;
+    // Who answers is the admin's ai_mode. Routing picks the agent, so in auto it
+    // runs on Gemini Flash-Lite (Groq's small model misroutes some requests,
+    // e.g. a supplier payment to the customer agent); ~₹0.02 a message
     const turnMeter = credits.meter.createMeter();
-    turnMeter.engine = decision.engine;
+    turnMeter.aiMode = creditCfg.ai_mode;
+    turnMeter.engine = creditCfg.ai_mode === "auto" ? "pro" : credits.policy.engineFor(creditCfg, "light");
     credits.meter.enter(turnMeter); // every AI call from here on is metered for this turn
     const history = await store.getMessages(db, conversation.id, { limit: HISTORY_TURNS * 2 + 1 });
 
@@ -300,6 +313,8 @@ async function handle({ req, res, db }) {
     const agent = AGENTS[r.agent];
     // Small model for questions and lookups; the strong one for records, reports and photos
     const tier = ctx.mode === "free" ? "light" : r.task === "action" || r.task === "report" || ctx.images?.length ? "heavy" : "light";
+    ctx.engine = credits.policy.engineFor(creditCfg, tier);
+    turnMeter.engine = ctx.engine;
     // Mostly-Devanagari input is Hindi, whatever the router guessed
     const letters = message.replace(/[^\p{L}]/gu, "");
     const deva = (message.match(/[\u0900-\u097F]/g) || []).length;
@@ -337,9 +352,9 @@ async function handle({ req, res, db }) {
       }
       lastUser.parts.push({ text: context });
     }
-    // Chart/report tools only when a report was asked for (~700 tokens a call otherwise)
+    // Chart/report tools only when a report was asked for (~800 tokens a call otherwise)
     const REPORT_TOOLS = new Set(["build_report", "show_chart"]);
-    const forTask = r.task === "report" || r.task === "action" ? agent.tools : agent.tools.filter((t) => !REPORT_TOOLS.has(t.name));
+    const forTask = r.task === "report" ? agent.tools : agent.tools.filter((t) => !REPORT_TOOLS.has(t.name));
     const tools = credits.policy.allowedTools(forTask, ctx.mode);
     const toolMap = Object.fromEntries(tools.map((t) => [t.name, t]));
     let text = "";
@@ -350,7 +365,10 @@ async function handle({ req, res, db }) {
     // told (and warned when the slow last resort answers), the reply labelled
     let stepEngine = ctx.engine;
     let answered = null;
-    let lastNote = null;
+    // The app's engine tab follows who is answering (Nemotron: slow warning)
+    const firstProvider = { gemini: "gemini", groq: "groq", nemotron: "nvidia" }[creditCfg.ai_mode] || (ctx.engine === "swift" ? "groq" : "gemini");
+    stream.send("engine", { engine: ctx.engine, provider: firstProvider, slow: firstProvider === "nvidia" });
+    let lastNote = firstProvider;
     const onSwitch = (s) => {
       if (lastNote === s.provider) return;
       lastNote = s.provider;
@@ -433,7 +451,7 @@ async function handle({ req, res, db }) {
     if (err.category === "cancelled") return;
     console.error("[assistant] turn failed:", err.message);
     const detail =
-      err.category === "all_busy"
+      err.category === "all_busy" || err.category === "failed"
         ? err.message
         : err.category === "network" || err.category === "timeout"
         ? "Couldn't reach the AI service just now. Please try again."

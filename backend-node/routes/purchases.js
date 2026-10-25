@@ -1465,6 +1465,21 @@ router.put(
         }
       }
 
+      // Return-note links live on the stored lines; the edit form doesn't send them
+      for (const item of processedItems) {
+        const old = (purchase.items || []).find(
+          (o) =>
+            o.return_refs?.length &&
+            o.batch_no === item.batch_no &&
+            (o.product_id === item.product_id ||
+              String(o.product_name || "").toLowerCase() === String(item.product_name || "").toLowerCase())
+        );
+        if (!old) continue;
+        for (const k of ["return_refs", "returned_units", "return_bundle_no", "returned_at", "status"]) {
+          if (old[k] !== undefined) item[k] = old[k];
+        }
+      }
+
       const updatePayload = {
         items: processedItems,
         total_amount: totalAmount,
@@ -1830,6 +1845,42 @@ router.delete(
     }
   }
 );
+
+// POST /api/purchases/:purchase_id/labels {lines: [{line, copies}], layout?, skip?}
+// Mini QR labels for the purchase's items (PDF to print and stick on packs)
+router.post("/:purchase_id/labels", auth, requireSubscription(), async (req, res, next) => {
+  try {
+    const { labelsPdf, LAYOUTS } = require("../services/itemLabels");
+    const { findBatch } = require("../services/stock");
+    const db = mongoose.connection.db;
+    const purchase = await db.collection("purchases").findOne({ id: req.params.purchase_id, pharmacy_id: req.user.pharmacy_id }, { projection: { _id: 0, items: 1, invoice_no: 1 } });
+    if (!purchase) return res.status(404).json({ detail: "Purchase not found" });
+    const layout = LAYOUTS[req.body?.layout] ? req.body.layout : "a4_65";
+    const asked = Array.isArray(req.body?.lines) ? req.body.lines : [];
+    if (!asked.length) return res.status(400).json({ detail: "Choose at least one item" });
+    let total = 0;
+    const lines = [];
+    for (const a of asked.slice(0, 200)) {
+      const item = purchase.items?.[Number(a.line)];
+      const copies = Math.min(500, Math.max(0, parseInt(a.copies, 10) || 0));
+      if (!item || !copies) continue;
+      const batch = await findBatch(db, req.user.pharmacy_id, item);
+      if (!batch) return res.status(400).json({ detail: `${item.product_name} (${item.batch_no || "no batch"}) is not in stock any more, so it can't get a label` });
+      lines.push({ batch, copies });
+      total += copies;
+    }
+    if (!lines.length) return res.status(400).json({ detail: "Set how many labels to print" });
+    if (total > 2000) return res.status(400).json({ detail: "That's more than 2,000 labels. Print them in parts." });
+    const pharmacy = await db.collection("pharmacies").findOne({ id: req.user.pharmacy_id }, { projection: { _id: 0, name: 1 } });
+    const pdf = await labelsPdf({ lines, layout, skip: Math.max(0, parseInt(req.body?.skip, 10) || 0), pharmacyName: pharmacy?.name || "" });
+    res.set("Content-Type", "application/pdf");
+    res.set("Content-Disposition", `inline; filename="labels-${String(purchase.invoice_no || req.params.purchase_id).replace(/[^A-Za-z0-9_-]/g, "")}.pdf"`);
+    res.set("Cache-Control", "private, no-store");
+    res.send(pdf);
+  } catch (error) {
+    next(error);
+  }
+});
 
 // POST /api/purchases/:purchase_id/pdf
 router.post(

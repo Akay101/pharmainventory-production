@@ -271,6 +271,18 @@ export const AdminAPI = {
 
   // Analytics & Traffic
   getFunnel: () => api.get("/analytics/funnel"),
+
+  // 50-50 launch offer registrations (follow-ups use the lead endpoints above)
+  getOfferLeads: (params) => api.get("/offer-leads", { params }),
+  getOfferLead: (id) => api.get(`/offer-leads/${encodeURIComponent(id)}`),
+  offerLeadCode: (id, data) => api.post(`/offer-leads/${encodeURIComponent(id)}/code`, data),
+  offerLeadSend: (id, data) => api.post(`/offer-leads/${encodeURIComponent(id)}/send`, data),
+
+  // Support queries from pharmacies
+  getSupportTickets: (params) => api.get("/support", { params }),
+  getSupportTicket: (id) => api.get(`/support/${id}`),
+  replySupport: (id, data) => api.post(`/support/${id}/reply`, data),
+  updateSupport: (id, data) => api.patch(`/support/${id}`, data),
   getActivityFeed: () => api.get("/analytics/activity-feed"),
 };
 

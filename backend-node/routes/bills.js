@@ -8,6 +8,7 @@ const { acceptImages, scanForBilling } = require("../services/ai/scanService");
 const { matchForBilling } = require("../services/ai/inventoryMatch");
 const { generateBillPDF } = require("../services/pdf");
 const { uploadToR2 } = require("../services/r2");
+const billShare = require("../services/billShare");
 const { sendBillEmail } = require("../services/email");
 const { logActivity } = require("../utils/activityLogger");
 const { requireSubscription } = require("../middleware/subscription");
@@ -745,7 +746,7 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
       try {
         const todayStr = new Date().toISOString().slice(0, 10);
         const bDate = billing_date || todayStr;
-        const daysSupply = parseInt(reminderConfig.days_supply) || 30;
+        const daysSupply = Math.max(1, parseInt(reminderConfig.days_supply) || 30);
         const remindBeforeDays = parseInt(reminderConfig.remind_before_days) || 5;
 
         let targetDate = reminderConfig.refill_target_date;
@@ -762,8 +763,18 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
           reminderDate = d.toISOString().slice(0, 10);
         }
 
+        // Per medicine: units sold, dose per day (decimals, e.g. 0.5) and how many days that lasts
+        const num = (v) => (Number.isFinite(Number(v)) && Number(v) > 0 ? Math.round(Number(v) * 1000) / 1000 : null);
         const reminderItems = Array.isArray(reminderConfig.items) && reminderConfig.items.length > 0
-          ? reminderConfig.items
+          ? reminderConfig.items.slice(0, 100).map((i) => ({
+              product_name: String(i.product_name || "").slice(0, 200),
+              batch_no: i.batch_no || null,
+              quantity: num(i.quantity),
+              unit_price: num(i.unit_price),
+              dose_per_day: num(i.dose_per_day),
+              days_supply: parseInt(i.days_supply) || daysSupply,
+              runs_out_on: /^\d{4}-\d{2}-\d{2}$/.test(i.runs_out_on || "") ? i.runs_out_on : null,
+            }))
           : processedItems.map(i => ({
               product_name: i.product_name,
               batch_no: i.batch_no || null,
@@ -1056,6 +1067,12 @@ router.put("/:bill_id", auth, requireSubscription(), async (req, res, next) => {
       }
     } else {
       finalPayments = [];
+    }
+
+    // Short-book marks live on the stored lines; the edit form doesn't send them
+    for (const item of processedItems) {
+      const old = (bill.items || []).find((o) => o.short_book && o.product_name === item.product_name && (o.batch_no || null) === (item.batch_no || null));
+      if (old) item.short_book = old.short_book;
     }
 
     const updates = {
@@ -1419,8 +1436,12 @@ router.post(
         gst_no: ""
       };
 
-      // Generate PDF
-      const pdfBuffer = await generateBillPDF(bill, pharmacy);
+      // Generate PDF (upi_qr: true/false = with/without the UPI payment QR)
+      const upiQr = req.body?.upi_qr === undefined ? undefined : req.body.upi_qr === true || req.body.upi_qr === "true";
+      if (upiQr && !String(pharmacyDoc?.upi_id || "").trim()) {
+        return res.status(400).json({ detail: "Add your UPI ID in Settings to put a payment QR on bills", code: "NO_UPI_ID" });
+      }
+      const pdfBuffer = await generateBillPDF(bill, pharmacy, { upiQr });
 
       // Upload to R2
       const key = `bills/${req.user.pharmacy_id}/${bill.bill_no}.pdf`;
@@ -1431,12 +1452,53 @@ router.post(
         .collection("bills")
         .updateOne({ id: req.params.bill_id }, { $set: { pdf_url: pdfUrl } });
 
-      res.json({ pdf_url: pdfUrl });
+      // With and without QR share one file name: make the browser fetch this one
+      res.json({ pdf_url: `${pdfUrl}${pdfUrl.includes("?") ? "&" : "?"}v=${Date.now()}`, upi_qr: !!upiQr });
     } catch (error) {
       next(error);
     }
   }
 );
+
+// POST /api/bills/:bill_id/share {phone?} - WhatsApp: expiring PDF link,
+// ready message, and the wa.me link when the number is valid
+router.post("/:bill_id/share", auth, requireSubscription(), async (req, res, next) => {
+  try {
+    const db = mongoose.connection.db;
+    const bill = await db.collection("bills").findOne({ id: req.params.bill_id, pharmacy_id: req.user.pharmacy_id }, { projection: { _id: 0 } });
+    if (!bill) return res.status(404).json({ detail: "Bill not found" });
+    const pharmacy = await db.collection("pharmacies").findOne({ id: req.user.pharmacy_id }, { projection: { _id: 0, name: 1, upi_id: 1 } });
+
+    const link = await billShare.getOrCreateLink(db, { bill, pharmacyId: req.user.pharmacy_id, userId: req.user.id });
+    const url = `${billShare.publicBase(req)}/api/public/bill/${link.token}`;
+    const message = billShare.buildMessage({ bill, pharmacy, url, expiresAt: link.expires_at });
+    const raw = req.body?.phone !== undefined ? req.body.phone : bill.customer_mobile;
+    const phone = billShare.normalizeMobile(raw);
+    res.json({
+      url,
+      expires_at: link.expires_at,
+      message,
+      phone,
+      phone_given: String(raw || "").trim(),
+      wa_url: phone ? `https://wa.me/${phone}?text=${encodeURIComponent(message)}` : null,
+    });
+    logActivity(db, req.user.pharmacy_id, req.user.id, req.user.name, "SHARE", "BILLING", bill.id, `Shared bill ${bill.bill_no}${phone ? ` with +${phone}` : ""}`, "/billing").catch(() => {});
+  } catch (error) {
+    next(error);
+  }
+});
+
+// DELETE /api/bills/:bill_id/share - stop every shared link of this bill
+router.delete("/:bill_id/share", auth, requireSubscription(), async (req, res, next) => {
+  try {
+    const db = mongoose.connection.db;
+    const bill = await db.collection("bills").findOne({ id: req.params.bill_id, pharmacy_id: req.user.pharmacy_id }, { projection: { id: 1 } });
+    if (!bill) return res.status(404).json({ detail: "Bill not found" });
+    res.json({ revoked: await billShare.revokeLinks(db, { billId: bill.id, pharmacyId: req.user.pharmacy_id }) });
+  } catch (error) {
+    next(error);
+  }
+});
 
 // POST /api/bills/:bill_id/email
 router.post(

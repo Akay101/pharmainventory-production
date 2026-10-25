@@ -171,6 +171,113 @@ async function sendAdminOTPEmail({ toEmail, toName, otp, scenario, expiryMinutes
   }
 }
 
+const escapeHtml = (v) =>
+  String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+
+/**
+ * A plain-text message (reviewed and edited in the admin panel) as a simple
+ * branded email. Paragraphs and line breaks are kept, links become clickable
+ * and `highlight` (e.g. a promo code) is shown as a large code box.
+ */
+function buildTextEmail({ text, highlight }) {
+  const linkify = (s) => s.replace(/https?:\/\/[^\s<]+/g, (u) => `<a href="${u}" style="color:#ea580c">${u}</a>`);
+  const body = String(text || "")
+    .replace(/\r\n/g, "\n")
+    .split(/\n{2,}/)
+    .map((para) => {
+      const safe = escapeHtml(para);
+      if (highlight && safe.includes(escapeHtml(highlight))) {
+        const code = escapeHtml(highlight);
+        const rest = safe.replace(code, "").replace(/\n/g, "<br/>").trim();
+        return `${rest ? `<p style="margin:0 0 8px">${linkify(rest)}</p>` : ""}<div style="margin:6px 0 18px;padding:16px;border:2px dashed #ea580c;border-radius:12px;text-align:center;font:800 26px/1.2 Menlo,Consolas,monospace;letter-spacing:3px;color:#111;background:#fff7ed">${code}</div>`;
+      }
+      return `<p style="margin:0 0 14px">${linkify(safe.replace(/\n/g, "<br/>"))}</p>`;
+    })
+    .join("");
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f4f4f5;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1f2937">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f4f5;padding:24px 12px"><tr><td align="center">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background:#ffffff;border-radius:16px;overflow:hidden">
+<tr><td style="background:linear-gradient(90deg,#f97316,#f59e0b);padding:18px 24px;color:#fff;font-weight:800;font-size:20px">DavaDesk</td></tr>
+<tr><td style="padding:24px;font-size:15px;line-height:1.6">${body}</td></tr>
+<tr><td style="padding:14px 24px;background:#fafafa;color:#6b7280;font-size:12px">DavaDesk · Smart Pharmacy Software · davadesk.in</td></tr>
+</table></td></tr></table></body></html>`;
+}
+
+// Amazon SES (same account and sender as the app's emails), Brevo as fallback
+let sesClient = null;
+function ses() {
+  if (!sesClient && process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
+    const { SESClient } = require("@aws-sdk/client-ses");
+    sesClient = new SESClient({
+      region: process.env.AWS_SES_REGION || process.env.AWS_REGION || "ap-south-1",
+      credentials: { accessKeyId: process.env.AWS_ACCESS_KEY_ID, secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY },
+    });
+  }
+  return sesClient;
+}
+
+/**
+ * Send a reviewed plain-text email (e.g. a 50-50 offer code): Amazon SES
+ * first, then Brevo. Returns { provider, message_id }.
+ */
+async function sendTextEmail({ toEmail, toName, subject, text, highlight, replyTo }) {
+  const fromEmail = process.env.MAIL_USER || "team@davadesk.in";
+  const fromName = process.env.MAIL_OFFER_SENDER_NAME || "DavaDesk";
+  const html = buildTextEmail({ text, highlight });
+  const errors = [];
+
+  const client = ses();
+  if (client) {
+    try {
+      const { SendEmailCommand } = require("@aws-sdk/client-ses");
+      const out = await client.send(
+        new SendEmailCommand({
+          Source: `${fromName} <${fromEmail}>`,
+          Destination: { ToAddresses: [toName ? `${String(toName).replace(/[<>"]/g, "")} <${toEmail}>` : toEmail] },
+          ...(replyTo ? { ReplyToAddresses: [replyTo] } : {}),
+          Message: {
+            Subject: { Data: subject, Charset: "UTF-8" },
+            Body: { Html: { Data: html, Charset: "UTF-8" }, Text: { Data: text, Charset: "UTF-8" } },
+          },
+        })
+      );
+      console.log(`[Admin Email] "${subject}" sent to ${toEmail} via Amazon SES`);
+      return { provider: "ses", message_id: out?.MessageId || null };
+    } catch (err) {
+      console.warn(`[Admin Email] SES failed for ${toEmail}: ${err.name || ""} ${err.message}`);
+      errors.push(`SES: ${err.message}`);
+    }
+  } else {
+    errors.push("SES: AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY not set");
+  }
+
+  if (process.env.BREVO_API_KEY) {
+    try {
+      const mail = new SibApiV3Sdk.SendSmtpEmail();
+      mail.subject = subject;
+      mail.htmlContent = html;
+      mail.textContent = text;
+      mail.sender = { name: fromName, email: fromEmail };
+      mail.to = [{ email: toEmail, name: toName || undefined }];
+      if (replyTo) mail.replyTo = { email: replyTo };
+      const data = await apiInstance.sendTransacEmail(mail);
+      console.log(`[Admin Email] "${subject}" sent to ${toEmail} via Brevo (fallback)`);
+      return { provider: "brevo", message_id: data?.messageId || null };
+    } catch (err) {
+      const detail = err.response?.body?.message || err.message;
+      console.warn(`[Admin Email] Brevo failed for ${toEmail}: ${detail}`);
+      errors.push(`Brevo: ${detail}`);
+    }
+  }
+
+  const err = new Error(`Email could not be sent (${errors.join("; ")})`);
+  err.status = client || process.env.BREVO_API_KEY ? 502 : 503;
+  throw err;
+}
+
 module.exports = {
   sendAdminOTPEmail,
+  sendTextEmail,
+  buildTextEmail,
 };

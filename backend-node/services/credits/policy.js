@@ -35,9 +35,12 @@ const PAID_TOOLS = new Set([
 // What each kind of request typically uses (credits), measured on real turns
 // (Oct 2026 prices); replaced by live averages once there is enough usage
 const DEFAULT_ESTIMATES = {
-  pro: { question: 1.5, lookup: 3, report: 7, action: 10, photo: 14, voice: 1.5, scan: 4 },
-  swift: { question: 0.4, lookup: 0.6, report: 1.2, action: 2, photo: 5, voice: 1.5, scan: 4 },
+  pro: { question: 1.3, lookup: 2.1, report: 3.4, action: 3, photo: 6.5, voice: 1.5, scan: 3, dictation: 1.2 },
+  swift: { question: 0.4, lookup: 0.6, report: 1.5, action: 1.7, photo: 5, voice: 1.5, scan: 3, dictation: 1.2 },
 };
+// Live averages only from usage after the move to Flash-Lite for records and
+// reports (older rows were priced on Flash)
+const ESTIMATES_FROM = new Date("2026-10-24T00:00:00Z");
 const TASKS = {
   question: { label: "Ask a question", hint: "Medicine info, how-to, greetings" },
   lookup: { label: "Look something up", hint: "Stock, a bill, a customer's dues" },
@@ -45,6 +48,7 @@ const TASKS = {
   action: { label: "Create or change records", hint: "Purchase or bill drafts, payments, edits" },
   photo: { label: "Read a photo in chat", hint: "Invoice or medicine pack" },
   voice: { label: "Spoken reply", hint: "Per reply read aloud" },
+  dictation: { label: "Voice typing", hint: "Per dictation, about 15 seconds" },
   scan: { label: "Scanner page scan", hint: "Purchase invoice or pack scan" },
 };
 
@@ -60,7 +64,7 @@ async function estimates(db) {
     const rows = await db
       .collection(wallet.LEDGER)
       .aggregate([
-        { $match: { type: "USAGE", status: "DONE", created_at: { $gte: new Date(Date.now() - 14 * 864e5) } } },
+        { $match: { type: "USAGE", status: "DONE", created_at: { $gte: new Date(Math.max(Date.now() - 14 * 864e5, ESTIMATES_FROM.getTime())) } } },
         { $group: { _id: { task: "$task", engine: "$engine" }, avg: { $avg: "$amount_milli" }, n: { $sum: 1 } } },
       ])
       .toArray();
@@ -73,29 +77,42 @@ async function estimates(db) {
   return out;
 }
 
-// Turned on in admin and its key set on this server (Precision: Gemini, Swift: Groq)
-const engineReady = (config, e) => !!ENGINES[e] && config.engines?.[e]?.enabled !== false && llm.engineReady(e);
+// Which engine runs a task. auto: Swift for light work (questions, lookups),
+// Precision for records, reports and photos; a fixed mode uses its provider
+// for everything (Nemotron shows as Swift)
+function engineFor(config, tier) {
+  if (config.ai_mode === "gemini") return "pro";
+  if (config.ai_mode === "groq" || config.ai_mode === "nemotron") return "swift";
+  return tier === "light" ? "swift" : "pro";
+}
 
-// The engine a request runs on: the one asked for when it can run, else the
-// other one (the reply is then labelled with the engine that really answered)
-function pickEngine(config, wanted) {
-  const ok = (e) => engineReady(config, e);
-  if (ok(wanted)) return wanted;
-  return ok("pro") ? "pro" : "swift";
+// Whether an engine can answer here right now (its provider's key is set and
+// the admin's mode allows it)
+function engineReady(config, e) {
+  if (!ENGINES[e]) return false;
+  const mode = config.ai_mode || "auto";
+  if (mode === "gemini") return e === "pro" && llm.providerReady("gemini");
+  if (mode === "groq") return e === "swift" && llm.providerReady("groq");
+  if (mode === "nemotron") return e === "swift" && llm.providerReady("nvidia");
+  return llm.providerReady(e === "pro" ? "gemini" : "groq");
 }
 
 /**
  * Decide how a chat turn runs. Consumes a free message when it falls to free mode.
  * Returns { mode: "full"|"free"|"blocked", engine, wallet, reason? }
  */
-async function decideTurn(db, config, { pharmacy, engine, hasPhotos }) {
+async function decideTurn(db, config, { pharmacy, hasPhotos }) {
   const w = await wallet.getWallet(db, config, pharmacy);
-  if (wallet.availableMilli(w) >= MIN_START_MILLI) return { mode: "full", engine: pickEngine(config, engine), wallet: w };
-  if (hasPhotos) return { mode: "blocked", engine: "swift", wallet: w, reason: "PHOTO_NEEDS_CREDITS" };
-  if (config.free_mode?.enabled && (await wallet.takeFreeMessage(db, pharmacy.id, Number(config.free_mode.messages_per_day) || 0))) {
-    return { mode: "free", engine: pickEngine(config, "swift"), wallet: w };
+  if (wallet.availableMilli(w) >= MIN_START_MILLI) return { mode: "full", wallet: w };
+  if (hasPhotos) return { mode: "blocked", wallet: w, reason: "PHOTO_NEEDS_CREDITS" };
+  // Light mode is part of the plan: an active subscription with budget left
+  const sub = pharmacy?.subscription;
+  const budget = wallet.planBudget(config, sub, w);
+  const included = wallet.isActiveSub(sub) && (!budget || budget.left > 0);
+  if (included && config.free_mode?.enabled && (await wallet.takeFreeMessage(db, pharmacy.id, Number(config.free_mode.messages_per_day) || 0))) {
+    return { mode: "free", wallet: w };
   }
-  return { mode: "blocked", engine: "swift", wallet: w, reason: "NO_CREDITS" };
+  return { mode: "blocked", wallet: w, reason: "NO_CREDITS" };
 }
 
 // Gate for a single paid feature outside chat (voice reply, scanner scan)
@@ -106,4 +123,4 @@ async function canSpend(db, config, pharmacy) {
 
 const allowedTools = (tools, mode) => (mode === "free" ? tools.filter((t) => !PAID_TOOLS.has(t.name)) : tools);
 
-module.exports = { ENGINES, TASKS, PAID_TOOLS, DEFAULT_ESTIMATES, MIN_START_MILLI, estimates, engineReady, pickEngine, decideTurn, canSpend, allowedTools };
+module.exports = { ENGINES, TASKS, PAID_TOOLS, DEFAULT_ESTIMATES, MIN_START_MILLI, estimates, engineReady, engineFor, decideTurn, canSpend, allowedTools };

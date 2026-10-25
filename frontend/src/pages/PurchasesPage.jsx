@@ -86,13 +86,16 @@ import {
   TrendingUp,
   TrendingDown,
   PackagePlus,
+  QrCode,
 } from "lucide-react";
 import { toast } from "sonner";
 import PlanBadge from "../components/PlanBadge";
 import Loader, { AiLoader } from "../components/Loader";
 import { formatDate, formatExpiry, formatExpiryInput, expiryToIso, openScanner } from "./utils";
 import CustomTooltip from "@/components/ui/CustomTooltip";
-import { getOS } from "../hooks/useKeyboard";
+import { formatCombo } from "../lib/shortcuts";
+import { useShortcuts, useShortcutLayer } from "../components/shortcuts/Shortcuts";
+import { ItemLabelsDialog } from "../components/ItemQr";
 import ProductCatalogModal from "../components/ProductCatalogModal";
 
 const PACK_TYPES = ["Strip", "Bottle", "Tube", "Packet", "Box", "Unit"];
@@ -1664,7 +1667,7 @@ export default function PurchasesPage() {
   const [listLoading, setListLoading] = useState(false);
 
   // Keyboard shortcuts dialog
-  const [showShortcuts, setShowShortcuts] = useState(false);
+
 
   //show salt dialog
   const [saltDialog, setSaltDialog] = useState({
@@ -1776,6 +1779,8 @@ export default function PurchasesPage() {
   // "Save as draft" here. Opening one puts it in its own tab; saving that tab
   // as a purchase removes the draft.
   const [purchaseDrafts, setPurchaseDrafts] = useState([]);
+  // { purchase, only: line index | null } for the QR label dialog
+  const [labelsFor, setLabelsFor] = useState(null);
   const [showPurchaseDrafts, setShowPurchaseDrafts] = useState(false);
   const [purchaseDraftsLoading, setPurchaseDraftsLoading] = useState(false);
   const [savingDraft, setSavingDraft] = useState(false);
@@ -2153,98 +2158,38 @@ export default function PurchasesPage() {
       handleCancelNewPurchase,
       handleAddNewRow,
       handleAutofillWithAI,
-      setShowShortcuts,
       showNewPurchase,
       newItemRow,
       editingPurchaseId,
     };
   });
 
-  // Keyboard shortcuts
-  useEffect(() => {
-    const handleKeyDown = (e) => {
-      const isInput = ["INPUT", "TEXTAREA", "SELECT"].includes(
-        e.target?.tagName
-      );
-      if (
-        isInput &&
-        !e.ctrlKey &&
-        !e.metaKey &&
-        !e.altKey &&
-        e.key !== "Escape" &&
-        e.key !== "Enter"
-      )
-        return;
-
-      const {
-        handleStartNewPurchase,
-        handleSubmitPurchase,
-        handleSaveEditPurchase,
-        handleCancelAddItem,
-        handleCancelNewPurchase,
-        handleAddNewRow,
-        handleAutofillWithAI,
-        setShowShortcuts,
-        showNewPurchase,
-        newItemRow,
-        editingPurchaseId,
-      } = handlersRef.current;
-
-      if (!handleStartNewPurchase) return;
-
-      // Alt+N - New purchase
-      if (e.altKey && (e.key === "n" || e.code === "KeyN")) {
-        e.preventDefault();
-        handleStartNewPurchase();
-      }
-      // Alt+S or Cmd+Enter - Save purchase
-      if (
-        (e.altKey && (e.key === "s" || e.code === "KeyS")) ||
-        ((e.ctrlKey || e.metaKey) && (e.key === "Enter" || e.code === "Enter"))
-      ) {
-        if (showNewPurchase) {
-          e.preventDefault();
-          handleSubmitPurchase();
-        } else if (editingPurchaseId) {
-          e.preventDefault();
-          handleSaveEditPurchase();
-        }
-      }
-      // Escape - Cancel
-      if (e.key === "Escape" || e.code === "Escape") {
-        if (newItemRow) {
-          handleCancelAddItem();
-        } else if (showNewPurchase) {
-          handleCancelNewPurchase();
-        }
-      }
-      // Alt+A - Add item row
-      if (e.altKey && (e.key === "a" || e.code === "KeyA")) {
-        if (showNewPurchase) {
-          e.preventDefault();
-          handleAddNewRow();
-        }
-      }
-      // Alt+I - Autofill with AI
-      if (
-        e.altKey &&
-        (e.key === "i" || e.key === "I" || e.code === "KeyI" || e.key === "ˆ")
-      ) {
-        if (showNewPurchase) {
-          e.preventDefault();
-          handleAutofillWithAI();
-        }
-      }
-      // Alt+? - Show shortcuts
-      if (e.altKey && (e.key === "/" || e.code === "Slash")) {
-        e.preventDefault();
-        setShowShortcuts(true);
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
+  // Keyboard: through the app's shortcut layer, so page keys win over
+  // navigation (Alt+S used to open Suppliers). AI autofill moved from Alt+I
+  // (Inventory) to Alt+G.
+  const shortcutLayer = useShortcutLayer();
+  const purchaseFormOpen = () => showNewPurchase || !!editingPurchaseId;
+  useShortcuts(
+    [
+      { combo: "alt+n", label: "New purchase", run: () => handleStartNewPurchase() },
+      { combo: "alt+a", label: "Add an item line", when: () => showNewPurchase, run: () => handleAddNewRow() },
+      { combo: "mod+enter", label: "Save the purchase", when: purchaseFormOpen, run: () => (showNewPurchase ? handleSubmitPurchase() : handleSaveEditPurchase()) },
+      { combo: "alt+s", label: "Save the purchase (while one is open)", when: purchaseFormOpen, run: () => (showNewPurchase ? handleSubmitPurchase() : handleSaveEditPurchase()) },
+      { combo: "alt+g", label: "Autofill missing details with AI", when: () => showNewPurchase, run: () => handleAutofillWithAI() },
+      {
+        combo: "escape",
+        label: "Cancel the line, then the purchase",
+        inInputs: true,
+        when: () => !!newItemRow || showNewPurchase,
+        run: () => {
+          if (showSuggestions || showBatchSuggestions) return false; // the dropdown closes first
+          if (newItemRow) return handleCancelAddItem();
+          handleCancelNewPurchase(); // asks before discarding lines
+        },
+      },
+    ],
+    "Purchases"
+  );
 
   const fetchPurchases = useCallback(
     async (page = 1, highlightId = undefined) => {
@@ -4364,60 +4309,7 @@ export default function PurchasesPage() {
       </AlertDialog>
 
       {/* Keyboard Shortcuts Dialog */}
-      <Dialog open={showShortcuts} onOpenChange={setShowShortcuts}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Keyboard className="w-5 h-5" />
-              Keyboard Shortcuts
-            </DialogTitle>
-          </DialogHeader>
-          <div className="grid gap-3 py-4">
-            <div className="flex justify-between items-center p-2 bg-muted/30 rounded">
-              <span>New Purchase</span>
-              <kbd className="px-2 py-1 bg-muted rounded text-xs font-mono">
-                {getOS() === "mac" ? "⌥ + N" : "Alt + N"}
-              </kbd>
-            </div>
-            <div className="flex justify-between items-center p-2 bg-muted/30 rounded">
-              <span>Add Item</span>
-              <kbd className="px-2 py-1 bg-muted rounded text-xs font-mono">
-                {getOS() === "mac" ? "⌥ + A" : "Alt + A"}
-              </kbd>
-            </div>
-            <div className="flex justify-between items-center p-2 bg-muted/30 rounded">
-              <span>Autofill with AI</span>
-              <kbd className="px-2 py-1 bg-muted rounded text-xs font-mono">
-                {getOS() === "mac" ? "⌥ + I" : "Alt + I"}
-              </kbd>
-            </div>
-            <div className="flex justify-between items-center p-2 bg-muted/30 rounded">
-              <span>Save Purchase</span>
-              <kbd className="px-2 py-1 bg-muted rounded text-xs font-mono">
-                {getOS() === "mac" ? "⌘ + Enter" : "Ctrl + Enter"}
-              </kbd>
-            </div>
-            <div className="flex justify-between items-center p-2 bg-muted/30 rounded">
-              <span>Save Item / Next Field</span>
-              <kbd className="px-2 py-1 bg-muted rounded text-xs font-mono">
-                Enter / Tab
-              </kbd>
-            </div>
-            <div className="flex justify-between items-center p-2 bg-muted/30 rounded">
-              <span>Fill Default (on empty field)</span>
-              <kbd className="px-2 py-1 bg-muted rounded text-xs font-mono">
-                Tab
-              </kbd>
-            </div>
-            <div className="flex justify-between items-center p-2 bg-muted/30 rounded">
-              <span>Cancel / Close</span>
-              <kbd className="px-2 py-1 bg-muted rounded text-xs font-mono">
-                Escape
-              </kbd>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
+
 
       {/* Purchases Page View Area */}
 
@@ -4657,11 +4549,12 @@ export default function PurchasesPage() {
                   <Button
                     variant="default"
                     onClick={handleAutofillWithAI}
+                    data-kbd={formatCombo("alt+g")}
                     className="relative overflow-hidden group bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white shadow-md border-none font-extrabold text-xs h-9 rounded-xl px-3 flex items-center gap-1.5"
                     size="sm"
                   >
                     <Sparkles className="w-3.5 h-3.5 text-white" />
-                    <span>Autofill<span className="max-md:hidden"> ({getOS() === "mac" ? "⌥I" : "Alt+I"})</span></span>
+                    <span>Autofill<span className="max-md:hidden"> ({formatCombo("alt+g")})</span></span>
                   </Button>
                   <CustomTooltip
                     position="bottom-right"
@@ -6740,6 +6633,8 @@ export default function PurchasesPage() {
                 </Button>
                 <Button
                   onClick={handleSaveEditPurchase}
+                  data-shortcut="save"
+                  data-kbd={formatCombo("mod+enter")}
                   disabled={submitting}
                   className="btn-primary"
                 >
@@ -6780,8 +6675,9 @@ export default function PurchasesPage() {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => setShowShortcuts(true)}
+                  onClick={() => shortcutLayer?.toggleHelp(true)}
                   data-testid="shortcuts-btn"
+                  title="Keyboard shortcuts (?)"
                   className="h-8 text-xs font-bold rounded-xl border-border/70 max-md:hidden"
                 >
                   <Keyboard className="w-3.5 h-3.5 mr-1.5 text-muted-foreground" />
@@ -6829,9 +6725,11 @@ export default function PurchasesPage() {
                   className="h-8 px-3.5 text-xs font-extrabold bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white rounded-xl shadow-xs border-none"
                   onClick={handleStartNewPurchase}
                   data-testid="add-purchase-btn"
+                  data-shortcut="new"
+                  data-kbd={formatCombo("alt+n")}
                 >
                   <Plus className="w-3.5 h-3.5 mr-1 stroke-[3]" />
-                  New<span className="max-md:hidden">{getOS() === "mac" ? " (⌥N)" : " (Alt+N)"}</span>
+                  New<span className="max-md:hidden"> ({formatCombo("alt+n")})</span>
                 </Button>
               </div>
             </div>
@@ -6906,6 +6804,7 @@ export default function PurchasesPage() {
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                   <Input
                     placeholder="Search purchases by supplier, invoice..."
+                    data-shortcut="search"
                     className="pl-9 h-9 text-xs font-medium rounded-xl border-border/70 bg-card/60 backdrop-blur-md"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
@@ -7009,12 +6908,16 @@ export default function PurchasesPage() {
                 </TableRow>
               </TableHeader>
               <TableBody
+                data-rows
                 className={`transition-opacity duration-200 ${listLoading ? "opacity-50 pointer-events-none" : ""}`}
               >
                 {purchases.map((purchase, index) => (
                   <Fragment key={purchase.id}>
                     <TableRow
                       id={`record-${purchase.id}`}
+                      data-row
+                      tabIndex={0}
+                      aria-expanded={expandedPurchase === purchase.id}
                       className="cursor-pointer"
                       onClick={() =>
                         setExpandedPurchase(
@@ -7057,6 +6960,14 @@ export default function PurchasesPage() {
                       </TableCell>
                       <TableCell className="text-sm">
                         {purchase.items?.length || 0} items
+                        {purchase.has_returns && (
+                          <div
+                            className="mt-0.5 inline-flex items-center px-1.5 py-0 rounded text-[9px] font-black bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/30"
+                            title={`${purchase.returned_units || 0} unit(s) returned to supplier`}
+                          >
+                            Returns ₹{Number(purchase.returned_value || 0).toFixed(2)}
+                          </div>
+                        )}
                       </TableCell>
                       <TableCell className="text-center">
                         <div>
@@ -7099,8 +7010,20 @@ export default function PurchasesPage() {
                               handleGeneratePurchasePdf(purchase.id)
                             }
                             data-testid={`pdf-purchase-${purchase.id}`}
+                            data-row-key="p"
                           >
                             <FileText className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-7 w-7 text-muted-foreground hover:text-orange-600"
+                            onClick={() => setLabelsFor({ purchase, only: null })}
+                            title="Print item QR labels (L)"
+                            aria-label="Print item QR labels"
+                            data-row-key="l"
+                          >
+                            <QrCode className="h-4 w-4" />
                           </Button>
                           <Button
                             size="icon"
@@ -7108,6 +7031,7 @@ export default function PurchasesPage() {
                             className="h-7 w-7"
                             onClick={() => handleStartEditPurchase(purchase)}
                             data-testid={`edit-purchase-${purchase.id}`}
+                            data-row-key="e"
                           >
                             <Edit2 className="h-4 w-4" />
                           </Button>
@@ -7119,6 +7043,7 @@ export default function PurchasesPage() {
                               setDeleteDialog({ open: true, purchase })
                             }
                             data-testid={`delete-purchase-${purchase.id}`}
+                            data-row-key="delete"
                           >
                             <Trash2 className="h-4 w-4" />
                           </Button>
@@ -7162,6 +7087,9 @@ export default function PurchasesPage() {
                                   <TableHead className="text-right">
                                     Total
                                   </TableHead>
+                                  <TableHead className="text-center" data-card-label="QR label">
+                                    QR label
+                                  </TableHead>
                                 </TableRow>
                               </TableHeader>
                               <TableBody>
@@ -7196,14 +7124,21 @@ export default function PurchasesPage() {
                                       <TableCell className="font-medium">
                                         <div className="flex items-center gap-1.5 flex-wrap">
                                           <span>{item.product_name}</span>
-                                          {item.status === "Expired & Returned" && (
-                                            <Badge className="px-1.5 py-0 text-[9px] font-black bg-rose-500/15 text-rose-500 border-rose-500/30">
-                                              Expired & Returned
-                                            </Badge>
-                                          )}
-                                          {item.status === "Returned" && (
-                                            <Badge className="px-1.5 py-0 text-[9px] font-black bg-blue-500/15 text-blue-500 border-blue-500/30">
-                                              Returned
+                                          {item.status && /Return/.test(item.status) && (
+                                            <Badge
+                                              className={`px-1.5 py-0 text-[9px] font-black ${
+                                                /Pending/.test(item.status)
+                                                  ? "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30"
+                                                  : item.status === "Expired & Returned"
+                                                    ? "bg-rose-500/15 text-rose-500 border-rose-500/30"
+                                                    : "bg-blue-500/15 text-blue-500 border-blue-500/30"
+                                              }`}
+                                              title={(item.return_refs || []).map((r) => `${r.bundle_no}: ${r.units} unit(s)`).join(", ") || item.return_bundle_no || ""}
+                                            >
+                                              {item.status}
+                                              {item.returned_units > 0 && totalUnits > 0 && item.returned_units < totalUnits
+                                                ? ` · ${item.returned_units}/${totalUnits}u`
+                                                : ""}
                                             </Badge>
                                           )}
                                         </div>
@@ -7256,6 +7191,18 @@ export default function PurchasesPage() {
                                       </TableCell>
                                       <TableCell className="text-right font-mono">
                                         ₹{total.toFixed(2)}
+                                      </TableCell>
+                                      <TableCell className="text-center">
+                                        <Button
+                                          type="button"
+                                          size="sm"
+                                          variant="outline"
+                                          onClick={() => setLabelsFor({ purchase, only: idx })}
+                                          className="h-7 rounded-lg px-2 text-[11px] font-bold"
+                                          title="Print mini QR labels to stick on this item's packs"
+                                        >
+                                          <QrCode className="mr-1 h-3.5 w-3.5" /> Print
+                                        </Button>
                                       </TableCell>
                                     </TableRow>
                                   );
@@ -8074,6 +8021,8 @@ export default function PurchasesPage() {
 
               <Button
                 onClick={handleSubmitPurchase}
+                data-shortcut="save"
+                data-kbd={formatCombo("mod+enter")}
                 disabled={
                   submitting ||
                   processingRowId !== null ||
@@ -8093,7 +8042,7 @@ export default function PurchasesPage() {
                       {editingPurchaseId ? "Update Purchase" : "Save Purchase"}
                     </span>
                     <kbd className="hidden md:inline-block ml-1 opacity-70 text-[9px] font-mono border border-white/20 px-1 rounded">
-                      {getOS() === "mac" ? "⌘Enter" : "Ctrl+Enter"}
+                      {formatCombo("mod+enter")}
                     </kbd>
                   </div>
                 )}
@@ -8849,6 +8798,7 @@ export default function PurchasesPage() {
           }
         }}
       />
+      {labelsFor && <ItemLabelsDialog key={`${labelsFor.purchase.id}:${labelsFor.only}`} purchase={labelsFor.purchase} only={labelsFor.only} onClose={() => setLabelsFor(null)} />}
     </div>
   );
 }

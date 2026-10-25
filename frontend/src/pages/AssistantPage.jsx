@@ -14,7 +14,6 @@ import {
   Menu,
   MessageSquarePlus,
   Mic,
-  MicOff,
   Paperclip,
   MoreHorizontal,
   Pencil,
@@ -45,11 +44,12 @@ import {
   AlertDialogTitle,
 } from "../components/ui/alert-dialog";
 import { AGENT_META, assistantApi, streamTurn } from "../components/assistant/assistantClient";
-import { ChoicesBlock, ConfirmBlock, DraftBlock, NoticeBlock, PickerBlock, ResultBlock, StatsBlock, TableBlock } from "../components/assistant/Blocks";
+import { ChoicesBlock, ConfirmBlock, DraftBlock, NoticeBlock, PickerBlock, QrBlock, ResultBlock, StatsBlock, TableBlock } from "../components/assistant/Blocks";
 import ChartBlock from "../components/assistant/ChartBlock";
 import ParticleOrb from "../components/assistant/ParticleOrb";
 import { ComposerHint, CreditsBlock, CreditsPill, CreditsSheet, EngineNote, EngineSwitch, UsageChip, useCredits } from "../components/assistant/Credits";
 import { useVoiceInput } from "../components/assistant/useVoice";
+import { dictationSupported, useDictation } from "../components/assistant/useDictation";
 import { onSpeakingChange, primeVoice, speakReply, stopVoice } from "../components/assistant/voicePlayer";
 import { AI_LOGO_SRC, AiAmbient } from "../components/scan/ScanUI";
 import { compressForScan } from "../components/scan/scanClient";
@@ -163,6 +163,7 @@ function AssistantMessage({ msg, onAction, onReply, busyKey, settled, openDrafts
           if (b.type === "confirm") return <ConfirmBlock key={key} {...props} settled={settled[key]} />;
           if (b.type === "result") return <ResultBlock key={key} {...props} />;
           if (b.type === "notice") return <NoticeBlock key={key} block={b} />;
+          if (b.type === "qr") return <QrBlock key={key} block={b} />;
           if (b.type === "credits") return <CreditsBlock key={key} block={b} onBuy={onBuyCredits} />;
           return null;
         })}
@@ -305,6 +306,19 @@ export default function AssistantPage() {
   const [title, setTitle] = useState("");
   const [openDrafts, setOpenDrafts] = useState(null);
   const credits = useCredits();
+  // Engine of the reply being written, else of the latest reply; a fixed admin
+  // mode shows its engine from the start
+  const activeEngine = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i];
+      if (m.role !== "assistant") continue;
+      const e = m.engineNote?.engine || m.usage?.engine;
+      if (e) return e;
+      if (m.pending) break;
+    }
+    const mode = credits.data?.ai_mode;
+    return mode === "gemini" ? "pro" : mode === "groq" || mode === "nemotron" ? "swift" : null;
+  }, [messages, credits.data?.ai_mode]);
   const creditsRef = useRef(credits);
   creditsRef.current = credits;
   const [creditsOpen, setCreditsOpen] = useState(false);
@@ -313,7 +327,18 @@ export default function AssistantPage() {
   const [busyKey, setBusyKey] = useState(null);
   const [settled, setSettled] = useState({});
   const [input, setInput] = useState("");
-  const [voiceLang, setVoiceLang] = useState(() => localStorage.getItem("dd-voice-lang") || "hi-IN");
+  // Voice typing script: auto (English and Hinglish in Roman letters) or hi (Devanagari)
+  const [sttLang, setSttLang] = useState(() => {
+    try {
+      return localStorage.getItem("dd-stt-lang") === "hi" ? "hi" : "auto";
+    } catch {
+      return "auto";
+    }
+  });
+  const voiceLang = "hi-IN"; // browser fallback: understands Hindi, Hinglish and English
+  // The input came from the mic: its reply is read aloud, as before
+  const [dictated, setDictated] = useState(false);
+  const dictBaseRef = useRef("");
   const [photos, setPhotos] = useState([]); // [{file, preview}]
   const [speaking, setSpeaking] = useState(false);
   const fileRef = useRef(null);
@@ -481,9 +506,9 @@ export default function AssistantPage() {
     const files = photos.map((p) => p.file);
     const previews = photos.map((p) => p.preview);
     setInput("");
+    setDictated(false);
     setPhotos([]);
-    const engine = creditsRef.current.data?.engine;
-    run({ message: t, ...(voice ? { voice: true } : {}), ...(engine ? { engine } : {}) }, t || (files.length ? `📷 ${files.length} photo${files.length > 1 ? "s" : ""}` : ""), { files, previews, speak: voice });
+    run({ message: t, ...(voice ? { voice: true } : {}) }, t || (files.length ? `📷 ${files.length} photo${files.length > 1 ? "s" : ""}` : ""), { files, previews, speak: voice });
     if (!voice) inputRef.current?.focus();
   };
 
@@ -514,10 +539,71 @@ export default function AssistantPage() {
     });
   };
 
+  // Dictated text goes into the box for the user to review and send
+  const insertDictation = (text) => {
+    const base = dictBaseRef.current;
+    const t = String(text || "").trim();
+    setInput(t ? `${base}${base && !/\s$/.test(base) ? " " : ""}${t}` : base);
+    if (t) setDictated(true);
+    setTimeout(() => {
+      const el = inputRef.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(el.value.length, el.value.length);
+      el.style.height = "auto";
+      el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+    }, 0);
+  };
+
   const voice = useVoiceInput({
     lang: voiceLang,
-    onFinal: (text) => send(text, { voice: true }),
+    onFinal: (text, info) => {
+      if (info?.error) toast.error("Microphone access is blocked. Allow it in your browser's site settings.");
+      insertDictation(text);
+    },
   });
+
+  const dictation = useDictation({
+    lang: sttLang,
+    onEnd: (text, { limit } = {}) => {
+      if (limit) toast.info("Voice typing stops after 3 minutes. Tap the mic to continue.");
+      insertDictation(text);
+    },
+    onFatal: ({ code, detail }) => {
+      // No credits or the service is down: the browser's own recognizer still works
+      if ((code === "NO_CREDITS" || code === "STT_UNAVAILABLE") && voice.supported) {
+        toast.info(code === "NO_CREDITS" ? "Basic voice typing (no credits for accurate voice typing)" : "Using basic voice typing for now");
+        voice.start();
+        return;
+      }
+      toast.error(detail || "Voice typing isn't available right now");
+    },
+  });
+  const micBusy = dictation.active || voice.listening;
+  const micSupported = dictationSupported() || voice.supported;
+  const toggleMic = () => {
+    if (dictation.finishing) return;
+    if (dictation.active) return dictation.stop();
+    if (voice.listening) return voice.stop();
+    dictBaseRef.current = input;
+    primeVoice(); // unlock audio now so the spoken reply can play
+    stopVoice();
+    if (dictationSupported()) dictation.start();
+    else voice.start();
+  };
+  const composerValue = dictation.active
+    ? [dictBaseRef.current, dictation.text].filter(Boolean).join(dictBaseRef.current && !/\s$/.test(dictBaseRef.current) ? " " : "")
+    : voice.listening
+      ? [dictBaseRef.current, voice.interim].filter(Boolean).join(dictBaseRef.current ? " " : "")
+      : input;
+  // Grow the box with live dictation (value changes don't fire onInput)
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el || !micBusy) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+    el.scrollTop = el.scrollHeight;
+  }, [composerValue, micBusy]);
 
   const newChat = () => {
     ctrlRef.current?.abort();
@@ -661,12 +747,12 @@ export default function AssistantPage() {
           <button type="button" onClick={() => navigate("/dashboard")} className="hidden h-9 items-center gap-1.5 rounded-xl px-2.5 text-sm text-muted-foreground hover:bg-muted hover:text-foreground md:flex">
             <ArrowLeft className="h-4 w-4" /> App
           </button>
-          {/* Which engine answers, top left, switchable any time */}
+          {/* Which engine is answering, top left; picked per task, not by hand */}
           <div className="hidden md:block">
-            <EngineSwitch data={credits.data} onChange={credits.setEngine} disabled={streaming} />
+            <EngineSwitch data={credits.data} active={activeEngine} live={streaming} />
           </div>
           <div className="md:hidden">
-            <EngineSwitch data={credits.data} onChange={credits.setEngine} disabled={streaming} compact />
+            <EngineSwitch data={credits.data} active={activeEngine} live={streaming} compact />
           </div>
           <p className="min-w-0 flex-1 truncate text-sm font-semibold md:pl-2">{empty ? "New chat" : title || "Chat"}</p>
           <CreditsPill wallet={credits.data?.wallet} onOpen={() => setCreditsOpen(true)} />
@@ -827,7 +913,7 @@ export default function AssistantPage() {
                 e.target.value = "";
               }}
             />
-            <div className={`flex items-end gap-2 rounded-2xl border bg-card p-2 shadow-sm transition ${voice.listening ? "border-rose-500/50 ring-2 ring-rose-500/20" : "border-border focus-within:border-orange-500/50 focus-within:ring-2 focus-within:ring-orange-500/15"}`}>
+            <div className={`flex items-end gap-2 rounded-2xl border bg-card p-2 shadow-sm transition ${micBusy ? "border-rose-500/50 ring-2 ring-rose-500/20" : "border-border focus-within:border-orange-500/50 focus-within:ring-2 focus-within:ring-orange-500/15"}`}>
               <button
                 type="button"
                 onClick={() => fileRef.current?.click()}
@@ -847,50 +933,66 @@ export default function AssistantPage() {
                   }
                 }}
                 rows={1}
-                value={voice.listening ? voice.interim : input}
-                onChange={(e) => setInput(e.target.value)}
+                value={composerValue}
+                readOnly={micBusy}
+                aria-live={micBusy ? "polite" : undefined}
+                onChange={(e) => {
+                  setInput(e.target.value);
+                  if (!e.target.value.trim()) setDictated(false);
+                }}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.shiftKey) {
                     e.preventDefault();
-                    send();
+                    // While dictating, Enter only stops the mic; the user still reviews and sends
+                    if (micBusy) return toggleMic();
+                    send(undefined, { voice: dictated });
+                  }
+                  if (e.key === "Escape" && micBusy) {
+                    e.preventDefault();
+                    toggleMic();
                   }
                 }}
                 onInput={(e) => {
                   e.currentTarget.style.height = "auto";
                   e.currentTarget.style.height = `${Math.min(e.currentTarget.scrollHeight, 160)}px`;
                 }}
-                placeholder={voice.listening ? "Listening… speak now" : photos.length ? "Say what to do with the photo… e.g. “iski purchase chadha do”" : "Ask anything… e.g. “Last 3 din ki purchase dikhao”"}
+                placeholder={dictation.status === "starting" ? "Opening the mic…" : micBusy ? "Listening… speak now, tap the mic to stop" : photos.length ? "Say what to do with the photo… e.g. “iski purchase chadha do”" : "Ask anything… e.g. “Last 3 din ki purchase dikhao”"}
                 className="max-h-40 min-h-[40px] flex-1 resize-none bg-transparent px-2 py-2 text-[15px] outline-none placeholder:text-muted-foreground"
               />
-              {voice.supported && (
+              {micSupported && (
                 <div className="flex items-center">
                   <button
                     type="button"
                     onClick={() => {
-                      const next = voiceLang === "hi-IN" ? "en-IN" : "hi-IN";
-                      setVoiceLang(next);
+                      const next = sttLang === "hi" ? "auto" : "hi";
+                      setSttLang(next);
                       try {
-                        localStorage.setItem("dd-voice-lang", next);
+                        localStorage.setItem("dd-stt-lang", next);
                       } catch {}
                     }}
-                    title="Voice language"
-                    className="h-10 rounded-xl px-1.5 text-[11px] font-bold text-muted-foreground hover:bg-muted"
+                    disabled={micBusy}
+                    title={sttLang === "hi" ? "Voice typing writes Hindi in हिंदी script. Tap for English / Hinglish in Roman letters." : "Voice typing writes English and Hinglish in Roman letters. Tap for हिंदी script."}
+                    aria-label="Voice typing script"
+                    className="h-10 min-w-[2.25rem] rounded-xl px-1.5 text-[11px] font-bold text-muted-foreground hover:bg-muted disabled:opacity-50"
                   >
-                    {voiceLang === "hi-IN" ? "हि" : "EN"}
+                    {sttLang === "hi" ? "हि" : "Aa"}
                   </button>
                   <button
                     type="button"
-                    onClick={() => {
-                      if (voice.listening) return voice.stop();
-                      primeVoice(); // unlock audio now so the spoken reply can play
-                      stopVoice();
-                      voice.start();
-                    }}
-                    disabled={streaming}
-                    title={voice.listening ? "Stop" : "Speak"}
-                    className={`flex h-10 w-10 items-center justify-center rounded-xl transition disabled:opacity-40 ${voice.listening ? "bg-rose-500 text-white animate-pulse" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
+                    onClick={toggleMic}
+                    disabled={streaming || dictation.finishing}
+                    title={dictation.finishing ? "Finishing…" : micBusy ? "Stop (Esc)" : "Voice typing"}
+                    aria-label={micBusy ? "Stop voice typing" : "Start voice typing"}
+                    aria-pressed={micBusy}
+                    className={`relative flex h-10 w-10 items-center justify-center rounded-xl transition disabled:opacity-60 ${micBusy ? "bg-rose-500 text-white" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
                   >
-                    {voice.listening ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
+                    {micBusy && !dictation.finishing && (
+                      <span
+                        className="pointer-events-none absolute inset-0 rounded-xl ring-4 ring-rose-500/40 transition-transform duration-100"
+                        style={{ transform: `scale(${1 + (dictation.active ? dictation.level : 0.15) * 0.35})` }}
+                      />
+                    )}
+                    {dictation.finishing ? <Loader2 className="h-5 w-5 animate-spin" /> : micBusy ? <Square className="h-4 w-4 fill-current" /> : <Mic className="h-5 w-5" />}
                   </button>
                 </div>
               )}
@@ -901,8 +1003,8 @@ export default function AssistantPage() {
               ) : (
                 <button
                   type="button"
-                  onClick={() => send()}
-                  disabled={!input.trim() && !photos.length}
+                  onClick={() => send(undefined, { voice: dictated })}
+                  disabled={micBusy || (!input.trim() && !photos.length)}
                   title="Send"
                   className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-orange-500 to-pink-500 text-white shadow-md shadow-orange-500/20 transition active:scale-95 disabled:opacity-40"
                 >
@@ -911,7 +1013,7 @@ export default function AssistantPage() {
               )}
             </div>
             <div className="mt-1.5 space-y-0.5">
-              <ComposerHint data={credits.data} hasPhotos={photos.length > 0} listening={voice.listening} estimate={credits.estimate} />
+              <ComposerHint data={credits.data} hasPhotos={photos.length > 0} listening={dictation.active} spokenReply={dictated && !micBusy} estimate={credits.estimate} />
               <p className="text-center text-[11px] text-muted-foreground">Nothing is saved until you confirm on a card. AI can make mistakes; check important details.</p>
             </div>
           </div>
@@ -950,7 +1052,7 @@ export default function AssistantPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-      <CreditsSheet open={creditsOpen} onClose={() => setCreditsOpen(false)} data={credits.data} onEngine={credits.setEngine} refresh={credits.refresh} />
+      <CreditsSheet open={creditsOpen} onClose={() => setCreditsOpen(false)} data={credits.data} refresh={credits.refresh} />
     </div>
   );
 }

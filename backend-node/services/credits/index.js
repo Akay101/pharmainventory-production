@@ -19,6 +19,7 @@ async function settle(db, pharmacy, m, { ref, task, engine, userId, label = "", 
       .collection(wallet.LEDGER)
       .insertOne({ id: require("crypto").randomUUID(), ref, pharmacy_id: pharmacy.id, user_id: userId, type: "FREE_USAGE", amount_milli: 0, task, engine, status: "DONE", meta: { label, cost_inr: Math.round(sum.inr * 1e4) / 1e4, models: sum.models }, created_at: new Date() })
       .catch(() => {});
+    await wallet.addIncludedCost(db, pharmacy, sum.inr * 100).catch((err) => console.error("[credits] light mode cost:", err.message));
     return { credits: 0, cost_inr: sum.inr, wallet: null, free: true };
   }
   const milli = config.creditsForInr(cfg, sum.inr);
@@ -28,6 +29,7 @@ async function settle(db, pharmacy, m, { ref, task, engine, userId, label = "", 
     userId,
     task,
     engine,
+    costPaise: sum.inr * 100,
     meta: {
       label,
       cost_usd: Math.round(sum.usd * 1e6) / 1e6,

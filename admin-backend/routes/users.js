@@ -3,6 +3,7 @@ const router = express.Router();
 const { resolveDbEnv } = require("../db/connections");
 const { describe } = require("../services/billing/subscriptions");
 const { userJourney, pendingJourney } = require("../services/journey");
+const { offerIndex, SOURCE: OFFER_SOURCE } = require("../services/offerLeads");
 
 router.use(resolveDbEnv);
 
@@ -29,6 +30,38 @@ router.get("/", async (req, res, next) => {
         .catch(() => []),
     ]);
     const paidBy = new Map(paidTotals.map((t) => [t._id, t]));
+
+    // 50-50 launch offer: redeemed one of its codes, or registered on the
+    // website form with the same email / mobile. The registrations DB being
+    // unreachable must not break this list.
+    const [offer, offerRedemptions] = await Promise.all([
+      offerIndex().catch((err) => {
+        console.warn("[users] 50-50 registrations unavailable:", err.message);
+        return null;
+      }),
+      db
+        .collection("promo_codes")
+        .find({ source: OFFER_SOURCE }, { projection: { _id: 0, code: 1, offer_lead: 1 } })
+        .toArray()
+        .then(async (codes) => {
+          const byCode = new Map(codes.map((c) => [c.code, c]));
+          const reds = codes.length ? await db.collection("promo_redemptions").find({ code: { $in: [...byCode.keys()] }, status: "REDEEMED" }).toArray() : [];
+          return new Map(reds.map((r) => [r.pharmacy_id, { ...byCode.get(r.code), redeemed_at: r.updated_at || r.created_at }]));
+        })
+        .catch(() => new Map()),
+    ]);
+    const offerFor = (u) => {
+      const red = offerRedemptions.get(u.pharmacy_id);
+      const reg = offer?.match(u.email, u.mobile);
+      if (!red && !reg) return null;
+      return {
+        lead_id: red?.offer_lead?.lead_id || reg?.lead_id || null,
+        registration_id: red?.offer_lead?.registration_id || reg?.registration_id || null,
+        code: red?.code || null,
+        code_redeemed: !!red,
+        redeemed_at: red?.redeemed_at || null,
+      };
+    };
 
     const pharmacyMap = new Map();
     pharmacies.forEach((p) => {
@@ -83,6 +116,7 @@ router.get("/", async (req, res, next) => {
         is_subscribed: isSubscribed,
         status,
         kind: "USER",
+        offer_5050: offerFor(u),
         last_login_at: u.last_login_at || null,
         created_at: u.created_at,
       };
@@ -110,6 +144,10 @@ router.get("/", async (req, res, next) => {
         is_subscribed: false,
         status: "INCOMPLETE",
         kind: "PENDING_SIGNUP",
+        offer_5050: (() => {
+          const reg = offer?.match(p.email, p.mobile);
+          return reg ? { lead_id: reg.lead_id, registration_id: reg.registration_id, code: null, code_redeemed: false, redeemed_at: null } : null;
+        })(),
         created_at: p.created_at ? new Date(p.created_at).toISOString() : null,
       });
     }
@@ -137,6 +175,8 @@ router.get("/", async (req, res, next) => {
       mapped = mapped.filter((u) => u.status === "INCOMPLETE");
     } else if (filter === "LEAD") {
       mapped = mapped.filter((u) => !u.is_subscribed);
+    } else if (filter === "OFFER_5050") {
+      mapped = mapped.filter((u) => u.offer_5050);
     }
 
     // Filter by role

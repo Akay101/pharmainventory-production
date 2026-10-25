@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { useSearchParams, useLocation } from "react-router-dom";
+import { useSearchParams, useLocation, useNavigate } from "react-router-dom";
 import { v4 as uuidv4 } from "uuid";
 import { createPortal } from "react-dom";
 import axios from "axios";
@@ -25,6 +25,8 @@ import {
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "../components/ui/dialog";
@@ -88,6 +90,7 @@ import {
   Bell,
   AlertTriangle,
   Sparkles,
+  QrCode,
 } from "lucide-react";
 import { toast } from "sonner";
 import CustomerFilter from "../components/CustomerFilter";
@@ -96,7 +99,12 @@ import PlanBadge from "../components/PlanBadge";
 import Loader from "../components/Loader";
 import BillingScannerModal from "../components/BillingScannerModal";
 import { formatDate, formatExpiry, formatExpiryInput, expiryToIso, openScanner } from "./utils";
-import { getOS } from "../hooks/useKeyboard";
+import { formatCombo } from "../lib/shortcuts";
+import { fmtDay, parseDose, refillPlan } from "../lib/refill";
+import { useShortcuts, useShortcutLayer } from "../components/shortcuts/Shortcuts";
+import UpiQrDialog from "../components/UpiQr";
+import { useWhatsAppShare, WhatsAppIcon } from "../components/ShareBillWhatsApp";
+import { ItemQrScanDialog, findItemLabel, resolveItemLabel } from "../components/ItemQr";
 
 const LOCAL_STORAGE_KEY_BILL = "pharmalogy_bill_draft";
 
@@ -159,6 +167,7 @@ const getPaymentModeIcon = (mode, sizeClass = "w-3.5 h-3.5") => {
 export default function BillingPage() {
   const location = useLocation();
   // Data state
+  const navigate = useNavigate();
   const [bills, setBills] = useState([]);
   const [totalBills, setTotalBills] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -201,6 +210,9 @@ export default function BillingPage() {
     reminder_date: "",
     notes: "",
     selected_items: [],
+    // auto: dates follow the dose calculator; custom: the user set them
+    mode: "auto",
+    doses: {}, // product_name -> { dose: "1", days: "" }
   });
 
   const calculateReminderDates = useCallback((bDate, daysSupply = 30, remindBefore = 5) => {
@@ -540,7 +552,32 @@ export default function BillingPage() {
   const editingProductInputRef = useRef(null);
 
   // Keyboard shortcuts info
-  const [showShortcuts, setShowShortcuts] = useState(false);
+
+  // UPI QR: { amount, note } (amount "" asks for one)
+  const [upiQr, setUpiQr] = useState(null);
+  const whatsApp = useWhatsAppShare();
+  // Bill line being added to the short book: { bill, line, item, quantity, unit, notes }
+  const [shortBookFor, setShortBookFor] = useState(null);
+  const [shortBookSaving, setShortBookSaving] = useState(false);
+  const saveShortBook = async (e) => {
+    e?.preventDefault();
+    const sb = shortBookFor;
+    if (!(Number(sb.quantity) > 0)) return toast.error("Enter the quantity to reorder");
+    setShortBookSaving(true);
+    try {
+      const res = await axios.post(`${API}/shortbook`, { bill_id: sb.bill.id, line: sb.line, quantity: Number(sb.quantity), unit: sb.unit, notes: sb.notes });
+      toast.success(res.data.merged ? `${sb.item.product_name} was already in the short book: now ${res.data.entry.quantity} ${res.data.entry.unit}` : `${sb.item.product_name} added to the short book`, {
+        action: { label: "Open", onClick: () => navigate("/short-book") },
+      });
+      const mark = { entry_id: res.data.entry.id, quantity: Number(sb.quantity), unit: sb.unit, added_at: new Date().toISOString() };
+      setBills((prev) => prev.map((b) => (b.id === sb.bill.id ? { ...b, items: b.items.map((it, i) => (i === sb.line ? { ...it, short_book: mark } : it)) } : b)));
+      setShortBookFor(null);
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Couldn't add to the short book");
+    } finally {
+      setShortBookSaving(false);
+    }
+  };
 
   // Dropdown keyboard navigation
   const [activeDropdownIndex, setActiveDropdownIndex] = useState(-1);
@@ -917,102 +954,59 @@ export default function BillingPage() {
       handleCancelNewBill,
       handleCancelEditBill,
       handleAddNewRow,
-      setShowShortcuts,
       showNewBill,
       newItemRow,
       editingBillId,
     };
   });
 
+  // Keyboard: same keys as before, now through the app's shortcut layer so
+  // they no longer collide with navigation (Alt+S used to open Suppliers)
+  const shortcutLayer = useShortcutLayer();
+  const [confirmDiscardBill, setConfirmDiscardBill] = useState(false);
+  const billFormOpen = () => showNewBill || !!editingBillId;
+  const saveOpenBill = () => (showNewBill ? handleSubmitBill() : handleSaveEditBill());
+  // A suggestion list on screen closes first (its input handles Esc)
+  const anyBillPopupOpen = () =>
+    [...document.querySelectorAll('[id^="suggestion-new-"], [id^="suggestion-edit-"], [id^="customer-suggestion-"]')].some((el) => el.getClientRects().length > 0) ||
+    (showDoctorSuggestions && doctorSuggestions.length > 0);
+  useShortcuts(
+    [
+      { combo: "alt+n", label: "New bill", run: () => handleStartNewBill() },
+      { combo: "alt+a", label: "Add an item line", when: () => showNewBill, run: () => handleAddNewRow() },
+      { combo: "mod+enter", label: "Save the bill", when: billFormOpen, run: () => saveOpenBill() },
+      { combo: "alt+s", label: "Save the bill (while one is open)", when: billFormOpen, run: () => saveOpenBill() },
+      { combo: "alt+u", label: "Update the bill being edited", when: () => !!editingBillId, run: () => handleSaveEditBill() },
+      { combo: "alt+q", label: "UPI payment QR", run: () => setUpiQr({ amount: "", note: "" }) },
+      {
+        combo: "escape",
+        label: "Cancel the line, then the bill",
+        inInputs: true,
+        when: () => !!newItemRow || billFormOpen(),
+        run: () => {
+          if (anyBillPopupOpen()) return false; // the dropdown closes first
+          if (newItemRow) return handleCancelAddItem();
+          if (showNewBill) {
+            if (billItems.some((i) => i.product_name)) return setConfirmDiscardBill(true);
+            return handleCancelNewBill();
+          }
+          handleCancelEditBill();
+        },
+      },
+    ],
+    "Billing"
+  );
+  useEffect(() => {
+    if (location.state?.newBill) {
+      handleStartNewBill();
+      window.history.replaceState({}, document.title);
+    }
+    // eslint-disable-next-line
+  }, [location.state]);
+
   useEffect(() => {
     fetchData(true);
-
-    // Global keyboard shortcuts
-    const handleKeyDown = (e) => {
-      // Avoid triggering when user is typing in generic inputs, UNLESS it's a modifier combo or Escape
-      const isInput = ["INPUT", "TEXTAREA", "SELECT"].includes(
-        e.target?.tagName
-      );
-      if (
-        isInput &&
-        !e.ctrlKey &&
-        !e.metaKey &&
-        !e.altKey &&
-        e.key !== "Escape" &&
-        e.key !== "Enter"
-      )
-        return;
-
-      const {
-        handleStartNewBill,
-        handleSubmitBill,
-        handleSaveEditBill,
-        handleCancelAddItem,
-        handleCancelNewBill,
-        handleCancelEditBill,
-        handleAddNewRow,
-        setShowShortcuts,
-        showNewBill,
-        newItemRow,
-        editingBillId,
-      } = handlersRef.current;
-
-      if (!handleStartNewBill) return;
-
-      // Alt+N - New bill
-      if (e.altKey && (e.key === "n" || e.code === "KeyN")) {
-        e.preventDefault();
-        handleStartNewBill();
-      }
-      // Alt+S or Cmd+Enter - Save bill
-      if (
-        (e.altKey && (e.key === "s" || e.code === "KeyS")) ||
-        ((e.ctrlKey || e.metaKey) && (e.key === "Enter" || e.code === "Enter"))
-      ) {
-        if (showNewBill) {
-          e.preventDefault();
-          handleSubmitBill();
-        }
-      }
-      // Alt+U or Cmd+Enter - Update bill (when editing)
-      if (
-        (e.altKey && (e.key === "u" || e.code === "KeyU")) ||
-        ((e.ctrlKey || e.metaKey) && (e.key === "Enter" || e.code === "Enter"))
-      ) {
-        if (editingBillId) {
-          e.preventDefault();
-          handleSaveEditBill();
-        }
-      }
-      // Escape - Cancel
-      if (e.key === "Escape" || e.code === "Escape") {
-        if (newItemRow) {
-          handleCancelAddItem();
-        } else if (showNewBill) {
-          handleCancelNewBill();
-        } else if (editingBillId) {
-          handleCancelEditBill();
-        }
-      }
-      // Alt+A - Add item (when in new bill mode)
-      if (e.altKey && (e.key === "a" || e.code === "KeyA")) {
-        if (showNewBill && !newItemRow) {
-          e.preventDefault();
-          handleStartAddItem();
-        } else if (showNewBill) {
-          e.preventDefault();
-          handleAddNewRow();
-        }
-      }
-      // Alt+? - Show shortcuts
-      if (e.altKey && (e.key === "/" || e.code === "Slash")) {
-        e.preventDefault();
-        setShowShortcuts(true);
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+    // eslint-disable-next-line
   }, []);
 
   // Debounce search query changes
@@ -1559,6 +1553,7 @@ export default function BillingPage() {
     setAdvanceAmount("");
     setPaymentMode("");
     setNewItemRow(null);
+    setRefillReminder((prev) => ({ ...prev, enabled: false, refill_target_date: "", reminder_date: "", notes: "", selected_items: [], mode: "auto", doses: {} }));
     clearDraft();
   };
 
@@ -1696,8 +1691,46 @@ export default function BillingPage() {
     setTimeout(() => quantityInputRef.current?.focus(), 100);
   };
 
+  // Item QR labels (printed from Purchases): scanned with the camera, or by a
+  // QR scanner typing into the product search
+  const [labelScanOpen, setLabelScanOpen] = useState(false);
+  const addFromLabel = (item, fromRowId = null) => {
+    if (!showNewBill) {
+      if (editingBillId) return toast.info("Scan item labels in a new bill");
+      handleStartNewBill();
+    }
+    if (item.returned) toast.warning(`${item.product_name} (${item.batch_no}) was returned to the supplier`);
+    else if (item.expired) toast.warning(`${item.product_name} batch ${item.batch_no} has expired`);
+    else if (item.available_quantity <= 0) toast.info(`${item.product_name} shows no stock; it will be billed as negative stock`);
+    const existing = billItems.find((r) => r.inventory_id === item.inventory_id && r.id !== fromRowId);
+    setBillItems((prev) => prev.filter((r) => r.id !== fromRowId && r.product_name && !findItemLabel(r.product_name)));
+    if (existing) {
+      toast.info(`${item.product_name} is already in this bill: change its quantity`);
+      return focusQtyFor(existing.id);
+    }
+    handleTransferScannedItemsToBill([{ ...item, quantity: 1, unit_price: item.mrp, available: item.available_quantity, available_batches: [] }]);
+    // Next: the quantity of the added line
+    setTimeout(() => {
+      const qty = [...document.querySelectorAll("[data-qty-for]")].pop();
+      qty?.focus();
+      qty?.select?.();
+    }, 200);
+  };
+
   // Handle dropdown keyboard navigation
   const handleDropdownKeyDown = (e, itemId) => {
+    const label = e.key === "Enter" ? findItemLabel(e.currentTarget.value) : null;
+    if (label) {
+      e.preventDefault();
+      setShowInventorySuggestions(false);
+      setInventorySearch("");
+      // The row keeps what it had before the scan; an empty row is replaced
+      handleItemFieldChange(itemId, "product_name", label.before);
+      resolveItemLabel(label.code)
+        .then((item) => addFromLabel(item, label.before ? null : itemId))
+        .catch((err) => toast.error(err.message));
+      return;
+    }
     if (!showInventorySuggestions) return;
 
     const totalOptions = 1 + inventorySuggestions.length;
@@ -2054,21 +2087,15 @@ export default function BillingPage() {
           refill_target_date: refillReminder.refill_target_date || calculateReminderDates(billingDate, refillReminder.days_supply, refillReminder.remind_before_days).targetDate,
           reminder_date: refillReminder.reminder_date || calculateReminderDates(billingDate, refillReminder.days_supply, refillReminder.remind_before_days).reminderDate,
           notes: refillReminder.notes || `Refill reminder for ${customerInfo.customer_name}`,
-          items: refillReminder.selected_items && refillReminder.selected_items.length > 0
-            ? refillReminder.selected_items.map(i => ({
-                product_name: i.product_name,
-                batch_no: i.batch_no || null,
-                quantity: i.quantity,
-                unit_price: i.unit_price,
-                days_supply: refillReminder.days_supply
-              }))
-            : validItems.map(i => ({
-                product_name: i.product_name,
-                batch_no: i.batch_no || null,
-                quantity: i.quantity,
-                unit_price: i.unit_price,
-                days_supply: refillReminder.days_supply
-              }))
+          items: refillCalc.rows.map((r) => ({
+            product_name: r.product_name,
+            batch_no: r.batch_no,
+            quantity: r.quantity,
+            unit_price: r.unit_price,
+            dose_per_day: r.days_input ? null : r.dose_per_day,
+            days_supply: r.days || refillReminder.days_supply,
+            runs_out_on: r.runs_out_on,
+          })),
         } : null,
       });
 
@@ -2546,18 +2573,73 @@ export default function BillingPage() {
     }
   };
 
-  const handleGeneratePdf = async (billId) => {
+  // Bill PDF with or without the UPI payment QR (the choice is remembered)
+  const { pharmacy: authPharmacy } = useAuth() || {};
+  const hasUpiId = /^[a-zA-Z0-9._-]{2,256}@[a-zA-Z][a-zA-Z0-9.-]{1,63}$/.test(String(authPharmacy?.upi_id || "").trim());
+  const [pdfWithQr, setPdfWithQr] = useState(() => {
     try {
-      toast.info("Generating PDF...");
-      const response = await axios.post(`${API}/bills/${billId}/pdf`);
+      return localStorage.getItem("dd-bill-pdf-qr") !== "0";
+    } catch {
+      return true;
+    }
+  });
+  const choosePdfQr = (v) => {
+    setPdfWithQr(v);
+    try {
+      localStorage.setItem("dd-bill-pdf-qr", v ? "1" : "0");
+    } catch {}
+  };
+  const [pdfFor, setPdfFor] = useState(null); // bill picked from the list
+  const generateBillPdf = async (billId, withQr) => {
+    const win = window.open("", "_blank"); // inside the click, so pop-up blockers allow it
+    try {
+      const response = await axios.post(`${API}/bills/${billId}/pdf`, { upi_qr: !!(withQr && hasUpiId) });
       if (response.data.pdf_url) {
-        window.open(response.data.pdf_url, "_blank");
-        toast.success("PDF generated successfully");
-      }
+        if (win) win.location.href = response.data.pdf_url;
+        else window.open(response.data.pdf_url, "_blank");
+      } else win?.close();
     } catch (error) {
+      win?.close();
       console.error("PDF generation error:", error);
       toast.error(error.response?.data?.detail || "Failed to generate PDF");
     }
+  };
+  const handleGeneratePdf = (billId) => setPdfFor(bills.find((b) => b.id === billId) || { id: billId });
+
+  // "With UPI QR" / "Without QR" choice, used by both PDF prompts
+  const pdfQrChoice = (bill) => {
+    const total = Number(bill?.grand_total ?? bill?.total_amount) || 0;
+    const paid = bill?.total_paid !== undefined ? Number(bill.total_paid) || 0 : bill?.is_paid ? total : Number(bill?.advance_amount) || 0;
+    const due = Math.max(0, Math.round((total - paid) * 100) / 100);
+    const qrAmount = due > 0 ? due : total;
+    return (
+      <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="UPI payment QR on the bill">
+        {[
+          [true, "With UPI QR", hasUpiId ? (bill ? `Scan to pay ₹${qrAmount.toFixed(2)}${due > 0 ? "" : " (bill total)"}` : "Scan to pay the bill amount") : "Add your UPI ID in Settings"],
+          [false, "Without QR", "Plain bill"],
+        ].map(([v, label, hint]) => {
+          const active = (pdfWithQr && hasUpiId) === v;
+          const disabled = v && !hasUpiId;
+          return (
+            <button
+              key={label}
+              type="button"
+              role="radio"
+              aria-checked={active}
+              disabled={disabled}
+              onClick={() => choosePdfQr(v)}
+              className={`rounded-xl border p-3 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${active ? "border-orange-500 bg-orange-500/10" : "border-border hover:border-orange-500/40"}`}
+            >
+              <span className="flex items-center gap-1.5 text-sm font-bold text-foreground">
+                {v ? <QrCode className="h-4 w-4 text-orange-500" /> : <FileText className="h-4 w-4 text-muted-foreground" />}
+                {label}
+              </span>
+              <span className="mt-0.5 block text-[11px] text-muted-foreground">{hint}</span>
+            </button>
+          );
+        })}
+      </div>
+    );
   };
 
   // Toggle expanded bill row
@@ -2582,6 +2664,42 @@ export default function BillingPage() {
   const validItems = billItems.filter(
     (item) => item.product_name && item.product_name.trim() !== ""
   );
+
+  // Refill reminder: when each chosen medicine runs out at its daily dose
+  const reminderItems = (refillReminder.selected_items.length
+    ? validItems.filter((i) => refillReminder.selected_items.some((s) => s.product_name === i.product_name))
+    : validItems
+  ).map((i) => {
+    const d = refillReminder.doses[i.product_name] || {};
+    return {
+      product_name: i.product_name,
+      batch_no: i.batch_no || null,
+      quantity: parseInt(i.quantity) || 0,
+      unit_price: i.unit_price,
+      units: parseInt(i.quantity) || 0,
+      dose_input: d.dose ?? "1",
+      dose_per_day: parseDose(d.dose ?? "1"),
+      days: d.days || "",
+      days_input: d.days || "",
+    };
+  });
+  const refillCalc = refillPlan(billingDate, reminderItems);
+  const refillRec = refillCalc.recommendation;
+  const setDose = (name, patch) =>
+    setRefillReminder((prev) => ({ ...prev, mode: "auto", doses: { ...prev.doses, [name]: { dose: "1", days: "", ...prev.doses[name], ...patch } } }));
+  // Auto mode keeps the dates on the recommendation
+  useEffect(() => {
+    if (!refillReminder.enabled || refillReminder.mode !== "auto" || !refillRec) return;
+    if (refillReminder.reminder_date === refillRec.reminder_date && refillReminder.refill_target_date === refillRec.refill_target_date && refillReminder.days_supply === refillRec.days_supply) return;
+    setRefillReminder((prev) => ({
+      ...prev,
+      days_supply: refillRec.days_supply,
+      remind_before_days: refillRec.remind_before_days,
+      refill_target_date: refillRec.refill_target_date,
+      reminder_date: refillRec.reminder_date,
+    }));
+    // eslint-disable-next-line
+  }, [refillReminder.enabled, refillReminder.mode, refillRec?.reminder_date, refillRec?.refill_target_date, refillRec?.days_supply]);
   const subtotal = validItems.reduce((sum, item) => {
     const qty = parseInt(item.quantity) || 0;
     const unitPrice = parseFloat(item.unit_price) || 0;
@@ -2700,83 +2818,44 @@ export default function BillingPage() {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => setShowShortcuts(true)}
+                onClick={() => shortcutLayer?.toggleHelp(true)}
                 data-testid="shortcuts-btn"
+                title={`Keyboard shortcuts (?)`}
                 className="h-8 text-xs font-bold rounded-xl border-border/70 max-md:hidden"
               >
                 <Keyboard className="w-3.5 h-3.5 mr-1.5 text-muted-foreground" />
                 Shortcuts
               </Button>
               <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setUpiQr({ amount: "", note: "" })}
+                data-testid="upi-qr-btn"
+                data-kbd={formatCombo("alt+q")}
+                title={`Show a UPI QR for any amount (${formatCombo("alt+q")})`}
+                className="h-8 text-xs font-bold rounded-xl border-border/70"
+              >
+                <QrCode className="w-3.5 h-3.5 mr-1.5 text-muted-foreground" />
+                UPI QR
+              </Button>
+              <Button
                 size="sm"
                 className="h-8 px-3.5 text-xs font-extrabold bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white rounded-xl shadow-xs border-none"
                 onClick={handleStartNewBill}
                 data-testid="new-bill-btn"
+                data-shortcut="new"
+                data-kbd={formatCombo("alt+n")}
                 disabled={showNewBill || editingBillId}
               >
                 <Plus className="w-3.5 h-3.5 mr-1 stroke-[3]" />
-                New Bill<span className="max-md:hidden">{getOS() === "mac" ? " (⌥N)" : " (Alt+N)"}</span>
+                New Bill<span className="max-md:hidden"> ({formatCombo("alt+n")})</span>
               </Button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Keyboard Shortcuts Dialog */}
-      <Dialog open={showShortcuts} onOpenChange={setShowShortcuts}>
-        <DialogContent className="glass bg-card/95 backdrop-blur-xl border border-border/80 shadow-2xl rounded-2xl p-6 max-w-md">
-          <DialogHeader className="pb-2 border-b border-border/50">
-            <DialogTitle className="text-xl font-bold flex items-center gap-2 text-foreground">
-              <Keyboard className="w-5 h-5 text-primary" />
-              Keyboard Shortcuts
-            </DialogTitle>
-          </DialogHeader>
-          <div className="grid gap-3 py-4 max-h-[380px] overflow-y-auto pr-1">
-            <div className="flex justify-between items-center p-3 bg-muted/40 hover:bg-muted/65 border border-border/40 rounded-xl transition-all duration-200">
-              <span className="text-sm font-semibold text-foreground/80">New Bill</span>
-              <kbd className="px-2 py-1 bg-background border border-border/80 rounded-lg text-xs font-mono shadow-sm">
-                {getOS() === "mac" ? "⌥ + N" : "Alt + N"}
-              </kbd>
-            </div>
-            <div className="flex justify-between items-center p-3 bg-muted/40 hover:bg-muted/65 border border-border/40 rounded-xl transition-all duration-200">
-              <span className="text-sm font-semibold text-foreground/80">Add Item</span>
-              <kbd className="px-2 py-1 bg-background border border-border/80 rounded-lg text-xs font-mono shadow-sm">
-                {getOS() === "mac" ? "⌥ + A" : "Alt + A"}
-              </kbd>
-            </div>
-            <div className="flex justify-between items-center p-3 bg-muted/40 hover:bg-muted/65 border border-border/40 rounded-xl transition-all duration-200">
-              <span className="text-sm font-semibold text-foreground/80">Save Bill</span>
-              <kbd className="px-2 py-1 bg-background border border-border/80 rounded-lg text-xs font-mono shadow-sm">
-                {getOS() === "mac" ? "⌘ + Enter / ⌥ + S" : "Ctrl + Enter / Alt + S"}
-              </kbd>
-            </div>
-            <div className="flex justify-between items-center p-3 bg-muted/40 hover:bg-muted/65 border border-border/40 rounded-xl transition-all duration-200">
-              <span className="text-sm font-semibold text-foreground/80">Update Bill</span>
-              <kbd className="px-2 py-1 bg-background border border-border/80 rounded-lg text-xs font-mono shadow-sm">
-                {getOS() === "mac" ? "⌘ + Enter / ⌥ + U" : "Ctrl + Enter / Alt + U"}
-              </kbd>
-            </div>
-            <div className="flex justify-between items-center p-3 bg-muted/40 hover:bg-muted/65 border border-border/40 rounded-xl transition-all duration-200">
-              <span className="text-sm font-semibold text-foreground/80">Save Item / Next Field</span>
-              <kbd className="px-2 py-1 bg-background border border-border/80 rounded-lg text-xs font-mono shadow-sm">
-                Enter / Tab
-              </kbd>
-            </div>
-            <div className="flex justify-between items-center p-3 bg-muted/40 hover:bg-muted/65 border border-border/40 rounded-xl transition-all duration-200">
-              <span className="text-sm font-semibold text-foreground/80">Fill Default (on empty field)</span>
-              <kbd className="px-2 py-1 bg-background border border-border/80 rounded-lg text-xs font-mono shadow-sm">
-                Tab
-              </kbd>
-            </div>
-            <div className="flex justify-between items-center p-3 bg-muted/40 hover:bg-muted/65 border border-border/40 rounded-xl transition-all duration-200">
-              <span className="text-sm font-semibold text-foreground/80">Cancel / Close</span>
-              <kbd className="px-2 py-1 bg-background border border-border/80 rounded-lg text-xs font-mono shadow-sm">
-                Escape
-              </kbd>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
+
 
       {/* Customer Profile Modal */}
       <Dialog
@@ -4070,7 +4149,7 @@ export default function BillingPage() {
             {/* Tip */}
             <p className="text-xs text-muted-foreground bg-muted/45 p-3 rounded-xl border border-border/50 backdrop-blur-sm flex items-center gap-1.5">
               <Sparkles className="w-4 h-4 text-primary shrink-0" />
-              <span><strong>Tip:</strong> Search by product name or salt composition. All fields are editable. Use Alt+A to quickly add a new row.</span>
+              <span><strong>Tip:</strong> Search by product name or salt composition. All fields are editable. Enter moves to the next field; {formatCombo("alt+a")} adds a row, {formatCombo("mod+enter")} saves.</span>
             </p>
 
             {/* Totals & Actions */}
@@ -4084,7 +4163,7 @@ export default function BillingPage() {
                     data-testid="add-item-btn"
                     className="h-9 px-4 border-border/80 hover:bg-muted/60 rounded-xl transition-all duration-200"
                   >
-                    <Plus className="h-4 w-4 mr-1.5 text-primary" /> Add Item<span className="max-md:hidden">&nbsp;(Alt+A)</span>
+                    <Plus className="h-4 w-4 mr-1.5 text-primary" /> Add Item<span className="max-md:hidden">&nbsp;({formatCombo("alt+a")})</span>
                   </Button>
                   <Button
                     variant="outline"
@@ -4094,6 +4173,16 @@ export default function BillingPage() {
                     className="h-9 px-4 border-amber-500/40 text-amber-600 dark:text-amber-400 bg-amber-500/10 hover:bg-amber-500/20 rounded-xl transition-all duration-200 shadow-2xs font-extrabold cursor-pointer"
                   >
                     <Camera className="h-4 w-4 mr-1.5" /> Scan for Bill
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setLabelScanOpen(true)}
+                    data-testid="scan-item-qr-btn"
+                    title="Scan the QR label stuck on a pack (printed from Purchases)"
+                    className="h-9 px-4 border-border/80 hover:bg-muted/60 rounded-xl transition-all duration-200 font-bold"
+                  >
+                    <QrCode className="h-4 w-4 mr-1.5" /> Scan item QR
                   </Button>
                   <div className="flex items-center gap-2 bg-muted/20 px-3 h-9 rounded-xl border border-border/50">
                     <Checkbox
@@ -4254,10 +4343,74 @@ export default function BillingPage() {
 
                   {refillReminder.enabled && (
                     <div className="mt-3 pt-3 border-t border-indigo-500/20 space-y-3 animate-in fade-in slide-in-from-top-2 duration-200">
+                      {/* Dosage calculator: units sold ÷ dose per day = days it lasts */}
+                      {reminderItems.length > 0 && (
+                        <div className="space-y-1.5">
+                          <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Dose per day (½ = 0.5) · or days it lasts</p>
+                          {refillCalc.rows.map((r) => {
+                            const badDose = !r.days && !r.dose_per_day;
+                            return (
+                              <div key={r.product_name} className="flex flex-wrap items-center gap-2 rounded-xl border border-indigo-500/15 bg-background/60 px-2.5 py-1.5">
+                                <span className="min-w-0 flex-1 truncate text-xs font-bold text-foreground" title={r.product_name}>
+                                  {r.product_name}
+                                  <span className="ml-1.5 font-mono text-[10px] font-semibold text-muted-foreground">{r.units} units</span>
+                                </span>
+                                <div className="flex items-center gap-1">
+                                  {["0.5", "1", "2", "3"].map((v) => (
+                                    <button
+                                      key={v}
+                                      type="button"
+                                      onClick={() => setDose(r.product_name, { dose: v, days: "" })}
+                                      className={`h-6 min-w-[1.75rem] rounded-md border px-1.5 text-[10px] font-bold ${!r.days_input && String(r.dose_input) === v ? "border-indigo-500 bg-indigo-500 text-white" : "border-border/70 text-muted-foreground hover:border-indigo-500/50"}`}
+                                    >
+                                      {v === "0.5" ? "½" : v}
+                                    </button>
+                                  ))}
+                                  <Input
+                                    aria-label={`Dose per day for ${r.product_name}`}
+                                    inputMode="decimal"
+                                    value={r.days_input ? "" : r.dose_input}
+                                    placeholder="dose"
+                                    onChange={(e) => setDose(r.product_name, { dose: e.target.value, days: "" })}
+                                    className={`h-6 w-14 rounded-md px-1.5 text-center text-[11px] font-bold ${badDose ? "border-rose-500" : ""}`}
+                                  />
+                                  <span className="text-[10px] text-muted-foreground">/day or</span>
+                                  <Input
+                                    aria-label={`Days ${r.product_name} lasts`}
+                                    inputMode="numeric"
+                                    value={refillReminder.doses[r.product_name]?.days || ""}
+                                    placeholder="days"
+                                    onChange={(e) => setDose(r.product_name, { days: e.target.value.replace(/\D/g, "").slice(0, 3) })}
+                                    className="h-6 w-14 rounded-md px-1.5 text-center text-[11px] font-bold"
+                                  />
+                                </div>
+                                <span className={`w-full text-[10px] font-semibold sm:w-auto ${r.days ? "text-indigo-600 dark:text-indigo-400" : "text-rose-500"}`}>
+                                  {r.days ? `Lasts ${r.days} day${r.days === 1 ? "" : "s"} · runs out ${fmtDay(r.runs_out_on)}` : "Enter a dose (e.g. 1, ½, 1½) or days"}
+                                </span>
+                              </div>
+                            );
+                          })}
+                          {refillRec && (
+                            <div className={`flex flex-wrap items-center justify-between gap-2 rounded-xl px-2.5 py-1.5 text-[11px] ${refillReminder.mode === "auto" ? "bg-indigo-500/10 text-indigo-700 dark:text-indigo-300" : "bg-amber-500/10 text-amber-700 dark:text-amber-300"}`}>
+                              <span>
+                                <strong>Recommended:</strong> remind on {fmtDay(refillRec.reminder_date)}
+                                {refillRec.remind_before_days > 0 ? `, ${refillRec.remind_before_days} day${refillRec.remind_before_days === 1 ? "" : "s"} before` : ", the day"} {reminderItems.length > 1 ? `${refillRec.driver} (first to run out)` : refillRec.driver} runs out on {fmtDay(refillRec.refill_target_date)}.
+                                {refillReminder.mode === "custom" && " You've set custom dates."}
+                              </span>
+                              {refillReminder.mode === "custom" && (
+                                <button type="button" onClick={() => setRefillReminder((prev) => ({ ...prev, mode: "auto" }))} className="rounded-md bg-indigo-600 px-2 py-0.5 text-[10px] font-bold text-white">
+                                  Use recommended
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
                       {/* Quick Presets */}
                       <div className="flex flex-wrap items-center gap-1.5">
                         <span className="text-[11px] font-bold text-muted-foreground mr-1 flex items-center gap-1">
-                          <Clock className="w-3 h-3 text-indigo-500" /> Presets:
+                          <Clock className="w-3 h-3 text-indigo-500" /> Or a fixed period:
                         </span>
                         {[
                           { days: 15, remindBefore: 3, label: "15 Days" },
@@ -4277,6 +4430,7 @@ export default function BillingPage() {
                                 const { targetDate, reminderDate } = calculateReminderDates(billingDate, preset.days, preset.remindBefore);
                                 setRefillReminder((prev) => ({
                                   ...prev,
+                                  mode: "custom",
                                   days_supply: preset.days,
                                   remind_before_days: preset.remindBefore,
                                   refill_target_date: targetDate,
@@ -4310,6 +4464,7 @@ export default function BillingPage() {
                               d.setDate(d.getDate() - parseInt(refillReminder.remind_before_days || 5));
                               setRefillReminder((prev) => ({
                                 ...prev,
+                                mode: "custom",
                                 refill_target_date: newTarget,
                                 reminder_date: !isNaN(d.getTime()) ? d.toISOString().slice(0, 10) : prev.reminder_date,
                               }));
@@ -4328,6 +4483,7 @@ export default function BillingPage() {
                             onChange={(e) =>
                               setRefillReminder((prev) => ({
                                 ...prev,
+                                mode: "custom",
                                 reminder_date: e.target.value,
                               }))
                             }
@@ -5607,6 +5763,7 @@ export default function BillingPage() {
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                 <Input
                   placeholder="Search bills by bill number, customer, doctor, batch, product, notes..."
+                  data-shortcut="search"
                   className="pl-9 h-9 text-xs font-medium rounded-xl border-border/70 bg-card/60 backdrop-blur-md"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
@@ -6091,7 +6248,7 @@ export default function BillingPage() {
                   <TableHead className="text-center text-xs font-bold text-muted-foreground uppercase tracking-wider" data-card="actions">Actions</TableHead>
                 </TableRow>
               </TableHeader>
-              <TableBody className={tableLoading ? "opacity-50 pointer-events-none transition-opacity duration-200" : "transition-opacity duration-200"}>
+              <TableBody data-rows className={tableLoading ? "opacity-50 pointer-events-none transition-opacity duration-200" : "transition-opacity duration-200"}>
                 {bills.length === 0 ? (
                   <TableRow>
                     <TableCell
@@ -6113,6 +6270,9 @@ export default function BillingPage() {
                         <TableRow
                           id={`record-${bill.id}`}
                           data-testid={`bill-row-${bill.id}`}
+                          data-row
+                          tabIndex={0}
+                          aria-expanded={!!isExpanded}
                           className={`cursor-pointer hover:bg-muted/30 transition-all border-b border-border/40 ${isExpanded ? "bg-muted/10" : ""}`}
                           onClick={() => toggleBillExpand(bill.id)}
                         >
@@ -6200,7 +6360,8 @@ export default function BillingPage() {
                                 variant="ghost"
                                 size="icon"
                                 onClick={() => handleStartEditBill(bill)}
-                                title="Edit Bill"
+                                title="Edit Bill (E)"
+                                data-row-key="e"
                                 className="h-8 w-8 rounded-xl hover:bg-amber-500/10 text-muted-foreground hover:text-amber-600 transition-all duration-200"
                                 data-testid={`edit-bill-${bill.id}`}
                               >
@@ -6210,18 +6371,51 @@ export default function BillingPage() {
                                 variant="ghost"
                                 size="icon"
                                 onClick={() => handleGeneratePdf(bill.id)}
-                                title="Generate PDF"
+                                title="Generate PDF (P)"
+                                data-row-key="p"
                                 className="h-8 w-8 rounded-xl hover:bg-primary/10 text-muted-foreground hover:text-primary transition-all duration-200"
                                 data-testid={`pdf-btn-${bill.id}`}
                               >
                                 <FileText className="w-4 h-4" />
                               </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => whatsApp.share(bill)}
+                                disabled={whatsApp.busyId === bill.id}
+                                title={`${bill.customer_mobile ? `Send on WhatsApp to ${bill.customer_mobile}` : "Send on WhatsApp"} (W)`}
+                                data-row-key="w"
+                                aria-label="Send bill on WhatsApp"
+                                className="h-8 w-8 rounded-xl hover:bg-[#25D366]/10 text-muted-foreground hover:text-[#1da851] transition-all duration-200"
+                                data-testid={`whatsapp-bill-${bill.id}`}
+                              >
+                                {whatsApp.busyId === bill.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <WhatsAppIcon className="w-4 h-4" />}
+                              </Button>
+                              {!bill.is_paid && (() => {
+                                const paid = bill.total_paid !== undefined ? Number(bill.total_paid) || 0 : Number(bill.advance_amount) || 0;
+                                const due = Math.max(0, Math.round((billTotal - paid) * 100) / 100);
+                                return due >= 1 ? (
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={() => setUpiQr({ amount: due, note: bill.bill_no, auto: true })}
+                                    title={`UPI QR for the ₹${due.toFixed(2)} due (Q)`}
+                                    data-row-key="q"
+                                    aria-label="UPI QR for the amount due"
+                                    className="h-8 w-8 rounded-xl hover:bg-orange-500/10 text-muted-foreground hover:text-orange-600 transition-all duration-200"
+                                    data-testid={`upi-qr-bill-${bill.id}`}
+                                  >
+                                    <QrCode className="w-4 h-4" />
+                                  </Button>
+                                ) : null;
+                              })()}
                               {!bill.is_paid && (
                                 <Button
                                   variant="ghost"
                                   size="icon"
                                   onClick={() => handleMarkPaid(bill.id)}
-                                  title="Mark as Paid"
+                                  title="Mark as Paid (M)"
+                                  data-row-key="m"
                                   className="h-8 w-8 rounded-xl hover:bg-emerald-500/10 text-muted-foreground hover:text-emerald-600 transition-all duration-200"
                                   data-testid={`mark-paid-btn-${bill.id}`}
                                 >
@@ -6234,7 +6428,8 @@ export default function BillingPage() {
                                 onClick={() =>
                                   setDeleteDialog({ open: true, bill })
                                 }
-                                title="Delete Bill"
+                                title="Delete Bill (Del)"
+                                data-row-key="delete"
                                 className="h-8 w-8 rounded-xl hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-all duration-200"
                                 data-testid={`delete-bill-btn-${bill.id}`}
                               >
@@ -6281,6 +6476,9 @@ export default function BillingPage() {
                                         </TableHead>
                                         <TableHead className="text-xs font-bold text-right text-muted-foreground uppercase tracking-wider">
                                           Profit
+                                        </TableHead>
+                                        <TableHead data-card-label="Short book" className="text-xs font-bold text-center text-muted-foreground uppercase tracking-wider">
+                                          Short book
                                         </TableHead>
                                         {bill.is_advance_paid && (
                                           <TableHead className="text-xs font-bold text-center text-muted-foreground uppercase tracking-wider">
@@ -6346,6 +6544,37 @@ export default function BillingPage() {
                                               }`}
                                             >
                                               ₹{item.profit.toFixed(2)}
+                                            </TableCell>
+                                            <TableCell className="text-center">
+                                              {item.short_book ? (
+                                                <button
+                                                  type="button"
+                                                  onClick={() => navigate("/short-book")}
+                                                  className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-bold text-emerald-600 dark:text-emerald-400"
+                                                  title={`Added ${new Date(item.short_book.added_at).toLocaleDateString("en-IN")} · open Short Book`}
+                                                >
+                                                  <Check className="h-3 w-3" /> {item.short_book.quantity} {item.short_book.unit}
+                                                </button>
+                                              ) : (
+                                                <Button
+                                                  variant="outline"
+                                                  size="sm"
+                                                  onClick={() =>
+                                                    setShortBookFor({
+                                                      bill,
+                                                      line: idx,
+                                                      item,
+                                                      quantity: item.units_per_pack > 1 ? String(Math.max(1, Math.ceil(qty / item.units_per_pack))) : String(qty),
+                                                      unit: item.units_per_pack > 1 ? "packs" : "units",
+                                                      notes: "",
+                                                    })
+                                                  }
+                                                  className="h-7 rounded-lg px-2 text-[11px] font-bold"
+                                                  title="Note this medicine to reorder"
+                                                >
+                                                  <Plus className="mr-1 h-3 w-3" /> Short book
+                                                </Button>
+                                              )}
                                             </TableCell>
                                             {bill.is_advance_paid && (
                                               <TableCell className="text-center">
@@ -6710,7 +6939,14 @@ export default function BillingPage() {
           }
         }}
       >
-        <AlertDialogContent className="glass bg-card/95 backdrop-blur-xl border border-border/80 shadow-2xl rounded-2xl p-6">
+        <AlertDialogContent
+          className="glass bg-card/95 backdrop-blur-xl border border-border/80 shadow-2xl rounded-2xl p-6"
+          onCloseAutoFocus={(e) => {
+            // Next customer: Enter on New Bill
+            e.preventDefault();
+            setTimeout(() => document.querySelector('[data-testid="new-bill-btn"]')?.focus(), 50);
+          }}
+        >
           <AlertDialogHeader className="space-y-3">
             <AlertDialogTitle className="text-xl font-bold flex items-center gap-2 text-primary">
               <FileText className="w-5 h-5 text-primary" />
@@ -6720,6 +6956,7 @@ export default function BillingPage() {
               Would you like to generate and view a PDF receipt for this newly recorded bill?
             </AlertDialogDescription>
           </AlertDialogHeader>
+          {pdfQrChoice(bills.find((b) => b.id === pdfConfirmDialog.billId) || null)}
           <AlertDialogFooter className="gap-2 mt-4">
             <AlertDialogCancel className="rounded-xl border-border/80 hover:bg-muted/80 h-10 px-4 transition-all">
               Skip
@@ -6728,16 +6965,7 @@ export default function BillingPage() {
               className="rounded-xl bg-gradient-to-r from-primary to-primary/90 hover:from-primary/95 hover:to-primary text-primary-foreground shadow-md shadow-primary/20 h-10 px-4 font-semibold transition-all hover:scale-[1.02] active:scale-[0.98]"
               onClick={async () => {
                 if (!pdfConfirmDialog.billId) return;
-                try {
-                  const pdfRes = await axios.post(
-                    `${API}/bills/${pdfConfirmDialog.billId}/pdf`
-                  );
-                  if (pdfRes.data.pdf_url) {
-                    window.open(pdfRes.data.pdf_url, "_blank");
-                  }
-                } catch (e) {
-                  toast.error("Failed to generate PDF");
-                }
+                await generateBillPdf(pdfConfirmDialog.billId, pdfWithQr);
                 setPdfConfirmDialog({ open: false, billId: null });
                 handleCancelNewBill();
                 fetchData();
@@ -6969,6 +7197,8 @@ export default function BillingPage() {
             {showNewBill ? (
               <Button
                 onClick={handleSubmitBill}
+                data-shortcut="save"
+                data-kbd={formatCombo("mod+enter")}
                 disabled={submitting || validItems.length === 0}
                 className="btn-primary shadow-lg shadow-primary/20 min-w-[140px] max-md:flex-[2] max-md:min-w-0"
               >
@@ -6982,7 +7212,7 @@ export default function BillingPage() {
                     <CreditCard className="w-4 h-4" />
                     <span>Create Bill</span>
                     <kbd className="hidden md:inline-block ml-1 opacity-70 text-[9px] font-mono border border-white/20 px-1 rounded">
-                      {getOS() === "mac" ? "⌘Enter" : "Ctrl+Enter"}
+                      {formatCombo("mod+enter")}
                     </kbd>
                   </div>
                 )}
@@ -6990,6 +7220,8 @@ export default function BillingPage() {
             ) : (
               <Button
                 onClick={handleSaveEditBill}
+                data-shortcut="save"
+                data-kbd={formatCombo("mod+enter")}
                 disabled={submitting || validEditItems.length === 0}
                 className="btn-primary bg-yellow-600 hover:bg-yellow-700 shadow-lg shadow-yellow-600/20 min-w-[140px] max-md:flex-[2] max-md:min-w-0"
               >
@@ -7018,6 +7250,117 @@ export default function BillingPage() {
         onOpenChange={setScannerModalOpen}
         onTransferToBill={handleTransferScannedItemsToBill}
       />
+      <AlertDialog open={confirmDiscardBill} onOpenChange={setConfirmDiscardBill}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Discard this bill?</AlertDialogTitle>
+            <AlertDialogDescription>The items you added will be cleared. Press Esc or Keep editing to go back.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep editing</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-rose-600 text-white hover:bg-rose-700"
+              onClick={() => {
+                setConfirmDiscardBill(false);
+                handleCancelNewBill();
+              }}
+            >
+              Discard bill
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <Dialog open={!!shortBookFor} onOpenChange={(o) => !o && setShortBookFor(null)}>
+        <DialogContent className="max-w-md rounded-3xl p-5 sm:p-6">
+          <DialogHeader>
+            <DialogTitle className="text-base font-black">Add to short book</DialogTitle>
+            <DialogDescription className="text-xs">
+              {shortBookFor?.item.product_name} · sold {shortBookFor?.item.quantity} units on {shortBookFor?.bill.bill_no}
+            </DialogDescription>
+          </DialogHeader>
+          {shortBookFor && (
+            <form onSubmit={saveShortBook} className="space-y-3">
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <Label htmlFor="sb-qty" className="text-xs font-bold">Reorder quantity</Label>
+                  <Input
+                    id="sb-qty"
+                    type="number"
+                    min="1"
+                    inputMode="numeric"
+                    autoFocus
+                    value={shortBookFor.quantity}
+                    onChange={(e) => setShortBookFor((s) => ({ ...s, quantity: e.target.value }))}
+                    className="mt-1 h-10 rounded-xl font-mono text-base font-bold"
+                  />
+                </div>
+                <div>
+                  <Label className="text-xs font-bold">In</Label>
+                  <div className="mt-1 grid h-10 grid-cols-2 gap-1 rounded-xl border border-border p-1" role="radiogroup">
+                    {["packs", "units"].map((u) => (
+                      <button key={u} type="button" role="radio" aria-checked={shortBookFor.unit === u} onClick={() => setShortBookFor((s) => ({ ...s, unit: u }))} className={`rounded-lg text-xs font-bold ${shortBookFor.unit === u ? "bg-orange-600 text-white" : "text-muted-foreground"}`}>
+                        {u === "packs" ? `Packs${shortBookFor.item.units_per_pack > 1 ? ` of ${shortBookFor.item.units_per_pack}` : ""}` : "Units"}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <div>
+                <Label htmlFor="sb-note" className="text-xs font-bold">Note</Label>
+                <Input id="sb-note" value={shortBookFor.notes} onChange={(e) => setShortBookFor((s) => ({ ...s, notes: e.target.value }))} placeholder="Optional, e.g. regular customer" className="mt-1 h-10 rounded-xl" maxLength={300} />
+              </div>
+              <DialogFooter className="gap-2">
+                <Button type="button" variant="outline" onClick={() => setShortBookFor(null)} className="rounded-xl text-xs font-bold">
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={shortBookSaving} className="rounded-xl bg-orange-600 text-xs font-bold text-white hover:bg-orange-700" data-shortcut="save">
+                  {shortBookSaving ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Plus className="mr-1.5 h-4 w-4" />}
+                  Add to short book
+                </Button>
+              </DialogFooter>
+            </form>
+          )}
+        </DialogContent>
+      </Dialog>
+      <Dialog open={!!pdfFor} onOpenChange={(o) => !o && setPdfFor(null)}>
+        <DialogContent className="max-w-md rounded-3xl p-5 sm:p-6">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base font-black">
+              <FileText className="h-5 w-5 text-orange-500" /> Bill PDF
+            </DialogTitle>
+            <DialogDescription className="text-xs">{pdfFor?.bill_no ? `${pdfFor.bill_no} · ${pdfFor.customer_name || "Walk-in"}` : ""}</DialogDescription>
+          </DialogHeader>
+          {pdfFor && pdfQrChoice(pdfFor.bill_no ? pdfFor : null)}
+          <DialogFooter className="gap-2">
+            <Button type="button" variant="outline" onClick={() => setPdfFor(null)} className="rounded-xl text-xs font-bold">
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              autoFocus
+              data-shortcut="save"
+              onClick={() => {
+                const id = pdfFor.id;
+                setPdfFor(null);
+                generateBillPdf(id, pdfWithQr);
+              }}
+              className="rounded-xl bg-orange-600 text-xs font-bold text-white hover:bg-orange-700"
+            >
+              <FileText className="mr-1.5 h-4 w-4" /> Generate PDF
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <ItemQrScanDialog
+        open={labelScanOpen}
+        onClose={() => setLabelScanOpen(false)}
+        onItem={(item) => {
+          setLabelScanOpen(false);
+          addFromLabel(item);
+        }}
+      />
+      <UpiQrDialog open={!!upiQr} onOpenChange={(o) => !o && setUpiQr(null)} initialAmount={upiQr?.amount ?? ""} note={upiQr?.note || ""} autoGenerate={!!upiQr?.auto} />
+      {whatsApp.dialog}
     </div>
   );
 }

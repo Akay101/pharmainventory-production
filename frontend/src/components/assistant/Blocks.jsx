@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { AlertTriangle, ArrowUpRight, BarChart3, Check, CheckCircle2, ChevronDown, ClipboardList, Globe, Info, Loader2, Package, Plus, Receipt, Search, ShoppingCart, Table2, Truck, X } from "lucide-react";
 import { assistantApi, inr } from "./assistantClient";
+import { UpiQrCard } from "../UpiQr";
 
 const BADGE = {
   paid: "bg-emerald-500/10 text-emerald-500 border-emerald-500/25",
@@ -569,6 +570,18 @@ export function PickerBlock({ block, onAction, busy, settled, locked }) {
           {locked && <p className="px-1 text-[11px] text-muted-foreground">You can pick once the reply finishes.</p>}
         </div>
       )}
+    </Shell>
+  );
+}
+
+// UPI payment QR made by the assistant
+export function QrBlock({ block }) {
+  return (
+    <Shell className="max-w-xs">
+      <div className="border-b border-border px-3.5 py-2.5 text-sm font-semibold">{block.title || "Scan to pay"}</div>
+      <div className="p-4">
+        <UpiQrCard q={block} compact />
+      </div>
     </Shell>
   );
 }

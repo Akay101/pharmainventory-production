@@ -85,6 +85,18 @@ mongoose
     require("./services/assistant/store").ensureIndexes(mongoose.connection.db).catch((err) =>
       console.warn("[Indexes] assistant indexes failed:", err.message)
     );
+    require("./routes/shortbook").ensureIndexes(mongoose.connection.db).catch((err) =>
+      console.warn("[Indexes] short book indexes failed:", err.message)
+    );
+    require("./routes/support").ensureIndexes(mongoose.connection.db).catch((err) =>
+      console.warn("[Indexes] support indexes failed:", err.message)
+    );
+    require("./services/billShare").ensureIndexes(mongoose.connection.db).catch((err) =>
+      console.warn("[Indexes] bill share indexes failed:", err.message)
+    );
+    require("./services/assistant/stt").ensureIndexes(mongoose.connection.db).catch((err) =>
+      console.warn("[Indexes] voice typing indexes failed:", err.message)
+    );
     ensureCoreIndexes(mongoose.connection.db).catch((err) =>
       console.warn("[Indexes] ensureCoreIndexes failed:", err.message)
     );
@@ -125,6 +137,15 @@ app.use(
   otpLimiter
 );
 app.use("/api/auth/refresh", refreshLimiter);
+// Shared bill links are public: keep guessing and scraping slow
+const publicLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 30 * rlScale,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  message: { detail: "Too many requests. Please wait a minute and try again." },
+});
+app.use("/api/public", publicLimiter);
 
 // API Routes - all prefixed with /api
 app.use("/api/auth", authRoutes);
@@ -158,6 +179,9 @@ app.use("/api/billing", require("./routes/billing"));
 app.use("/api/credits", require("./routes/credits"));
 app.use("/api/webhook", require("./routes/webhook"));
 app.use("/api/assistant", require("./routes/assistant"));
+app.use("/api/public", require("./routes/public"));
+app.use("/api/support", require("./routes/support"));
+app.use("/api/shortbook", require("./routes/shortbook"));
 
 // Bull Board Setup (Protected with Basic Auth)
 if (!process.env.ADMIN_PASSWORD) {

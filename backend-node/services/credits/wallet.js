@@ -21,13 +21,70 @@ const toMilli = (credits) => Math.round(Number(credits || 0) * 1000);
 const toCredits = (milli) => Math.round((milli || 0) / 100) / 10; // one decimal
 const isActiveSub = (sub, now = new Date()) => !!sub?.plan && !!sub.ends_at && new Date(sub.ends_at) > now && sub.status !== "EXPIRED";
 
-// Today's allowance (credits) for a pharmacy: its own override, else its plan's
+const DAY_MS = 864e5;
+const addDays = (ymd, n) => new Date(Date.parse(ymd) + n * DAY_MS).toISOString().slice(0, 10);
+function addYears(ymd, n) {
+  const [y, m, d] = ymd.split("-").map(Number);
+  return new Date(Date.UTC(y + n, m - 1, d)).toISOString().slice(0, 10); // 29 Feb -> 1 Mar
+}
+const daysBetween = (a, b) => Math.round((Date.parse(b) - Date.parse(a)) / DAY_MS);
+
+// The subscription's current plan year (India dates, end exclusive): from the
+// last anniversary of its start, cut short where the subscription ends.
+// `key` names the year in wallet.included.
+function planYear(sub, now = new Date()) {
+  const today = todayIst(now);
+  const anchor = sub?.starts_at ? todayIst(new Date(sub.starts_at)) : `${today.slice(0, 4)}-01-01`;
+  let start = anchor > today ? today : anchor;
+  if (anchor <= today) {
+    let k = Number(today.slice(0, 4)) - Number(anchor.slice(0, 4));
+    while (k > 0 && addYears(anchor, k) > today) k--;
+    start = addYears(anchor, k);
+  }
+  let end = addYears(start, 1);
+  const subEnd = sub?.ends_at ? addDays(todayIst(new Date(sub.ends_at)), 1) : null;
+  if (subEnd && subEnd > today && subEnd < end) end = subEnd;
+  return { key: start, start, end, days: Math.max(1, daysBetween(start, end)), daysLeft: Math.max(1, daysBetween(today, end)) };
+}
+
+// Our AI cost allowance (₹) for a paid plan's included usage this plan year, and
+// what's been used of it. null for trials, inactive subscriptions and plans
+// without a budget.
+function planBudget(config, sub, w, now = new Date()) {
+  if (!isActiveSub(sub, now) || sub.kind === "TRIAL") return null;
+  const yearly = Number(config.plan_budget_inr?.[sub.plan]);
+  if (!(yearly > 0)) return null;
+  const py = planYear(sub, now);
+  const budget = (yearly * Math.min(365, py.days)) / 365;
+  const spent = w?.included?.period === py.key ? (w.included.cost_paise || 0) / 100 : 0;
+  return { ...py, yearly, budget, spent, left: Math.max(0, budget - spent) };
+}
+
+// Today's allowance (credits) for a pharmacy: its own override, the trial's
+// fixed amount, or a fair share of what's left of its plan's yearly budget
 function allowanceCredits(config, pharmacy, wallet) {
   const sub = pharmacy?.subscription;
   if (!isActiveSub(sub)) return 0;
   if (wallet?.daily_override_credits !== null && wallet?.daily_override_credits !== undefined) return Number(wallet.daily_override_credits) || 0;
   if (sub.kind === "TRIAL") return Number(config.trial_daily_credits) || 0;
-  return Number(config.daily_credits?.[sub.plan]) || 0;
+  const b = planBudget(config, sub, wallet);
+  if (!b) return Number(config.daily_credits?.[sub.plan]) || 0;
+  const perCredit = config.credit_value_paise / 100 / (1 + config.margin_percent / 100); // our cost of one credit
+  const even = b.budget / b.days / perCredit;
+  const fair = b.left / b.daysLeft / perCredit;
+  return Math.floor(Math.min(fair, even * (Number(config.budget_daily_cap_factor) || 2)) * 10) / 10;
+}
+
+// Pipeline expression: wallet.included with `paise` more AI cost in plan year `key`
+const includedPlus = (key, paise) => ({
+  period: key,
+  cost_paise: { $add: [{ $cond: [{ $eq: ["$included.period", key] }, { $ifNull: ["$included.cost_paise", 0] }, 0] }, paise] },
+});
+
+// Record AI cost paid for by the plan (light mode turns)
+async function addIncludedCost(db, pharmacy, paise) {
+  if (!(paise > 0)) return;
+  await db.collection(WALLETS).updateOne({ pharmacy_id: pharmacy.id }, [{ $set: { included: includedPlus(planYear(pharmacy.subscription).key, paise) } }]);
 }
 
 const isDuplicate = (err) => err && (err.code === 11000 || /E11000/.test(err.message || ""));
@@ -62,10 +119,15 @@ async function getWallet(db, config, pharmacy) {
     const w = await ensureWallet(db, pharmacy.id);
     if (w.daily?.date === today) return w;
     const allowance = toMilli(allowanceCredits(config, pharmacy, w));
+    const year = planYear(pharmacy.subscription).key;
     const res = await db.collection(WALLETS).updateOne(
       { pharmacy_id: pharmacy.id, version: w.version },
       {
-        $set: { daily: { date: today, allowance_milli: allowance, remaining_milli: allowance }, updated_at: new Date() },
+        $set: {
+          daily: { date: today, allowance_milli: allowance, remaining_milli: allowance },
+          ...(w.included?.period !== year ? { included: { period: year, cost_paise: 0 } } : {}),
+          updated_at: new Date(),
+        },
         $inc: { version: 1, "totals.daily_granted_milli": allowance },
       }
     );
@@ -109,7 +171,9 @@ function view(w) {
 
 // Spend credits (daily first, then balance). The balance may dip below zero by
 // at most this one charge: the turn already happened; the next one is gated.
-async function charge(db, config, pharmacy, { milli, ref, userId = null, task = null, engine = null, meta = {} }) {
+// costPaise: what the request cost us; the share paid from daily credits counts
+// against the plan's yearly budget.
+async function charge(db, config, pharmacy, { milli, ref, userId = null, task = null, engine = null, costPaise = 0, meta = {} }) {
   if (!(milli > 0)) return { charged: 0, duplicate: false };
   ref = ref || `usage:${crypto.randomUUID()}`;
   const entry = {
@@ -136,6 +200,7 @@ async function charge(db, config, pharmacy, { milli, ref, userId = null, task = 
   for (let i = 0; i < 3; i++) {
     const today = todayIst();
     await getWallet(db, config, pharmacy); // today's allowance in place
+    const year = planYear(pharmacy.subscription).key;
     const r = await db.collection(WALLETS).findOneAndUpdate(
       { pharmacy_id: pharmacy.id, "daily.date": today },
       [
@@ -150,6 +215,7 @@ async function charge(db, config, pharmacy, { milli, ref, userId = null, task = 
             updated_at: "$$NOW",
           },
         },
+        { $set: { included: { $cond: [{ $gt: ["$last_take_milli", 0] }, includedPlus(year, { $multiply: [costPaise || 0, { $divide: ["$last_take_milli", milli] }] }), "$included"] } } },
         { $unset: "_take" },
       ],
       { returnDocument: "after" }
@@ -287,4 +353,4 @@ async function history(db, pharmacyId, { limit = 50, before = null } = {}) {
   }));
 }
 
-module.exports = { WALLETS, LEDGER, todayIst, toMilli, toCredits, allowanceCredits, getWallet, availableMilli, view, charge, credit, remove, setDailyOverride, takeFreeMessage, history, ensureWallet };
+module.exports = { WALLETS, LEDGER, isActiveSub, todayIst, toMilli, toCredits, planYear, planBudget, allowanceCredits, addIncludedCost, getWallet, availableMilli, view, charge, credit, remove, setDailyOverride, takeFreeMessage, history, ensureWallet };

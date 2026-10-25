@@ -14,6 +14,8 @@ import {
   CalendarClock,
   IndianRupee,
   Coins,
+  LifeBuoy,
+  Gift,
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 
@@ -22,6 +24,8 @@ export default function Sidebar({
   onTabChange,
   leadCount = 0,
   promoCount = 0,
+  supportCount = 0,
+  offerCount = 0,
   activeEnv,
   envStatus,
   isOpen,
@@ -49,11 +53,27 @@ export default function Sidebar({
       section: "MONITORING",
     },
     {
+      id: "support",
+      label: "Support Queries",
+      icon: LifeBuoy,
+      badge: supportCount > 0 ? supportCount : null,
+      badgeColor: "bg-orange-500 text-white font-bold",
+      section: "MONITORING",
+    },
+    {
       id: "leads",
       label: "Leads CRM",
       icon: Flame,
       badge: leadCount > 0 ? leadCount : null,
       badgeColor: "bg-rose-500 text-white font-bold",
+      section: "SALES & CRM",
+    },
+    {
+      id: "offer5050",
+      label: "50-50 Launch Offer",
+      icon: Gift,
+      badge: offerCount > 0 ? `${offerCount} to send` : null,
+      badgeColor: "bg-orange-100 text-orange-700",
       section: "SALES & CRM",
     },
     {

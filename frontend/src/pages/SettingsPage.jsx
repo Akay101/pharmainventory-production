@@ -22,9 +22,10 @@ import {
   DialogTitle,
   DialogDescription,
 } from "../components/ui/dialog";
-import { Settings, Building2, User, Camera, Loader2, Save, Upload, Database, Download, FileJson, Edit2, KeyRound, Mail, Layout, Sliders, Search } from "lucide-react";
+import { Settings, Building2, User, Camera, Loader2, Save, Upload, Database, Download, FileJson, Edit2, KeyRound, Mail, Layout, Sliders, Search, QrCode } from "lucide-react";
 import { toast } from "sonner";
 import { Switch } from "../components/ui/switch";
+import UpiQrDialog, { UPI_ID_RE } from "../components/UpiQr";
 
 export default function SettingsPage() {
   const { user, pharmacy, setUser, setPharmacy, isAdmin, settings, settingsDefinitions, updateSetting, fetchSettings } = useAuth();
@@ -101,6 +102,7 @@ export default function SettingsPage() {
   const avatarInputRef = useRef(null);
   const migrationFileRef = useRef(null);
 
+  const [qrOpen, setQrOpen] = useState(false);
   const [pharmacyData, setPharmacyData] = useState({
     name: pharmacy?.name || "",
     location: pharmacy?.location || "",
@@ -223,7 +225,15 @@ export default function SettingsPage() {
     }
   };
 
+  const upiDraft = String(pharmacyData.upi_id || "").trim();
+  const upiError = upiDraft && !UPI_ID_RE.test(upiDraft) ? "Should look like name@bank, e.g. medicalstore@okhdfcbank" : null;
+  const upiSaved = String(pharmacy?.upi_id || "").trim();
+
   const handleSavePharmacy = async () => {
+    if (upiError) {
+      toast.error(`UPI ID: ${upiError}`);
+      return;
+    }
     setSaving(true);
     try {
       const formData = new FormData();
@@ -657,14 +667,39 @@ export default function SettingsPage() {
                     </div>
                   </div>
                   <div className="space-y-2">
-                    <Label>UPI ID</Label>
-                    <Input
-                      value={pharmacyData.upi_id}
-                      onChange={(e) => setPharmacyData({ ...pharmacyData, upi_id: e.target.value })}
-                      disabled={!isAdmin}
-                      placeholder="e.g. q201486073@ybl"
-                      data-testid="pharmacy-upi-input"
-                    />
+                    <Label htmlFor="pharmacy-upi-id">UPI ID</Label>
+                    <div className="flex gap-2">
+                      <Input
+                        id="pharmacy-upi-id"
+                        value={pharmacyData.upi_id}
+                        onChange={(e) => setPharmacyData({ ...pharmacyData, upi_id: e.target.value.replace(/\s+/g, "") })}
+                        disabled={!isAdmin}
+                        placeholder="e.g. q201486073@ybl"
+                        aria-invalid={!!upiError}
+                        autoCapitalize="none"
+                        autoCorrect="off"
+                        spellCheck={false}
+                        className={upiError ? "border-rose-500" : ""}
+                        data-testid="pharmacy-upi-input"
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => setQrOpen(true)}
+                        disabled={!upiSaved || upiDraft !== upiSaved}
+                        title={!upiSaved ? "Save a UPI ID first" : upiDraft !== upiSaved ? "Save your changes first" : "Make a payment QR for any amount"}
+                        className="shrink-0"
+                        data-testid="generate-upi-qr-btn"
+                      >
+                        <QrCode className="w-4 h-4 mr-1.5" />
+                        Generate QR
+                      </Button>
+                    </div>
+                    {upiError ? (
+                      <p className="text-xs text-rose-500">{upiError}</p>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">Used for payment QRs on bills and in the Billing page.</p>
+                    )}
                   </div>
                 </div>
 
@@ -1348,6 +1383,7 @@ export default function SettingsPage() {
           </div>
         </DialogContent>
       </Dialog>
+      <UpiQrDialog open={qrOpen} onOpenChange={setQrOpen} />
     </div>
   );
 }

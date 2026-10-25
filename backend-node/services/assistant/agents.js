@@ -35,16 +35,18 @@ const AGENTS = {
   billing: {
     id: "billing",
     label: { en: "Billing agent", hinglish: "Billing agent", hi: "बिलिंग एजेंट" },
-    description: "Customer sales bills: make a bill, edit/delete bills, bill PDF, sales reports (today, month, top medicines, best customers, payment modes), dues on bills, receiving payments.",
+    description: "Customer sales bills: make a bill, edit/delete bills, bill PDF, sales reports (today, month, top medicines, best customers, payment modes), dues on bills, receiving payments, UPI payment QR for an amount.",
     knowledge: `BILLING MODULE
 - A bill sells units (tablets) from a specific batch. MRP is per unit and GST-inclusive. Line amount = qty × MRP × (1 − line discount%). A bill-level discount % applies to the total.
 - Quantity words: "2 strip" → unit "packs" quantity 2; "10 goli/tablet" → units 10.
+- draft_bill finds the items, stock and batches itself: call it directly (no search_stock first).
 - The batch is picked automatically (earliest expiry with stock) unless the user names one; other batches are listed in the result if they want to switch (offer them as a dropdown).
 - Items not in stock can still be billed as negative stock but warn the user, and offer to check alternatives via find_alternatives.
 - Payment: Cash/UPI/Card, or Credit (unpaid, goes to customer's dues). Ask for the customer name/mobile only if they want it on the bill; Walk-in is fine.
 - After a draft: offer buttons Save bill / Add item / Change payment.
-- PHOTOS: if the user attached a medicine pack photo, call read_product_photo (adds it to the bill, matched by batch then name). To add to an open bill pass its draft_id.`,
-    tools: [...billing.tools, photo.readPackForBill, tool(inventory.tools, "find_alternatives"), tool(inventory.tools, "search_stock"), ...charts],
+- PHOTOS: if the user attached a medicine pack photo, call read_product_photo (adds it to the bill, matched by batch then name). To add to an open bill pass its draft_id.
+- UPI QR: "₹250 ka QR do" → upi_payment_qr with that amount (and the bill number as note when it's for a bill). If no amount was given, ask for it.`,
+    tools: [...billing.tools, app.upiQrTool, photo.readPackForBill, tool(inventory.tools, "find_alternatives"), tool(inventory.tools, "search_stock"), ...charts],
   },
   inventory: {
     id: "inventory",
@@ -81,13 +83,13 @@ const AGENTS = {
   app: {
     id: "app",
     label: { en: "App assistant", hinglish: "App assistant", hi: "ऐप सहायक" },
-    description: "The application itself: overall business summary/dashboard and cross-module business reports (sales vs purchases, overall growth), settings (thresholds, defaults, theme), navigating to pages, how to use features, greetings, questions about the assistant itself, and anything unrelated to the pharmacy (to decline politely).",
+    description: "The application itself: overall business summary/dashboard and cross-module business reports (sales vs purchases, overall growth), settings (thresholds, defaults, theme), UPI payment QR codes, navigating to pages, how to use features, greetings, questions about the assistant itself, and anything unrelated to the pharmacy (to decline politely).",
     knowledge: `DAVADESK APP
 - Pages: Dashboard, Inventory, Purchases, Billing, Suppliers, Customers, Expiry, Returns, Users (staff), Reports, Settings, AI scanners (scan a purchase invoice or product pack; scan a pack to bill).
 - Plans: subscription is per pharmacy; upgrade from the Upgrade page.
 - Settings include low-stock threshold, expiry warning days, default payment modes and whether payment mode is mandatory, theme.
 - For greetings, introduce yourself briefly and suggest 3-4 useful things you can do as ::choices::.`,
-    tools: [...app.appTools, ...charts],
+    tools: [...app.appTools, app.upiQrTool, ...charts],
   },
   medi: {
     id: "medi",

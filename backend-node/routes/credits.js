@@ -2,7 +2,6 @@
 //   GET  /api/credits            balance, packs, engines, what tasks cost
 //   GET  /api/credits/history    ledger (?before=ISO&limit=)
 //   POST /api/credits/checkout   { pack_id } -> Cashfree session
-//   PUT  /api/credits/engine     { engine: "pro"|"swift" } the user's assistant engine
 // Authenticated, not behind requireSubscription: the balance stays visible.
 const express = require("express");
 const mongoose = require("mongoose");
@@ -31,17 +30,20 @@ router.get("/", auth, async (req, res, next) => {
     const pharmacy = await loadPharmacy(req);
     const w = await credits.wallet.getWallet(db(), cfg, pharmacy);
     const est = await credits.policy.estimates(db());
-    const me = await db().collection("users").findOne({ id: req.user.id }, { projection: { _id: 0, assistant_engine: 1 } });
-    // Engines turned on in admin; `ready` says whether one can run here right now
-    const engines = Object.values(credits.policy.ENGINES)
-      .filter((e) => cfg.engines?.[e.id]?.enabled !== false)
-      .map((e) => ({ ...e, ready: credits.policy.engineReady(cfg, e.id) }));
+    // Which engine handles each task is decided by the admin's ai_mode, not the user
+    const engines = Object.values(credits.policy.ENGINES).map((e) => ({ ...e, ready: credits.policy.engineReady(cfg, e.id) }));
+    const TIER = { question: "light", lookup: "light", report: "heavy", action: "heavy", photo: "heavy" };
+    const budget = credits.wallet.planBudget(cfg, pharmacy.subscription, w);
     res.json({
       wallet: credits.wallet.view(w),
       plan_daily: credits.wallet.allowanceCredits(cfg, pharmacy, w),
-      engine: credits.policy.pickEngine(cfg, me?.assistant_engine || "pro"),
+      plan_year: budget ? { ends: budget.end, days_left: budget.daysLeft } : null,
+      ai_mode: cfg.ai_mode,
       engines,
-      tasks: Object.entries(credits.policy.TASKS).map(([id, t]) => ({ id, ...t, credits: Object.fromEntries(engines.map((e) => [e.id, est[e.id]?.[id] ?? null])) })),
+      tasks: Object.entries(credits.policy.TASKS).map(([id, t]) => {
+        const engine = TIER[id] ? credits.policy.engineFor(cfg, TIER[id]) : "pro"; // voice and scans run on Google
+        return { id, ...t, engine: TIER[id] ? engine : null, credits: est[engine]?.[id] ?? null };
+      }),
       packs: (cfg.packs || [])
         .filter((p) => p.active !== false)
         .map((p) => ({ id: p.id, label: p.label, price_paise: p.price_paise, credits: credits.config.packCredits(cfg, p), bonus_credits: p.bonus_credits || 0 })),
@@ -76,16 +78,12 @@ router.post("/checkout", auth, perUser(10), async (req, res, next) => {
   }
 });
 
-const engineSchema = z.object({ engine: z.enum(["pro", "swift"]) });
-router.put("/engine", auth, perUser(30), async (req, res, next) => {
+// Pages loaded before the engine became automatic still call this when the
+// old switch is tapped: accept it and change nothing (the admin's mode decides)
+router.put("/engine", auth, async (req, res, next) => {
   try {
-    const parsed = engineSchema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ detail: "Unknown engine" });
-    if (!credits.policy.engineReady(await credits.config.getConfig(db()), parsed.data.engine)) {
-      return res.status(400).json({ detail: `${credits.policy.ENGINES[parsed.data.engine].name} isn't available right now` });
-    }
-    await db().collection("users").updateOne({ id: req.user.id }, { $set: { assistant_engine: parsed.data.engine } });
-    res.json({ engine: parsed.data.engine });
+    const cfg = await credits.config.getConfig(db());
+    res.json({ engine: null, ai_mode: cfg.ai_mode, automatic: true });
   } catch (err) {
     next(err);
   }

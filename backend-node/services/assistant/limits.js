@@ -47,6 +47,14 @@ async function consumeTts(user) {
   if (n > parseInt(process.env.ASSISTANT_TTS_PER_MIN || "30", 10)) throw new LimitError("Voice replies are paused for a moment. Please try again shortly.");
 }
 
+// Voice typing: ASSISTANT_STT_PER_MIN audio pieces per user (default 90; a
+// dictation sends a live preview every ~2 s plus one per phrase)
+async function consumeStt(user) {
+  const k = `asst:stt:${user.id}:${Math.floor(Date.now() / 60000)}`;
+  const n = await safe(async () => (await redis.multi().incr(k).expire(k, 70).exec())[0][1], 0);
+  if (n > parseInt(process.env.ASSISTANT_STT_PER_MIN || "90", 10)) throw new LimitError("Voice typing is paused for a moment. Please try again shortly.");
+}
+
 // Serialises turns within one chat; waits briefly, then gives up
 async function lock(conversationId, { waitMs = 8000, ttlS = 120 } = {}) {
   const key = `asst:lock:${conversationId}`;
@@ -65,4 +73,4 @@ async function lock(conversationId, { waitMs = 8000, ttlS = 120 } = {}) {
   throw new LimitError("Still working on your previous message in this chat. Please wait.");
 }
 
-module.exports = { consume, consumeTts, lock, LimitError };
+module.exports = { consume, consumeTts, consumeStt, lock, LimitError };

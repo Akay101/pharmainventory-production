@@ -181,6 +181,8 @@ const tools = [
     },
     status: (a, lang) => say(lang, { en: a.draft_id ? "Updating the bill" : "Preparing the bill", hinglish: a.draft_id ? "Bill update kar raha hoon" : "Bill bana raha hoon, stock check ho raha hai", hi: "बिल बना रहा हूँ" }),
     async run(a, ctx) {
+      a.items = (a.items || []).map((it) => ({ ...it, product: it.product || it.product_name || it.name || it.medicine || null, batch_no: it.batch_no ?? it.batch ?? undefined, quantity: it.quantity ?? it.qty ?? undefined }));
+      if (a.items.some((it) => !it.product)) return { error: "Every item needs product (the medicine name). Call draft_bill again with product set for each item." };
       const prev = a.draft_id ? ctx.getDraft(a.draft_id) : null;
       // Record names are English: convert anything said in Hindi script first
       const products = await latinNames((a.items || []).map((it) => it.product), "medicine");

@@ -26,6 +26,7 @@ const FILTERS = [
   ["EXPIRED", "Expired"],
   ["LEAD", "Leads"],
   ["INCOMPLETE", "Incomplete signup"],
+  ["OFFER_5050", "50-50 users"],
 ];
 
 // Lifetime amount the pharmacy has paid (all successful checkouts)
@@ -124,6 +125,7 @@ export default function UsersPage({
     }
     if (filterSub === "LEAD" && u.is_subscribed) return false;
     if (["SUBSCRIBED", "TRIAL", "EXPIRED", "INCOMPLETE"].includes(filterSub) && statusOf(u) !== filterSub) return false;
+    if (filterSub === "OFFER_5050" && !u.offer_5050) return false;
     if (filterRole === "ADMIN" && !u.is_primary_admin) return false;
     if (filterRole === "STAFF" && u.is_primary_admin) return false;
     return true;
@@ -171,7 +173,7 @@ export default function UsersPage({
                   {label}
                   {f !== "ALL" && (
                     <span className="ml-1 opacity-60">
-                      {f === "LEAD" ? users.filter((u) => !u.is_subscribed).length : users.filter((u) => statusOf(u) === f).length}
+                      {f === "LEAD" ? users.filter((u) => !u.is_subscribed).length : f === "OFFER_5050" ? users.filter((u) => u.offer_5050).length : users.filter((u) => statusOf(u) === f).length}
                     </span>
                   )}
                 </button>
@@ -235,7 +237,17 @@ export default function UsersPage({
                           {user.name?.charAt(0)?.toUpperCase() || "U"}
                         </div>
                         <div>
-                          <div className="font-bold text-slate-900">{user.name}</div>
+                          <div className="font-bold text-slate-900 flex items-center gap-1.5">
+                            {user.name}
+                            {user.offer_5050 && (
+                              <span
+                                className={`rounded-full px-1.5 py-0.5 text-[9px] font-black ${user.offer_5050.code_redeemed ? "bg-emerald-100 text-emerald-700" : "bg-orange-100 text-orange-700"}`}
+                                title={user.offer_5050.code_redeemed ? `50-50 launch offer · code ${user.offer_5050.code} applied` : `Registered for the 50-50 launch offer (${user.offer_5050.registration_id || ""}); offer code not applied yet`}
+                              >
+                                50-50{user.offer_5050.code_redeemed ? " ✓" : ""}
+                              </span>
+                            )}
+                          </div>
                           <div className="text-[11px] text-slate-400">{user.email}</div>
                         </div>
                       </div>

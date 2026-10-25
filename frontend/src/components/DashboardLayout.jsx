@@ -1,6 +1,7 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Outlet, NavLink, useNavigate, useLocation } from "react-router-dom";
-import { useAuth } from "../App";
+import axios from "axios";
+import { API, useAuth } from "../App";
 import { Button } from "./ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "./ui/avatar";
 import { Sheet, SheetContent, SheetTrigger } from "./ui/sheet";
@@ -37,58 +38,65 @@ import {
   Sparkles,
   CalendarX,
   RotateCcw,
+  LifeBuoy,
+  ClipboardList,
 } from "lucide-react";
 
 import RecentActivitySidebar from "./RecentActivitySidebar";
-import { useKeyboardShortcut, formatShortcut } from "../hooks/useKeyboard";
+import { formatCombo, isVisible } from "../lib/shortcuts";
+import { ShortcutProvider } from "./shortcuts/Shortcuts";
 import AssistantLauncher from "./assistant/AssistantLauncher";
 import PlanBadge from "./PlanBadge";
 import NotificationCenter from "./NotificationCenter";
 import { MobileBottomNav } from "./MobileNav";
+import TopNav from "./TopNav";
 import { AI_LOGO_SRC } from "./scan/ScanUI";
 
 const navItems = [
-  { path: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { path: "/dashboard", label: "Dashboard", icon: LayoutDashboard, shortcut: "alt+h" },
   {
     path: "/inventory",
     label: "Inventory",
     icon: Package,
-    shortcut: ["alt", "i"],
+    shortcut: "alt+i",
   },
   {
     path: "/purchases",
     label: "Purchases",
     icon: ShoppingCart,
-    shortcut: ["alt", "p"],
+    shortcut: "alt+p",
   },
-  { path: "/billing", label: "Billing", icon: Receipt, shortcut: ["alt", "b"] },
+  { path: "/billing", label: "Billing", icon: Receipt, shortcut: "alt+b" },
   {
     path: "/suppliers",
     label: "Suppliers",
     icon: Truck,
-    shortcut: ["alt", "s"],
+    shortcut: "alt+s",
   },
   {
     path: "/customers",
     label: "Customers",
     icon: Users,
-    shortcut: ["alt", "c"],
+    shortcut: "alt+c",
   },
   {
     path: "/expiry",
     label: "Expiry",
     icon: CalendarX,
-    shortcut: ["alt", "e"],
+    shortcut: "alt+e",
   },
   {
     path: "/returns",
     label: "Returns",
     icon: RotateCcw,
-    shortcut: ["alt", "r"],
+    shortcut: "alt+r",
   },
+  { path: "/short-book", label: "Short Book", icon: ClipboardList, shortcut: "alt+o" },
   { path: "/users", label: "Users", icon: UserCog, adminOnly: true },
-  { path: "/reports", label: "Reports", icon: BarChart3 },
-  { path: "/settings", label: "Settings", icon: Settings },
+  { path: "/reports", label: "Reports", icon: BarChart3, shortcut: "alt+y" },
+  { path: "/settings", label: "Settings", icon: Settings, shortcut: "alt+," },
+  // In the user menu and the phone's More sheet, not the top bar
+  { path: "/support", label: "Help & Support", icon: LifeBuoy, menuOnly: true },
 ];
 
 // "AGENTIC Plan", or "AGENTIC Trial · 3d left" while on the free trial
@@ -114,16 +122,65 @@ export default function DashboardLayout() {
   });
 
   const filteredItems = navItems.filter((item) => !item.adminOnly || isAdmin);
+  const topNavItems = useMemo(() => filteredItems.filter((item) => !item.menuOnly), [isAdmin]); // eslint-disable-line
 
-  // Keyboard Shortcuts
-  useKeyboardShortcut(["alt", "i"], () => navigate("/inventory"));
-  useKeyboardShortcut(["alt", "p"], () => navigate("/purchases"));
-  useKeyboardShortcut(["alt", "b"], () => navigate("/billing"));
-  useKeyboardShortcut(["alt", "s"], () => navigate("/suppliers"));
-  useKeyboardShortcut(["alt", "c"], () => navigate("/customers"));
-  useKeyboardShortcut(["alt", "e"], () => navigate("/expiry"));
-  useKeyboardShortcut(["alt", "r"], () => navigate("/returns"));
-  useKeyboardShortcut(["alt", "a"], () => toggleActivity());
+  // Support replies not seen yet (badge in the user menu)
+  const [supportUnread, setSupportUnread] = useState(0);
+  useEffect(() => {
+    let live = true;
+    const check = () =>
+      axios
+        .get(`${API}/support/unread`)
+        .then((r) => live && setSupportUnread(r.data?.count || 0))
+        .catch(() => {});
+    check();
+    const t = setInterval(check, 3 * 60 * 1000);
+    window.addEventListener("support-read", check);
+    return () => {
+      live = false;
+      clearInterval(t);
+      window.removeEventListener("support-read", check);
+    };
+  }, [location.pathname]);
+
+  // Global keyboard shortcuts (pages add their own with useShortcuts; theirs win)
+  const visible = (selector) => [...document.querySelectorAll(selector)].find((el) => isVisible(el) && !el.disabled);
+  const globalShortcuts = [
+    ...filteredItems
+      .filter((item) => item.shortcut)
+      .map((item) => ({ combo: item.shortcut, label: item.label, group: "Go to", run: () => navigate(item.path) })),
+    { combo: "alt+j", label: "DavaDesk AI", group: "Go to", run: () => navigate("/assistant") },
+    {
+      combo: "alt+n",
+      label: "New (bill, purchase, note… on this page; else a new bill)",
+      run: () => {
+        const btn = visible('[data-shortcut="new"]');
+        if (btn) return btn.click();
+        navigate("/billing", { state: { newBill: true } });
+      },
+    },
+    {
+      combo: "alt+k",
+      label: "Search this page",
+      run: () => {
+        const el = visible('[data-shortcut="search"]') || visible('main input[type="search"], main input[placeholder^="Search"]');
+        if (!el) return false;
+        el.focus();
+        el.select?.();
+      },
+    },
+    { combo: "/", label: "Search this page", run: () => globalShortcuts.find((b) => b.combo === "alt+k").run() },
+    {
+      combo: "mod+enter",
+      hidden: true,
+      run: () => {
+        const btn = visible('[data-shortcut="save"]');
+        if (!btn) return false;
+        btn.click();
+      },
+    },
+    { combo: "alt+l", label: "Recent activity panel", run: () => toggleActivity() },
+  ];
 
   // Listen to dark/light theme mutations
   useEffect(() => {
@@ -211,6 +268,7 @@ export default function DashboardLayout() {
   };
 
   return (
+    <ShortcutProvider globals={globalShortcuts}>
     <TooltipProvider delayDuration={0}>
       <div
         className="h-screen w-screen max-h-screen max-md:h-[100dvh] max-md:max-h-[100dvh] bg-background flex flex-col select-none overflow-hidden"
@@ -335,38 +393,8 @@ export default function DashboardLayout() {
               </div>
             </div>
 
-            {/* Center Top Horizontal Navigation Bar (Desktop / Large Screens) */}
-            <nav className="hidden lg:flex items-center gap-1 min-w-0 bg-muted/40 dark:bg-muted/20 p-1.5 rounded-2xl border border-border/60 dark:border-border/40 shadow-xs">
-              {filteredItems.map((item) => {
-                const isItemActive = checkIsActive(item.path);
-                return (
-                  <Tooltip key={item.path}>
-                    <TooltipTrigger asChild>
-                      <NavLink
-                        to={item.path}
-                        aria-label={item.label}
-                        className={`group relative flex items-center gap-2 px-2.5 2xl:px-3 py-1.5 rounded-xl text-xs font-bold transition-all duration-300 ease-out active:scale-95 whitespace-nowrap ${
-                          isItemActive
-                            ? "bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-md shadow-orange-500/25 scale-[1.02]"
-                            : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
-                        }`}
-                        data-testid={`nav-${item.path.slice(1)}`}
-                      >
-                        <item.icon className={`w-4 h-4 shrink-0 transition-transform duration-300 ease-out ${isItemActive ? "" : "group-hover:-rotate-12 group-hover:scale-110"}`} />
-                        {/* Labels only where there is room; icons + tooltip otherwise */}
-                        <span className={isItemActive ? "hidden xl:inline" : "hidden 2xl:inline"}>{item.label}</span>
-                      </NavLink>
-                    </TooltipTrigger>
-                    <TooltipContent side="bottom" className="text-[11px] font-bold shadow-md">
-                      {item.label}
-                      {item.shortcut && (
-                        <span className="ml-1.5 font-mono text-[10px] opacity-70">{formatShortcut(item.shortcut)}</span>
-                      )}
-                    </TooltipContent>
-                  </Tooltip>
-                );
-              })}
-            </nav>
+            {/* Top menu (desktop): fits on one line, overflow goes under "More" */}
+            <TopNav items={topNavItems} isActive={checkIsActive} />
 
             {/* Right Controls Panel */}
             <div className="flex items-center gap-2.5 max-md:gap-1.5 shrink-0">
@@ -409,7 +437,8 @@ export default function DashboardLayout() {
                     ? "bg-orange-500/15 text-orange-500 border-orange-500/40 shadow-xs"
                     : "hover:bg-muted/80 text-foreground"
                 }`}
-                title="Recent Activity (Alt + A)"
+                title={`Recent Activity (${formatCombo("alt+l")})`}
+                data-kbd={formatCombo("alt+l")}
               >
                 <Activity className="w-4.5 h-4.5 text-foreground dark:text-foreground transition-transform duration-200 group-hover:scale-110" />
               </Button>
@@ -450,6 +479,19 @@ export default function DashboardLayout() {
                   >
                     <Settings className="w-4 h-4 mr-2.5 text-orange-500 group-hover:rotate-45 transition-transform duration-200" />
                     Settings
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() => navigate("/support", { state: { from: location.pathname } })}
+                    data-testid="support-dropdown"
+                    className="cursor-pointer font-bold py-2 px-3 rounded-xl group hover:bg-orange-500/10 focus:bg-orange-500/10 text-foreground hover:text-orange-600 focus:text-orange-600 dark:hover:text-orange-400 dark:focus:text-orange-400 transition-colors"
+                  >
+                    <LifeBuoy className="w-4 h-4 mr-2.5 text-orange-500" />
+                    Help & Support
+                    {supportUnread > 0 && (
+                      <span className="ml-auto rounded-full bg-violet-600 px-1.5 py-0.5 text-[10px] font-black text-white" aria-label={`${supportUnread} new replies`}>
+                        {supportUnread}
+                      </span>
+                    )}
                   </DropdownMenuItem>
                   <DropdownMenuSeparator className="bg-border/50 my-1" />
                   <DropdownMenuItem
@@ -524,5 +566,6 @@ export default function DashboardLayout() {
         </div>
       </div>
     </TooltipProvider>
+    </ShortcutProvider>
   );
 }

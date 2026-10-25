@@ -1552,3 +1552,29 @@ input:-webkit-autofill:active {
     padding: 0 !important;
   }
 }
+
+/* Hold Alt (⌥): every control marked data-kbd shows its shortcut */
+html.kbd-hints [data-kbd]:not(.fixed):not(.absolute):not(.sticky) {
+  position: relative;
+}
+html.kbd-hints [data-kbd]::after {
+  content: attr(data-kbd);
+  position: absolute;
+  top: -9px;
+  right: -7px;
+  z-index: 60;
+  padding: 3px 5px;
+  border-radius: 6px;
+  background: #ea580c;
+  color: #fff;
+  font: 700 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  pointer-events: none;
+}
+/* Focused list rows (keyboard) */
+[data-row]:focus-visible {
+  outline: 2px solid rgb(249 115 22 / 0.7);
+  outline-offset: -2px;
+}

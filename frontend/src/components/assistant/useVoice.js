@@ -2,15 +2,15 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 const Recognition = typeof window !== "undefined" ? window.SpeechRecognition || window.webkitSpeechRecognition : null;
 
-// Speech-to-text with the browser's recognizer. hi-IN understands Hindi and
-// Hinglish (and plenty of English); en-IN is there for English-only speakers.
-// The turn ends when the user has finished: a short silence after the last
-// words, not the browser's first pause. Desktop Chrome listens continuously;
-// Android Chrome repeats words in continuous mode, so there each pause ends a
-// recognition session and, if the user hasn't gone quiet yet, a new one
-// starts and the words are joined. iOS Safari behaves like desktop.
-const AFTER_PHRASE_MS = 1400; // silence after a recognised phrase
-const AFTER_WORDS_MS = 1900; // silence while the last words were still being recognised
+// Speech-to-text with the browser's recognizer: the fallback for voice typing
+// when the server's Whisper can't be used (no credits, offline). hi-IN
+// understands Hindi and Hinglish (and plenty of English); en-IN is for
+// English-only speakers. It keeps listening until the user stops: nothing is
+// sent on a pause. Desktop Chrome listens continuously; Android Chrome repeats
+// words in continuous mode, so there each pause ends a recognition session
+// and a new one starts, and the words are joined. iOS Safari behaves like
+// desktop. The text arrives through onFinal when the user stops.
+const MAX_LISTEN_MS = 3 * 60 * 1000;
 const isAndroid = typeof navigator !== "undefined" && /android/i.test(navigator.userAgent);
 
 export function useVoiceInput({ lang = "hi-IN", onFinal } = {}) {
@@ -20,20 +20,19 @@ export function useVoiceInput({ lang = "hi-IN", onFinal } = {}) {
   const finalRef = useRef(onFinal);
   finalRef.current = onFinal;
 
-  // The user's own stop: send what was heard
+  // The user's own stop: hand over what was heard
   const stop = useCallback(() => sessionRef.current?.finish(), []);
 
   const start = useCallback(() => {
     if (!Recognition || listening) return;
-    let earlier = ""; // words from previous recognition sessions (Android)
+    let earlier = ""; // words from previous recognition sessions (Android, pauses)
     let heard = "";
-    let silence = null;
     let done = false;
     let rec = null;
-    let restarts = 0;
+    let limit = null;
 
     const end = () => {
-      clearTimeout(silence);
+      clearTimeout(limit);
       setListening(false);
       setInterim("");
       sessionRef.current = null;
@@ -45,8 +44,7 @@ export function useVoiceInput({ lang = "hi-IN", onFinal } = {}) {
       try {
         rec?.stop();
       } catch {}
-      const text = heard.replace(/\s+/g, " ").trim();
-      if (text) finalRef.current?.(text);
+      finalRef.current?.(heard.replace(/\s+/g, " ").trim());
     };
 
     const listen = () => {
@@ -66,28 +64,23 @@ export function useVoiceInput({ lang = "hi-IN", onFinal } = {}) {
         }
         heard = `${earlier} ${finals}${live}`.replace(/\s+/g, " ").trim();
         setInterim(heard);
-        clearTimeout(silence);
-        silence = setTimeout(finish, live.trim() ? AFTER_WORDS_MS : AFTER_PHRASE_MS);
       };
       rec.onerror = (e) => {
         if (e.error === "not-allowed" || e.error === "service-not-allowed" || e.error === "audio-capture") {
           done = true;
           end();
+          finalRef.current?.(heard.trim(), { error: e.error });
         }
       };
       rec.onend = () => {
         if (done) return;
-        // The browser stopped at a pause while the user may still be talking:
-        // keep listening and join the words (a few times at most)
-        if (heard && restarts < 15) {
-          earlier = heard;
-          restarts++;
-          try {
-            listen();
-            return;
-          } catch {}
+        // The browser stopped at a pause; the user hasn't: listen again
+        earlier = heard;
+        try {
+          listen();
+        } catch {
+          finish();
         }
-        finish();
       };
       rec.start();
     };
@@ -96,13 +89,14 @@ export function useVoiceInput({ lang = "hi-IN", onFinal } = {}) {
       finish,
       abort: () => {
         done = true;
-        clearTimeout(silence);
+        clearTimeout(limit);
         try {
           rec?.abort();
         } catch {}
       },
     };
     setListening(true);
+    limit = setTimeout(finish, MAX_LISTEN_MS);
     try {
       listen();
     } catch {
