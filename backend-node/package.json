@@ -6,6 +6,7 @@
   "scripts": {
     "swagger": "node swagger.js",
     "start": "node server.js",
+    "predev": "node scripts/ensure-db-tunnel.js",
     "dev": "nodemon server.js",
     "worker": "node workers/scan.worker.js"
   },

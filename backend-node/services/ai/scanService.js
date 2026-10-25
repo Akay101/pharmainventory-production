@@ -27,7 +27,7 @@ async function requireCredits(pharmacyId) {
   const pharmacy = await db.collection("pharmacies").findOne({ id: pharmacyId }, { projection: { _id: 0, id: 1, subscription: 1 } });
   const cfg = await credits.config.getConfig(db);
   const gate = await credits.policy.canSpend(db, cfg, pharmacy || { id: pharmacyId });
-  if (!gate.ok) throw new NoCreditsError("AI scanning needs AI credits. Buy credits from DavaDesk AI (Credits) and scan again.");
+  if (!gate.ok) throw new NoCreditsError("AI scanning needs AI credits. Add credits from the credits button at the top of DavaDesk, then scan again.");
   return pharmacy || { id: pharmacyId };
 }
 

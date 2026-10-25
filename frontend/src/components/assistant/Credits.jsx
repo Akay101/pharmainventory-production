@@ -37,6 +37,15 @@ export function useCredits() {
   }, []);
   useEffect(() => {
     refresh();
+    // Scans, chat replies and top-ups elsewhere in the app announce changes
+    const onChange = () => refresh();
+    const onVisible = () => document.visibilityState === "visible" && refresh();
+    window.addEventListener("credits-updated", onChange);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.removeEventListener("credits-updated", onChange);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [refresh]);
   const setWallet = useCallback((wallet) => wallet && setData((d) => (d ? { ...d, wallet } : d)), []);
   // Credits a task typically uses on the engine that handles it in this mode

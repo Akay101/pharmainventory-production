@@ -12,9 +12,11 @@ import {
   Activity,
   ChevronRight,
   Sparkles,
+  Compass,
 } from "lucide-react";
 import { Sheet, SheetContent, SheetTitle, SheetDescription } from "./ui/sheet";
 import { AI_LOGO_SRC } from "./scan/ScanUI";
+import { useTour } from "./tour/ProductTour";
 
 // Phone-only navigation (below md): a bottom tab bar like a native app, with
 // the rest of the app in a "More" sheet. Desktop keeps the top navigation.
@@ -50,6 +52,7 @@ function useKeyboardOpen() {
 }
 
 export function MobileBottomNav({ items, isActive, onLogout, onOpenActivity, pharmacy, planLabel }) {
+  const { start: startTour } = useTour();
   const navigate = useNavigate();
   const location = useLocation();
   const [sheet, setSheet] = useState(null); // "scan" | "more" | null
@@ -70,6 +73,7 @@ export function MobileBottomNav({ items, isActive, onLogout, onOpenActivity, pha
       <nav
         className={`md:hidden shrink-0 border-t border-border/70 bg-background/95 backdrop-blur-xl pb-[env(safe-area-inset-bottom)] ${keyboardOpen ? "hidden" : ""}`}
         data-testid="mobile-bottom-nav"
+        data-tour="mobile-nav"
       >
         <div className="grid grid-cols-5 h-16">
           {TABS.map((tab) => {
@@ -80,6 +84,7 @@ export function MobileBottomNav({ items, isActive, onLogout, onOpenActivity, pha
                     type="button"
                     onClick={() => setSheet("scan")}
                     aria-label="Scan"
+                    data-tour="mtab-scan"
                     className="-mt-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-orange-500 to-amber-500 text-white shadow-lg shadow-orange-500/30 ring-4 ring-background active:scale-95 transition-transform"
                   >
                     <ScanLine className="h-6 w-6" />
@@ -99,11 +104,11 @@ export function MobileBottomNav({ items, isActive, onLogout, onOpenActivity, pha
             );
             const cls = "flex flex-col items-center justify-center gap-1 active:scale-95 transition-transform";
             return tab.more ? (
-              <button key="more" type="button" onClick={() => setSheet("more")} className={cls}>
+              <button key="more" type="button" onClick={() => setSheet("more")} className={cls} data-tour="mtab-more">
                 {inner}
               </button>
             ) : (
-              <NavLink key={tab.path} to={tab.path} className={cls} data-testid={`tab-${tab.path.slice(1)}`}>
+              <NavLink key={tab.path} to={tab.path} className={cls} data-testid={`tab-${tab.path.slice(1)}`} data-tour={`mtab-${tab.path}`}>
                 {inner}
               </NavLink>
             );
@@ -188,7 +193,18 @@ export function MobileBottomNav({ items, isActive, onLogout, onOpenActivity, pha
             })}
           </div>
 
-          <div className="mt-4 grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              setSheet(null);
+              setTimeout(startTour, 250); // after the sheet has closed
+            }}
+            className="mt-4 flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-orange-500/30 bg-orange-500/5 text-sm font-bold text-orange-600 active:scale-[0.98] dark:text-orange-400"
+          >
+            <Compass className="h-4 w-4" /> Take the tour
+          </button>
+
+          <div className="mt-2 grid grid-cols-2 gap-2">
             <button
               type="button"
               onClick={() => {

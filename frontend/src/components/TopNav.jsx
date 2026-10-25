@@ -114,7 +114,7 @@ export default function TopNav({ items, isActive }) {
         </span>
       </div>
 
-      <nav aria-label="Main" className="flex max-w-full items-center gap-0.5 rounded-2xl border border-border/60 bg-muted/50 p-1 shadow-xs dark:border-border/40 dark:bg-muted/20">
+      <nav aria-label="Main" data-tour="topnav" className="flex max-w-full items-center gap-0.5 rounded-2xl border border-border/60 bg-muted/50 p-1 shadow-xs dark:border-border/40 dark:bg-muted/20">
         {layout.visible.map((i) => {
           const item = items[i];
           const active = i === activeIndex;
@@ -128,6 +128,7 @@ export default function TopNav({ items, isActive }) {
                   aria-current={active ? "page" : undefined}
                   className={tabClass(active)}
                   data-testid={`nav-${item.path.slice(1)}`}
+                  data-tour={`nav-${item.path}`}
                   data-kbd={item.shortcut ? formatCombo(item.shortcut) : undefined}
                 >
                   <item.icon className={`h-4 w-4 shrink-0 transition-transform duration-200 ${active ? "" : "group-hover:scale-110"}`} />
@@ -146,7 +147,7 @@ export default function TopNav({ items, isActive }) {
         {layout.hidden.length > 0 && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <button type="button" className={tabClass(hiddenActive)} aria-label="More pages">
+              <button type="button" className={tabClass(hiddenActive)} aria-label="More pages" data-tour="nav-more">
                 <MoreHorizontal className="h-4 w-4" />
                 <span>More</span>
               </button>

@@ -14,6 +14,7 @@ export default function AssistantLauncher() {
       title={`DavaDesk AI (${formatCombo("alt+j")})`}
       data-kbd={formatCombo("alt+j")}
       aria-label="Open DavaDesk AI"
+      data-tour="assistant"
       className="group fixed bottom-5 right-5 z-[60] flex items-center gap-2 rounded-full bg-card p-1 pr-1 shadow-xl shadow-indigo-500/20 ring-1 ring-border transition-all hover:pr-4 sm:bottom-6 sm:right-6"
     >
       <span className="relative flex h-12 w-12 items-center justify-center">

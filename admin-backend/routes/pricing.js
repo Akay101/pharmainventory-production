@@ -45,6 +45,11 @@ const trialSchema = z.object({
   plan: z.enum(["BEST", ...PLAN_CODES]),
 });
 
+const displaySchema = z.object({
+  hide_prices: z.boolean(),
+  label: z.string().trim().min(2).max(40).default("Launching soon"),
+});
+
 // GET /api/pricing
 router.get("/", async (req, res, next) => {
   try {
@@ -60,6 +65,7 @@ router.get("/", async (req, res, next) => {
         ? { ...config.offer, value: config.offer.type === "FLAT" ? config.offer.value / 100 : config.offer.value }
         : { enabled: false, label: "", type: "PERCENT", value: 10, plans: [], starts_at: null, ends_at: null },
       trial: config?.trial || { enabled: true, days: 7, plan: "BEST" },
+      display: { hide_prices: false, label: "Launching soon", ...(config?.display || {}) },
       updated_at: config?.updated_at || null,
     });
   } catch (err) {
@@ -137,6 +143,22 @@ router.put("/trial", requireSuperAdmin, async (req, res, next) => {
       .updateOne({ _id: CONFIG_ID }, { $set: { trial: data, updated_at: new Date() } }, { upsert: true });
     await audit(req, "PRICING_TRIAL_UPDATED", "trial", data);
     res.json({ message: "Trial settings saved" });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PUT /api/pricing/display — hide plan prices on the app's upgrade page
+// (early access: plans show "₹XXX · Launching soon" and can't be bought)
+router.put("/display", requireSuperAdmin, async (req, res, next) => {
+  try {
+    const data = parseBody(displaySchema, req, res);
+    if (!data) return;
+    await req.db
+      .collection("pricing_config")
+      .updateOne({ _id: CONFIG_ID }, { $set: { display: data, updated_at: new Date() } }, { upsert: true });
+    await audit(req, "PRICING_DISPLAY_UPDATED", "display", data);
+    res.json({ message: data.hide_prices ? "Prices hidden on the upgrade page" : "Prices visible on the upgrade page" });
   } catch (err) {
     next(err);
   }

@@ -45,9 +45,13 @@ const toForm = (files) => {
   return fd;
 };
 
+// Scans use AI credits: tell the credits chip to refresh
+const creditsChanged = () => window.dispatchEvent(new Event("credits-updated"));
+
 // Billing: read one pack and match it to stock in a single request
 export async function scanPackForBilling(files, { signal } = {}) {
   const res = await axios.post(`${API}/bills/scan-product`, toForm(files), { signal, timeout: 70000 });
+  creditsChanged();
   return res.data;
 }
 
@@ -65,7 +69,10 @@ export async function runQueuedScan(type, files, { signal, onUpdate } = {}) {
     // Server holds the request open until the scan finishes (up to ~20s)
     const { data } = await axios.get(`${API}/purchases/scan-status/${jobId}?wait=1`, { signal, timeout: 30000 });
     onUpdate?.(data);
-    if (data.status === "completed") return data;
+    if (data.status === "completed") {
+      creditsChanged();
+      return data;
+    }
     if (data.status === "failed") throw Object.assign(new Error(data.errorMessage || "Scan failed"), { scanFailed: true });
   }
   throw new Error("The scan is taking longer than usual. Please try again.");

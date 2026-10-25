@@ -49,7 +49,7 @@ const TASKS = {
   photo: { label: "Read a photo in chat", hint: "Invoice or medicine pack" },
   voice: { label: "Spoken reply", hint: "Per reply read aloud" },
   dictation: { label: "Voice typing", hint: "Per dictation, about 15 seconds" },
-  scan: { label: "Scanner page scan", hint: "Purchase invoice or pack scan" },
+  scan: { label: "Scan an invoice or pack", hint: "Supplier invoice, medicine pack, or scan to bill" },
 };
 
 const MIN_START_MILLI = 1000; // need at least 1 credit to start a full request

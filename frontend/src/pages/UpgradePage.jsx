@@ -144,6 +144,9 @@ export default function UpgradePage() {
   if (!user) return <Navigate to="/login" state={{ from: location }} replace />;
 
   const sub = status?.subscription;
+  // Early access: plans show without prices and can't be bought; codes still work
+  const hidden = !!catalogue?.prices_hidden;
+  const launchLabel = catalogue?.launch_label || "Launching soon";
   const canManage = !!status?.can_manage;
   const isLive = sub && (sub.status === "ACTIVE" || sub.status === "TRIAL");
   const currentPaid = sub?.status === "ACTIVE" && sub?.kind === "PAID" ? plansByCode[sub.plan] : null;
@@ -183,12 +186,18 @@ export default function UpgradePage() {
       const res = await axios.post(`${API}/billing/redeem`, { code });
       await fetchUser();
       toast.success(`${plansByCode[res.data.plan]?.name || res.data.plan} activated for ${res.data.days} days`);
-      navigate("/dashboard", { replace: true });
+      // Early access terms come first (the dashboard asks for them anyway)
+      navigate("/early-access/terms", { replace: true });
       return;
     } catch (err) {
       const errCode = err.response?.data?.code;
       if (errCode !== "NOT_AN_ACCESS_CODE") {
         toast.error(err.response?.data?.detail || "This code is invalid or has expired");
+        setApplyingCode(false);
+        return;
+      }
+      if (hidden) {
+        toast.error("That's a discount code. You can use it once plans launch; for now, activate with an early access code.");
         setApplyingCode(false);
         return;
       }
@@ -264,6 +273,52 @@ export default function UpgradePage() {
     return { amount: plan.amount_paise, base: plan.base_paise, offer: plan.offer, promo: null };
   };
 
+  const codeBox = canManage && catalogue ? (
+          <div className={`mx-auto max-w-xl ${hidden ? "mb-10" : "mt-10"}`}>
+            {hidden && !appliedCode && (
+              <p className="mb-2.5 flex items-center justify-center gap-1.5 text-sm font-extrabold">
+                <Gift className="w-4 h-4 text-orange-500" /> Have an early access code? Activate DavaDesk here
+              </p>
+            )}
+            {appliedCode ? (
+              <div className="flex items-center justify-between gap-3 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm font-bold text-emerald-700 dark:text-emerald-300">
+                <span className="flex items-center gap-2">
+                  <Tag className="w-4 h-4" /> Code {appliedCode} applied to eligible plans
+                </span>
+                <button onClick={clearCode} className="p-1 rounded-lg hover:bg-emerald-500/10" aria-label="Remove code">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            ) : (
+              <form
+                className="flex items-center gap-2 rounded-2xl border border-border bg-card p-2 shadow-sm"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  applyCode();
+                }}
+              >
+                <Tag className="w-4 h-4 ml-3 text-muted-foreground shrink-0" />
+                <input
+                  value={codeInput}
+                  onChange={(e) => setCodeInput(e.target.value.toUpperCase().replace(/[^A-Z0-9_-]/g, "").slice(0, 32))}
+                  placeholder={hidden ? "Enter your early access code" : "Have a promo or discount code?"}
+                  className="flex-1 bg-transparent px-2 py-2.5 text-sm font-bold tracking-wider focus:outline-none placeholder:font-medium placeholder:tracking-normal placeholder:text-muted-foreground"
+                  aria-label="Promo code"
+                  data-testid="promo-input"
+                />
+                <Button type="submit" disabled={applyingCode || !codeInput} className="rounded-xl font-bold" data-testid="apply-code-btn">
+                  {applyingCode ? <Loader2 className="w-4 h-4 animate-spin" /> : "Apply"}
+                </Button>
+              </form>
+            )}
+            {hidden && (
+              <p className="mt-2 text-center text-[11px] font-semibold text-muted-foreground">
+                After activating, you'll be asked to accept the Early Access Terms.
+              </p>
+            )}
+          </div>
+  ) : null;
+
   return (
     <div className="min-h-screen bg-background text-foreground relative overflow-x-hidden" data-testid="upgrade-page">
       {/* Soft brand glow */}
@@ -308,7 +363,9 @@ export default function UpgradePage() {
             <span className="text-transparent bg-clip-text bg-gradient-to-r from-orange-500 to-amber-500">pharmacy</span>
           </h1>
           <p className="text-muted-foreground text-base sm:text-lg font-medium">
-            Billing, inventory, purchases and expiry tracking in one place. Simple yearly pricing, no hidden fees.
+            {hidden
+              ? "DavaDesk is in early access. Plans and prices launch soon; activate now with your early access code."
+              : "Billing, inventory, purchases and expiry tracking in one place. Simple yearly pricing, no hidden fees."}
           </p>
         </section>
 
@@ -375,6 +432,8 @@ export default function UpgradePage() {
           </div>
         )}
 
+        {hidden && codeBox}
+
         {/* Plans */}
         <div className="grid gap-6 md:grid-cols-3 items-stretch">
           {!catalogue && !loadError
@@ -414,11 +473,21 @@ export default function UpgradePage() {
                     </div>
 
                     <div className="mb-1 flex items-end gap-2 flex-wrap">
-                      <span className="text-4xl font-black tracking-tight">{formatINR(price.amount)}</span>
+                      {hidden ? (
+                        <span className="text-4xl font-black tracking-tight text-muted-foreground/70 select-none" aria-label="Price not announced yet">
+                          ₹XXX
+                        </span>
+                      ) : (
+                        <span className="text-4xl font-black tracking-tight">{formatINR(price.amount)}</span>
+                      )}
                       <span className="text-sm font-semibold text-muted-foreground mb-1">/year</span>
                     </div>
                     <div className="min-h-[22px] mb-4 text-sm font-semibold">
-                      {discounted ? (
+                      {hidden ? (
+                        <span className="inline-flex items-center gap-1.5 rounded-full border border-orange-500/30 bg-orange-500/10 px-2.5 py-0.5 text-xs font-extrabold text-orange-600 dark:text-orange-400" data-testid="launch-badge">
+                          <Sparkles className="w-3.5 h-3.5" /> {launchLabel}
+                        </span>
+                      ) : discounted ? (
                         <span className="text-muted-foreground">
                           <span className="line-through mr-2">{formatINR(price.base)}</span>
                           <span className="text-emerald-600 dark:text-emerald-400">
@@ -434,7 +503,7 @@ export default function UpgradePage() {
 
                     <Button
                       onClick={() => openSummary(plan)}
-                      disabled={btn.disabled || quoting === plan.code}
+                      disabled={hidden || btn.disabled || quoting === plan.code}
                       className={`h-12 rounded-xl font-bold mb-2 ${
                         plan.highlight
                           ? "text-white bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 shadow-lg shadow-orange-500/25"
@@ -443,7 +512,7 @@ export default function UpgradePage() {
                       variant={plan.highlight ? "default" : "outline"}
                       data-testid={`choose-${plan.code}`}
                     >
-                      {quoting === plan.code ? <Loader2 className="w-4 h-4 animate-spin" /> : btn.label}
+                      {quoting === plan.code ? <Loader2 className="w-4 h-4 animate-spin" /> : hidden ? launchLabel : btn.label}
                     </Button>
                     <p className="min-h-[18px] mb-4 text-xs font-semibold text-center text-muted-foreground">
                       {codeError ? `Code ${appliedCode}: ${codeError}` : ""}
@@ -462,44 +531,10 @@ export default function UpgradePage() {
               })}
         </div>
 
-        {/* Codes */}
-        {canManage && catalogue && (
-          <div className="mt-10 mx-auto max-w-xl">
-            {appliedCode ? (
-              <div className="flex items-center justify-between gap-3 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm font-bold text-emerald-700 dark:text-emerald-300">
-                <span className="flex items-center gap-2">
-                  <Tag className="w-4 h-4" /> Code {appliedCode} applied to eligible plans
-                </span>
-                <button onClick={clearCode} className="p-1 rounded-lg hover:bg-emerald-500/10" aria-label="Remove code">
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-            ) : (
-              <form
-                className="flex items-center gap-2 rounded-2xl border border-border bg-card p-2 shadow-sm"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  applyCode();
-                }}
-              >
-                <Tag className="w-4 h-4 ml-3 text-muted-foreground shrink-0" />
-                <input
-                  value={codeInput}
-                  onChange={(e) => setCodeInput(e.target.value.toUpperCase().replace(/[^A-Z0-9_-]/g, "").slice(0, 32))}
-                  placeholder="Have a promo or discount code?"
-                  className="flex-1 bg-transparent px-2 py-2.5 text-sm font-bold tracking-wider focus:outline-none placeholder:font-medium placeholder:tracking-normal placeholder:text-muted-foreground"
-                  aria-label="Promo code"
-                  data-testid="promo-input"
-                />
-                <Button type="submit" disabled={applyingCode || !codeInput} className="rounded-xl font-bold" data-testid="apply-code-btn">
-                  {applyingCode ? <Loader2 className="w-4 h-4 animate-spin" /> : "Apply"}
-                </Button>
-              </form>
-            )}
-          </div>
-        )}
+        {/* Codes (below the plans; above them during early access) */}
+        {!hidden && codeBox}
 
-        <div className="mt-10 flex flex-wrap items-center justify-center gap-x-8 gap-y-3 text-xs font-semibold text-muted-foreground">
+        <div className={`mt-10 flex-wrap items-center justify-center gap-x-8 gap-y-3 text-xs font-semibold text-muted-foreground ${hidden ? "hidden" : "flex"}`}>
           <span className="flex items-center gap-1.5">
             <ShieldCheck className="w-4 h-4 text-emerald-500" /> Payments secured by Cashfree
           </span>

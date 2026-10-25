@@ -59,10 +59,19 @@ router.get("/status", auth, async (req, res, next) => {
   }
 });
 
+// Plans can't be priced or bought until prices are announced (early access)
+async function requirePricesLive() {
+  const display = await pricing.getDisplay(mongoose.connection.db);
+  if (display.hide_prices) {
+    throw new BillingError("PRICES_NOT_LAUNCHED", "Plans aren't on sale yet. Activate DavaDesk with your early access code.", 403);
+  }
+}
+
 // POST /api/billing/quote { plan, code? }
 router.post("/quote", auth, perUser(30), async (req, res, next) => {
   try {
     const { plan, code } = parse(planSchema, req.body);
+    await requirePricesLive();
     const pharmacy = await loadPharmacy(req);
     res.json(await orders.quote(mongoose.connection.db, { pharmacy, planCode: plan, promoCode: code || null }));
   } catch (err) {
@@ -74,6 +83,7 @@ router.post("/quote", auth, perUser(30), async (req, res, next) => {
 router.post("/checkout", auth, perUser(10), async (req, res, next) => {
   try {
     const { plan, code } = parse(planSchema, req.body);
+    await requirePricesLive();
     const pharmacy = await loadPharmacy(req);
     res.json(
       await orders.createCheckout(mongoose.connection.db, { user: req.user, pharmacy, planCode: plan, promoCode: code || null })

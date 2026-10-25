@@ -56,6 +56,14 @@ const publicUser = (user, pharmacy) => {
     subscription_plan: active ? subscription.plan : null,
     subscription_expiry: active ? subscription.ends_at : null,
     subscription,
+    // Early access terms accepted (version + when), or null
+    early_access_terms: user.early_access_terms
+      ? { version: user.early_access_terms.version || 1, accepted_at: user.early_access_terms.accepted_at }
+      : null,
+    // Welcome tour: null until the user finishes or skips it
+    tour: user.onboarding_tour
+      ? { status: user.onboarding_tour.status, version: user.onboarding_tour.version || 1, at: user.onboarding_tour.at }
+      : null,
   };
 };
 

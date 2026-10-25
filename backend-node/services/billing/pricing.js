@@ -79,6 +79,9 @@ const defaultPricingConfig = () => ({
     ends_at: null,
   },
   trial: { enabled: true, days: 7, plan: "BEST" }, // BEST = highest-ranked active plan
+  // Before prices are announced (early access): plans show without prices and
+  // can't be bought; access codes still work. Toggled from the admin panel.
+  display: { hide_prices: false, label: "Launching soon" },
   updated_at: new Date(),
 });
 
@@ -162,11 +165,33 @@ function priceBreakdown(plan, offer, promo, now = new Date()) {
   };
 }
 
-// Public catalogue for the upgrade page.
+async function getDisplay(db) {
+  const { config } = await loadCatalogue(db);
+  return { ...defaultPricingConfig().display, ...(config.display || {}) };
+}
+
+// Public catalogue for the upgrade page. While prices are hidden no amount
+// leaves the server (not even in the API response).
 async function getPublicPlans(db) {
   const { plans, config } = await loadCatalogue(db);
   const now = new Date();
+  const display = { ...defaultPricingConfig().display, ...(config.display || {}) };
+  if (display.hide_prices) {
+    return {
+      prices_hidden: true,
+      launch_label: display.label || "Launching soon",
+      plans: plans
+        .filter((p) => p.is_active)
+        .map((p) => ({ code: p.code, name: p.name, rank: p.rank, description: p.description, features: p.features || [], highlight: !!p.highlight, duration_days: p.duration_days })),
+      offer: null,
+      trial: (() => {
+        const t = { ...defaultPricingConfig().trial, ...(config.trial || {}) };
+        return { enabled: !!t.enabled, days: t.days };
+      })(),
+    };
+  }
   return {
+    prices_hidden: false,
     plans: plans
       .filter((p) => p.is_active)
       .map((p) => ({
@@ -211,6 +236,7 @@ module.exports = {
   getBestPlan,
   getTrialConfig,
   getOffer,
+  getDisplay,
   getPublicPlans,
   priceBreakdown,
   requireActivePlan,

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { BadgePercent, Gift, IndianRupee, Loader2, Plus, Save, Star, Tag, Trash2, AlertTriangle } from "lucide-react";
+import { BadgePercent, Gift, IndianRupee, Loader2, Plus, Save, Star, Tag, Trash2, AlertTriangle, EyeOff, Eye } from "lucide-react";
 import { toast } from "sonner";
 import { AdminAPI, apiError } from "../api";
 import { useAuth } from "../context/AuthContext";
@@ -185,6 +185,8 @@ export default function PricingPage({ activeEnv }) {
   const [trial, setTrial] = useState(null);
   const [savingOffer, setSavingOffer] = useState(false);
   const [savingTrial, setSavingTrial] = useState(false);
+  const [display, setDisplay] = useState(null);
+  const [savingDisplay, setSavingDisplay] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -192,6 +194,7 @@ export default function PricingPage({ activeEnv }) {
       setData(res.data);
       setOffer(res.data.offer);
       setTrial(res.data.trial);
+      setDisplay(res.data.display || { hide_prices: false, label: "Launching soon" });
     } catch (err) {
       toast.error(apiError(err, "Couldn't load pricing"));
     }
@@ -236,6 +239,19 @@ export default function PricingPage({ activeEnv }) {
     }
   };
 
+  const saveDisplay = async () => {
+    setSavingDisplay(true);
+    try {
+      const res = await AdminAPI.updatePriceDisplay({ hide_prices: !!display.hide_prices, label: (display.label || "").trim() || "Launching soon" });
+      toast.success(res.data.message);
+      load();
+    } catch (err) {
+      toast.error(apiError(err, "Couldn't save price visibility"));
+    } finally {
+      setSavingDisplay(false);
+    }
+  };
+
   if (!data) {
     return (
       <div className="py-20 flex justify-center">
@@ -266,6 +282,58 @@ export default function PricingPage({ activeEnv }) {
           Plans haven't been set up in this environment yet. Run the billing migration on the server
           (backend-node/scripts/migrations/2026_10_billing.js) and refresh.
         </div>
+      )}
+
+      {display && (
+        <Card
+          title="Price visibility"
+          icon={display.hide_prices ? EyeOff : Eye}
+          subtitle="Early access: show the plans without prices. Plans can't be bought while hidden; access codes keep working."
+        >
+          <div className="space-y-3">
+            <label className="flex items-start gap-2.5 text-sm font-bold text-slate-700">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={!!display.hide_prices}
+                disabled={!canEdit}
+                onChange={(e) => setDisplay({ ...display, hide_prices: e.target.checked })}
+                data-testid="hide-prices"
+              />
+              <span>
+                Hide prices on the upgrade page
+                <span className="block text-xs font-semibold text-slate-500">
+                  {display.hide_prices
+                    ? "Customers see ₹XXX with the badge below. Untick and save to publish your prices."
+                    : "Prices are public and plans can be bought."}
+                </span>
+              </span>
+            </label>
+            <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
+              <div>
+                <label className={labelCls}>Badge shown on each plan</label>
+                <input
+                  className={inputCls}
+                  maxLength={40}
+                  value={display.label || ""}
+                  disabled={!canEdit || !display.hide_prices}
+                  onChange={(e) => setDisplay({ ...display, label: e.target.value })}
+                  placeholder="Launching soon"
+                />
+              </div>
+              {canEdit && (
+                <button
+                  onClick={saveDisplay}
+                  disabled={savingDisplay}
+                  className="flex items-center justify-center gap-1.5 px-4 py-2.5 text-xs font-extrabold text-white bg-brand-500 hover:bg-brand-600 rounded-xl disabled:opacity-40"
+                  data-testid="save-price-display"
+                >
+                  {savingDisplay ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />} Save
+                </button>
+              )}
+            </div>
+          </div>
+        </Card>
       )}
 
       {data.initialized && (

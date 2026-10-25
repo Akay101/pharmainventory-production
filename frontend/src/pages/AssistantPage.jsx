@@ -475,7 +475,10 @@ export default function AssistantPage() {
                 updatePending({ error: data.detail, errorTone: data.code === "all_busy" ? "info" : "danger", retry: body.message ? () => runRef.current?.({ message: body.message }, body.message) : null });
               } else if (name === "done") {
                 ok = true;
-                if (data.credits) creditsRef.current.setWallet(data.credits);
+                if (data.credits) {
+                  creditsRef.current.setWallet(data.credits);
+                  window.dispatchEvent(new Event("credits-updated"));
+                }
                 // Spoken question -> spoken answer (spoken replies use credits)
                 if (speak && data.message?.text && data.mode === "full") speakReply(data.message.text, data.message.language);
                 updatePending((m) => ({ ...m, ...data.message, blocks: data.message.blocks?.length ? data.message.blocks : m.blocks, agentLabel: m.agentLabel, pending: false }));

@@ -35,6 +35,7 @@ import ShortBookPage from "./pages/ShortBookPage";
 // Layout
 import DashboardLayout from "./components/DashboardLayout";
 import UpgradePage from "./pages/UpgradePage";
+import EarlyAccessTermsPage, { needsEarlyAccessTerms } from "./pages/EarlyAccessTermsPage";
 import PaymentSuccessPage from "./pages/PaymentSuccessPage";
 import Loader from "./components/Loader";
 import { getPageTitle } from "./hooks/useDocumentTitle";
@@ -314,6 +315,11 @@ const ProtectedRoute = ({ children, adminOnly = false }) => {
     return <Navigate to="/dashboard" replace />;
   }
 
+  // Early access pharmacies: each user accepts the early access terms first
+  if (needsEarlyAccessTerms(user)) {
+    return <Navigate to="/early-access/terms" replace />;
+  }
+
   return children;
 };
 
@@ -425,6 +431,7 @@ function App() {
           <Route path="/register" element={<RegisterPage />} />
           <Route path="/forgot-password" element={<ForgotPasswordPage />} />
           <Route path="/upgrade" element={<UpgradePage />} />
+          <Route path="/early-access/terms" element={<EarlyAccessTermsPage />} />
           <Route path="/payment-success" element={<PaymentSuccessPage />} />
 
           {/* Scanner Route - Standalone for mobile */}

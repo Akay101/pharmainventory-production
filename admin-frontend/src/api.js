@@ -246,6 +246,7 @@ export const AdminAPI = {
   updatePlan: (code, data) => api.put(`/pricing/plans/${code}`, data),
   updateOffer: (data) => api.put("/pricing/offer", data),
   updateTrial: (data) => api.put("/pricing/trial", data),
+  updatePriceDisplay: (data) => api.put("/pricing/display", data),
 
   // Subscriptions
   getSubscriptions: (params) => api.get("/subscriptions", { params }),

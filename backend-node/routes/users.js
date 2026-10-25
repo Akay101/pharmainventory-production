@@ -44,6 +44,45 @@ const sendCode = async (email, name, purpose, scenario) => {
   if (!sent) throw new OtpError("EMAIL_FAILED", "We couldn't send the verification email. Please try again shortly.", 503);
 };
 
+// POST /api/users/me/tour {status: "completed"|"skipped", version, step}
+// Remembers that this user has seen the welcome tour (on every device).
+const TOUR_STATUSES = new Set(["completed", "skipped"]);
+router.post("/me/tour", auth, async (req, res, next) => {
+  try {
+    const status = String(req.body?.status || "");
+    if (!TOUR_STATUSES.has(status)) return res.status(400).json({ detail: "status must be completed or skipped" });
+    const version = Math.min(Math.max(parseInt(req.body?.version, 10) || 1, 1), 100);
+    const step = Math.min(Math.max(parseInt(req.body?.step, 10) || 0, 0), 100);
+    const tour = { status, version, step, at: new Date().toISOString() };
+    await db().collection("users").updateOne({ id: req.user.id }, { $set: { onboarding_tour: tour } });
+    res.json({ tour: { status, version, at: tour.at } });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// POST /api/users/me/early-access-terms {version}
+// The user accepted the early access terms (shown after an access code).
+const EARLY_ACCESS_TERMS_VERSION = 1;
+router.post("/me/early-access-terms", auth, async (req, res, next) => {
+  try {
+    const version = parseInt(req.body?.version, 10);
+    if (version !== EARLY_ACCESS_TERMS_VERSION) {
+      return res.status(409).json({ detail: "These terms have been updated. Please reload the page and read them again." });
+    }
+    const terms = {
+      version,
+      accepted_at: new Date().toISOString(),
+      ip: req.ip,
+      user_agent: String(req.headers["user-agent"] || "").slice(0, 200),
+    };
+    await db().collection("users").updateOne({ id: req.user.id }, { $set: { early_access_terms: terms } });
+    res.json({ early_access_terms: { version, accepted_at: terms.accepted_at } });
+  } catch (error) {
+    next(error);
+  }
+});
+
 // GET /api/users/me - Get current user profile and pharmacy details
 router.get("/me", auth, async (req, res, next) => {
   try {

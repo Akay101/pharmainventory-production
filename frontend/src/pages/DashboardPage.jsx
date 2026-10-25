@@ -492,7 +492,7 @@ export default function DashboardPage() {
             Here's how <span className="text-foreground">{pharmacy?.name || "your pharmacy"}</span> is doing.
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2" data-tour="dashboard-actions">
           <span className="hidden sm:inline text-[11px] font-semibold text-muted-foreground mr-1">Updated {timeAgo(data.as_of)}</span>
           <Button
             variant="outline"
@@ -520,7 +520,7 @@ export default function DashboardPage() {
       </div>
 
       {/* ------------------------------------------------------------ KPIs */}
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4" data-tour="dashboard-kpis">
         <KpiCard
           icon={IndianRupee}
           tone="orange"

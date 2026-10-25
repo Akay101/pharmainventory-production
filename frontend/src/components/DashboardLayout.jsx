@@ -40,6 +40,8 @@ import {
   RotateCcw,
   LifeBuoy,
   ClipboardList,
+  Compass,
+  FileText,
 } from "lucide-react";
 
 import RecentActivitySidebar from "./RecentActivitySidebar";
@@ -51,6 +53,8 @@ import NotificationCenter from "./NotificationCenter";
 import { MobileBottomNav } from "./MobileNav";
 import TopNav from "./TopNav";
 import { AI_LOGO_SRC } from "./scan/ScanUI";
+import { TourProvider, useTour } from "./tour/ProductTour";
+import { CreditsPill, CreditsSheet, useCredits } from "./assistant/Credits";
 
 const navItems = [
   { path: "/dashboard", label: "Dashboard", icon: LayoutDashboard, shortcut: "alt+h" },
@@ -98,6 +102,39 @@ const navItems = [
   // In the user menu and the phone's More sheet, not the top bar
   { path: "/support", label: "Help & Support", icon: LifeBuoy, menuOnly: true },
 ];
+
+// AI credits left (shared by the pharmacy); opens balance, top-ups and history.
+// Refreshes on page change and whenever a scan or chat reply uses credits.
+function HeaderCredits() {
+  const { data, refresh } = useCredits();
+  const [open, setOpen] = useState(false);
+  const { pathname } = useLocation();
+  useEffect(() => {
+    refresh();
+  }, [pathname]); // eslint-disable-line
+  if (!data?.wallet) return null;
+  return (
+    <span data-tour="credits" className="flex">
+      <CreditsPill wallet={data.wallet} onOpen={() => setOpen(true)} />
+      <CreditsSheet open={open} onClose={() => setOpen(false)} data={data} refresh={refresh} />
+    </span>
+  );
+}
+
+// Profile menu entry that replays the welcome tour
+function TakeTourItem() {
+  const { start } = useTour();
+  return (
+    <DropdownMenuItem
+      onClick={start}
+      data-testid="take-tour"
+      className="cursor-pointer font-bold py-2 px-3 rounded-xl group hover:bg-orange-500/10 focus:bg-orange-500/10 text-foreground hover:text-orange-600 focus:text-orange-600 dark:hover:text-orange-400 dark:focus:text-orange-400 transition-colors"
+    >
+      <Compass className="w-4 h-4 mr-2.5 text-orange-500 group-hover:rotate-45 transition-transform duration-200" />
+      Take the tour
+    </DropdownMenuItem>
+  );
+}
 
 // "AGENTIC Plan", or "AGENTIC Trial · 3d left" while on the free trial
 const planLabel = (user) => {
@@ -269,6 +306,7 @@ export default function DashboardLayout() {
 
   return (
     <ShortcutProvider globals={globalShortcuts}>
+    <TourProvider user={user}>
     <TooltipProvider delayDuration={0}>
       <div
         className="h-screen w-screen max-h-screen max-md:h-[100dvh] max-md:max-h-[100dvh] bg-background flex flex-col select-none overflow-hidden"
@@ -287,6 +325,7 @@ export default function DashboardLayout() {
                     size="icon"
                     className="hover:bg-muted/80 rounded-xl"
                     data-testid="mobile-menu-btn"
+                    data-tour="menu-button"
                   >
                     <Menu className="w-5 h-5" />
                   </Button>
@@ -403,10 +442,13 @@ export default function DashboardLayout() {
                 type="button"
                 onClick={() => navigate("/assistant")}
                 aria-label="Open DavaDesk AI"
+                data-tour="assistant-mobile"
                 className="md:hidden flex h-9 w-9 items-center justify-center rounded-xl border border-border/60 active:scale-95"
               >
                 <img src={AI_LOGO_SRC} alt="" className="h-7 w-7 rounded-full" />
               </button>
+
+              <HeaderCredits />
 
               {/* Theme Toggle Button */}
               <Button
@@ -424,6 +466,8 @@ export default function DashboardLayout() {
                 )}
               </Button>
 
+              {/* Alerts + activity (one spot in the welcome tour) */}
+              <div className="flex items-center gap-2.5 max-md:gap-1.5" data-tour="alerts">
               {/* Notification Center */}
               <NotificationCenter />
 
@@ -442,6 +486,7 @@ export default function DashboardLayout() {
               >
                 <Activity className="w-4.5 h-4.5 text-foreground dark:text-foreground transition-transform duration-200 group-hover:scale-110" />
               </Button>
+              </div>
 
               {/* User Avatar & Dropdown Menu */}
               <DropdownMenu>
@@ -450,6 +495,7 @@ export default function DashboardLayout() {
                     variant="ghost"
                     className="flex items-center gap-2 hover:bg-muted/80 text-foreground px-2.5 max-md:px-1 py-1.5 rounded-xl border border-border/60 dark:border-border/40 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98] h-9 cursor-pointer"
                     data-testid="user-menu-btn"
+                    data-tour="user-menu"
                   >
                     <Avatar className="w-7 h-7 ring-1 ring-border/60 shadow-xs shrink-0 transition-transform duration-200 group-hover:scale-105">
                       <AvatarImage src={user?.image_url} />
@@ -493,6 +539,16 @@ export default function DashboardLayout() {
                       </span>
                     )}
                   </DropdownMenuItem>
+                  <TakeTourItem />
+                  {user?.subscription?.kind === "PROMO" && (
+                    <DropdownMenuItem
+                      onClick={() => navigate("/early-access/terms")}
+                      className="cursor-pointer font-bold py-2 px-3 rounded-xl group hover:bg-orange-500/10 focus:bg-orange-500/10 text-foreground hover:text-orange-600 focus:text-orange-600 dark:hover:text-orange-400 dark:focus:text-orange-400 transition-colors"
+                    >
+                      <FileText className="w-4 h-4 mr-2.5 text-orange-500" />
+                      Early access terms
+                    </DropdownMenuItem>
+                  )}
                   <DropdownMenuSeparator className="bg-border/50 my-1" />
                   <DropdownMenuItem
                     onClick={handleLogout}
@@ -566,6 +622,7 @@ export default function DashboardLayout() {
         </div>
       </div>
     </TooltipProvider>
+    </TourProvider>
     </ShortcutProvider>
   );
 }
