@@ -16,19 +16,26 @@ let cache = { at: 0, rows: null };
 async function collection() {
   const url = process.env.OFFER_LEADS_MONGO_URL;
   if (!url) {
-    const err = new Error("OFFER_LEADS_MONGO_URL is not set, so the 50-50 registrations can't be loaded");
+    const err = new Error(
+      "OFFER_LEADS_MONGO_URL is not set, so the 50-50 registrations can't be loaded"
+    );
     err.status = 503;
     throw err;
   }
   if (!client) {
     connecting =
       connecting ||
-      MongoClient.connect(url, { serverSelectionTimeoutMS: 8000, maxPoolSize: 5 })
+      MongoClient.connect(url, {
+        serverSelectionTimeoutMS: 8000,
+        maxPoolSize: 5,
+      })
         .then((c) => (client = c))
         .finally(() => (connecting = null));
     await connecting;
   }
-  return client.db().collection(process.env.OFFER_LEADS_COLLECTION || "offerleads");
+  return client
+    .db()
+    .collection(process.env.OFFER_LEADS_COLLECTION || "offerleads");
 }
 
 const clean = (v) => (v === undefined || v === null ? "" : String(v).trim());
@@ -56,7 +63,9 @@ function normalize(doc) {
     drug_license: clean(f.drug_license),
     current_software: clean(f.current_software),
     problems: clean(f.problems),
-    license_photo: /^https:\/\//.test(clean(f.license_photo)) ? clean(f.license_photo) : "",
+    license_photo: /^https:\/\//.test(clean(f.license_photo))
+      ? clean(f.license_photo)
+      : "",
     website_status: clean(doc.followUpStatus) || null,
     website_notes: clean(doc.followUpNotes) || null,
     created_at: doc.createdAt ? new Date(doc.createdAt).toISOString() : null,
@@ -65,9 +74,24 @@ function normalize(doc) {
 
 /** Every registration, newest first (cached for a minute). */
 async function listOfferLeads({ fresh = false } = {}) {
-  if (!fresh && cache.rows && Date.now() - cache.at < CACHE_MS) return cache.rows;
-  const docs = await (await collection())
-    .find({}, { projection: { offerId: 1, registrationId: 1, formData: 1, followUpStatus: 1, followUpNotes: 1, createdAt: 1 } })
+  if (!fresh && cache.rows && Date.now() - cache.at < CACHE_MS)
+    return cache.rows;
+  const docs = await (
+    await collection()
+  )
+    .find(
+      {},
+      {
+        projection: {
+          offerId: 1,
+          registrationId: 1,
+          formData: 1,
+          followUpStatus: 1,
+          followUpNotes: 1,
+          createdAt: 1,
+        },
+      }
+    )
     .sort({ createdAt: -1 })
     .limit(5000)
     .toArray();
@@ -76,8 +100,14 @@ async function listOfferLeads({ fresh = false } = {}) {
 }
 
 async function getOfferLead(leadId) {
-  const id = String(leadId || "").startsWith(LEAD_PREFIX) ? String(leadId).slice(LEAD_PREFIX.length) : String(leadId || "");
-  return (await listOfferLeads()).find((l) => l.source_id === id) || (await listOfferLeads({ fresh: true })).find((l) => l.source_id === id) || null;
+  const id = String(leadId || "").startsWith(LEAD_PREFIX)
+    ? String(leadId).slice(LEAD_PREFIX.length)
+    : String(leadId || "");
+  return (
+    (await listOfferLeads()).find((l) => l.source_id === id) ||
+    (await listOfferLeads({ fresh: true })).find((l) => l.source_id === id) ||
+    null
+  );
 }
 
 /** Lookup maps for "is this DavaDesk user a 50-50 registrant?" */
@@ -89,7 +119,19 @@ async function offerIndex() {
     if (r.email) byEmail.set(r.email, r);
     if (r.mobile_key) byMobile.set(r.mobile_key, r);
   }
-  return { rows, match: (email, mobile) => byEmail.get(emailKey(email)) || byMobile.get(mobileKey(mobile)) || null };
+  return {
+    rows,
+    match: (email, mobile) =>
+      byEmail.get(emailKey(email)) || byMobile.get(mobileKey(mobile)) || null,
+  };
 }
 
-module.exports = { LEAD_PREFIX, SOURCE, listOfferLeads, getOfferLead, offerIndex, emailKey, mobileKey };
+module.exports = {
+  LEAD_PREFIX,
+  SOURCE,
+  listOfferLeads,
+  getOfferLead,
+  offerIndex,
+  emailKey,
+  mobileKey,
+};
