@@ -8,7 +8,13 @@ const { normalizeUpiId, isValidUpiId, pharmacyUpiQr } = require("../utils/upi");
 
 const { requireSubscription } = require("../middleware/subscription");
 
-const upload = multer({ storage: multer.memoryStorage() });
+// Logos are public files: only small raster images, never HTML/SVG
+const LOGO_TYPES = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" };
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 2 * 1024 * 1024, files: 1 },
+  fileFilter: (req, file, cb) => cb(null, !file.mimetype || !!LOGO_TYPES[file.mimetype]),
+});
 
 // PUT /api/pharmacy - Update pharmacy
 router.put(
@@ -95,11 +101,11 @@ router.post(
   upload.single("file"),
   async (req, res, next) => {
     try {
-      if (!req.file) {
-        return res.status(400).json({ detail: "No file uploaded" });
+      if (!req.file || !LOGO_TYPES[req.file.mimetype]) {
+        return res.status(400).json({ detail: "Upload a PNG, JPEG or WebP image (max 2 MB)" });
       }
 
-      const key = `logos/${req.user.pharmacy_id}-${Date.now()}.${req.file.originalname.split(".").pop()}`;
+      const key = `logos/${req.user.pharmacy_id}-${Date.now()}.${LOGO_TYPES[req.file.mimetype]}`;
       const url = await uploadToR2(key, req.file.buffer, req.file.mimetype);
 
       const db = mongoose.connection.db;

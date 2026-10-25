@@ -1,0 +1,9 @@
+# /etc/logrotate.d/davadesk
+/var/log/davadesk-*.log {
+    weekly
+    rotate 8
+    compress
+    missingok
+    notifempty
+    copytruncate
+}

@@ -1,5 +1,10 @@
 node_modules
 venv
 .env
+.env.*
+*.pem
 .git
 .cache
+tmp
+coverage
+*.log

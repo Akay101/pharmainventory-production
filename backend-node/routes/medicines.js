@@ -4,6 +4,7 @@ const mongoose = require("mongoose");
 const { auth } = require("../middleware/auth");
 
 const { requireSubscription } = require("../middleware/subscription");
+const { catalogLimiter, GLOBAL_MAX_PAGES } = require("../middleware/security");
 const { medicineKey } = require("../services/search/normalize");
 
 const {
@@ -25,7 +26,7 @@ const escapeRegex = (str) => {
 const normalizeMedName = (str) => medicineKey(str);
 
 // POST & GET /api/medicines/enrich (AI Autofill)
-router.all("/enrich", auth, requireSubscription(), async (req, res, next) => {
+router.all("/enrich", auth, requireSubscription(), catalogLimiter, async (req, res, next) => {
   try {
     const productNameRaw =
       req.body?.product_name ||
@@ -102,7 +103,7 @@ Respond ONLY in JSON format:
 });
 
 // GET /api/medicines/search
-router.get("/search", auth, requireSubscription(), async (req, res, next) => {
+router.get("/search", auth, requireSubscription(), catalogLimiter, async (req, res, next) => {
   try {
     const { q, limit = 20, fuzzy = "true", page = 1 } = req.query;
     const db = mongoose.connection.db;
@@ -118,8 +119,10 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
     // cached inside searchGlobalMedicines.
     const trimmedQ = String(q).trim();
     const searchLower = trimmedQ.toLowerCase();
-    const parsedLimit = Math.min(parseInt(limit) || 20, 100);
-    const parsedPage = Math.max(parseInt(page) || 1, 1);
+    // Bounded: a search shows a few pages of suggestions, never a walk
+    // through the whole global catalogue
+    const parsedLimit = Math.min(Math.max(parseInt(limit) || 20, 1), 50);
+    const parsedPage = Math.min(Math.max(parseInt(page) || 1, 1), GLOBAL_MAX_PAGES);
     const skip = (parsedPage - 1) * parsedLimit;
     // Fixed candidate pool so ranking (and therefore paging) is stable
     const internalLimit = Math.max(200, parsedLimit * parsedPage);
@@ -690,6 +693,7 @@ router.get(
   "/search-suggestions",
   auth,
   requireSubscription(),
+  catalogLimiter,
   async (req, res, next) => {
     try {
       const { q, limit = 10 } = req.query;

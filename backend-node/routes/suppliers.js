@@ -6,6 +6,7 @@ const { auth } = require("../middleware/auth");
 const { logActivity } = require("../utils/activityLogger");
 
 const { requireSubscription } = require("../middleware/subscription");
+const { catalogLimiter, GLOBAL_PAGE_SIZE, GLOBAL_MAX_PAGES, MIN_GLOBAL_QUERY } = require("../middleware/security");
 const {
   getGlobalDistributorsCollection,
   getCached,
@@ -25,12 +26,15 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
     const { search, page = 1, limit = 50, highlight_id, include_global } = req.query;
     const pharmacyId = req.user.pharmacy_id;
 
-    const pageNum = Math.max(1, parseInt(page) || 1);
-    const limitNum = Math.max(1, parseInt(limit) || 20);
-    const skip = (pageNum - 1) * limitNum;
-    const shouldIncludeGlobal = include_global === "true" || include_global === "1";
-
-    const trimmedSearch = (search || "").trim();
+    let pageNum = Math.max(1, parseInt(page) || 1);
+    const limitNum = Math.min(Math.max(1, parseInt(limit) || 20), 500);
+    let skip = (pageNum - 1) * limitNum;
+    const trimmedSearch = String(search || "").trim();
+    // Global distributors only for a real search, a few small pages deep
+    const shouldIncludeGlobal =
+      (include_global === "true" || include_global === "1") &&
+      trimmedSearch.length >= MIN_GLOBAL_QUERY &&
+      pageNum <= GLOBAL_MAX_PAGES;
     const cacheKey = `sups:${pharmacyId}:${trimmedSearch.toLowerCase()}:${pageNum}:${limitNum}:${shouldIncludeGlobal}`;
     if (shouldIncludeGlobal) {
       const cached = getCached(cacheKey);
@@ -58,6 +62,7 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
       const targetIndex = allSups.findIndex((s) => s.id === highlight_id);
       if (targetIndex !== -1) {
         pageNum = Math.floor(targetIndex / limitNum) + 1;
+        skip = (pageNum - 1) * limitNum;
       }
     }
 
@@ -134,7 +139,7 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
             if (nm) localNameMap.set(nm, ls);
           }
 
-          const slotsNeeded = limitNum - localSuppliers.length;
+          const slotsNeeded = Math.min(limitNum - localSuppliers.length, GLOBAL_PAGE_SIZE);
           const globalSkip = Math.max(0, skip - localCount);
 
           if (trimmedSearch) {
@@ -198,21 +203,6 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
 
             const hasMoreGlobal = globalSuppliers.length >= slotsNeeded;
             globalCount = hasMoreGlobal ? globalSkip + slotsNeeded + 10 : globalSuppliers.length;
-          } else {
-            // Empty search: browse top global distributors
-            if (slotsNeeded > 0) {
-              globalSuppliers = await globalDistCol
-                .find({})
-                .sort({ supplier_id: 1 })
-                .skip(globalSkip)
-                .limit(slotsNeeded)
-                .toArray();
-            }
-            try {
-              globalCount = await globalDistCol.estimatedDocumentCount();
-            } catch (e) {
-              globalCount = 87739;
-            }
           }
 
           // Map global distributors to supplier contract with accurate badging
@@ -306,7 +296,7 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
 
 // POST /api/suppliers/ensure-global
 // Seamlessly syncs / links a selected global distributor into the pharmacy's local suppliers
-router.post("/ensure-global", auth, requireSubscription(), async (req, res, next) => {
+router.post("/ensure-global", auth, requireSubscription(), catalogLimiter, async (req, res, next) => {
   try {
     const { global_id, name, phone, contact, gstin, gst_no, address, city, state } = req.body;
     const db = mongoose.connection.db;

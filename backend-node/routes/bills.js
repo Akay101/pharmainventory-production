@@ -12,6 +12,7 @@ const billShare = require("../services/billShare");
 const { sendBillEmail } = require("../services/email");
 const { logActivity } = require("../utils/activityLogger");
 const { requireSubscription } = require("../middleware/subscription");
+const { catalogLimiter, GLOBAL_PAGE_SIZE, GLOBAL_MAX_PAGES, MIN_GLOBAL_QUERY } = require("../middleware/security");
 const {
   getGlobalDoctorsCollection,
   getCached,
@@ -241,17 +242,20 @@ router.get("/insights", auth, requireSubscription(), async (req, res, next) => {
 });
 
 // GET /api/bills/doctors
-router.get("/doctors", auth, requireSubscription(), async (req, res, next) => {
+router.get("/doctors", auth, requireSubscription(), catalogLimiter, async (req, res, next) => {
   try {
     const db = mongoose.connection.db;
     const { search, page = 1, limit = 20 } = req.query;
     const pharmacyId = req.user.pharmacy_id;
 
     const pageNum = Math.max(1, parseInt(page) || 1);
-    const limitNum = Math.max(1, parseInt(limit) || 20);
+    const limitNum = Math.min(Math.max(1, parseInt(limit) || 20), 50);
     const skip = (pageNum - 1) * limitNum;
 
-    const trimmedSearch = (search || "").trim();
+    const trimmedSearch = String(search || "").trim();
+    // Global doctors only for a real search, a few pages deep
+    const globalLimit = Math.min(limitNum, GLOBAL_PAGE_SIZE);
+    const withGlobal = trimmedSearch.length >= MIN_GLOBAL_QUERY && pageNum <= GLOBAL_MAX_PAGES;
     const cacheKey = `docs:${pharmacyId}:${trimmedSearch.toLowerCase()}:${pageNum}:${limitNum}`;
     const cached = getCached(cacheKey);
     if (cached) return res.json(cached);
@@ -282,8 +286,8 @@ router.get("/doctors", auth, requireSubscription(), async (req, res, next) => {
       (async () => {
         try {
           const globalDocCol = await getGlobalDoctorsCollection();
-          if (!globalDocCol) return [];
-          if (trimmedSearch) {
+          if (!globalDocCol || !withGlobal) return [];
+          {
             const escapedSearch = escapeRegex(trimmedSearch);
             const isMultiWord = trimmedSearch.includes(" ");
             let results = [];
@@ -292,17 +296,17 @@ router.get("/doctors", auth, requireSubscription(), async (req, res, next) => {
               results = await globalDocCol
                 .find({ $text: { $search: trimmedSearch } }, { score: { $meta: "textScore" } })
                 .sort({ score: { $meta: "textScore" } })
-                .limit(limitNum)
+                .limit(globalLimit)
                 .toArray()
                 .catch(() => []);
             }
 
-            if (results.length < limitNum) {
+            if (results.length < globalLimit) {
               const prefixMatches = await globalDocCol
                 .find(
                   { full_name: { $regex: `^${escapedSearch}`, $options: "i" } }
                 )
-                .limit(limitNum - results.length)
+                .limit(globalLimit - results.length)
                 .toArray()
                 .catch(() => []);
 
@@ -315,7 +319,7 @@ router.get("/doctors", auth, requireSubscription(), async (req, res, next) => {
               }
             }
 
-            if (results.length < limitNum) {
+            if (results.length < globalLimit) {
               const subMatches = await globalDocCol
                 .find({
                   $or: [
@@ -323,7 +327,7 @@ router.get("/doctors", auth, requireSubscription(), async (req, res, next) => {
                     { clinic_hospital: { $regex: escapedSearch, $options: "i" } },
                   ]
                 })
-                .limit(limitNum - results.length)
+                .limit(globalLimit - results.length)
                 .toArray()
                 .catch(() => []);
 
@@ -336,14 +340,6 @@ router.get("/doctors", auth, requireSubscription(), async (req, res, next) => {
               }
             }
             return results;
-          } else {
-            return await globalDocCol
-              .find({})
-              .sort({ practitioner_id: 1 })
-              .skip(skip)
-              .limit(limitNum)
-              .toArray()
-              .catch(() => []);
           }
         } catch (err) {
           console.warn("Global doctors search error:", err.message);
@@ -396,7 +392,7 @@ router.get("/doctors", auth, requireSubscription(), async (req, res, next) => {
 });
 
 // POST /api/bills/doctors/ensure-global
-router.post("/doctors/ensure-global", auth, requireSubscription(), async (req, res, next) => {
+router.post("/doctors/ensure-global", auth, requireSubscription(), catalogLimiter, async (req, res, next) => {
   try {
     const { name, license_number, registration_no, clinic, city, state } = req.body;
     const db = mongoose.connection.db;

@@ -9,6 +9,7 @@ import {
 } from "react-router-dom";
 import axios from "axios";
 import { Toaster } from "./components/ui/sonner";
+import { toast } from "sonner";
 
 // Pages
 import LoginPage from "./pages/LoginPage";
@@ -345,6 +346,15 @@ axios.interceptors.response.use(
     const code = error.response?.data?.code;
 
     if (!originalRequest) {
+      return Promise.reject(error);
+    }
+
+    // Rate limited (by the API or nginx, whose 429 has no JSON detail):
+    // one clear toast, and the message pages show uses it too
+    if (status === 429) {
+      const detail = error.response?.data?.detail || "Too many requests. Please wait a few seconds and try again.";
+      if (error.response && typeof error.response.data !== "object") error.response.data = { detail, code: "RATE_LIMITED" };
+      toast.warning(detail, { id: "rate-limited" });
       return Promise.reject(error);
     }
 

@@ -50,7 +50,8 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
     }
 
     if (search) {
-      const searchRegex = { $regex: search, $options: "i" };
+      const escaped = String(search).slice(0, 100).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const searchRegex = { $regex: escaped, $options: "i" };
       query.$or = [
         { customer_name: searchRegex },
         { customer_mobile: searchRegex },
@@ -59,8 +60,8 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
       ];
     }
 
-    const pageNum = parseInt(page) || 1;
-    const limitNum = parseInt(limit) || 50;
+    const pageNum = Math.max(parseInt(page) || 1, 1);
+    const limitNum = Math.min(Math.max(parseInt(limit) || 50, 1), 200);
     const skip = (pageNum - 1) * limitNum;
 
     const reminders = await db

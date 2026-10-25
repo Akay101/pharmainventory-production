@@ -34,6 +34,7 @@
     "openai": "^4.20.0",
     "pdfkit": "^0.14.0",
     "qrcode": "^1.5.4",
+    "rate-limit-redis": "^4.2.0",
     "sharp": "^0.34.5",
     "sib-api-v3-sdk": "^8.5.0",
     "swagger-autogen": "^2.23.7",

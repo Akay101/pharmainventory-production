@@ -31,8 +31,8 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
       query.is_read = is_read === "true" || is_read === true;
     }
 
-    const pageNum = parseInt(page) || 1;
-    const limitNum = parseInt(limit) || 30;
+    const pageNum = Math.max(parseInt(page) || 1, 1);
+    const limitNum = Math.min(Math.max(parseInt(limit) || 30, 1), 100);
     const skip = (pageNum - 1) * limitNum;
 
     const notifications = await db

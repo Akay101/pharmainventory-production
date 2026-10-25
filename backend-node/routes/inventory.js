@@ -148,7 +148,7 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
     }
 
     const sortDir = sort_order === "asc" ? 1 : -1;
-    const parsedLimit = parseInt(limit);
+    const parsedLimit = Math.min(Math.max(parseInt(limit) || 50, 1), 1000);
     let pageNum = parseInt(page);
     let total = 0;
 

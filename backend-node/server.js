@@ -1,7 +1,6 @@
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
-const { rateLimit } = require("express-rate-limit");
 const mongoose = require("mongoose");
 
 const startCronJobs = require("./services/cron");
@@ -31,12 +30,22 @@ const { BullMQAdapter } = require("@bull-board/api/bullMQAdapter");
 const { ExpressAdapter } = require("@bull-board/express");
 const { scanQueue } = require("./services/ai/queue");
 const basicAuth = require("express-basic-auth");
+const {
+  sanitizeInput,
+  apiLimiter,
+  authLimiter,
+  otpLimiter,
+  refreshLimiter,
+  publicLimiter,
+  adminLimiter,
+} = require("./middleware/security");
 
 const app = express();
 app.set("trust proxy", 1);
 const PORT = process.env.PORT || 8001;
 // Security headers (API only serves JSON, so no CSP/frame concerns for HTML)
-app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
+// HSTS is set by nginx (it also covers nginx's own error pages)
+app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" }, strictTransportSecurity: false }));
 
 // CORS: credentials are allowed, so only known frontends may call the API.
 // CORS_ORIGINS="https://a.com,https://b.com" overrides; "*" or unset = defaults.
@@ -70,12 +79,15 @@ app.use(
 // Cashfree webhooks need the exact raw bytes for signature verification, so
 // this must be registered before the JSON parser.
 app.use("/api/webhook/cashfree", express.raw({ type: "*/*", limit: "1mb" }));
-app.use(express.json({ limit: "50mb" }));
-app.use(express.urlencoded({ extended: true, limit: "50mb" }));
+// Files arrive as multipart uploads (their own limits); JSON stays modest so
+// a single request can't tie up memory.
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ extended: true, limit: "10mb" }));
+app.use(sanitizeInput);
 
 // MongoDB connection
 mongoose
-  .connect(process.env.MONGO_URL)
+  .connect(process.env.MONGO_URL, { maxPoolSize: 50, serverSelectionTimeoutMS: 10000 })
   .then(() => {
     console.log("Connected to MongoDB");
     // Idempotent; runs in the background so startup isn't blocked
@@ -107,44 +119,15 @@ mongoose
   });
 
 
-// Brute-force protection on credential and OTP endpoints (per client IP).
-// RATE_LIMIT_SCALE only exists so automated tests can raise the ceilings.
-const rlScale = Math.max(1, Number(process.env.RATE_LIMIT_SCALE) || 1);
-const authLimiter = rateLimit({
-  windowMs: 60 * 1000,
-  limit: 20 * rlScale,
-  standardHeaders: "draft-8",
-  legacyHeaders: false,
-  message: { detail: "Too many requests. Please wait a minute and try again." },
-});
-const otpLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  limit: 15 * rlScale,
-  standardHeaders: "draft-8",
-  legacyHeaders: false,
-  message: { detail: "Too many OTP attempts. Please try again later." },
-});
-const refreshLimiter = rateLimit({
-  windowMs: 60 * 1000,
-  limit: 60 * rlScale,
-  standardHeaders: "draft-8",
-  legacyHeaders: false,
-  message: { detail: "Too many requests." },
-});
+// Rate limits live in Redis (middleware/security.js): one overall ceiling per
+// IP, tighter ones on credential, OTP and public endpoints.
+app.use("/api", apiLimiter);
 app.use(["/api/auth/login", "/api/auth/register", "/api/auth/forgot-password"], authLimiter);
 app.use(
   ["/api/auth/verify-otp", "/api/auth/resend-otp", "/api/auth/reset-password", "/api/users/verify"],
   otpLimiter
 );
 app.use("/api/auth/refresh", refreshLimiter);
-// Shared bill links are public: keep guessing and scraping slow
-const publicLimiter = rateLimit({
-  windowMs: 60 * 1000,
-  limit: 30 * rlScale,
-  standardHeaders: "draft-8",
-  legacyHeaders: false,
-  message: { detail: "Too many requests. Please wait a minute and try again." },
-});
 app.use("/api/public", publicLimiter);
 
 // API Routes - all prefixed with /api
@@ -200,6 +183,7 @@ createBullBoard({
 
 app.use(
   "/admin/queues",
+  adminLimiter,
   basicAuth({
     users: { admin: process.env.ADMIN_PASSWORD },
     challenge: true,
@@ -209,8 +193,10 @@ app.use(
 
 startCronJobs();
 
-// Swagger Documentation setup
-try {
+// Swagger Documentation setup (not served in production unless asked for:
+// it lists every endpoint)
+const serveDocs = process.env.NODE_ENV !== "production" || process.env.ENABLE_API_DOCS === "true";
+if (serveDocs) try {
   const swaggerUi = require("swagger-ui-express");
   const swaggerDocument = require("./swagger-output.json");
   app.use(
@@ -233,18 +219,34 @@ app.get("/api/", (req, res) => {
   res.json({ message: "Pharmacy API - Node.js/Express", version: "2.0.0" });
 });
 
-// Health check endpoints
-app.get("/api/health", (req, res) => {
-  res.json({
-    status: "healthy",
-    timestamp: new Date().toISOString(),
-    stack: "Node.js/Express",
-  });
-});
-
-app.get("/health", (req, res) => {
+// Health checks. /health is liveness (the process answers); /health/ready
+// also checks MongoDB and Redis, and is what deploys and monitors should use.
+app.get(["/health", "/api/health"], (req, res) => {
   res.json({ status: "healthy", timestamp: new Date().toISOString() });
 });
+
+const withTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), ms))]);
+app.get(["/health/ready", "/api/health/ready"], async (req, res) => {
+  const checks = {};
+  try {
+    await withTimeout(mongoose.connection.db.admin().ping(), 2000);
+    checks.mongo = "ok";
+  } catch {
+    checks.mongo = "down";
+  }
+  try {
+    await withTimeout(scanQueue.client.then((c) => c.ping()), 2000);
+    checks.redis = "ok";
+  } catch {
+    checks.redis = "down";
+  }
+  const ok = Object.values(checks).every((v) => v === "ok");
+  res.set("Cache-Control", "no-store");
+  res.status(ok ? 200 : 503).json({ status: ok ? "ready" : "degraded", checks, timestamp: new Date().toISOString() });
+});
+
+// Unknown API paths answer JSON, not Express's HTML page
+app.use("/api", (req, res) => res.status(404).json({ detail: "Not found" }));
 
 // Error handling middleware
 app.use((err, req, res, next) => {
@@ -258,6 +260,27 @@ app.use((err, req, res, next) => {
 });
 
 // Start server
-app.listen(PORT, "0.0.0.0", () => {
+const server = app.listen(PORT, "0.0.0.0", () => {
   console.log(`Pharmalogy API running on port ${PORT}`);
 });
+// Slow or stalled clients can't hold sockets open indefinitely; keep-alive is
+// longer than nginx's upstream keepalive so nginx closes first.
+server.requestTimeout = 120 * 1000;
+server.headersTimeout = 65 * 1000;
+server.keepAliveTimeout = 61 * 1000;
+
+// Graceful shutdown: finish in-flight requests on deploy/stop, then close DB
+let shuttingDown = false;
+const shutdown = (signal) => {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`${signal} received, shutting down`);
+  server.close(async () => {
+    await mongoose.connection.close().catch(() => {});
+    process.exit(0);
+  });
+  setTimeout(() => process.exit(0), 15000).unref();
+};
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
+process.on("unhandledRejection", (err) => console.error("Unhandled rejection:", err));

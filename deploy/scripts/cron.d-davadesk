@@ -1,0 +1,7 @@
+# /etc/cron.d/davadesk
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# Nightly DB backup at 02:30 IST (21:00 UTC)
+0 21 * * * root /opt/davadesk/backup-mongo.sh >> /var/log/davadesk-backup.log 2>&1
+# API watchdog
+* * * * * root /opt/davadesk/healthwatch.sh >> /var/log/davadesk-health.log 2>&1

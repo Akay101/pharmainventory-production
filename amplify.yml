@@ -27,7 +27,8 @@ frontend:
           else
             echo "🔨 Building main frontend (React)..."
             cd frontend
-            npm run build
+            # No source maps in production: they publish the full source code
+            GENERATE_SOURCEMAP=false npm run build
           fi
   artifacts:
     baseDirectory: frontend/build
