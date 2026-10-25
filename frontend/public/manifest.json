@@ -1,0 +1,20 @@
+{
+  "short_name": "DavaDesk",
+  "name": "DavaDesk - Pharmacy Management Software",
+  "icons": [
+    {
+      "src": "assets/svgs/logoBrand/logoOnly.png",
+      "sizes": "192x192 512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "assets/svgs/logoBrand/logoOnlyWithoutBackground.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ],
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#ff751f",
+  "background_color": "#ffffff"
+}

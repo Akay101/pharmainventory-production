@@ -15,11 +15,8 @@ const scanJobSchema = new mongoose.Schema({
     required: true,
   },
   result: { type: mongoose.Schema.Types.Mixed },
-  errorCategory: {
-    type: String,
-    enum: ["timeout", "invalid_json", "gemini_error", "image_error", "unknown"],
-    null: true,
-  },
+  // timeout, rate_limit, image_error, invalid_json, gemini_error, ...
+  errorCategory: { type: String, default: null },
   errorMessage: { type: String, null: true },
   createdAt: { type: Date, default: Date.now, expires: 86400 * 7 }, // Expire after 7 days
 });

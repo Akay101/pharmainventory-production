@@ -1,69 +1,907 @@
+const fs = require("fs");
+const path = require("path");
 const SibApiV3Sdk = require("sib-api-v3-sdk");
+const {
+  SESClient,
+  SendEmailCommand,
+} = require("@aws-sdk/client-ses");
+const {
+  S3Client,
+  GetObjectCommand,
+  PutObjectCommand,
+  HeadObjectCommand,
+} = require("@aws-sdk/client-s3");
+const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
 
+// Initialize Brevo SDK
 const defaultClient = SibApiV3Sdk.ApiClient.instance;
 const apiKey = defaultClient.authentications["api-key"];
 apiKey.apiKey = process.env.BREVO_API_KEY || "";
-
 const apiInstance = new SibApiV3Sdk.TransactionalEmailsApi();
-const SENDER_EMAIL = process.env.MAIL_USER || "no-reply@pharmalogy.co.in";
 
-const sendOTPEmail = async (toEmail, toName, otp) => {
+// Initialize Amazon SES SDK
+let sesClient = null;
+if (process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
+  sesClient = new SESClient({
+    region: process.env.AWS_REGION || "ap-south-1",
+    credentials: {
+      accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+      secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+    },
+  });
+}
+
+// Initialize Amazon S3 SDK for Email Media Assets
+let s3Client = null;
+if (process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
+  s3Client = new S3Client({
+    region: process.env.AWS_REGION || "ap-south-1",
+    credentials: {
+      accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+      secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+    },
+  });
+}
+
+const S3_BUCKET = process.env.AWS_S3_BUCKET || "pharmalogy-media-bucket";
+const S3_REGION = process.env.AWS_REGION || "ap-south-1";
+
+const SENDER_EMAIL = process.env.MAIL_USER || "team@davadesk.in";
+const SENDER_NAME = "DavaDesk";
+
+// In-Memory Cache for Presigned Image URLs (Valid for 6 days before auto-refresh)
+let presignedCache = {
+  logo: `https://${S3_BUCKET}.s3.${S3_REGION}.amazonaws.com/email-assets/logoOnly.png`,
+  youtube: `https://${S3_BUCKET}.s3.${S3_REGION}.amazonaws.com/email-assets/youtube.png`,
+  linkedin: `https://${S3_BUCKET}.s3.${S3_REGION}.amazonaws.com/email-assets/linkedin.png`,
+  website: `https://${S3_BUCKET}.s3.${S3_REGION}.amazonaws.com/email-assets/website.png`,
+  expiresAt: 0,
+};
+
+/**
+ * Fetch or generate fresh 7-day presigned URLs for email images
+ */
+async function getAssetUrls() {
+  const now = Date.now();
+  // Return cached if still valid for > 1 day
+  if (
+    presignedCache.expiresAt &&
+    presignedCache.expiresAt - now > 86400000 &&
+    presignedCache.logo.includes("X-Amz-Signature")
+  ) {
+    return presignedCache;
+  }
+
+  if (!s3Client) {
+    return presignedCache;
+  }
+
   try {
-    const sendSmtpEmail = new SibApiV3Sdk.SendSmtpEmail();
+    const expiresIn = 604800; // 7 days in seconds (AWS SigV4 maximum)
+    const [logoUrl, youtubeUrl, linkedinUrl, websiteUrl] = await Promise.all([
+      getSignedUrl(
+        s3Client,
+        new GetObjectCommand({
+          Bucket: S3_BUCKET,
+          Key: "email-assets/logoOnly.png",
+        }),
+        { expiresIn }
+      ),
+      getSignedUrl(
+        s3Client,
+        new GetObjectCommand({
+          Bucket: S3_BUCKET,
+          Key: "email-assets/youtube.png",
+        }),
+        { expiresIn }
+      ),
+      getSignedUrl(
+        s3Client,
+        new GetObjectCommand({
+          Bucket: S3_BUCKET,
+          Key: "email-assets/linkedin.png",
+        }),
+        { expiresIn }
+      ),
+      getSignedUrl(
+        s3Client,
+        new GetObjectCommand({
+          Bucket: S3_BUCKET,
+          Key: "email-assets/website.png",
+        }),
+        { expiresIn }
+      ),
+    ]);
 
-    sendSmtpEmail.subject = "Pharmacy - Your OTP Code";
-    sendSmtpEmail.htmlContent = `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-        <h2 style="color: #7c3aed;">Pharmacy - Test Instance</h2>
-        <p>Hello ${toName},</p>
-        <p>Your OTP code is:</p>
-        <h1 style="color: #7c3aed; font-size: 32px; letter-spacing: 5px;">${otp}</h1>
-        <p>This code will expire in 10 minutes.</p>
-        <p>If you didn't request this code, please ignore this email.</p>
-        <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
-        <p style="color: #666; font-size: 12px;">Pharmacy Test Instance</p>
+    presignedCache = {
+      logo: logoUrl,
+      youtube: youtubeUrl,
+      linkedin: linkedinUrl,
+      website: websiteUrl,
+      expiresAt: now + expiresIn * 1000,
+    };
+  } catch (err) {
+    console.error(
+      "[DavaDesk Email] Warning: Could not generate presigned asset URLs:",
+      err.message
+    );
+  }
+
+  return presignedCache;
+}
+
+// Immediately trigger pre-warming of presigned URLs on server startup
+getAssetUrls().catch(() => {});
+
+// Brand Configuration
+const BRAND_CONFIG = {
+  name: "DavaDesk",
+  tagline: "Automate Your Pharmacy",
+  websiteUrl: "https://davadesk.in",
+  supportEmail: "support@davadesk.in",
+  copyrightYear: new Date().getFullYear(),
+  colors: {
+    primary: "#ff751f",
+    primaryDark: "#ea580c",
+    primaryLight: "#fff7ed",
+    accent: "#f59e0b",
+    textMain: "#0f172a",
+    textMuted: "#64748b",
+    border: "#e2e8f0",
+    bgOuter: "#f8fafc",
+    bgCard: "#ffffff",
+  },
+};
+
+/**
+ * Centralized Base Email Layout Generator
+ * Wraps content with fixed brand header, S3 presigned brand logo, theme colors, and interactive footer with social icons.
+ */
+const renderBaseLayout = ({
+  previewText = "",
+  badge = "",
+  badgeColor = BRAND_CONFIG.colors.primaryDark,
+  title = "",
+  greeting = "",
+  contentHtml = "",
+  footerNote = "",
+  showSocials = true,
+  assetUrls = null,
+}) => {
+  const { colors, name, tagline, copyrightYear, supportEmail, websiteUrl } =
+    BRAND_CONFIG;
+
+  const currentAssets = assetUrls || presignedCache;
+
+  const socials = [
+    {
+      name: "YouTube",
+      url: "https://youtube.com/@davadesk",
+      iconUri: currentAssets.youtube,
+      textColor: "#0f172a",
+    },
+    {
+      name: "Website",
+      url: "https://davadesk.in",
+      iconUri: currentAssets.website,
+      textColor: "#0f172a",
+    },
+    {
+      name: "LinkedIn",
+      url: "https://linkedin.com/company/davadesk",
+      iconUri: currentAssets.linkedin,
+      textColor: "#0f172a",
+    },
+  ];
+
+  const socialLinksHtml = showSocials
+    ? `
+      <div style="margin: 22px 0 16px 0; text-align: center;">
+        <p style="margin: 0 0 12px 0; font-size: 11px; font-weight: 800; color: ${colors.textMuted}; text-transform: uppercase; letter-spacing: 1.2px;">
+          Connect With Us
+        </p>
+        <table align="center" border="0" cellpadding="0" cellspacing="0" style="margin: 0 auto;">
+          <tr>
+            ${socials
+              .map(
+                (s) => `
+              <td style="padding: 0 6px;">
+                <a href="${s.url}" target="_blank" style="display: inline-block; padding: 7px 16px; background: #ffffff; border: 1px solid ${colors.border}; border-radius: 24px; text-decoration: none; box-shadow: 0 1px 3px rgba(0,0,0,0.04);">
+                  <table border="0" cellpadding="0" cellspacing="0">
+                    <tr>
+                      <td valign="middle" style="padding-right: 6px;">
+                        <img src="${s.iconUri}" width="18" height="18" alt="${s.name}" style="display: block; width: 18px; height: 18px; border: 0;" />
+                      </td>
+                      <td valign="middle" style="font-size: 12px; font-weight: 700; color: ${s.textColor}; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+                        ${s.name}
+                      </td>
+                    </tr>
+                  </table>
+                </a>
+              </td>
+            `
+              )
+              .join("")}
+          </tr>
+        </table>
+      </div>
+    `
+    : "";
+
+  const logoImgTag = currentAssets.logo
+    ? `<img src="${currentAssets.logo}" width="42" height="42" alt="${name}" style="display: block; width: 42px; height: 42px; object-fit: contain; border: 0;" />`
+    : `<div style="width: 42px; height: 42px; border-radius: 10px; background: linear-gradient(135deg, #ff751f 0%, #ea580c 100%); text-align: center; line-height: 42px; color: #ffffff; font-weight: 900; font-size: 22px;">✛</div>`;
+
+  return `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <title>${title || name}</title>
+  <!--[if mso]>
+  <style type="text/css">
+    body, table, td {font-family: Arial, Helvetica, sans-serif !important;}
+  </style>
+  <![endif]-->
+  <style type="text/css">
+    body {
+      margin: 0 !important;
+      padding: 0 !important;
+      -webkit-text-size-adjust: 100% !important;
+      -ms-text-size-adjust: 100% !important;
+      background-color: ${colors.bgOuter};
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    }
+    table {
+      border-collapse: collapse !important;
+      mso-table-lspace: 0pt;
+      mso-table-rspace: 0pt;
+    }
+    a {
+      color: ${colors.primary};
+      text-decoration: none;
+    }
+    @media only screen and (max-width: 620px) {
+      .email-container {
+        width: 100% !important;
+        max-width: 100% !important;
+        border-radius: 0 !important;
+        border-left: none !important;
+        border-right: none !important;
+      }
+      .content-padding {
+        padding: 24px 20px !important;
+      }
+      .header-padding {
+        padding: 20px 20px 16px 20px !important;
+      }
+    }
+  </style>
+</head>
+<body style="margin: 0; padding: 0; background-color: ${colors.bgOuter};">
+  ${
+    previewText
+      ? `<div style="display: none; font-size: 1px; color: ${colors.bgOuter}; line-height: 1px; max-height: 0px; max-width: 0px; opacity: 0; overflow: hidden;">
+          ${previewText}
+          &nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;
+        </div>`
+      : ""
+  }
+
+  <table border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: ${colors.bgOuter};">
+    <tr>
+      <td align="center" style="padding: 32px 12px;">
+        <!-- Main Card Container -->
+        <table border="0" cellpadding="0" cellspacing="0" width="100%" class="email-container" style="max-width: 600px; background-color: ${colors.bgCard}; border-radius: 16px; border: 1px solid ${colors.border}; overflow: hidden; box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);">
+          
+          <!-- Top Gradient Accent Bar -->
+          <tr>
+            <td style="height: 5px; background: linear-gradient(90deg, #ff751f 0%, #ea580c 50%, #f59e0b 100%); font-size: 0; line-height: 0;">&nbsp;</td>
+          </tr>
+
+          <!-- Header Section with S3 Presigned Brand Logo -->
+          <tr>
+            <td class="header-padding" style="padding: 26px 36px 20px 36px; border-bottom: 1px solid #f1f5f9;">
+              <table border="0" cellpadding="0" cellspacing="0" width="100%">
+                <tr>
+                  <td align="left" valign="middle">
+                    <table border="0" cellpadding="0" cellspacing="0">
+                      <tr>
+                        <!-- Real DavaDesk Logo Image -->
+                        <td valign="middle" style="padding-right: 14px;">
+                          ${logoImgTag}
+                        </td>
+                        <td valign="middle">
+                          <div style="font-size: 22px; font-weight: 900; color: ${colors.textMain}; letter-spacing: -0.5px; line-height: 1.1;">
+                            ${name}
+                          </div>
+                          <div style="font-size: 11px; font-weight: 600; color: ${colors.textMuted}; margin-top: 3px;">
+                            ${tagline}
+                          </div>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                  ${
+                    badge
+                      ? `
+                  <td align="right" valign="middle">
+                    <span style="display: inline-block; padding: 5px 12px; background-color: #fff7ed; color: ${badgeColor}; border: 1px solid #ffedd5; border-radius: 20px; font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.8px;">
+                      ${badge}
+                    </span>
+                  </td>
+                  `
+                      : ""
+                  }
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Content Body Section -->
+          <tr>
+            <td class="content-padding" style="padding: 32px 36px;">
+              ${
+                title
+                  ? `<h1 style="margin: 0 0 16px 0; font-size: 22px; font-weight: 800; color: ${colors.textMain}; letter-spacing: -0.4px; line-height: 1.3;">
+                      ${title}
+                    </h1>`
+                  : ""
+              }
+
+              ${
+                greeting
+                  ? `<p style="margin: 0 0 16px 0; font-size: 15px; font-weight: 600; color: ${colors.textMain};">
+                      ${greeting}
+                    </p>`
+                  : ""
+              }
+
+              <div style="font-size: 14px; line-height: 1.6; color: #334155;">
+                ${contentHtml}
+              </div>
+            </td>
+          </tr>
+
+          <!-- Footer Section -->
+          <tr>
+            <td style="background-color: #f8fafc; padding: 24px 36px; border-top: 1px solid #f1f5f9;">
+              
+              <!-- Social Media Links with S3 Presigned Icons -->
+              ${socialLinksHtml}
+
+              <!-- Help & Support Line -->
+              <div style="text-align: center; margin-top: 16px; font-size: 12px; color: ${colors.textMuted};">
+                Need help or have questions? Contact our support team at 
+                <a href="mailto:${supportEmail}" style="color: ${colors.primary}; font-weight: 700; text-decoration: none;">${supportEmail}</a>
+              </div>
+
+              ${
+                footerNote
+                  ? `<div style="text-align: center; margin-top: 10px; font-size: 11px; color: #94a3b8;">
+                      ${footerNote}
+                    </div>`
+                  : ""
+              }
+
+              <!-- Divider -->
+              <div style="border-top: 1px solid #e2e8f0; margin: 16px 0;"></div>
+
+              <!-- Copyright & Legal -->
+              <table border="0" cellpadding="0" cellspacing="0" width="100%">
+                <tr>
+                  <td align="center" style="font-size: 11px; color: #94a3b8; line-height: 1.5;">
+                    © ${copyrightYear} <strong>${name} Inc.</strong> All rights reserved.<br>
+                    Smart Pharmacy Operations, Automated Invoicing & Inventory Intelligence.
+                  </td>
+                </tr>
+                <tr>
+                  <td align="center" style="font-size: 10px; color: #cbd5e1; padding-top: 8px;">
+                    This is an automated transactional message. Please do not reply directly to this email.
+                  </td>
+                </tr>
+              </table>
+
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+  `.trim();
+};
+
+/**
+ * Reusable Components for Building Email Content
+ */
+// Escape user-supplied text before it goes into email HTML.
+const escapeHtml = (v) =>
+  String(v ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
+const EmailComponents = {
+  // Bold OTP Box with Expiry Timer
+  otpBox: (otp, expiryMinutes = 10) => `
+    <div style="background: linear-gradient(135deg, rgba(255, 117, 31, 0.08) 0%, rgba(245, 158, 11, 0.05) 100%); border: 1.5px dashed #ff751f; border-radius: 12px; padding: 20px; text-align: center; margin: 24px 0;">
+      <p style="margin: 0 0 6px 0; font-size: 11px; font-weight: 800; color: #ea580c; text-transform: uppercase; letter-spacing: 1.5px;">
+        One-Time Password (OTP)
+      </p>
+      <div style="font-size: 36px; font-weight: 900; letter-spacing: 8px; color: #ff751f; font-family: 'Courier New', Courier, monospace; margin: 6px 0; text-shadow: 0 2px 4px rgba(255, 117, 31, 0.15);">
+        ${otp}
+      </div>
+      <p style="margin: 8px 0 0 0; font-size: 12px; font-weight: 600; color: #64748b;">
+        ⏱ Valid for <strong>${expiryMinutes} minutes</strong>. Do not share this code with anyone.
+      </p>
+    </div>
+  `,
+
+  // Call-To-Action Button
+  button: (text, url, color = "#ff751f") => `
+    <table border="0" cellpadding="0" cellspacing="0" style="margin: 24px 0;">
+      <tr>
+        <td align="center" style="border-radius: 10px; background: linear-gradient(135deg, ${color} 0%, #ea580c 100%);">
+          <a href="${url}" target="_blank" style="display: inline-block; padding: 12px 28px; font-size: 14px; font-weight: 700; color: #ffffff; text-decoration: none; border-radius: 10px; box-shadow: 0 4px 12px rgba(234, 88, 12, 0.25);">
+            ${text}
+          </a>
+        </td>
+      </tr>
+    </table>
+  `,
+
+  // Information Card / Key-Value Grid
+  infoCard: (title, rows = []) => `
+    <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 18px 20px; margin: 20px 0;">
+      ${
+        title
+          ? `<h3 style="margin: 0 0 12px 0; font-size: 13px; font-weight: 800; color: #0f172a; text-transform: uppercase; letter-spacing: 0.8px;">${title}</h3>`
+          : ""
+      }
+      <table border="0" cellpadding="0" cellspacing="0" width="100%">
+        ${rows
+          .map(
+            (r, i) => `
+          <tr>
+            <td style="padding: 6px 0; font-size: 13px; color: #64748b; font-weight: 600; border-bottom: ${
+              i === rows.length - 1 ? "none" : "1px dashed #f1f5f9"
+            }; width: 40%;">
+              ${r.label}
+            </td>
+            <td style="padding: 6px 0; font-size: 13px; color: #0f172a; font-weight: 700; text-align: right; border-bottom: ${
+              i === rows.length - 1 ? "none" : "1px dashed #f1f5f9"
+            };">
+              ${r.value}
+            </td>
+          </tr>
+        `
+          )
+          .join("")}
+      </table>
+    </div>
+  `,
+
+  // Alert Callout Box
+  alertBox: (text, type = "warning") => {
+    const styles = {
+      warning: { bg: "#fffbeb", border: "#f59e0b", text: "#92400e" },
+      info: { bg: "#eff6ff", border: "#3b82f6", text: "#1e40af" },
+      success: { bg: "#ecfdf5", border: "#10b981", text: "#065f46" },
+    }[type] || { bg: "#fffbeb", border: "#f59e0b", text: "#92400e" };
+
+    return `
+      <div style="background: ${styles.bg}; border-left: 4px solid ${styles.border}; padding: 12px 16px; border-radius: 0 8px 8px 0; margin: 20px 0; font-size: 13px; color: ${styles.text}; line-height: 1.5;">
+        ${text}
       </div>
     `;
-    sendSmtpEmail.sender = { name: "Pharmacy", email: SENDER_EMAIL };
-    sendSmtpEmail.to = [{ email: toEmail, name: toName }];
+  },
+};
 
-    await apiInstance.sendTransacEmail(sendSmtpEmail);
+/**
+ * Helper: Send via Amazon SES
+ */
+const sendViaSES = async ({ toEmail, toName, subject, htmlContent }) => {
+  if (!sesClient) {
+    throw new Error(
+      "AWS SES client is not configured (missing credentials/region)"
+    );
+  }
+
+  const formattedFrom = SENDER_NAME
+    ? `${SENDER_NAME} <${SENDER_EMAIL}>`
+    : SENDER_EMAIL;
+  const formattedTo = toName ? `${toName} <${toEmail}>` : toEmail;
+
+  const params = {
+    Source: formattedFrom,
+    Destination: {
+      ToAddresses: [formattedTo],
+    },
+    Message: {
+      Subject: {
+        Data: subject,
+        Charset: "UTF-8",
+      },
+      Body: {
+        Html: {
+          Data: htmlContent,
+          Charset: "UTF-8",
+        },
+      },
+    },
+  };
+
+  const command = new SendEmailCommand(params);
+  return await sesClient.send(command);
+};
+
+/**
+ * Helper: Send via Brevo
+ */
+const sendViaBrevo = async ({ toEmail, toName, subject, htmlContent }) => {
+  const sendSmtpEmail = new SibApiV3Sdk.SendSmtpEmail();
+  sendSmtpEmail.subject = subject;
+  sendSmtpEmail.htmlContent = htmlContent;
+  sendSmtpEmail.sender = { name: SENDER_NAME, email: SENDER_EMAIL };
+  sendSmtpEmail.to = [{ email: toEmail, name: toName || toEmail }];
+
+  return await apiInstance.sendTransacEmail(sendSmtpEmail);
+};
+
+/**
+ * Generic Sender with Auto-Fallback:
+ * 1. Primary: Amazon SES
+ * 2. Fallback: Brevo
+ */
+const sendEmail = async ({ toEmail, toName, subject, htmlContent }) => {
+  // Local/dev test transport: store instead of sending. Never in production.
+  if (process.env.EMAIL_TRANSPORT === "outbox" && process.env.NODE_ENV !== "production") {
+    const mongoose = require("mongoose");
+    await mongoose.connection.db
+      .collection("dev_outbox")
+      .insertOne({ to: toEmail, subject, html: htmlContent, created_at: new Date() });
     return true;
-  } catch (error) {
-    console.error("Brevo email error:", error);
+  }
+
+  // 1. Primary Attempt: Amazon SES
+  try {
+    await sendViaSES({ toEmail, toName, subject, htmlContent });
+    console.log(
+      `[DavaDesk Email] Sent "${subject}" to ${toEmail} via Amazon SES ✅`
+    );
+    return true;
+  } catch (sesError) {
+    console.warn(
+      `[DavaDesk Email Warning] Amazon SES delivery failed for ${toEmail} (${sesError.message}). Falling back to Brevo 🔄...`
+    );
+  }
+
+  // 2. Fallback Attempt: Brevo
+  try {
+    await sendViaBrevo({ toEmail, toName, subject, htmlContent });
+    console.log(
+      `[DavaDesk Email] Sent "${subject}" to ${toEmail} via Brevo Fallback ✅`
+    );
+    return true;
+  } catch (brevoError) {
+    console.error(
+      `[DavaDesk Email Critical] Both SES and Brevo failed to deliver "${subject}" to ${toEmail}:`,
+      brevoError.message || brevoError
+    );
     return false;
   }
 };
 
-const sendBillEmail = async (toEmail, toName, billNo, pdfUrl, amount) => {
-  try {
-    const sendSmtpEmail = new SibApiV3Sdk.SendSmtpEmail();
+/**
+ * SCENARIO 1: Centralized OTP Verification Email
+ */
+const sendOTPEmail = async (toEmail, toName, otp, scenario = "general") => {
+  const assetUrls = await getAssetUrls();
 
-    sendSmtpEmail.subject = `Pharmacy - Bill ${billNo}`;
-    sendSmtpEmail.htmlContent = `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-        <h2 style="color: #7c3aed;">Pharmacy</h2>
-        <p>Hello ${toName},</p>
-        <p>Thank you for your purchase! Here are your bill details:</p>
-        <div style="background: #f5f5f5; padding: 15px; border-radius: 8px; margin: 20px 0;">
-          <p><strong>Bill Number:</strong> ${billNo}</p>
-          <p><strong>Amount:</strong> Rs. ${amount.toFixed(2)}</p>
-        </div>
-        <p>You can download your bill from the link below:</p>
-        <a href="${pdfUrl}" style="display: inline-block; background: #7c3aed; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Download Bill PDF</a>
-        <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
-        <p style="color: #666; font-size: 12px;">Pharmacy - Test Instance</p>
-      </div>
-    `;
-    sendSmtpEmail.sender = { name: "Pharmacy", email: SENDER_EMAIL };
-    sendSmtpEmail.to = [{ email: toEmail, name: toName }];
+  let subject = "DavaDesk - Your Verification Code";
+  let badge = "Security Verification";
+  let title = "Verify Your Account";
+  let description =
+    "Please use the one-time verification code below to proceed with your request on DavaDesk:";
 
-    await apiInstance.sendTransacEmail(sendSmtpEmail);
-    return true;
-  } catch (error) {
-    console.error("Brevo email error:", error);
-    return false;
+  if (scenario === "signup" || scenario === "verification") {
+    subject = "DavaDesk - Welcome & Verification Code";
+    badge = "Account Verification";
+    title = "Verify Your New DavaDesk Account";
+    description =
+      "Welcome to DavaDesk! Please enter the 6-digit verification code below to verify your email and activate your pharmacy workspace:";
+  } else if (scenario === "forgot_password" || scenario === "reset") {
+    subject = "DavaDesk - Password Reset Code";
+    badge = "Password Reset";
+    title = "Reset Your Password";
+    description =
+      "We received a request to reset your DavaDesk account password. Use the verification code below to set a new password:";
+  } else if (scenario === "settings" || scenario === "security") {
+    subject = "DavaDesk - Security Verification Code";
+    badge = "Security Alert";
+    title = "Confirm Security Action";
+    description =
+      "A sensitive change was requested on your pharmacy configuration. Confirm your identity using the code below:";
+  } else if (scenario === "user_invite") {
+    subject = "DavaDesk - Pharmacy Staff Invitation Code";
+    badge = "Staff Setup";
+    title = "Join Pharmacy Workspace";
+    description =
+      "You have been invited to join a pharmacy workspace on DavaDesk. Use the verification code below to complete your setup:";
   }
+
+  const contentHtml = `
+    <p style="margin: 0 0 16px 0; color: #334155;">${description}</p>
+    ${EmailComponents.otpBox(otp, 10)}
+    ${EmailComponents.alertBox(
+      "⚠️ <strong>Security Notice:</strong> DavaDesk will never ask for your OTP over phone or email. If you did not initiate this request, please ignore this email or contact support immediately.",
+      "warning"
+    )}
+  `;
+
+  const htmlContent = renderBaseLayout({
+    previewText: `Your DavaDesk verification code is ${otp}. Valid for 10 minutes.`,
+    badge,
+    title,
+    greeting: `Hello ${escapeHtml(toName) || "there"},`,
+    contentHtml,
+    footerNote: "This code expires in 10 minutes for your account security.",
+    assetUrls,
+  });
+
+  return sendEmail({ toEmail, toName, subject, htmlContent });
 };
 
-module.exports = { sendOTPEmail, sendBillEmail };
+/**
+ * SCENARIO 2: Centralized Bill / Invoice Receipt Email
+ */
+const sendBillEmail = async (
+  toEmail,
+  toName,
+  billNo,
+  pdfUrl,
+  amount,
+  options = {}
+) => {
+  const assetUrls = await getAssetUrls();
+  const pharmacyName = options.pharmacyName || "Pharmacy Store";
+  const safePharmacy = escapeHtml(pharmacyName);
+  const safeBillNo = escapeHtml(billNo);
+  const formattedAmount = Number(amount || 0).toLocaleString("en-IN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+
+  const subject = `Invoice #${billNo} from ${pharmacyName} - DavaDesk`;
+  const badge = "Invoice Receipt";
+  const title = "Thank You For Your Purchase!";
+
+  const contentHtml = `
+    <p style="margin: 0 0 16px 0; color: #334155;">
+      Your digital bill for purchase from <strong>${safePharmacy}</strong> has been generated successfully. Here is a summary of your invoice:
+    </p>
+
+    ${EmailComponents.infoCard("Invoice Details", [
+      { label: "Invoice Number", value: `#${safeBillNo}` },
+      {
+        label: "Billing Date",
+        value: new Date().toLocaleDateString("en-IN", {
+          day: "numeric",
+          month: "short",
+          year: "numeric",
+        }),
+      },
+      { label: "Pharmacy Store", value: safePharmacy },
+      {
+        label: "Total Paid Amount",
+        value: `<span style="color: #ff751f; font-size: 15px; font-weight: 900;">₹${formattedAmount}</span>`,
+      },
+      {
+        label: "Payment Status",
+        value: `<span style="color: #16a34a; font-weight: 800;">✓ Completed</span>`,
+      },
+    ])}
+
+    <p style="margin: 20px 0 12px 0; color: #334155;">
+      You can view and download your complete GST invoice PDF using the button below:
+    </p>
+
+    <div style="text-align: center;">
+      ${EmailComponents.button(
+        "Download Tax Invoice (PDF)",
+        pdfUrl,
+        "#ff751f"
+      )}
+    </div>
+
+    ${EmailComponents.alertBox(
+      "💡 <strong>Tip:</strong> Keep this digital invoice for your medical records and prescription warranty claims.",
+      "info"
+    )}
+  `;
+
+  const htmlContent = renderBaseLayout({
+    previewText: `Your invoice #${safeBillNo} for ₹${formattedAmount} is ready for download.`,
+    badge,
+    title,
+    greeting: `Hello ${escapeHtml(toName) || "Valued Customer"},`,
+    contentHtml,
+    footerNote: `Invoice generated powered by DavaDesk Pharmacy Intelligence.`,
+    assetUrls,
+  });
+
+  return sendEmail({ toEmail, toName, subject, htmlContent });
+};
+
+/**
+ * SCENARIO 3: Custom Transactional Email Generator for future extensions
+ */
+const sendCustomEmail = async ({
+  toEmail,
+  toName,
+  subject,
+  previewText,
+  badge = "Notification",
+  badgeColor,
+  title,
+  greeting,
+  bodyHtml,
+  actionButton,
+  alertBox,
+  infoCard,
+  footerNote,
+  showSocials = true,
+}) => {
+  const assetUrls = await getAssetUrls();
+  let combinedContent = bodyHtml || "";
+
+  if (infoCard) {
+    combinedContent += EmailComponents.infoCard(infoCard.title, infoCard.rows);
+  }
+  if (alertBox) {
+    combinedContent += EmailComponents.alertBox(alertBox.text, alertBox.type);
+  }
+  if (actionButton) {
+    combinedContent += EmailComponents.button(
+      actionButton.text,
+      actionButton.url,
+      actionButton.color
+    );
+  }
+
+  const htmlContent = renderBaseLayout({
+    previewText: previewText || subject,
+    badge,
+    badgeColor,
+    title,
+    greeting: greeting || (toName ? `Hello ${escapeHtml(toName)},` : "Hello,"),
+    contentHtml: combinedContent,
+    footerNote,
+    showSocials,
+    assetUrls,
+  });
+
+  return sendEmail({ toEmail, toName, subject, htmlContent });
+};
+
+/**
+ * SCENARIO 4: Welcome Email on Account Creation
+ */
+const sendWelcomeEmail = async (toEmail, toName, pharmacyName) => {
+  const assetUrls = await getAssetUrls();
+  const subject = `Welcome to DavaDesk, ${toName}! 🚀`;
+  const badge = "Welcome Onboard";
+  const title = "Welcome to DavaDesk Pharmacy OS";
+
+  const contentHtml = `
+    <p style="margin: 0 0 16px 0; color: #334155;">
+      Congratulations on setting up <strong>${
+        escapeHtml(pharmacyName) || "your pharmacy"
+      }</strong> on DavaDesk! You now have access to next-gen AI OCR bill extraction, smart batch expiry tracking, and real-time ledger accounting.
+    </p>
+
+    ${EmailComponents.infoCard("Your Workspace Details", [
+      { label: "Account Administrator", value: escapeHtml(toName) },
+      { label: "Registered Email", value: escapeHtml(toEmail) },
+      { label: "Pharmacy Store", value: escapeHtml(pharmacyName) || "Configured" },
+      {
+        label: "Platform Access",
+        value: `<a href="${BRAND_CONFIG.websiteUrl}" style="color: #ff751f; font-weight: 700;">Launch Dashboard</a>`,
+      },
+    ])}
+
+    <div style="text-align: center;">
+      ${EmailComponents.button(
+        "Go to DavaDesk Dashboard",
+        BRAND_CONFIG.websiteUrl,
+        "#ff751f"
+      )}
+    </div>
+  `;
+
+  const htmlContent = renderBaseLayout({
+    previewText: `Welcome to DavaDesk, ${escapeHtml(toName)}! Get started with your pharmacy workspace.`,
+    badge,
+    title,
+    greeting: `Hello ${escapeHtml(toName)},`,
+    contentHtml,
+    assetUrls,
+  });
+
+  return sendEmail({ toEmail, toName, subject, htmlContent });
+};
+
+/**
+ * SCENARIO 5: Free trial started (carries the trial code as a receipt)
+ */
+const sendTrialStartedEmail = async (toEmail, toName, { code, planName, days, endsAt }) => {
+  const assetUrls = await getAssetUrls();
+  const endDate = new Date(endsAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+  const contentHtml = `
+    <p style="margin: 0 0 16px 0; color: #334155;">
+      Your <strong>${days}-day free trial</strong> of the <strong>${escapeHtml(planName)}</strong> plan is now active. Every feature is unlocked until <strong>${endDate}</strong>.
+    </p>
+    ${EmailComponents.infoCard("Trial Details", [
+      { label: "Plan", value: escapeHtml(planName) },
+      { label: "Trial code", value: `<span style="font-family: monospace; font-weight: 800;">${escapeHtml(code)}</span>` },
+      { label: "Ends on", value: endDate },
+    ])}
+    <div style="text-align: center;">
+      ${EmailComponents.button("Open DavaDesk", BRAND_CONFIG.websiteUrl, "#ff751f")}
+    </div>
+    ${EmailComponents.alertBox("No card needed. When the trial ends you can choose a plan from the Upgrade page.", "info")}
+  `;
+  const htmlContent = renderBaseLayout({
+    previewText: `Your ${days}-day ${escapeHtml(planName)} trial is active until ${endDate}.`,
+    badge: "Free Trial",
+    title: "Your Free Trial Has Started",
+    greeting: `Hello ${escapeHtml(toName) || "there"},`,
+    contentHtml,
+    assetUrls,
+  });
+  return sendEmail({ toEmail, toName, subject: `Your ${days}-day DavaDesk trial is active`, htmlContent });
+};
+
+/**
+ * SCENARIO 6: Subscription lifecycle notices (payment received, trial ending)
+ */
+const sendSubscriptionEmail = async (toEmail, toName, { subject, title, badge, message, rows = [] }) => {
+  const assetUrls = await getAssetUrls();
+  const contentHtml = `
+    <p style="margin: 0 0 16px 0; color: #334155;">${escapeHtml(message)}</p>
+    ${rows.length ? EmailComponents.infoCard("Details", rows.map((r) => ({ label: r.label, value: escapeHtml(r.value) }))) : ""}
+    <div style="text-align: center;">
+      ${EmailComponents.button("Open DavaDesk", BRAND_CONFIG.websiteUrl, "#ff751f")}
+    </div>
+  `;
+  const htmlContent = renderBaseLayout({
+    previewText: message,
+    badge,
+    title,
+    greeting: `Hello ${escapeHtml(toName) || "there"},`,
+    contentHtml,
+    assetUrls,
+  });
+  return sendEmail({ toEmail, toName, subject, htmlContent });
+};
+
+module.exports = {
+  escapeHtml,
+  sendTrialStartedEmail,
+  sendSubscriptionEmail,
+  sendOTPEmail,
+  sendBillEmail,
+  sendCustomEmail,
+  sendWelcomeEmail,
+  renderBaseLayout,
+  getAssetUrls,
+  EmailComponents,
+  BRAND_CONFIG,
+};

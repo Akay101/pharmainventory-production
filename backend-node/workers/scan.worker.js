@@ -1,253 +1,147 @@
-const { Worker } = require("bullmq");
-const { spawn } = require("child_process");
-const mongoose = require("mongoose");
+// Scan worker: reads queued product/invoice scans with Gemini and links each
+// line to the pharmacy's catalog. Runs as its own container; scale it out by
+// running more replicas (BullMQ distributes jobs) or raising WORKER_CONCURRENCY.
 const path = require("path");
-const fs = require("fs");
 const dotenv = require("dotenv");
-
-// Load env vars
 dotenv.config({ path: path.join(__dirname, "../.env") });
+
+const { Worker } = require("bullmq");
+const mongoose = require("mongoose");
+const credits = require("../services/credits");
 
 const { connection } = require("../services/ai/queue");
 const ScanJob = require("../models/scanJob");
-const { cleanupTmpFolder } = require("../services/ai/cleanup_service");
-const { deleteFromR2, downloadFromR2, R2_PUBLIC_URL } = require("../services/r2");
+const { extractProduct, extractBill } = require("../services/ai/extract");
+const { matchForPurchase } = require("../services/ai/inventoryMatch");
+const { setCached, releaseInflight } = require("../services/ai/scanGuard");
+const { deleteFromR2, downloadFromR2 } = require("../services/r2");
 
-// Connect to MongoDB
-const MONGO_URL =
-  process.env.MONGO_URL || "mongodb://localhost:27017/pharmalogy";
+const MONGO_URL = process.env.MONGO_URL || "mongodb://localhost:27017/pharmalogy";
 mongoose
-  .connect(MONGO_URL)
+  .connect(MONGO_URL, { maxPoolSize: 20 })
   .then(() => console.log("[Worker] Connected to MongoDB"))
-  .catch((err) => console.error("[Worker] MongoDB connection error:", err));
+  .catch((err) => console.error("[Worker] MongoDB connection error:", err.message));
 
-const pythonPath =
-  process.env.PYTHON_PATH ||
-  (fs.existsSync("/usr/local/bin/python3")
-    ? "/usr/local/bin/python3"
-    : "python3");
+const CONCURRENCY = parseInt(process.env.WORKER_CONCURRENCY || "8", 10);
+// Jobs started per minute across all workers, to stay under the Gemini quota
+const JOBS_PER_MINUTE = parseInt(process.env.GEMINI_JOBS_PER_MIN || "600", 10);
+
+const FRIENDLY = {
+  timeout: "The AI took too long to read these images. Try clearer or fewer photos.",
+  rate_limit: "The AI service is busy right now. Please try again in a minute.",
+  image_error: "The images couldn't be read. Retake them in good light.",
+  invalid_json: "The AI couldn't read the bill properly. Try a clearer photo.",
+  config: "AI scanning is not configured on the server.",
+};
+
+async function loadImages(data) {
+  if (Array.isArray(data.images) && data.images.length) {
+    return data.images.map((b64) => ({ data: Buffer.from(b64, "base64"), mimeType: "image/jpeg" }));
+  }
+  // Jobs queued by the previous API version kept their images in R2
+  if (Array.isArray(data.r2Keys)) {
+    const out = [];
+    for (const key of data.r2Keys) {
+      try {
+        out.push({ data: await downloadFromR2(key), mimeType: /\.png$/i.test(key) ? "image/png" : /\.webp$/i.test(key) ? "image/webp" : "image/jpeg" });
+      } catch (err) {
+        console.error(`[Worker] R2 download failed for ${key}:`, err.message);
+      }
+    }
+    return out;
+  }
+  return [];
+}
+
+async function processJob(job) {
+  const { jobId, type, pharmacyId, hash } = job.data;
+  const started = Date.now();
+  await ScanJob.updateOne({ jobId }, { status: "processing" });
+  await job.updateProgress(20);
+
+  const images = await loadImages(job.data);
+  if (!images.length) {
+    const err = new Error("No images could be loaded for this scan");
+    err.category = "image_error";
+    throw err;
+  }
+
+  const db = mongoose.connection.db;
+  // What the AI reads cost, charged to the pharmacy when the scan is done
+  const m = credits.meter.createMeter();
+  credits.meter.enter(m);
+  let result;
+  if (type === "bill") {
+    const bill = await extractBill(images);
+    await job.updateProgress(80);
+    const matches = pharmacyId && db ? await Promise.all(bill.items.map((i) => matchForPurchase(db, pharmacyId, i).catch(() => null))) : [];
+    result = { success: true, purchase_data: bill, matches };
+  } else {
+    const { raw, product } = await extractProduct(images);
+    await job.updateProgress(80);
+    const match = pharmacyId && db ? await matchForPurchase(db, pharmacyId, product).catch(() => null) : null;
+    result = { success: true, scanned_product: product, scanned_data: raw, match };
+  }
+  result.duration_ms = Date.now() - started;
+
+  await ScanJob.updateOne({ jobId }, { status: "completed", result });
+  if (pharmacyId && hash) await setCached(pharmacyId, type, hash, result);
+  if (pharmacyId && db) {
+    const pharmacy = await db.collection("pharmacies").findOne({ id: pharmacyId }, { projection: { _id: 0, id: 1, subscription: 1 } });
+    await credits
+      .settle(db, pharmacy || { id: pharmacyId }, m, { ref: `scan:${jobId}`, task: "scan", engine: "pro", userId: job.data.userId || null, label: type === "bill" ? "Invoice scan" : "Pack scan" })
+      .catch((err) => console.error(`[Worker] charging credits for ${jobId} failed:`, err.message));
+  }
+  await job.updateProgress(100);
+  return { ok: true };
+}
 
 const worker = new Worker(
   "scan-queue",
-  async (job) => {
-    const { jobId, r2Keys, type } = job.data;
-    const apiKey = process.env.EMERGENT_LLM_KEY || process.env.GEMINI_API_KEY;
-
-    console.log(`[Worker] Processing job ${jobId} (type: ${type}) from R2`);
-
-    // Create a local temp folder for this job
-    const tempDir = path.join(__dirname, "../tmp/scans", jobId);
-    fs.mkdirSync(tempDir, { recursive: true });
-
-    // Download files from R2
-    const localPaths = [];
-    for (const key of r2Keys) {
-      try {
-        const buffer = await downloadFromR2(key);
-        const localPath = path.join(tempDir, path.basename(key));
-        fs.writeFileSync(localPath, buffer);
-        localPaths.push(localPath);
-      } catch (err) {
-        console.error(`[Worker] Failed to download key ${key} from R2:`, err);
-      }
-    }
-
-    if (localPaths.length === 0) {
-      // Clean up tempDir
-      try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch (e) {}
-      throw new Error(`No images could be retrieved for processing. Tried to download: ${r2Keys.join(", ")}`);
-    }
-
-    // [Issue #7] Granular progress steps
-    await job.updateProgress(10);
-
-    // Update status to processing
-    await ScanJob.findOneAndUpdate(
-      { jobId },
-      { status: "processing" },
-      { upsert: true }
-    );
-
-    const helperPath =
-      type === "bill"
-        ? path.join(__dirname, "../services/scan_purchase_bill.py")
-        : path.join(__dirname, "../services/scan_helper.py");
-
-    await job.updateProgress(40);
-
-    let currentProgress = 40;
-    const progressTicker = setInterval(async () => {
-      if (currentProgress < 80) {
-        currentProgress += 5;
-        try {
-          await job.updateProgress(currentProgress);
-        } catch (e) {}
-      } else {
-        clearInterval(progressTicker);
-      }
-    }, 10000);
-
-    return new Promise((resolve, reject) => {
-      const pythonProcess = spawn(
-        pythonPath,
-        [helperPath, apiKey, ...localPaths],
-        {
-          shell: false,
-        }
-      );
-
-      let stdoutData = "";
-      let stderrData = "";
-
-      const timeout = setTimeout(async () => {
-        clearInterval(progressTicker);
-
-        if (pythonProcess.exitCode === null) {
-          pythonProcess.kill();
-
-          // Cleanup local temp files
-          try {
-            fs.rmSync(tempDir, { recursive: true, force: true });
-          } catch (e) {}
-
-          // Cleanup R2 files if max attempts reached
-          const maxAttempts = job.opts.attempts || 3;
-          if (job.attemptsMade >= maxAttempts) {
-            for (const key of r2Keys) {
-              try { await deleteFromR2(key); } catch (e) {}
-            }
-          }
-
-          await ScanJob.findOneAndUpdate(
-            { jobId },
-            {
-              status: "failed",
-              errorCategory: "timeout",
-              errorMessage: "Process timed out after 90 seconds",
-            }
-          );
-
-          reject(new Error("PROCESS_TIMEOUT"));
-        }
-      }, 90000);
-
-      pythonProcess.stdout.on("data", (data) => {
-        stdoutData += data.toString();
-      });
-
-      pythonProcess.stderr.on("data", (data) => {
-        stderrData += data.toString();
-      });
-
-      pythonProcess.on("close", async (code) => {
-        clearTimeout(timeout);
-        clearInterval(progressTicker);
-
-        // Cleanup local temp files
-        try {
-          fs.rmSync(tempDir, { recursive: true, force: true });
-        } catch (e) {}
-
-        try {
-          if (code !== 0) {
-            const errorMsg =
-              stderrData || `Python process exited with code ${code}`;
-
-            // Cleanup R2 files if max attempts reached
-            const maxAttempts = job.opts.attempts || 3;
-            if (job.attemptsMade >= maxAttempts) {
-              for (const key of r2Keys) {
-                try { await deleteFromR2(key); } catch (e) {}
-              }
-            }
-
-            return reject(new Error(errorMsg));
-          }
-
-          await job.updateProgress(85);
-
-          const result = JSON.parse(stdoutData.trim());
-
-          if (!result.success) {
-            // Cleanup R2 files if max attempts reached
-            const maxAttempts = job.opts.attempts || 3;
-            if (job.attemptsMade >= maxAttempts) {
-              for (const key of r2Keys) {
-                try { await deleteFromR2(key); } catch (e) {}
-              }
-            }
-            return reject(new Error(result.error || "AI extraction failed"));
-          }
-
-          // If successful, clean up R2 files immediately
-          for (const key of r2Keys) {
-            try {
-              await deleteFromR2(key);
-            } catch (e) {}
-          }
-
-          await ScanJob.findOneAndUpdate(
-            { jobId },
-            {
-              status: "completed",
-              result: result,
-            }
-          );
-
-          await job.updateProgress(100);
-
-          resolve(result);
-        } catch (err) {
-          reject(err);
-        }
-      });
-    });
-  },
+  processJob,
   {
     connection,
-    concurrency: 2,
+    concurrency: CONCURRENCY,
+    limiter: { max: JOBS_PER_MINUTE, duration: 60000 },
+    lockDuration: 120000,
     stalledInterval: 30000,
   }
 );
 
-// [Issue #8] Handle Failure - Only mark failed if retries are exhausted
+// Once a scan is finished either way: free the pharmacy's slot and drop any
+// legacy R2 copies of the images
+async function finish(job) {
+  if (job.data.pharmacyId) await releaseInflight(job.data.pharmacyId, job.data.jobId);
+  if (Array.isArray(job.data.r2Keys)) {
+    for (const key of job.data.r2Keys) await deleteFromR2(key).catch(() => {});
+  }
+}
+
+worker.on("completed", finish);
+
+// Only mark the scan failed once retries are exhausted
 worker.on("failed", async (job, err) => {
-  console.error(`[Worker] Job ${job.id} failed:`, err.message);
-
-  if (job.attemptsMade >= (job.opts.attempts || 3)) {
-    console.log(
-      `[Worker] Max retries reached for job ${job.data.jobId}. Marking as failed in DB.`
-    );
-
-    // Safety cleanup fallback
-    for (const key of job.data.r2Keys) {
-      try {
-        await deleteFromR2(key);
-      } catch (e) {}
-    }
-
-    await ScanJob.findOneAndUpdate(
+  if (!job) return;
+  console.error(`[Worker] Job ${job.id} attempt ${job.attemptsMade} failed:`, err.message);
+  if (job.attemptsMade >= (job.opts.attempts || 1)) {
+    const category = err.category || "unknown";
+    await ScanJob.updateOne(
       { jobId: job.data.jobId },
-      {
-        status: "failed",
-        errorCategory: "max_retries_exceeded",
-        errorMessage: err.message,
-      }
-    );
+      { status: "failed", errorCategory: category, errorMessage: FRIENDLY[category] || err.message }
+    ).catch(() => {});
+    await finish(job);
   }
 });
 
-// [Issue #20] Graceful Shutdown
+worker.on("error", (err) => console.error("[Worker] error:", err.message));
+
 const shutdown = async (signal) => {
-  console.log(`[Worker] ${signal} received. Shutting down gracefully...`);
+  console.log(`[Worker] ${signal} received. Finishing active scans...`);
   await worker.close();
   await mongoose.connection.close();
   process.exit(0);
 };
-
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 process.on("SIGINT", () => shutdown("SIGINT"));
 
-// Run cleanup on startup [Issue #2]
-cleanupTmpFolder(path.join(process.cwd(), "tmp/uploads"));
-console.log("[Worker] Started and cleanup performed");
+console.log(`[Worker] Started (concurrency ${CONCURRENCY}, ${JOBS_PER_MINUTE} jobs/min)`);

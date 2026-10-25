@@ -1,49 +1,44 @@
 const mongoose = require("mongoose");
+const { isActive } = require("../services/billing/subscriptions");
 
+// Subscriptions belong to the pharmacy; every user of the pharmacy (owner and
+// staff) shares it. Expiry is checked on every request, so access stops on
+// time regardless of when the expiry cron last ran.
 const requireSubscription = (plans = []) => {
   return async (req, res, next) => {
     try {
       const db = mongoose.connection.db;
+      const pharmacy = await db
+        .collection("pharmacies")
+        .findOne({ id: req.user.pharmacy_id }, { projection: { subscription: 1 } });
+      const sub = pharmacy?.subscription;
 
-      const user = await db.collection("users").findOne(
-        { id: req.user.id },
-        {
-          projection: {
-            subscription_plan: 1,
-            subscription_expiry: 1,
-          },
-        }
-      );
-
-      // ❌ No subscription
-      if (!user || !user.subscription_expiry || !user.subscription_plan) {
+      if (!sub || !sub.plan) {
         return res.status(403).json({
           code: "SUBSCRIPTION_REQUIRED",
           detail: "No active subscription",
         });
       }
 
-      // ❌ Expired
-      if (new Date(user.subscription_expiry) < new Date()) {
+      if (!isActive(sub)) {
         return res.status(403).json({
           code: "SUBSCRIPTION_EXPIRED",
-          detail: "Subscription expired",
+          detail: sub.kind === "TRIAL" ? "Your free trial has ended" : "Subscription expired",
         });
       }
 
-      // ❌ Plan restriction
-      if (plans.length && !plans.includes(user.subscription_plan)) {
+      if (plans.length && !plans.includes(sub.plan)) {
         return res.status(403).json({
           code: "PLAN_UPGRADE_REQUIRED",
           detail: "Upgrade required",
-          current_plan: user.subscription_plan,
+          current_plan: sub.plan,
         });
       }
 
-      // ✅ Attach subscription to request (VERY USEFUL)
       req.subscription = {
-        plan: user.subscription_plan,
-        expiry: user.subscription_expiry,
+        plan: sub.plan,
+        kind: sub.kind,
+        expiry: sub.ends_at,
       };
 
       next();

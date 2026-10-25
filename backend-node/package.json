@@ -1,7 +1,7 @@
 {
   "name": "pharmalogy-api",
   "version": "1.0.0",
-  "description": "Pharmalogy Pharmacy Management System - Node.js Backend",
+  "description": "Davadesk Pharmacy Management System - Node.js Backend",
   "main": "server.js",
   "scripts": {
     "swagger": "node swagger.js",
@@ -10,7 +10,9 @@
     "worker": "node workers/scan.worker.js"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.450.0",
+    "@aws-sdk/client-s3": "^3.1143.0",
+    "@aws-sdk/client-ses": "^3.1143.0",
+    "@aws-sdk/s3-request-presigner": "^3.1143.0",
     "@bull-board/api": "^7.0.0",
     "@bull-board/express": "^7.0.0",
     "@google/generative-ai": "^0.24.1",
@@ -23,6 +25,7 @@
     "express": "^4.18.2",
     "express-basic-auth": "^1.2.1",
     "express-rate-limit": "^8.5.1",
+    "helmet": "^8.0.0",
     "ioredis": "^5.10.1",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.0.0",
@@ -30,11 +33,13 @@
     "node-cron": "^4.2.1",
     "openai": "^4.20.0",
     "pdfkit": "^0.14.0",
+    "qrcode": "^1.5.4",
     "sharp": "^0.34.5",
     "sib-api-v3-sdk": "^8.5.0",
     "swagger-autogen": "^2.23.7",
     "swagger-ui-express": "^5.0.1",
-    "uuid": "^9.0.0"
+    "uuid": "^9.0.0",
+    "zod": "^3.23.8"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"

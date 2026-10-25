@@ -1,9 +1,14 @@
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
+const { rateLimit } = require("express-rate-limit");
 const mongoose = require("mongoose");
 
 const startCronJobs = require("./services/cron");
+const { ensureTenantIndexes } = require("./services/search/indexes");
+const { ensureCoreIndexes } = require("./services/billing/indexes");
+const { getPublicPlans } = require("./services/billing/pricing");
+const helmet = require("helmet");
 
 // Import routes
 const authRoutes = require("./routes/auth");
@@ -30,32 +35,41 @@ const basicAuth = require("express-basic-auth");
 const app = express();
 app.set("trust proxy", 1);
 const PORT = process.env.PORT || 8001;
-// Middleware
-const allowedOrigins = [
-  "https://store.davadesk.in",
-  "https://store-dev.pharmalogy.co.in",
-  "https://app.davadesk.in",
-  "https://api.davadesk.in",
-  "http://localhost:3000",
-  "http://localhost:5173",
-];
+// Security headers (API only serves JSON, so no CSP/frame concerns for HTML)
+app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
 
+// CORS: credentials are allowed, so only known frontends may call the API.
+// CORS_ORIGINS="https://a.com,https://b.com" overrides; "*" or unset = defaults.
+const DEFAULT_ORIGIN_SUFFIXES = [".davadesk.in", ".pharmalogy.co.in"];
+const DEFAULT_ORIGINS = ["https://davadesk.in", "http://localhost:3000", "http://localhost:3001", "http://localhost:5173"];
+const configuredOrigins = (process.env.CORS_ORIGINS || "")
+  .replace(/"/g, "")
+  .split(",")
+  .map((o) => o.trim().replace(/\/+$/, ""))
+  .filter((o) => o && o !== "*");
+const isAllowedOrigin = (origin) => {
+  if (configuredOrigins.length) return configuredOrigins.includes(origin);
+  if (DEFAULT_ORIGINS.includes(origin)) return true;
+  try {
+    const { protocol, hostname } = new URL(origin);
+    return protocol === "https:" && DEFAULT_ORIGIN_SUFFIXES.some((s) => hostname.endsWith(s));
+  } catch {
+    return false;
+  }
+};
 app.use(
   cors({
     origin: (origin, callback) => {
+      // No Origin header: server-to-server, curl, Cashfree webhooks
       if (!origin) return callback(null, true);
-      if (
-        allowedOrigins.includes(origin) ||
-        origin.endsWith(".davadesk.in") ||
-        origin.endsWith(".pharmalogy.co.in")
-      ) {
-        return callback(null, true);
-      }
-      return callback(new Error("Not allowed by CORS"));
+      callback(null, isAllowedOrigin(origin));
     },
     credentials: true,
   })
 );
+// Cashfree webhooks need the exact raw bytes for signature verification, so
+// this must be registered before the JSON parser.
+app.use("/api/webhook/cashfree", express.raw({ type: "*/*", limit: "1mb" }));
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 
@@ -64,13 +78,74 @@ mongoose
   .connect(process.env.MONGO_URL)
   .then(() => {
     console.log("Connected to MongoDB");
+    // Idempotent; runs in the background so startup isn't blocked
+    ensureTenantIndexes(mongoose.connection.db).catch((err) =>
+      console.warn("[Indexes] ensureTenantIndexes failed:", err.message)
+    );
+    require("./services/assistant/store").ensureIndexes(mongoose.connection.db).catch((err) =>
+      console.warn("[Indexes] assistant indexes failed:", err.message)
+    );
+    require("./routes/shortbook").ensureIndexes(mongoose.connection.db).catch((err) =>
+      console.warn("[Indexes] short book indexes failed:", err.message)
+    );
+    require("./routes/support").ensureIndexes(mongoose.connection.db).catch((err) =>
+      console.warn("[Indexes] support indexes failed:", err.message)
+    );
+    require("./services/billShare").ensureIndexes(mongoose.connection.db).catch((err) =>
+      console.warn("[Indexes] bill share indexes failed:", err.message)
+    );
+    require("./services/assistant/stt").ensureIndexes(mongoose.connection.db).catch((err) =>
+      console.warn("[Indexes] voice typing indexes failed:", err.message)
+    );
+    ensureCoreIndexes(mongoose.connection.db).catch((err) =>
+      console.warn("[Indexes] ensureCoreIndexes failed:", err.message)
+    );
   })
   .catch((err) => {
     console.error("MongoDB connection error:", err);
     process.exit(1);
   });
 
-app.use("/api/webhook/cashfree", express.raw({ type: "application/json" }));
+
+// Brute-force protection on credential and OTP endpoints (per client IP).
+// RATE_LIMIT_SCALE only exists so automated tests can raise the ceilings.
+const rlScale = Math.max(1, Number(process.env.RATE_LIMIT_SCALE) || 1);
+const authLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 20 * rlScale,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  message: { detail: "Too many requests. Please wait a minute and try again." },
+});
+const otpLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 15 * rlScale,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  message: { detail: "Too many OTP attempts. Please try again later." },
+});
+const refreshLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 60 * rlScale,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  message: { detail: "Too many requests." },
+});
+app.use(["/api/auth/login", "/api/auth/register", "/api/auth/forgot-password"], authLimiter);
+app.use(
+  ["/api/auth/verify-otp", "/api/auth/resend-otp", "/api/auth/reset-password", "/api/users/verify"],
+  otpLimiter
+);
+app.use("/api/auth/refresh", refreshLimiter);
+// Shared bill links are public: keep guessing and scraping slow
+const publicLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 30 * rlScale,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  message: { detail: "Too many requests. Please wait a minute and try again." },
+});
+app.use("/api/public", publicLimiter);
 
 // API Routes - all prefixed with /api
 app.use("/api/auth", authRoutes);
@@ -89,10 +164,24 @@ app.use("/api/activities", activityRoutes);
 app.use("/api/settings", settingsRoutes);
 app.use("/api/expiry", require("./routes/expiry"));
 app.use("/api/returns", require("./routes/returns"));
+app.use("/api/reminders", require("./routes/reminders"));
+app.use("/api/notifications", require("./routes/notifications"));
 
-app.use("/api/payments", require("./routes/payments"));
+app.get("/api/plans", async (req, res, next) => {
+  try {
+    res.set("Cache-Control", "public, max-age=30");
+    res.json(await getPublicPlans(mongoose.connection.db));
+  } catch (err) {
+    next(err);
+  }
+});
+app.use("/api/billing", require("./routes/billing"));
+app.use("/api/credits", require("./routes/credits"));
 app.use("/api/webhook", require("./routes/webhook"));
-app.use("/api/chat", require("./routes/chat"));
+app.use("/api/assistant", require("./routes/assistant"));
+app.use("/api/public", require("./routes/public"));
+app.use("/api/support", require("./routes/support"));
+app.use("/api/shortbook", require("./routes/shortbook"));
 
 // Bull Board Setup (Protected with Basic Auth)
 if (!process.env.ADMIN_PASSWORD) {
@@ -159,9 +248,12 @@ app.get("/health", (req, res) => {
 
 // Error handling middleware
 app.use((err, req, res, next) => {
-  console.error("Error:", err);
-  res.status(err.status || 500).json({
-    detail: err.message || "Internal server error",
+  const status = err.status || err.statusCode || 500;
+  if (status >= 500) console.error("Error:", err);
+  // Client errors keep their message; server errors never leak internals
+  res.status(status).json({
+    detail: status < 500 ? err.message : "Something went wrong. Please try again.",
+    ...(err.code && typeof err.code === "string" && status < 500 ? { code: err.code } : {}),
   });
 });
 

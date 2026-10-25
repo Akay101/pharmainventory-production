@@ -2,45 +2,56 @@ const express = require("express");
 const router = express.Router();
 const mongoose = require("mongoose");
 const { v4: uuidv4 } = require("uuid");
-const path = require("path");
-const fs = require("fs");
-const { spawn } = require("child_process");
-const multer = require("multer");
-const sharp = require("sharp");
-const { GoogleGenerativeAI } = require("@google/generative-ai");
 const { auth } = require("../middleware/auth");
+const { takeFromStock, returnToStock } = require("../services/stock");
+const { acceptImages, scanForBilling } = require("../services/ai/scanService");
+const { matchForBilling } = require("../services/ai/inventoryMatch");
 const { generateBillPDF } = require("../services/pdf");
 const { uploadToR2 } = require("../services/r2");
+const billShare = require("../services/billShare");
 const { sendBillEmail } = require("../services/email");
 const { logActivity } = require("../utils/activityLogger");
 const { requireSubscription } = require("../middleware/subscription");
+const {
+  getGlobalDoctorsCollection,
+  getCached,
+  setCached,
+} = require("../utils/globalDb");
 
 const escapeRegex = (str) => {
   if (!str) return "";
   return String(str).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 };
 
-const scanUploadDir = path.join(__dirname, "../tmp/uploads");
-if (!fs.existsSync(scanUploadDir)) {
-  fs.mkdirSync(scanUploadDir, { recursive: true });
-}
-
-const scanStorage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, scanUploadDir),
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname);
-    cb(null, `bill-scan-${Date.now()}-${uuidv4()}${ext}`);
-  },
-});
-const scanUpload = multer({
-  storage: scanStorage,
-  limits: { fileSize: 15 * 1024 * 1024 },
-});
-
 // Generate bill number
 const generateBillNo = () => {
-  const now = new Date();
-  return `BILL-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}${String(now.getHours()).padStart(2, "0")}${String(now.getMinutes()).padStart(2, "0")}${String(now.getSeconds()).padStart(2, "0")}`;
+  // Timestamp in IST (servers run in UTC), e.g. BILL-20261022143005
+  const ist = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
+  const p = (n) => String(n).padStart(2, "0");
+  return `BILL-${ist.getUTCFullYear()}${p(ist.getUTCMonth() + 1)}${p(ist.getUTCDate())}${p(ist.getUTCHours())}${p(ist.getUTCMinutes())}${p(ist.getUTCSeconds())}`;
+};
+
+// Two counters billing in the same second would otherwise share a number
+const uniqueBillNo = async (db, pharmacyId) => {
+  const base = generateBillNo();
+  let candidate = base;
+  for (let i = 2; await db.collection("bills").findOne({ pharmacy_id: pharmacyId, bill_no: candidate }, { projection: { _id: 1 } }); i++) {
+    candidate = `${base}-${i}`;
+  }
+  return candidate;
+};
+
+// MRP is GST-inclusive, so a line's amount is qty x MRP less its discount.
+// Computed here rather than trusted from the client.
+const lineAmounts = (item) => {
+  const quantity = parseInt(item.quantity) || 1;
+  const unitPrice = parseFloat(item.unit_price) || 0;
+  const discountPercent = Math.min(100, Math.max(0, parseFloat(item.discount_percent) || 0));
+  const purchasePrice = parseFloat(item.purchase_price) || 0;
+  const gross = quantity * unitPrice;
+  const itemDiscount = gross * (discountPercent / 100);
+  const itemTotal = Math.round((gross - itemDiscount) * 100) / 100;
+  return { quantity, unitPrice, discountPercent, purchasePrice, itemTotal, itemProfit: itemTotal - purchasePrice * quantity };
 };
 
 // GET /api/bills
@@ -233,19 +244,192 @@ router.get("/insights", auth, requireSubscription(), async (req, res, next) => {
 router.get("/doctors", auth, requireSubscription(), async (req, res, next) => {
   try {
     const db = mongoose.connection.db;
-    const { search } = req.query;
-    const query = { pharmacy_id: req.user.pharmacy_id };
-    if (search) {
-      query.name = { $regex: search, $options: "i" };
+    const { search, page = 1, limit = 20 } = req.query;
+    const pharmacyId = req.user.pharmacy_id;
+
+    const pageNum = Math.max(1, parseInt(page) || 1);
+    const limitNum = Math.max(1, parseInt(limit) || 20);
+    const skip = (pageNum - 1) * limitNum;
+
+    const trimmedSearch = (search || "").trim();
+    const cacheKey = `docs:${pharmacyId}:${trimmedSearch.toLowerCase()}:${pageNum}:${limitNum}`;
+    const cached = getCached(cacheKey);
+    if (cached) return res.json(cached);
+
+    const localQuery = { pharmacy_id: pharmacyId };
+    if (trimmedSearch) {
+      localQuery.name = { $regex: escapeRegex(trimmedSearch), $options: "i" };
     }
-    const doctors = await db
-      .collection("doctors")
-      .find(query, { projection: { _id: 0 } })
-      .sort({ name: 1 })
-      .toArray();
-    res.json({ doctors });
+
+    const [localData, rawGlobal] = await Promise.all([
+      (async () => {
+        const [localCount, localDocs] = await Promise.all([
+          db.collection("doctors").countDocuments(localQuery).catch(() => 0),
+          db.collection("doctors")
+            .find(localQuery, { projection: { _id: 0 } })
+            .sort({ name: 1 })
+            .skip(skip)
+            .limit(limitNum)
+            .toArray()
+            .catch(() => [])
+        ]);
+        return {
+          localCount,
+          localDoctors: localDocs.map((d) => ({ ...d, source: "local" }))
+        };
+      })(),
+
+      (async () => {
+        try {
+          const globalDocCol = await getGlobalDoctorsCollection();
+          if (!globalDocCol) return [];
+          if (trimmedSearch) {
+            const escapedSearch = escapeRegex(trimmedSearch);
+            const isMultiWord = trimmedSearch.includes(" ");
+            let results = [];
+
+            if (isMultiWord) {
+              results = await globalDocCol
+                .find({ $text: { $search: trimmedSearch } }, { score: { $meta: "textScore" } })
+                .sort({ score: { $meta: "textScore" } })
+                .limit(limitNum)
+                .toArray()
+                .catch(() => []);
+            }
+
+            if (results.length < limitNum) {
+              const prefixMatches = await globalDocCol
+                .find(
+                  { full_name: { $regex: `^${escapedSearch}`, $options: "i" } }
+                )
+                .limit(limitNum - results.length)
+                .toArray()
+                .catch(() => []);
+
+              const seenIds = new Set(results.map(r => String(r._id)));
+              for (const pm of prefixMatches) {
+                if (!seenIds.has(String(pm._id))) {
+                  seenIds.add(String(pm._id));
+                  results.push(pm);
+                }
+              }
+            }
+
+            if (results.length < limitNum) {
+              const subMatches = await globalDocCol
+                .find({
+                  $or: [
+                    { full_name: { $regex: escapedSearch, $options: "i" } },
+                    { clinic_hospital: { $regex: escapedSearch, $options: "i" } },
+                  ]
+                })
+                .limit(limitNum - results.length)
+                .toArray()
+                .catch(() => []);
+
+              const seenIds = new Set(results.map(r => String(r._id)));
+              for (const sm of subMatches) {
+                if (!seenIds.has(String(sm._id))) {
+                  seenIds.add(String(sm._id));
+                  results.push(sm);
+                }
+              }
+            }
+            return results;
+          } else {
+            return await globalDocCol
+              .find({})
+              .sort({ practitioner_id: 1 })
+              .skip(skip)
+              .limit(limitNum)
+              .toArray()
+              .catch(() => []);
+          }
+        } catch (err) {
+          console.warn("Global doctors search error:", err.message);
+          return [];
+        }
+      })()
+    ]);
+
+    const { localCount, localDoctors } = localData;
+    const seenNames = new Set(localDoctors.map((d) => (d.name || "").toLowerCase()));
+
+    const globalDoctors = (rawGlobal || [])
+      .filter((gd) => !seenNames.has((gd.full_name || gd.name || "").toLowerCase()))
+      .map((gd) => ({
+        id: gd.practitioner_code || (gd.practitioner_id ? `DOC-${gd.practitioner_id}` : (gd.id || String(gd._id))),
+        global_id: gd.practitioner_code || (gd.practitioner_id ? `DOC-${gd.practitioner_id}` : (gd.id || String(gd._id))),
+        name: gd.full_name || gd.name,
+        full_name: gd.full_name || gd.name,
+        license_number: gd.medical_registration_no || gd.license_number || "",
+        registration_no: gd.medical_registration_no || gd.registration_no || "",
+        clinic: gd.clinic_hospital || gd.clinic || "",
+        locality: gd.locality || "",
+        city: gd.city || "",
+        state: gd.state || "",
+        source: "global",
+      }));
+
+    const combinedDoctors = [...localDoctors, ...globalDoctors];
+    const hasMore = combinedDoctors.length >= limitNum;
+    const totalCount = localCount + (hasMore ? skip + limitNum + 10 : combinedDoctors.length);
+
+    const responseData = {
+      doctors: combinedDoctors,
+      pagination: {
+        page: pageNum,
+        limit: limitNum,
+        total: totalCount,
+        total_pages: Math.ceil(totalCount / limitNum) || 1,
+        has_more: hasMore,
+      },
+    };
+
+    if (combinedDoctors.length > 0) {
+      setCached(cacheKey, responseData);
+    }
+    res.json(responseData);
   } catch (error) {
     next(error);
+  }
+});
+
+// POST /api/bills/doctors/ensure-global
+router.post("/doctors/ensure-global", auth, requireSubscription(), async (req, res, next) => {
+  try {
+    const { name, license_number, registration_no, clinic, city, state } = req.body;
+    const db = mongoose.connection.db;
+    const pharmacyId = req.user.pharmacy_id;
+
+    if (!name || !name.trim()) {
+      return res.status(400).json({ detail: "Doctor name required" });
+    }
+
+    const cleanName = name.trim();
+    let localDoc = await db.collection("doctors").findOne({
+      pharmacy_id: pharmacyId,
+      name: { $regex: new RegExp(`^${escapeRegex(cleanName)}$`, "i") },
+    });
+
+    if (localDoc) {
+      return res.json({ doctor: localDoc, existed: true });
+    }
+
+    const newDoc = {
+      id: uuidv4(),
+      pharmacy_id: pharmacyId,
+      name: cleanName,
+      license_number: license_number || registration_no || "",
+      clinic: clinic || "",
+      city: city || "",
+      state: state || "",
+      created_at: new Date().toISOString(),
+    };
+    await db.collection("doctors").insertOne(newDoc);
+    res.status(201).json({ doctor: newDoc, existed: false });
+  } catch (err) {
+    next(err);
   }
 });
 
@@ -371,62 +555,40 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
     }
 
     const billId = uuidv4();
-    const billNo = generateBillNo();
+    const billNo = await uniqueBillNo(db, req.user.pharmacy_id);
     let subtotal = 0;
     let totalProfit = 0;
     const processedItems = [];
 
     for (const item of items) {
-      const quantity = parseInt(item.quantity) || 1;
-      const unitPrice = parseFloat(item.unit_price) || 0;
-      const discountPercent = parseFloat(item.discount_percent) || 0;
-      const purchasePrice = parseFloat(item.purchase_price) || 0;
-
-      const itemSubtotal = quantity * unitPrice;
-      const itemDiscount = itemSubtotal * (discountPercent / 100);
-      const cgst = parseFloat(item.cgst) || 0;
-      const sgst = parseFloat(item.sgst) || 0;
-      const itemTotal = item.item_total !== undefined ? parseFloat(item.item_total) : (itemSubtotal - itemDiscount);
-      const itemProfit = (unitPrice - purchasePrice) * quantity - itemDiscount;
+      const { quantity, unitPrice, discountPercent, purchasePrice, itemTotal, itemProfit } = lineAmounts(item);
 
       subtotal += itemTotal;
       totalProfit += itemProfit;
+
+      // Units that actually came off the shelf; any extra is negative billing
+      const stockDeducted = await takeFromStock(db, req.user.pharmacy_id, item.inventory_id, quantity);
 
       processedItems.push({
         inventory_id: item.inventory_id || null,
         product_name: item.product_name,
         batch_no: item.batch_no || null,
+        hsn_no: item.hsn_no || null,
         expiry_date: item.expiry_date || null,
         quantity,
+        units_per_pack: parseInt(item.units_per_pack) || null,
         unit_price: unitPrice,
         purchase_price: purchasePrice,
         discount_percent: discountPercent,
+        line_discount: Math.round((quantity * unitPrice - itemTotal) * 100) / 100,
         item_total: itemTotal,
         profit: itemProfit,
         is_manual: !item.inventory_id, // Mark as manual if no inventory_id
+        stock_deducted: stockDeducted,
         cgst: parseFloat(item.cgst) || 0,
         sgst: parseFloat(item.sgst) || 0,
         delivery_status: is_advance_paid ? "Pending" : "Delivered",
       });
-
-      // Update inventory stock for inventory items (supports both UUID id and Mongo ObjectId _id)
-      if (item.inventory_id) {
-        const invQuery = {
-          pharmacy_id: req.user.pharmacy_id,
-          $or: [
-            { id: item.inventory_id },
-            ...(mongoose.Types.ObjectId.isValid(item.inventory_id)
-              ? [{ _id: new mongoose.Types.ObjectId(item.inventory_id) }]
-              : []),
-          ],
-        };
-        await db
-          .collection("inventory")
-          .updateOne(
-            invQuery,
-            [{ $set: { available_quantity: { $max: [0, { $subtract: ["$available_quantity", quantity] }] } } }]
-          );
-      }
     }
 
     const discountAmount = subtotal * (discount_percent / 100);
@@ -578,6 +740,81 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
       }
     }
 
+    // Handle Optional Restock / Refill Reminder
+    const reminderConfig = req.body.refill_reminder || req.body.restock_reminder;
+    if (reminderConfig && (reminderConfig.enabled === true || reminderConfig.enabled === 'true')) {
+      try {
+        const todayStr = new Date().toISOString().slice(0, 10);
+        const bDate = billing_date || todayStr;
+        const daysSupply = Math.max(1, parseInt(reminderConfig.days_supply) || 30);
+        const remindBeforeDays = parseInt(reminderConfig.remind_before_days) || 5;
+
+        let targetDate = reminderConfig.refill_target_date;
+        if (!targetDate) {
+          const d = new Date(bDate);
+          d.setDate(d.getDate() + daysSupply);
+          targetDate = d.toISOString().slice(0, 10);
+        }
+
+        let reminderDate = reminderConfig.reminder_date;
+        if (!reminderDate) {
+          const d = new Date(targetDate);
+          d.setDate(d.getDate() - remindBeforeDays);
+          reminderDate = d.toISOString().slice(0, 10);
+        }
+
+        // Per medicine: units sold, dose per day (decimals, e.g. 0.5) and how many days that lasts
+        const num = (v) => (Number.isFinite(Number(v)) && Number(v) > 0 ? Math.round(Number(v) * 1000) / 1000 : null);
+        const reminderItems = Array.isArray(reminderConfig.items) && reminderConfig.items.length > 0
+          ? reminderConfig.items.slice(0, 100).map((i) => ({
+              product_name: String(i.product_name || "").slice(0, 200),
+              batch_no: i.batch_no || null,
+              quantity: num(i.quantity),
+              unit_price: num(i.unit_price),
+              dose_per_day: num(i.dose_per_day),
+              days_supply: parseInt(i.days_supply) || daysSupply,
+              runs_out_on: /^\d{4}-\d{2}-\d{2}$/.test(i.runs_out_on || "") ? i.runs_out_on : null,
+            }))
+          : processedItems.map(i => ({
+              product_name: i.product_name,
+              batch_no: i.batch_no || null,
+              quantity: i.quantity,
+              unit_price: i.unit_price,
+              days_supply: daysSupply,
+            }));
+
+        const reminderId = uuidv4();
+        await db.collection("reminders").insertOne({
+          id: reminderId,
+          pharmacy_id: req.user.pharmacy_id,
+          customer_id: finalCustomerId || null,
+          customer_name: customer_name || "Customer",
+          customer_mobile: customer_mobile || null,
+          bill_id: billId,
+          bill_no: billNo,
+          items: reminderItems,
+          billing_date: bDate,
+          refill_target_date: targetDate,
+          reminder_date: reminderDate,
+          notes: reminderConfig.notes || `Refill reminder for Bill #${billNo}`,
+          is_active: true,
+          status: "PENDING",
+          notified_at: null,
+          completed_at: null,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+
+        // If reminder date is already due today, process immediately
+        if (reminderDate <= todayStr) {
+          const { checkAndProcessDueReminders } = require("../services/notifications");
+          await checkAndProcessDueReminders(db, req.user.pharmacy_id);
+        }
+      } catch (remErr) {
+        console.error("Failed to create refill reminder from bill:", remErr);
+      }
+    }
+
     const { _id, ...bill } = billData;
     await logActivity(db, req.user.pharmacy_id, req.user.id, req.user.name, "CREATE", "BILLING", billId, `Created Bill ${billNo} for ₹${totalAmount}`, `/billing`);
 
@@ -652,15 +889,8 @@ router.put("/:bill_id", auth, requireSubscription(), async (req, res, next) => {
 
     /* ---------------- Reverse old inventory ---------------- */
 
-    for (const oldItem of bill.items) {
-      if (oldItem.inventory_id) {
-        await db
-          .collection("inventory")
-          .updateOne(
-            { id: oldItem.inventory_id },
-            { $inc: { available_quantity: oldItem.quantity } }
-          );
-      }
+    for (const oldItem of bill.items || []) {
+      await returnToStock(db, req.user.pharmacy_id, oldItem);
     }
 
     /* ---------------- Process new items ---------------- */
@@ -670,17 +900,7 @@ router.put("/:bill_id", auth, requireSubscription(), async (req, res, next) => {
     const processedItems = [];
 
     for (const item of items) {
-      const quantity = parseInt(item.quantity) || 1;
-      const unitPrice = parseFloat(item.unit_price) || 0;
-      const discountPercent = parseFloat(item.discount_percent) || 0;
-      const purchasePrice = parseFloat(item.purchase_price) || 0;
-
-      const itemSubtotal = quantity * unitPrice;
-      const itemDiscount = itemSubtotal * (discountPercent / 100);
-      const cgst = parseFloat(item.cgst) || 0;
-      const sgst = parseFloat(item.sgst) || 0;
-      const itemTotal = item.item_total !== undefined ? parseFloat(item.item_total) : (itemSubtotal - itemDiscount);
-      const itemProfit = (unitPrice - purchasePrice) * quantity - itemDiscount;
+      const { quantity, unitPrice, discountPercent, purchasePrice, itemTotal, itemProfit } = lineAmounts(item);
 
       subtotal += itemTotal;
       totalProfit += itemProfit;
@@ -692,32 +912,28 @@ router.put("/:bill_id", auth, requireSubscription(), async (req, res, next) => {
         finalDeliveryStatus = matchingOld ? (matchingOld.delivery_status || "Pending") : "Pending";
       }
 
+      const stockDeducted = await takeFromStock(db, req.user.pharmacy_id, item.inventory_id, quantity);
+
       processedItems.push({
         inventory_id: item.inventory_id || null,
         product_name: item.product_name,
         batch_no: item.batch_no || null,
+        hsn_no: item.hsn_no || null,
         expiry_date: item.expiry_date || null,
         quantity,
+        units_per_pack: parseInt(item.units_per_pack) || null,
         unit_price: unitPrice,
         purchase_price: purchasePrice,
         discount_percent: discountPercent,
+        line_discount: Math.round((quantity * unitPrice - itemTotal) * 100) / 100,
         item_total: itemTotal,
         profit: itemProfit,
         is_manual: !item.inventory_id,
+        stock_deducted: stockDeducted,
         cgst: parseFloat(item.cgst) || 0,
         sgst: parseFloat(item.sgst) || 0,
         delivery_status: finalDeliveryStatus,
       });
-
-      // Deduct inventory if item linked to inventory
-      if (item.inventory_id) {
-        await db
-          .collection("inventory")
-          .updateOne(
-            { id: item.inventory_id },
-            [{ $set: { available_quantity: { $max: [0, { $subtract: ["$available_quantity", quantity] }] } } }]
-          );
-      }
     }
 
     /* ---------------- Calculate totals ---------------- */
@@ -793,11 +1009,17 @@ router.put("/:bill_id", auth, requireSubscription(), async (req, res, next) => {
     const oldAdvance = Math.max(0, oldPaid - oldDeliveredValue);
 
     // Calculate new active values
-    const finalIsPaid = is_paid !== undefined ? is_paid : bill.is_paid;
+    let finalIsPaid = is_paid !== undefined ? is_paid : bill.is_paid;
     const finalIsAdvancePaid = is_advance_paid !== undefined ? is_advance_paid : bill.is_advance_paid;
     const finalAdvanceAmount = is_advance_paid !== undefined ? (Number(advance_amount) || 0) : (bill.advance_amount || 0);
 
-    const newPaid = finalIsPaid ? totalAmount : (finalIsAdvancePaid ? finalAdvanceAmount : 0);
+    // A credit bill that stays on credit keeps the part-payments already
+    // recorded against it; editing items must not wipe them.
+    const keepRecordedPayments = !finalIsPaid && !finalIsAdvancePaid && !bill.is_paid && !bill.is_advance_paid && (Number(bill.total_paid) || 0) > 0;
+    const recordedPaid = keepRecordedPayments ? Number(bill.total_paid) || 0 : 0;
+    if (keepRecordedPayments && recordedPaid >= totalAmount) finalIsPaid = true;
+
+    const newPaid = keepRecordedPayments ? recordedPaid : finalIsPaid ? totalAmount : (finalIsAdvancePaid ? finalAdvanceAmount : 0);
     let newDeliveredValue = 0;
     if (finalIsAdvancePaid) {
       newDeliveredValue = processedItems.reduce((sum, i) => i.delivery_status === "Delivered" ? sum + (i.item_total || 0) : sum, 0);
@@ -833,7 +1055,9 @@ router.put("/:bill_id", auth, requireSubscription(), async (req, res, next) => {
     /* ---------------- Update bill ---------------- */
 
     let finalPayments = bill.payments || [];
-    if (finalIsPaid) {
+    if (keepRecordedPayments) {
+      // unchanged
+    } else if (finalIsPaid) {
       finalPayments = [{ amount: totalAmount, payment_mode: payment_mode || bill.payment_mode || "Cash", paid_at: new Date().toISOString() }];
     } else if (finalIsAdvancePaid) {
       if (finalPayments.length === 0 && finalAdvanceAmount > 0) {
@@ -843,6 +1067,12 @@ router.put("/:bill_id", auth, requireSubscription(), async (req, res, next) => {
       }
     } else {
       finalPayments = [];
+    }
+
+    // Short-book marks live on the stored lines; the edit form doesn't send them
+    for (const item of processedItems) {
+      const old = (bill.items || []).find((o) => o.short_book && o.product_name === item.product_name && (o.batch_no || null) === (item.batch_no || null));
+      if (old) item.short_book = old.short_book;
     }
 
     const updates = {
@@ -1050,15 +1280,8 @@ router.delete(
 
       // Restore inventory if requested
       if (restore_inventory === "true") {
-        for (const item of bill.items) {
-          if (item.inventory_id && !item.inventory_id.startsWith("negative-")) {
-            await db
-              .collection("inventory")
-              .updateOne(
-                { id: item.inventory_id },
-                { $inc: { available_quantity: item.quantity } }
-              );
-          }
+        for (const item of bill.items || []) {
+          await returnToStock(db, req.user.pharmacy_id, item);
         }
       }
 
@@ -1213,8 +1436,12 @@ router.post(
         gst_no: ""
       };
 
-      // Generate PDF
-      const pdfBuffer = await generateBillPDF(bill, pharmacy);
+      // Generate PDF (upi_qr: true/false = with/without the UPI payment QR)
+      const upiQr = req.body?.upi_qr === undefined ? undefined : req.body.upi_qr === true || req.body.upi_qr === "true";
+      if (upiQr && !String(pharmacyDoc?.upi_id || "").trim()) {
+        return res.status(400).json({ detail: "Add your UPI ID in Settings to put a payment QR on bills", code: "NO_UPI_ID" });
+      }
+      const pdfBuffer = await generateBillPDF(bill, pharmacy, { upiQr });
 
       // Upload to R2
       const key = `bills/${req.user.pharmacy_id}/${bill.bill_no}.pdf`;
@@ -1225,12 +1452,53 @@ router.post(
         .collection("bills")
         .updateOne({ id: req.params.bill_id }, { $set: { pdf_url: pdfUrl } });
 
-      res.json({ pdf_url: pdfUrl });
+      // With and without QR share one file name: make the browser fetch this one
+      res.json({ pdf_url: `${pdfUrl}${pdfUrl.includes("?") ? "&" : "?"}v=${Date.now()}`, upi_qr: !!upiQr });
     } catch (error) {
       next(error);
     }
   }
 );
+
+// POST /api/bills/:bill_id/share {phone?} - WhatsApp: expiring PDF link,
+// ready message, and the wa.me link when the number is valid
+router.post("/:bill_id/share", auth, requireSubscription(), async (req, res, next) => {
+  try {
+    const db = mongoose.connection.db;
+    const bill = await db.collection("bills").findOne({ id: req.params.bill_id, pharmacy_id: req.user.pharmacy_id }, { projection: { _id: 0 } });
+    if (!bill) return res.status(404).json({ detail: "Bill not found" });
+    const pharmacy = await db.collection("pharmacies").findOne({ id: req.user.pharmacy_id }, { projection: { _id: 0, name: 1, upi_id: 1 } });
+
+    const link = await billShare.getOrCreateLink(db, { bill, pharmacyId: req.user.pharmacy_id, userId: req.user.id });
+    const url = `${billShare.publicBase(req)}/api/public/bill/${link.token}`;
+    const message = billShare.buildMessage({ bill, pharmacy, url, expiresAt: link.expires_at });
+    const raw = req.body?.phone !== undefined ? req.body.phone : bill.customer_mobile;
+    const phone = billShare.normalizeMobile(raw);
+    res.json({
+      url,
+      expires_at: link.expires_at,
+      message,
+      phone,
+      phone_given: String(raw || "").trim(),
+      wa_url: phone ? `https://wa.me/${phone}?text=${encodeURIComponent(message)}` : null,
+    });
+    logActivity(db, req.user.pharmacy_id, req.user.id, req.user.name, "SHARE", "BILLING", bill.id, `Shared bill ${bill.bill_no}${phone ? ` with +${phone}` : ""}`, "/billing").catch(() => {});
+  } catch (error) {
+    next(error);
+  }
+});
+
+// DELETE /api/bills/:bill_id/share - stop every shared link of this bill
+router.delete("/:bill_id/share", auth, requireSubscription(), async (req, res, next) => {
+  try {
+    const db = mongoose.connection.db;
+    const bill = await db.collection("bills").findOne({ id: req.params.bill_id, pharmacy_id: req.user.pharmacy_id }, { projection: { id: 1 } });
+    if (!bill) return res.status(404).json({ detail: "Bill not found" });
+    res.json({ revoked: await billShare.revokeLinks(db, { billId: bill.id, pharmacyId: req.user.pharmacy_id }) });
+  } catch (error) {
+    next(error);
+  }
+});
 
 // POST /api/bills/:bill_id/email
 router.post(
@@ -1310,7 +1578,8 @@ router.post(
         bill.customer_name,
         bill.bill_no,
         pdfUrl,
-        bill.total_amount
+        bill.total_amount,
+        { pharmacyName: pharmacyDoc?.name || "Pharmacy Store" }
       );
 
       if (!sent) {
@@ -1506,368 +1775,44 @@ router.post(
 );
 
 // POST /api/bills/match-inventory - Smart batch-first inventory matching for billing
+// POST /api/bills/match-inventory - map scanned lines to stock (batch first, then name)
 router.post("/match-inventory", auth, requireSubscription(), async (req, res, next) => {
   try {
-    const db = mongoose.connection.db;
     const { items } = req.body;
-
-    if (!items || !Array.isArray(items)) {
+    if (!Array.isArray(items) || items.length === 0) {
       return res.json({ success: true, matches: [] });
     }
-
-    const allInventoryItems = await db
-      .collection("inventory")
-      .find({ pharmacy_id: req.user.pharmacy_id })
-      .toArray();
-
-    const cleanAlphanumeric = (str) =>
-      (str || "").replace(/[^a-zA-Z0-9]/g, "").toLowerCase().replace(/^0+/, "");
-
-    const COMMON_DOSAGE_WORDS = new Set([
-      "ds", "cap", "capsule", "capsules", "tab", "tablet", "tablets",
-      "syp", "syrup", "dry", "inj", "injection", "gel", "cream",
-      "ointment", "suspension", "solution", "drops", "lotion", "mg", "ml", "gm", "g"
-    ]);
-
-    const getBrandCoreTokens = (name) => {
-      return (name || "")
-        .toLowerCase()
-        .replace(/[^a-z0-9\s]/g, " ")
-        .split(/\s+/)
-        .filter((t) => t.length > 0 && !COMMON_DOSAGE_WORDS.has(t));
-    };
-
-    const matches = items.map((item) => {
-      const scannedName = (item.product_name || item.name || "").trim();
-      const scannedBatch = (item.batch_no || item.batch || "").trim();
-      const cleanScannedBatch = cleanAlphanumeric(scannedBatch);
-
-      let batchMatch = null;
-      let exactNameMatch = null;
-      const rawSuggestions = [];
-
-      // 1. Exact Batch Match Priority against inventory
-      if (cleanScannedBatch && cleanScannedBatch.length >= 2) {
-        const foundInv = allInventoryItems.find((inv) => {
-          const cleanInvBatch = cleanAlphanumeric(inv.batch_no);
-          if (!cleanInvBatch || cleanInvBatch.length < 2) return false;
-
-          if (cleanInvBatch === cleanScannedBatch) return true;
-          if (cleanScannedBatch.includes(cleanInvBatch) || cleanInvBatch.includes(cleanScannedBatch)) return true;
-
-          const rawInvBatch = (inv.batch_no || "").trim().toLowerCase();
-          const rawScannedBatch = scannedBatch.toLowerCase();
-          if (rawInvBatch && rawScannedBatch && (rawInvBatch === rawScannedBatch || rawScannedBatch.includes(rawInvBatch))) return true;
-
-          return false;
-        });
-
-        if (foundInv) {
-          batchMatch = {
-            product_id: foundInv.product_id || foundInv.id || (foundInv._id ? foundInv._id.toString() : ""),
-            inventory_id: foundInv.id || (foundInv._id ? foundInv._id.toString() : ""),
-            product_name: foundInv.product_name,
-            salt_composition: foundInv.salt_composition || "",
-            batch_no: foundInv.batch_no,
-            expiry_date: foundInv.expiry_date || "",
-            available_quantity: foundInv.available_quantity || 0,
-            mrp: foundInv.mrp_per_unit || foundInv.mrp || 0,
-            purchase_price: foundInv.cost_per_unit || foundInv.purchase_price || 0,
-            cgst: foundInv.cgst || 0,
-            sgst: foundInv.sgst || 0,
-            type: "batch_exact",
-          };
-        }
-      }
-
-      // 2. Product Name Matching & Brand Token Similarity
-      if (scannedName) {
-        const normScannedName = scannedName.toLowerCase();
-        const scannedBrandTokens = getBrandCoreTokens(scannedName);
-
-        allInventoryItems.forEach((inv) => {
-          if (!inv.product_name) return;
-          const normProdName = inv.product_name.toLowerCase();
-          const prodBrandTokens = getBrandCoreTokens(inv.product_name);
-
-          let score = 0;
-          let isHighConfidence = false;
-
-          if (normProdName === normScannedName) {
-            score = 100;
-            isHighConfidence = true;
-            exactNameMatch = {
-              product_id: inv.product_id || inv.id,
-              inventory_id: inv.id || (inv._id ? inv._id.toString() : ""),
-              product_name: inv.product_name,
-              type: "name_exact",
-            };
-          } else if (normProdName.includes(normScannedName) || normScannedName.includes(normProdName)) {
-            score = 90;
-            isHighConfidence = true;
-          } else if (scannedBrandTokens.length > 0 && prodBrandTokens.length > 0) {
-            let brandMatchCount = 0;
-            scannedBrandTokens.forEach((tok) => {
-              if (prodBrandTokens.includes(tok)) brandMatchCount++;
-            });
-
-            const matchRatio = brandMatchCount / scannedBrandTokens.length;
-            if (brandMatchCount > 0 && matchRatio >= 0.5) {
-              score = Math.round(50 + matchRatio * 40);
-              if (matchRatio >= 0.75) isHighConfidence = true;
-            }
-          }
-
-          if (score >= 40) {
-            rawSuggestions.push({
-              product_id: inv.product_id || inv.id,
-              inventory_id: inv.id || (inv._id ? inv._id.toString() : ""),
-              product_name: inv.product_name,
-              salt_composition: inv.salt_composition || "",
-              batch_no: inv.batch_no || "",
-              expiry_date: inv.expiry_date || "",
-              available_quantity: inv.available_quantity || 0,
-              mrp: inv.mrp_per_unit || inv.mrp || 0,
-              purchase_price: inv.cost_per_unit || inv.purchase_price || 0,
-              cgst: inv.cgst || 0,
-              sgst: inv.sgst || 0,
-              score: Math.round(score),
-              is_high_confidence: isHighConfidence,
-            });
-          }
-        });
-      }
-
-      if (batchMatch) {
-        rawSuggestions.unshift({
-          product_id: batchMatch.product_id,
-          inventory_id: batchMatch.inventory_id,
-          product_name: batchMatch.product_name,
-          salt_composition: batchMatch.salt_composition,
-          score: 10000,
-          is_batch_match: true,
-          is_high_confidence: true,
-          batch_no: batchMatch.batch_no,
-          expiry_date: batchMatch.expiry_date,
-          available_quantity: batchMatch.available_quantity,
-          mrp: batchMatch.mrp,
-          purchase_price: batchMatch.purchase_price,
-          cgst: batchMatch.cgst,
-          sgst: batchMatch.sgst,
-        });
-      }
-
-      rawSuggestions.sort((a, b) => b.score - a.score);
-
-      const uniqueSuggestions = [];
-      const seenIds = new Set();
-      for (const sug of rawSuggestions) {
-        const key = `${sug.inventory_id}_${sug.batch_no}`;
-        if (!seenIds.has(key)) {
-          seenIds.add(key);
-          uniqueSuggestions.push(sug);
-        }
-      }
-
-      return {
-        scanned_name: scannedName,
-        scanned_batch: scannedBatch,
-        batch_match: batchMatch,
-        exact_name_match: exactNameMatch,
-        suggestions: uniqueSuggestions.slice(0, 12),
-      };
-    });
-
+    const db = mongoose.connection.db;
+    const matches = await Promise.all(
+      items.slice(0, 100).map(async (item) => {
+        const scanned = {
+          product_name: String(item?.product_name || item?.name || "").trim(),
+          batch_no: String(item?.batch_no || item?.batch || "").trim(),
+        };
+        const m = await matchForBilling(db, req.user.pharmacy_id, scanned);
+        const hit = m.match_type !== "negative_billing" ? m.matched_item : null;
+        return {
+          scanned_name: scanned.product_name,
+          scanned_batch: scanned.batch_no,
+          match_type: m.match_type,
+          confidence: m.confidence,
+          batch_match: hit && m.match_type.startsWith("batch") ? { ...hit, type: m.match_type } : null,
+          exact_name_match: hit && m.match_type === "name_matched" ? { ...hit, type: "name_exact" } : null,
+          matched_item: m.matched_item,
+          suggestions: [
+            ...(hit ? [{ ...hit, score: m.confidence, is_batch_match: m.match_type.startsWith("batch"), is_high_confidence: true }] : []),
+            ...m.alternatives.map((a) => ({ ...a, score: 50, is_high_confidence: false })),
+          ],
+        };
+      })
+    );
     res.json({ success: true, matches });
   } catch (error) {
     next(error);
   }
 });
 
-// POST /api/bills/scan-product - Ultra-fast synchronous AI product scanning for billing
-router.post(
-  "/scan-product",
-  auth,
-  requireSubscription(),
-  scanUpload.array("files", 10),
-  async (req, res, next) => {
-    const tempFiles = req.files || [];
-    try {
-      if (!tempFiles || tempFiles.length === 0) {
-        return res.status(400).json({ success: false, detail: "No image files provided for scanning." });
-      }
-
-      const apiKey = process.env.EMERGENT_LLM_KEY || process.env.GEMINI_API_KEY;
-      if (!apiKey) {
-        return res.status(500).json({ success: false, detail: "Gemini API key is not configured." });
-      }
-
-      // Fast, parallel image compression via Sharp (takes ~30ms)
-      const imageParts = await Promise.all(
-        tempFiles.map(async (file) => {
-          let compressedBuf;
-          try {
-            compressedBuf = await sharp(file.path)
-              .resize({ width: 1024, height: 1024, fit: "inside", withoutEnlargement: true })
-              .jpeg({ quality: 80 })
-              .toBuffer();
-          } catch (e) {
-            compressedBuf = fs.readFileSync(file.path);
-          }
-          return {
-            inlineData: {
-              data: compressedBuf.toString("base64"),
-              mimeType: "image/jpeg",
-            },
-          };
-        })
-      );
-
-      // Cleanup local temp upload files immediately
-      tempFiles.forEach((f) => {
-        try { fs.unlinkSync(f.path); } catch (e) {}
-      });
-
-      // Call Gemini 2.5 Flash directly in Node.js (completes in ~1.5 seconds)
-      const genAI = new GoogleGenerativeAI(apiKey);
-      const model = genAI.getGenerativeModel({
-        model: "gemini-2.5-flash",
-        generationConfig: {
-          temperature: 0.1,
-          responseMimeType: "application/json",
-        },
-      });
-
-      const prompt = `Extract Indian pharmacy medicine/product details from the provided product photo(s).
-Inspect trade name, manufacturer, salt/active formulation, batch/lot number, expiry date, and MRP.
-Return ONLY valid JSON matching this schema:
-{
-  "product_name": "Exact Brand / Product Name",
-  "manufacturer": "Company Name",
-  "salt_composition": "Salt / Formula Details",
-  "batch_no": "Batch / Lot No",
-  "expiry_date": "YYYY-MM-DD",
-  "mrp": 0.0
-}`;
-
-      const aiResponse = await model.generateContent([prompt, ...imageParts]);
-      const responseText = aiResponse.response.text();
-
-      let extracted = {};
-      try {
-        extracted = JSON.parse(responseText.trim());
-      } catch (e) {
-        console.error("Failed to parse Gemini AI JSON:", responseText);
-      }
-
-      const scannedName = (extracted.product_name || extracted.name || "").trim();
-      const scannedBatch = (extracted.batch_no || extracted.batch || "").trim();
-
-      // Perform instant batch-first inventory auto-mapping
-      const db = mongoose.connection.db;
-      const allInventoryItems = await db
-        .collection("inventory")
-        .find({ pharmacy_id: req.user.pharmacy_id })
-        .toArray();
-
-      const cleanAlphanumeric = (str) =>
-        (str || "").replace(/[^a-zA-Z0-9]/g, "").toLowerCase().replace(/^0+/, "");
-
-      const cleanScannedBatch = cleanAlphanumeric(scannedBatch);
-
-      let matchedItem = null;
-
-      if (cleanScannedBatch && cleanScannedBatch.length >= 2) {
-        const foundInv = allInventoryItems.find((inv) => {
-          const cleanInvBatch = cleanAlphanumeric(inv.batch_no);
-          if (!cleanInvBatch || cleanInvBatch.length < 2) return false;
-
-          if (cleanInvBatch === cleanScannedBatch) return true;
-          if (cleanScannedBatch.includes(cleanInvBatch) || cleanInvBatch.includes(cleanScannedBatch)) return true;
-
-          const rawInvBatch = (inv.batch_no || "").trim().toLowerCase();
-          const rawScannedBatch = scannedBatch.toLowerCase();
-          if (rawInvBatch && rawScannedBatch && (rawInvBatch === rawScannedBatch || rawScannedBatch.includes(rawInvBatch))) return true;
-
-          return false;
-        });
-
-        if (foundInv) {
-          matchedItem = {
-            inventory_id: foundInv.id || (foundInv._id ? foundInv._id.toString() : ""),
-            product_id: foundInv.product_id || foundInv.id,
-            product_name: foundInv.product_name,
-            salt_composition: foundInv.salt_composition || "",
-            batch_no: foundInv.batch_no,
-            expiry_date: foundInv.expiry_date || extracted.expiry_date || "",
-            available_quantity: foundInv.available_quantity || 0,
-            mrp: foundInv.mrp_per_unit || foundInv.mrp || parseFloat(extracted.mrp) || 0,
-            purchase_price: foundInv.cost_per_unit || foundInv.purchase_price || 0,
-            cgst: foundInv.cgst || 0,
-            sgst: foundInv.sgst || 0,
-            quantity: 1,
-            match_type: "batch_exact",
-          };
-        }
-      }
-
-      // Name fallback if batch not matched
-      if (!matchedItem && scannedName) {
-        const normScannedName = scannedName.toLowerCase();
-        const foundNameInv = allInventoryItems.find((inv) => {
-          if (!inv.product_name) return false;
-          const normInvName = inv.product_name.toLowerCase();
-          return normInvName === normScannedName || normInvName.includes(normScannedName) || normScannedName.includes(normInvName);
-        });
-
-        if (foundNameInv) {
-          matchedItem = {
-            inventory_id: foundNameInv.id || (foundNameInv._id ? foundNameInv._id.toString() : ""),
-            product_id: foundNameInv.product_id || foundNameInv.id,
-            product_name: foundNameInv.product_name,
-            salt_composition: foundNameInv.salt_composition || "",
-            batch_no: scannedBatch || foundNameInv.batch_no || "",
-            expiry_date: extracted.expiry_date || foundNameInv.expiry_date || "",
-            available_quantity: foundNameInv.available_quantity || 0,
-            mrp: foundNameInv.mrp_per_unit || foundNameInv.mrp || parseFloat(extracted.mrp) || 0,
-            purchase_price: foundNameInv.cost_per_unit || foundNameInv.purchase_price || 0,
-            cgst: foundNameInv.cgst || 0,
-            sgst: foundNameInv.sgst || 0,
-            quantity: 1,
-            match_type: "name_suggested",
-          };
-        }
-      }
-
-      // Default negative billing payload if no inventory match
-      if (!matchedItem) {
-        matchedItem = {
-          product_name: scannedName || "Scanned Medicine",
-          salt_composition: extracted.salt_composition || "",
-          batch_no: scannedBatch || "",
-          expiry_date: extracted.expiry_date || "",
-          available_quantity: 0,
-          mrp: parseFloat(extracted.mrp) || 0,
-          purchase_price: 0,
-          cgst: 0,
-          sgst: 0,
-          quantity: 1,
-          match_type: "negative_billing",
-        };
-      }
-
-      return res.json({
-        success: true,
-        extracted_data: extracted,
-        matched_item: matchedItem,
-      });
-    } catch (err) {
-      tempFiles.forEach((f) => {
-        try { fs.unlinkSync(f.path); } catch (e) {}
-      });
-      next(err);
-    }
-  }
-);
+// POST /api/bills/scan-product - read a pack photo and map it to stock
+router.post("/scan-product", auth, requireSubscription(), acceptImages(6), scanForBilling);
 
 module.exports = router;

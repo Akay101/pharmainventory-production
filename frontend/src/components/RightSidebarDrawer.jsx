@@ -13,7 +13,8 @@ export default function RightSidebarDrawer({
   activeTab,
   onTabChange,
   children,
-  widthClass = "sm:w-[540px]"
+  widthClass = "sm:w-[540px]",
+  headerAction,
 }) {
   // Lock body scroll when drawer is open
   useEffect(() => {
@@ -30,7 +31,7 @@ export default function RightSidebarDrawer({
   if (!open) return null;
 
   return createPortal(
-    <div className="fixed inset-0 z-[99999] flex justify-end">
+    <div className="fixed inset-0 z-[80] flex justify-end">
       {/* Dark Backdrop */}
       <div
         className="fixed inset-0 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200"
@@ -58,14 +59,17 @@ export default function RightSidebarDrawer({
               )}
             </div>
           </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={onClose}
-            className="h-8 w-8 p-0 rounded-xl hover:bg-muted shrink-0 cursor-pointer"
-          >
-            <X className="w-4 h-4 text-muted-foreground" />
-          </Button>
+          <div className="flex items-center gap-1.5 shrink-0">
+            {headerAction}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onClose}
+              className="h-8 w-8 p-0 rounded-xl hover:bg-muted shrink-0 cursor-pointer"
+            >
+              <X className="w-4 h-4 text-muted-foreground" />
+            </Button>
+          </div>
         </div>
 
         {/* Navigation Tabs */}

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { useSearchParams, useLocation } from "react-router-dom";
+import { useSearchParams, useLocation, useNavigate } from "react-router-dom";
 import { v4 as uuidv4 } from "uuid";
 import { createPortal } from "react-dom";
 import axios from "axios";
@@ -25,6 +25,8 @@ import {
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "../components/ui/dialog";
@@ -68,6 +70,7 @@ import {
   User,
   ShoppingCart,
   Package,
+  Globe,
   CreditCard,
   RotateCcw,
   History,
@@ -84,13 +87,24 @@ import {
   SlidersHorizontal,
   Filter,
   Calendar,
+  Bell,
+  AlertTriangle,
+  Sparkles,
+  QrCode,
 } from "lucide-react";
 import { toast } from "sonner";
+import CustomerFilter from "../components/CustomerFilter";
+import BatchPicker from "../components/BatchPicker";
 import PlanBadge from "../components/PlanBadge";
 import Loader from "../components/Loader";
 import BillingScannerModal from "../components/BillingScannerModal";
-import { formatDate } from "./utils";
-import { getOS } from "../hooks/useKeyboard";
+import { formatDate, formatExpiry, formatExpiryInput, expiryToIso, openScanner } from "./utils";
+import { formatCombo } from "../lib/shortcuts";
+import { fmtDay, parseDose, refillPlan } from "../lib/refill";
+import { useShortcuts, useShortcutLayer } from "../components/shortcuts/Shortcuts";
+import UpiQrDialog from "../components/UpiQr";
+import { useWhatsAppShare, WhatsAppIcon } from "../components/ShareBillWhatsApp";
+import { ItemQrScanDialog, findItemLabel, resolveItemLabel } from "../components/ItemQr";
 
 const LOCAL_STORAGE_KEY_BILL = "pharmalogy_bill_draft";
 
@@ -153,9 +167,9 @@ const getPaymentModeIcon = (mode, sizeClass = "w-3.5 h-3.5") => {
 export default function BillingPage() {
   const location = useLocation();
   // Data state
+  const navigate = useNavigate();
   const [bills, setBills] = useState([]);
   const [totalBills, setTotalBills] = useState(0);
-  const [customers, setCustomers] = useState([]);
   const [loading, setLoading] = useState(true);
   const { user, settings } = useAuth();
   const [tabs, setTabs] = useState([]);
@@ -165,7 +179,6 @@ export default function BillingPage() {
   // New bill state - inline table approach
   const [showNewBill, setShowNewBill] = useState(false);
   const [billItems, setBillItems] = useState([]);
-  const [visibleBatchesLimit, setVisibleBatchesLimit] = useState({});
   const [customerInfo, setCustomerInfo] = useState({
     customer_id: "",
     customer_name: "",
@@ -187,6 +200,39 @@ export default function BillingPage() {
     paymentMode: "Cash"
   });
   const [activeCustomerSuggestionIndex, setActiveCustomerSuggestionIndex] = useState(-1);
+
+  // Patient Restock / Refill Reminder State
+  const [refillReminder, setRefillReminder] = useState({
+    enabled: false,
+    days_supply: 30,
+    remind_before_days: 5,
+    refill_target_date: "",
+    reminder_date: "",
+    notes: "",
+    selected_items: [],
+    // auto: dates follow the dose calculator; custom: the user set them
+    mode: "auto",
+    doses: {}, // product_name -> { dose: "1", days: "" }
+  });
+
+  const calculateReminderDates = useCallback((bDate, daysSupply = 30, remindBefore = 5) => {
+    try {
+      const base = bDate ? new Date(bDate) : new Date();
+      if (isNaN(base.getTime())) return { targetDate: "", reminderDate: "" };
+
+      const target = new Date(base);
+      target.setDate(target.getDate() + parseInt(daysSupply || 30));
+      const targetDate = target.toISOString().slice(0, 10);
+
+      const reminder = new Date(target);
+      reminder.setDate(reminder.getDate() - parseInt(remindBefore || 5));
+      const reminderDate = reminder.toISOString().slice(0, 10);
+
+      return { targetDate, reminderDate };
+    } catch (e) {
+      return { targetDate: "", reminderDate: "" };
+    }
+  }, []);
   
   // Customer Profile Modal state
   const [showCustomerProfileModal, setShowCustomerProfileModal] = useState(false);
@@ -202,6 +248,9 @@ export default function BillingPage() {
   const [doctorSearch, setDoctorSearch] = useState("");
   const [doctorSuggestions, setDoctorSuggestions] = useState([]);
   const [showDoctorSuggestions, setShowDoctorSuggestions] = useState(false);
+  const [doctorPage, setDoctorPage] = useState(1);
+  const [hasMoreDoctors, setHasMoreDoctors] = useState(false);
+  const [loadingDoctors, setLoadingDoctors] = useState(false);
 
   // Customer suggestions pagination state
   const [customerSuggestions, setCustomerSuggestions] = useState([]);
@@ -247,6 +296,16 @@ export default function BillingPage() {
   // Delete dialog
   const [deleteDialog, setDeleteDialog] = useState({ open: false, bill: null });
 
+  // High-performance search cache & abort controllers
+  const invSearchCacheRef = useRef(new Map());
+  const invAbortRef = useRef(null);
+  const editingInvSearchCacheRef = useRef(new Map());
+  const editingInvAbortRef = useRef(null);
+  const docSearchCacheRef = useRef(new Map());
+  const docAbortRef = useRef(null);
+  const custSearchCacheRef = useRef(new Map());
+  const custAbortRef = useRef(null);
+
   // Expanded bill rows
   const [expandedBills, setExpandedBills] = useState({});
   const [pendingBillNo, setPendingBillNo] = useState("");
@@ -276,7 +335,7 @@ export default function BillingPage() {
       return {
         batchCount,
         batchLabel: invItem?.batch_no || "-",
-        expiryLabel: invItem?.expiry_date || "-",
+        expiryLabel: formatExpiry(invItem?.expiry_date),
         isMultiple: false
       };
     }
@@ -313,7 +372,7 @@ export default function BillingPage() {
     return {
       batchCount,
       batchLabel: batches.length > 1 ? `${batches.length} Batches` : (batches[0]?.batch_no || invItem.batch_no || "-"),
-      expiryLabel: nearestExp,
+      expiryLabel: formatExpiry(nearestExp),
       isMultiple: batches.length > 1
     };
   };
@@ -369,19 +428,24 @@ export default function BillingPage() {
     toast.success(`Loaded Draft ${draft.draft_no} into New Bill layout!`);
   };
 
+  // Scanned lines arrive already matched to stock (inventory_id + that
+  // product's batches). Older drafts carry only the inventory_id, so their
+  // batch list is looked up for that exact product.
   const handleTransferScannedItemsToBill = async (scannedItems) => {
     if (!scannedItems || scannedItems.length === 0) return;
 
-    let allInv = [];
-    try {
-      const res = await axios.get(`${API}/inventory?limit=500`);
-      allInv = res.data.inventory || res.data || [];
-    } catch (e) {
-      console.error("Failed to fetch inventory for auto-linking:", e);
-    }
-
-    const cleanAlphanumeric = (str) =>
-      (str || "").replace(/[^a-zA-Z0-9]/g, "").toLowerCase().replace(/^0+/, "");
+    const batchLists = await Promise.all(
+      scannedItems.map(async (item) => {
+        if (!item.inventory_id || item.available_batches?.length) return item.available_batches || [];
+        try {
+          const res = await axios.get(`${API}/inventory/search`, { params: { q: item.product_name, limit: 5 } });
+          const group = (res.data.inventory || []).find((g) => (g.batches || []).some((b) => b.id === item.inventory_id));
+          return (group?.batches || []).filter((b) => (b.available_quantity || 0) > 0 || b.id === item.inventory_id);
+        } catch {
+          return [];
+        }
+      })
+    );
 
     setBillItems((prev) => {
       const isFirstRowEmpty =
@@ -390,83 +454,40 @@ export default function BillingPage() {
         !prev[0].inventory_id &&
         !prev[0].batch_no;
 
-      const newRows = scannedItems.map((item) => {
+      const newRows = scannedItems.map((item, idx) => {
         const qty = parseInt(item.quantity) || 1;
         const mrp = parseFloat(item.mrp) || parseFloat(item.unit_price) || 0;
         const purchasePrice = parseFloat(item.purchase_price) || 0;
-        const profit = (mrp - purchasePrice) * qty;
-
-        const scannedNameNorm = (item.product_name || "").toLowerCase().trim();
-        const cleanScannedBatch = cleanAlphanumeric(item.batch_no);
-
-        // Match inventory item
-        let invProduct = allInv.find((inv) => {
-          if (!inv.product_name) return false;
-          const normName = inv.product_name.toLowerCase().trim();
-          return (
-            normName === scannedNameNorm ||
-            normName.includes(scannedNameNorm) ||
-            scannedNameNorm.includes(normName)
-          );
-        });
-
-        let availableBatches = item.available_batches || [];
-        let matchedBatch = null;
-
-        if (invProduct) {
-          availableBatches = (invProduct.batches || []).filter(
-            (b) => (b.available_quantity || 0) > 0 || b.batch_no === item.batch_no
-          );
-          if (availableBatches.length === 0) {
-            availableBatches = invProduct.batches || [];
-          }
-
-          if (cleanScannedBatch) {
-            matchedBatch = availableBatches.find((b) => {
-              const cleanB = cleanAlphanumeric(b.batch_no);
-              return (
-                cleanB === cleanScannedBatch ||
-                cleanScannedBatch.includes(cleanB) ||
-                cleanB.includes(cleanScannedBatch)
-              );
-            });
-          }
-
-          if (!matchedBatch && availableBatches.length > 0) {
-            matchedBatch = availableBatches[0];
-          }
-        }
-
-        const invId = matchedBatch?.id || item.inventory_id || (invProduct?.batches?.[0]?.id) || null;
-        const finalBatchNo = matchedBatch?.batch_no || item.batch_no || "";
-        const finalExpDate = matchedBatch?.expiry_date || item.expiry_date || "";
-        const finalAvail = matchedBatch
-          ? (matchedBatch.available_quantity !== undefined ? matchedBatch.available_quantity : matchedBatch.available_units)
-          : (item.available !== undefined ? item.available : (item.available_quantity || 0));
-
-        const isManual = !invId;
+        const cgstVal = parseFloat(item.cgst) || 0;
+        const sgstVal = parseFloat(item.sgst) || 0;
+        const exclPrice = mrp / (1 + (cgstVal + sgstVal) / 100);
+        const invId = item.inventory_id || null;
+        const avail = item.available !== undefined ? item.available : item.available_quantity || 0;
 
         return {
           id: uuidv4(),
           inventory_id: invId,
-          product_name: invProduct?.product_name || item.product_name || "",
-          salt_composition: invProduct?.salt_composition || item.salt_composition || "",
-          batch_no: finalBatchNo,
-          available_batches: availableBatches,
+          product_name: item.product_name || "",
+          salt_composition: item.salt_composition || "",
+          batch_no: item.batch_no || "",
+          available_batches: batchLists[idx],
           quantity: qty,
-          available: finalAvail,
-          available_quantity: finalAvail,
+          available: avail,
+          available_quantity: avail,
           unit_price: mrp,
+          exclusive_price: exclPrice,
+          net_total: qty * mrp,
           mrp: mrp,
           purchase_price: purchasePrice,
-          discount: 0,
+          discount_percent: 0,
           cgst: item.cgst || 0,
           sgst: item.sgst || 0,
-          profit: profit,
-          is_manual: isManual,
-          is_pack: false,
-          pack_units: 1,
-          expiry_date: finalExpDate,
+          hsn_no: item.hsn_no || "",
+          units_per_pack: item.units_per_pack || 1,
+          profit: (mrp - purchasePrice) * qty,
+          is_manual: !invId,
+          source: invId ? "inventory" : "manual",
+          expiry_date: item.expiry_date || "",
         };
       });
 
@@ -478,8 +499,11 @@ export default function BillingPage() {
   };
 
   // Automatically open New Bill form and populate scanned items & customer details when returning from /scan-bill
+  const consumedScanNavRef = useRef(null);
   useEffect(() => {
-    if (location.state?.scannedItems) {
+    // Each navigation hands its scanned items over once (StrictMode re-runs effects)
+    if (location.state?.scannedItems && consumedScanNavRef.current !== location.key) {
+      consumedScanNavRef.current = location.key;
       const { scannedItems, customerDetails } = location.state;
       setShowNewBill(true);
       if (scannedItems && scannedItems.length > 0) {
@@ -515,10 +539,45 @@ export default function BillingPage() {
   // Refs for keyboard navigation
   const productInputRef = useRef(null);
   const quantityInputRef = useRef(null);
+  // Row whose batch picker should open right after a product is chosen
+  const [autoOpenBatchFor, setAutoOpenBatchFor] = useState(null);
+  const focusQtyFor = (itemId) =>
+    setTimeout(() => {
+      const el = document.querySelector(`[data-qty-for="${itemId}"]`);
+      if (el) {
+        el.focus();
+        el.select?.();
+      }
+    }, 30);
   const editingProductInputRef = useRef(null);
 
   // Keyboard shortcuts info
-  const [showShortcuts, setShowShortcuts] = useState(false);
+
+  // UPI QR: { amount, note } (amount "" asks for one)
+  const [upiQr, setUpiQr] = useState(null);
+  const whatsApp = useWhatsAppShare();
+  // Bill line being added to the short book: { bill, line, item, quantity, unit, notes }
+  const [shortBookFor, setShortBookFor] = useState(null);
+  const [shortBookSaving, setShortBookSaving] = useState(false);
+  const saveShortBook = async (e) => {
+    e?.preventDefault();
+    const sb = shortBookFor;
+    if (!(Number(sb.quantity) > 0)) return toast.error("Enter the quantity to reorder");
+    setShortBookSaving(true);
+    try {
+      const res = await axios.post(`${API}/shortbook`, { bill_id: sb.bill.id, line: sb.line, quantity: Number(sb.quantity), unit: sb.unit, notes: sb.notes });
+      toast.success(res.data.merged ? `${sb.item.product_name} was already in the short book: now ${res.data.entry.quantity} ${res.data.entry.unit}` : `${sb.item.product_name} added to the short book`, {
+        action: { label: "Open", onClick: () => navigate("/short-book") },
+      });
+      const mark = { entry_id: res.data.entry.id, quantity: Number(sb.quantity), unit: sb.unit, added_at: new Date().toISOString() };
+      setBills((prev) => prev.map((b) => (b.id === sb.bill.id ? { ...b, items: b.items.map((it, i) => (i === sb.line ? { ...it, short_book: mark } : it)) } : b)));
+      setShortBookFor(null);
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Couldn't add to the short book");
+    } finally {
+      setShortBookSaving(false);
+    }
+  };
 
   // Dropdown keyboard navigation
   const [activeDropdownIndex, setActiveDropdownIndex] = useState(-1);
@@ -895,102 +954,59 @@ export default function BillingPage() {
       handleCancelNewBill,
       handleCancelEditBill,
       handleAddNewRow,
-      setShowShortcuts,
       showNewBill,
       newItemRow,
       editingBillId,
     };
   });
 
+  // Keyboard: same keys as before, now through the app's shortcut layer so
+  // they no longer collide with navigation (Alt+S used to open Suppliers)
+  const shortcutLayer = useShortcutLayer();
+  const [confirmDiscardBill, setConfirmDiscardBill] = useState(false);
+  const billFormOpen = () => showNewBill || !!editingBillId;
+  const saveOpenBill = () => (showNewBill ? handleSubmitBill() : handleSaveEditBill());
+  // A suggestion list on screen closes first (its input handles Esc)
+  const anyBillPopupOpen = () =>
+    [...document.querySelectorAll('[id^="suggestion-new-"], [id^="suggestion-edit-"], [id^="customer-suggestion-"]')].some((el) => el.getClientRects().length > 0) ||
+    (showDoctorSuggestions && doctorSuggestions.length > 0);
+  useShortcuts(
+    [
+      { combo: "alt+n", label: "New bill", run: () => handleStartNewBill() },
+      { combo: "alt+a", label: "Add an item line", when: () => showNewBill, run: () => handleAddNewRow() },
+      { combo: "mod+enter", label: "Save the bill", when: billFormOpen, run: () => saveOpenBill() },
+      { combo: "alt+s", label: "Save the bill (while one is open)", when: billFormOpen, run: () => saveOpenBill() },
+      { combo: "alt+u", label: "Update the bill being edited", when: () => !!editingBillId, run: () => handleSaveEditBill() },
+      { combo: "alt+q", label: "UPI payment QR", run: () => setUpiQr({ amount: "", note: "" }) },
+      {
+        combo: "escape",
+        label: "Cancel the line, then the bill",
+        inInputs: true,
+        when: () => !!newItemRow || billFormOpen(),
+        run: () => {
+          if (anyBillPopupOpen()) return false; // the dropdown closes first
+          if (newItemRow) return handleCancelAddItem();
+          if (showNewBill) {
+            if (billItems.some((i) => i.product_name)) return setConfirmDiscardBill(true);
+            return handleCancelNewBill();
+          }
+          handleCancelEditBill();
+        },
+      },
+    ],
+    "Billing"
+  );
+  useEffect(() => {
+    if (location.state?.newBill) {
+      handleStartNewBill();
+      window.history.replaceState({}, document.title);
+    }
+    // eslint-disable-next-line
+  }, [location.state]);
+
   useEffect(() => {
     fetchData(true);
-
-    // Global keyboard shortcuts
-    const handleKeyDown = (e) => {
-      // Avoid triggering when user is typing in generic inputs, UNLESS it's a modifier combo or Escape
-      const isInput = ["INPUT", "TEXTAREA", "SELECT"].includes(
-        e.target?.tagName
-      );
-      if (
-        isInput &&
-        !e.ctrlKey &&
-        !e.metaKey &&
-        !e.altKey &&
-        e.key !== "Escape" &&
-        e.key !== "Enter"
-      )
-        return;
-
-      const {
-        handleStartNewBill,
-        handleSubmitBill,
-        handleSaveEditBill,
-        handleCancelAddItem,
-        handleCancelNewBill,
-        handleCancelEditBill,
-        handleAddNewRow,
-        setShowShortcuts,
-        showNewBill,
-        newItemRow,
-        editingBillId,
-      } = handlersRef.current;
-
-      if (!handleStartNewBill) return;
-
-      // Alt+N - New bill
-      if (e.altKey && (e.key === "n" || e.code === "KeyN")) {
-        e.preventDefault();
-        handleStartNewBill();
-      }
-      // Alt+S or Cmd+Enter - Save bill
-      if (
-        (e.altKey && (e.key === "s" || e.code === "KeyS")) ||
-        ((e.ctrlKey || e.metaKey) && (e.key === "Enter" || e.code === "Enter"))
-      ) {
-        if (showNewBill) {
-          e.preventDefault();
-          handleSubmitBill();
-        }
-      }
-      // Alt+U or Cmd+Enter - Update bill (when editing)
-      if (
-        (e.altKey && (e.key === "u" || e.code === "KeyU")) ||
-        ((e.ctrlKey || e.metaKey) && (e.key === "Enter" || e.code === "Enter"))
-      ) {
-        if (editingBillId) {
-          e.preventDefault();
-          handleSaveEditBill();
-        }
-      }
-      // Escape - Cancel
-      if (e.key === "Escape" || e.code === "Escape") {
-        if (newItemRow) {
-          handleCancelAddItem();
-        } else if (showNewBill) {
-          handleCancelNewBill();
-        } else if (editingBillId) {
-          handleCancelEditBill();
-        }
-      }
-      // Alt+A - Add item (when in new bill mode)
-      if (e.altKey && (e.key === "a" || e.code === "KeyA")) {
-        if (showNewBill && !newItemRow) {
-          e.preventDefault();
-          handleStartAddItem();
-        } else if (showNewBill) {
-          e.preventDefault();
-          handleAddNewRow();
-        }
-      }
-      // Alt+? - Show shortcuts
-      if (e.altKey && (e.key === "/" || e.code === "Slash")) {
-        e.preventDefault();
-        setShowShortcuts(true);
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+    // eslint-disable-next-line
   }, []);
 
   // Debounce search query changes
@@ -1078,127 +1094,256 @@ export default function BillingPage() {
   const [loadingInventorySuggestions, setLoadingInventorySuggestions] = useState(false);
   const [loadingEditingInventorySuggestions, setLoadingEditingInventorySuggestions] = useState(false);
 
-  // Server-side inventory search for new bills
+  // Server-side inventory search for new bills with instant cache & 120ms debounce
   useEffect(() => {
+    const trimmed = (inventorySearch || "").trim();
+    if (trimmed.length < 2) {
+      if (invAbortRef.current) {
+        invAbortRef.current.abort();
+      }
+      setInventorySuggestions([]);
+      setShowInventorySuggestions(false);
+      setLoadingInventorySuggestions(false);
+      return;
+    }
+
+    const cacheKey = trimmed.toLowerCase();
+    // ⚡ Instant Cache Hit (0ms)
+    if (invSearchCacheRef.current.has(cacheKey)) {
+      setInventorySuggestions(invSearchCacheRef.current.get(cacheKey));
+      setShowInventorySuggestions(true);
+    }
+
     const searchInventory = async () => {
-      if (inventorySearch.length >= 2) {
+      if (invAbortRef.current) {
+        invAbortRef.current.abort();
+      }
+      const controller = new AbortController();
+      invAbortRef.current = controller;
+
+      if (!invSearchCacheRef.current.has(cacheKey)) {
         setLoadingInventorySuggestions(true);
-        try {
-          const response = await axios.get(
-            `${API}/inventory/search?q=${encodeURIComponent(inventorySearch)}&limit=15`
-          );
-          setInventorySuggestions(response.data.inventory);
-          setShowInventorySuggestions(true);
-        } catch (error) {
+      }
+
+      try {
+        const response = await axios.get(
+          `${API}/inventory/search?q=${encodeURIComponent(trimmed)}&limit=30`,
+          { signal: controller.signal }
+        );
+        const data = response.data.inventory || response.data.medicines || [];
+        invSearchCacheRef.current.set(cacheKey, data);
+        setInventorySuggestions(data);
+        setShowInventorySuggestions(true);
+      } catch (error) {
+        if (!axios.isCancel(error)) {
           console.error("Inventory search error:", error);
-          // Fallback to paginated endpoint
-          try {
-            const response = await axios.get(
-              `${API}/inventory?search=${encodeURIComponent(inventorySearch)}&limit=15`
-            );
-            setInventorySuggestions(response.data.inventory);
-            setShowInventorySuggestions(true);
-          } catch (e) {
-            console.error("Fallback search error:", e);
-          }
-        } finally {
+        }
+      } finally {
+        if (invAbortRef.current === controller) {
           setLoadingInventorySuggestions(false);
         }
-      } else {
-        setInventorySuggestions([]);
-        setShowInventorySuggestions(false);
-        setLoadingInventorySuggestions(false);
       }
     };
 
-    const debounce = setTimeout(searchInventory, 200);
+    const debounce = setTimeout(searchInventory, 120);
     return () => clearTimeout(debounce);
   }, [inventorySearch]);
 
-  // Server-side inventory search for editing bills
+  // Server-side inventory search for editing bills with instant cache
   useEffect(() => {
+    const trimmed = (editingInventorySearch || "").trim();
+    if (trimmed.length < 2) {
+      if (editingInvAbortRef.current) {
+        editingInvAbortRef.current.abort();
+      }
+      setEditingInventorySuggestions([]);
+      setShowEditingInventorySuggestions(false);
+      setLoadingEditingInventorySuggestions(false);
+      return;
+    }
+
+    const cacheKey = trimmed.toLowerCase();
+    // ⚡ Instant Cache Hit (0ms)
+    if (editingInvSearchCacheRef.current.has(cacheKey)) {
+      setEditingInventorySuggestions(editingInvSearchCacheRef.current.get(cacheKey));
+      setShowEditingInventorySuggestions(true);
+    }
+
     const searchInventory = async () => {
-      if (editingInventorySearch.length >= 2) {
+      if (editingInvAbortRef.current) {
+        editingInvAbortRef.current.abort();
+      }
+      const controller = new AbortController();
+      editingInvAbortRef.current = controller;
+
+      if (!editingInvSearchCacheRef.current.has(cacheKey)) {
         setLoadingEditingInventorySuggestions(true);
-        try {
-          const response = await axios.get(
-            `${API}/inventory/search?q=${encodeURIComponent(editingInventorySearch)}&limit=15`
-          );
-          setEditingInventorySuggestions(response.data.inventory);
-          setShowEditingInventorySuggestions(true);
-        } catch (error) {
+      }
+
+      try {
+        const response = await axios.get(
+          `${API}/inventory/search?q=${encodeURIComponent(trimmed)}&limit=30`,
+          { signal: controller.signal }
+        );
+        const data = response.data.inventory || response.data.medicines || [];
+        editingInvSearchCacheRef.current.set(cacheKey, data);
+        setEditingInventorySuggestions(data);
+        setShowEditingInventorySuggestions(true);
+      } catch (error) {
+        if (!axios.isCancel(error)) {
           console.error("Inventory search error:", error);
-          try {
-            const response = await axios.get(
-              `${API}/inventory?search=${encodeURIComponent(editingInventorySearch)}&limit=15`
-            );
-            setEditingInventorySuggestions(response.data.inventory);
-            setShowEditingInventorySuggestions(true);
-          } catch (e) {
-            console.error("Fallback search error:", e);
-          }
-        } finally {
+        }
+      } finally {
+        if (editingInvAbortRef.current === controller) {
           setLoadingEditingInventorySuggestions(false);
         }
-      } else {
-        setEditingInventorySuggestions([]);
-        setShowEditingInventorySuggestions(false);
-        setLoadingEditingInventorySuggestions(false);
       }
     };
 
-    const debounce = setTimeout(searchInventory, 200);
+    const debounce = setTimeout(searchInventory, 120);
     return () => clearTimeout(debounce);
   }, [editingInventorySearch]);
 
-  // Server-side doctor search
-  useEffect(() => {
-    const searchDoctors = async () => {
-      if (doctorSearch.length >= 1) {
-        try {
-          const response = await axios.get(
-            `${API}/bills/doctors?search=${encodeURIComponent(doctorSearch)}`
-          );
-          setDoctorSuggestions(response.data.doctors || []);
-        } catch (error) {
-          console.error("Doctor search error:", error);
-        }
-      } else {
-        setDoctorSuggestions([]);
-      }
-    };
+  // Server-side doctor search with instant cache & infinite scroll
+  const fetchDoctors = async (page = 1, search = "", append = false) => {
+    const trimmed = (search || "").trim();
+    const cacheKey = `${page}:${trimmed.toLowerCase()}`;
 
-    const debounce = setTimeout(searchDoctors, 200);
+    if (!append && docSearchCacheRef.current.has(cacheKey)) {
+      const cached = docSearchCacheRef.current.get(cacheKey);
+      setDoctorSuggestions(cached.doctors || []);
+      setHasMoreDoctors(cached.has_more ?? false);
+      setDoctorPage(page);
+    }
+
+    if (docAbortRef.current) {
+      docAbortRef.current.abort();
+    }
+    const controller = new AbortController();
+    docAbortRef.current = controller;
+
+    if (!append && !docSearchCacheRef.current.has(cacheKey)) {
+      setLoadingDoctors(true);
+    }
+
+    try {
+      const response = await axios.get(
+        `${API}/bills/doctors?search=${encodeURIComponent(trimmed)}&page=${page}&limit=20`,
+        { signal: controller.signal }
+      );
+      const data = response.data.doctors || [];
+      const hasMoreData = response.data.pagination?.has_more ?? data.length === 20;
+
+      docSearchCacheRef.current.set(cacheKey, { doctors: data, has_more: hasMoreData });
+      setDoctorSuggestions((prev) => (append ? [...prev, ...data] : data));
+      setHasMoreDoctors(hasMoreData);
+      setDoctorPage(page);
+    } catch (error) {
+      if (!axios.isCancel(error)) {
+        console.error("Doctor search error:", error);
+      }
+    } finally {
+      if (docAbortRef.current === controller) {
+        setLoadingDoctors(false);
+      }
+    }
+  };
+
+  const loadMoreDoctors = () => {
+    if (loadingDoctors || !hasMoreDoctors) return;
+    fetchDoctors(doctorPage + 1, doctorSearch, true);
+  };
+
+  const handleSelectDoctor = async (doc) => {
+    if (!doc) return;
+    setDoctorName(doc.name);
+    setDoctorSearch("");
+    setShowDoctorSuggestions(false);
+    if (doc.source === "global") {
+      try {
+        await axios.post(`${API}/bills/doctors/ensure-global`, doc);
+      } catch (e) {}
+    }
+  };
+
+  const handleSelectEditingDoctor = async (doc) => {
+    if (!doc) return;
+    setEditingBillData((prev) => ({
+      ...prev,
+      doctor: doc.name,
+    }));
+    setDoctorSearch("");
+    setShowDoctorSuggestions(false);
+    if (doc.source === "global") {
+      try {
+        await axios.post(`${API}/bills/doctors/ensure-global`, doc);
+      } catch (e) {}
+    }
+  };
+
+  useEffect(() => {
+    const debounce = setTimeout(() => {
+      fetchDoctors(1, doctorSearch, false);
+    }, 120);
     return () => clearTimeout(debounce);
   }, [doctorSearch]);
 
-  // Server-side customer search with infinite scroll
+  // Server-side customer search with instant cache & infinite scroll
   useEffect(() => {
+    const trimmed = (customerSearch || "").trim();
+    if (trimmed.length < 1) {
+      if (custAbortRef.current) {
+        custAbortRef.current.abort();
+      }
+      setCustomerSuggestions([]);
+      setHasMoreCustomerSuggestions(false);
+      setCustomerSuggestionPage(1);
+      return;
+    }
+
+    const cacheKey = trimmed.toLowerCase();
+    // ⚡ Instant Cache Hit (0ms)
+    if (custSearchCacheRef.current.has(cacheKey)) {
+      const cached = custSearchCacheRef.current.get(cacheKey);
+      setCustomerSuggestions(cached.customers || []);
+      setHasMoreCustomerSuggestions(cached.has_more ?? false);
+    }
+
     const searchCustomers = async () => {
-      if (customerSearch.trim().length >= 1) {
+      if (custAbortRef.current) {
+        custAbortRef.current.abort();
+      }
+      const controller = new AbortController();
+      custAbortRef.current = controller;
+
+      if (!custSearchCacheRef.current.has(cacheKey)) {
         setLoadingCustomerSuggestions(true);
-        try {
-          const response = await axios.get(
-            `${API}/customers?search=${encodeURIComponent(customerSearch)}&page=1&limit=15`
-          );
-          setCustomerSuggestions(response.data.customers || []);
-          setHasMoreCustomerSuggestions(
-            response.data.pagination?.page < response.data.pagination?.total_pages
-          );
-          setCustomerSuggestionPage(1);
-        } catch (error) {
+      }
+
+      try {
+        const response = await axios.get(
+          `${API}/customers?search=${encodeURIComponent(trimmed)}&page=1&limit=15`,
+          { signal: controller.signal }
+        );
+        const data = response.data.customers || [];
+        const hasMore = response.data.pagination?.page < response.data.pagination?.total_pages;
+
+        custSearchCacheRef.current.set(cacheKey, { customers: data, has_more: hasMore });
+        setCustomerSuggestions(data);
+        setHasMoreCustomerSuggestions(hasMore);
+        setCustomerSuggestionPage(1);
+      } catch (error) {
+        if (!axios.isCancel(error)) {
           console.error("Customer search error:", error);
-        } finally {
+        }
+      } finally {
+        if (custAbortRef.current === controller) {
           setLoadingCustomerSuggestions(false);
         }
-      } else {
-        setCustomerSuggestions([]);
-        setHasMoreCustomerSuggestions(false);
-        setCustomerSuggestionPage(1);
       }
     };
 
-    const debounce = setTimeout(searchCustomers, 300);
+    const debounce = setTimeout(searchCustomers, 120);
     return () => clearTimeout(debounce);
   }, [customerSearch]);
 
@@ -1358,9 +1503,6 @@ export default function BillingPage() {
         setTotalPages(billsRes.data.pagination.total_pages);
       }
 
-      const custRes = await axios.get(`${API}/customers`);
-      setCustomers(custRes.data.customers);
-
       if (hlId) {
         setTimeout(() => {
           setExpandedBills((prev) => ({ ...prev, [hlId]: true }));
@@ -1383,14 +1525,7 @@ export default function BillingPage() {
     }
   };
 
-  const searchLower = (customerSearch || "").trim().toLowerCase();
 
-  const filteredCustomers = customers.filter(
-    (customer) =>
-      (customer.name ?? "").toLowerCase().includes(searchLower) ||
-      (customer.mobile ?? "").toLowerCase().includes(searchLower) ||
-      (customer.email ?? "").toLowerCase().includes(searchLower)
-  );
 
   // ============ NEW BILL - INLINE TABLE ============
 
@@ -1418,6 +1553,7 @@ export default function BillingPage() {
     setAdvanceAmount("");
     setPaymentMode("");
     setNewItemRow(null);
+    setRefillReminder((prev) => ({ ...prev, enabled: false, refill_target_date: "", reminder_date: "", notes: "", selected_items: [], mode: "auto", doses: {} }));
     clearDraft();
   };
 
@@ -1441,12 +1577,19 @@ export default function BillingPage() {
 
   // Handle selecting inventory item for a specific row
   const handleSelectInventoryForRow = (itemId, inventoryItem) => {
-    let availableBatches = (inventoryItem.batches || []).filter(b => (b.available_quantity || 0) > 0);
+    const isGlobalOrEmpty =
+      inventoryItem.source === "global" ||
+      !inventoryItem.batches ||
+      inventoryItem.batches.length === 0;
+
+    let availableBatches = (inventoryItem.batches || []).filter(
+      (b) => (b.available_quantity || 0) > 0
+    );
     if (availableBatches.length === 0) {
       availableBatches = inventoryItem.batches || [];
     }
 
-    if (nearExpiryBatchFilter) {
+    if (nearExpiryBatchFilter && availableBatches.length > 0) {
       availableBatches.sort((a, b) => {
         if (!a.expiry_date) return 1;
         if (!b.expiry_date) return -1;
@@ -1461,32 +1604,50 @@ export default function BillingPage() {
         if (item.id !== itemId) return item;
 
         const qty = parseInt(item.quantity) || 1;
-        const unitPrice = defaultBatch.mrp_per_unit || defaultBatch.mrp || 0;
+        const unitPrice =
+          defaultBatch.mrp_per_unit ||
+          defaultBatch.mrp ||
+          inventoryItem.mrp_per_unit ||
+          inventoryItem.mrp ||
+          0;
         const purchasePrice =
-          defaultBatch.cost_per_unit || defaultBatch.purchase_price || 0;
-        const cgstVal = defaultBatch.cgst !== undefined ? Math.max(0, parseFloat(defaultBatch.cgst) || 0) : 0;
-        const sgstVal = defaultBatch.sgst !== undefined ? Math.max(0, parseFloat(defaultBatch.sgst) || 0) : 0;
+          defaultBatch.cost_per_unit ||
+          defaultBatch.purchase_price ||
+          inventoryItem.purchase_price ||
+          0;
+        const cgstVal =
+          defaultBatch.cgst !== undefined
+            ? Math.max(0, parseFloat(defaultBatch.cgst) || 0)
+            : 0;
+        const sgstVal =
+          defaultBatch.sgst !== undefined
+            ? Math.max(0, parseFloat(defaultBatch.sgst) || 0)
+            : 0;
         const exclPrice = unitPrice / (1 + (cgstVal + sgstVal) / 100);
-        const itemDiscount = (qty * exclPrice) * ((parseFloat(item.discount_percent) || 0) / 100);
-        const netTotal = (qty * exclPrice - itemDiscount) * (1 + (cgstVal + sgstVal) / 100);
+        const itemDiscount =
+          qty * exclPrice * ((parseFloat(item.discount_percent) || 0) / 100);
+        const netTotal =
+          (qty * exclPrice - itemDiscount) * (1 + (cgstVal + sgstVal) / 100);
 
         return {
           ...item,
-          inventory_id: defaultBatch.id,
-          product_name: inventoryItem.product_name,
+          inventory_id: isGlobalOrEmpty ? null : defaultBatch.id,
+          product_name: inventoryItem.product_name || inventoryItem.name,
           salt_composition: inventoryItem.salt_composition || "",
-          batch_no: defaultBatch.batch_no,
-          expiry_date: defaultBatch.expiry_date || "",
+          batch_no: isGlobalOrEmpty ? "" : defaultBatch.batch_no || "",
+          expiry_date: isGlobalOrEmpty ? "" : defaultBatch.expiry_date || "",
           unit_price: unitPrice,
           exclusive_price: exclPrice,
           net_total: netTotal,
           purchase_price: purchasePrice,
-          available:
-            defaultBatch.available_quantity ||
-            defaultBatch.available_units ||
-            0,
+          available: isGlobalOrEmpty
+            ? 0
+            : defaultBatch.available_quantity ||
+              defaultBatch.available_units ||
+              0,
           units_per_pack: inventoryItem.units_per_pack || 1,
-          is_manual: false,
+          is_manual: isGlobalOrEmpty,
+          source: inventoryItem.source || "inventory",
           cgst: defaultBatch.cgst !== undefined ? defaultBatch.cgst : "",
           sgst: defaultBatch.sgst !== undefined ? defaultBatch.sgst : "",
           available_batches: availableBatches,
@@ -1498,6 +1659,8 @@ export default function BillingPage() {
     setShowInventorySuggestions(false);
     setIsMouseOverSuggestions(false);
     setActiveBillItemId(null);
+    if (!isGlobalOrEmpty && availableBatches.length > 0) setAutoOpenBatchFor(itemId);
+    else focusQtyFor(itemId);
   };
 
   // Handle manual entry for items not in inventory
@@ -1528,8 +1691,46 @@ export default function BillingPage() {
     setTimeout(() => quantityInputRef.current?.focus(), 100);
   };
 
+  // Item QR labels (printed from Purchases): scanned with the camera, or by a
+  // QR scanner typing into the product search
+  const [labelScanOpen, setLabelScanOpen] = useState(false);
+  const addFromLabel = (item, fromRowId = null) => {
+    if (!showNewBill) {
+      if (editingBillId) return toast.info("Scan item labels in a new bill");
+      handleStartNewBill();
+    }
+    if (item.returned) toast.warning(`${item.product_name} (${item.batch_no}) was returned to the supplier`);
+    else if (item.expired) toast.warning(`${item.product_name} batch ${item.batch_no} has expired`);
+    else if (item.available_quantity <= 0) toast.info(`${item.product_name} shows no stock; it will be billed as negative stock`);
+    const existing = billItems.find((r) => r.inventory_id === item.inventory_id && r.id !== fromRowId);
+    setBillItems((prev) => prev.filter((r) => r.id !== fromRowId && r.product_name && !findItemLabel(r.product_name)));
+    if (existing) {
+      toast.info(`${item.product_name} is already in this bill: change its quantity`);
+      return focusQtyFor(existing.id);
+    }
+    handleTransferScannedItemsToBill([{ ...item, quantity: 1, unit_price: item.mrp, available: item.available_quantity, available_batches: [] }]);
+    // Next: the quantity of the added line
+    setTimeout(() => {
+      const qty = [...document.querySelectorAll("[data-qty-for]")].pop();
+      qty?.focus();
+      qty?.select?.();
+    }, 200);
+  };
+
   // Handle dropdown keyboard navigation
   const handleDropdownKeyDown = (e, itemId) => {
+    const label = e.key === "Enter" ? findItemLabel(e.currentTarget.value) : null;
+    if (label) {
+      e.preventDefault();
+      setShowInventorySuggestions(false);
+      setInventorySearch("");
+      // The row keeps what it had before the scan; an empty row is replaced
+      handleItemFieldChange(itemId, "product_name", label.before);
+      resolveItemLabel(label.code)
+        .then((item) => addFromLabel(item, label.before ? null : itemId))
+        .catch((err) => toast.error(err.message));
+      return;
+    }
     if (!showInventorySuggestions) return;
 
     const totalOptions = 1 + inventorySuggestions.length;
@@ -1643,7 +1844,7 @@ export default function BillingPage() {
           const cgstVal = Math.max(0, parseFloat(updated.cgst) || 0);
           const sgstVal = Math.max(0, parseFloat(updated.sgst) || 0);
 
-          if (field === "unit_price" || updated.exclusive_price === undefined || updated.exclusive_price === null || isNaN(updated.exclusive_price) || updated.exclusive_price === 0) {
+          if (field === "unit_price" || field === "cgst" || field === "sgst" || updated.exclusive_price === undefined || updated.exclusive_price === null || isNaN(updated.exclusive_price) || updated.exclusive_price === 0) {
             updated.exclusive_price = unitPrice / (1 + (cgstVal + sgstVal) / 100);
           }
 
@@ -1726,10 +1927,26 @@ export default function BillingPage() {
       prevItems.map((item) => {
         if (item.id !== itemId) return item;
 
+        const newQty = checked ? (parseInt(item.units_per_pack) || 1) : (parseInt(item.previousQuantity) || 1);
+        const cgstVal = Math.max(0, parseFloat(item.cgst) || 0);
+        const sgstVal = Math.max(0, parseFloat(item.sgst) || 0);
+        const unitPrice = parseFloat(item.unit_price) || 0;
+        const purchasePrice = parseFloat(item.purchase_price) || 0;
+        const discPercent = parseFloat(item.discount_percent) || 0;
+        const exclPrice = parseFloat(item.exclusive_price) || (unitPrice / (1 + (cgstVal + sgstVal) / 100));
+        const itemTotal = newQty * exclPrice;
+        const itemDiscount = itemTotal * (discPercent / 100);
+        const taxableValue = itemTotal - itemDiscount;
+        const netTotal = taxableValue * (1 + (cgstVal + sgstVal) / 100);
+        const profit = (unitPrice - purchasePrice) * newQty - (newQty * unitPrice * (discPercent / 100));
+
         return {
           ...item,
-          quantity: checked ? item.units_per_pack : item.previousQuantity || 1,
+          quantity: newQty,
           previousQuantity: checked ? item.quantity : undefined,
+          exclusive_price: exclPrice,
+          net_total: netTotal,
+          profit: profit,
         };
       })
     );
@@ -1846,13 +2063,14 @@ export default function BillingPage() {
             product_name: item.product_name,
             batch_no: item.batch_no,
             hsn_no: item.hsn_no || null,
-            expiry_date: item.expiry_date,
+            expiry_date: item.expiry_date ? expiryToIso(item.expiry_date) || item.expiry_date : null,
             quantity: parseInt(item.quantity) || 1,
             unit_price: parseFloat(item.unit_price) || 0,
             purchase_price: parseFloat(item.purchase_price) || 0,
             discount_percent: parseFloat(item.discount_percent) || 0,
             cgst: parseFloat(item.cgst) || 0,
             sgst: parseFloat(item.sgst) || 0,
+            units_per_pack: parseInt(units_per_pack) || null,
             item_total: parseFloat(net_total) || 0,
           })
         ),
@@ -1862,6 +2080,23 @@ export default function BillingPage() {
         is_advance_paid: isAdvancePaid,
         advance_amount: isAdvancePaid ? (parseFloat(advanceAmount) || 0) : 0,
         draft_id: pendingDraftId || null,
+        refill_reminder: refillReminder.enabled ? {
+          enabled: true,
+          days_supply: refillReminder.days_supply,
+          remind_before_days: refillReminder.remind_before_days,
+          refill_target_date: refillReminder.refill_target_date || calculateReminderDates(billingDate, refillReminder.days_supply, refillReminder.remind_before_days).targetDate,
+          reminder_date: refillReminder.reminder_date || calculateReminderDates(billingDate, refillReminder.days_supply, refillReminder.remind_before_days).reminderDate,
+          notes: refillReminder.notes || `Refill reminder for ${customerInfo.customer_name}`,
+          items: refillCalc.rows.map((r) => ({
+            product_name: r.product_name,
+            batch_no: r.batch_no,
+            quantity: r.quantity,
+            unit_price: r.unit_price,
+            dose_per_day: r.days_input ? null : r.dose_per_day,
+            days_supply: r.days || refillReminder.days_supply,
+            runs_out_on: r.runs_out_on,
+          })),
+        } : null,
       });
 
       toast.success(`Bill ${response.data.bill?.bill_no || response.data.bill_no} created successfully`);
@@ -1934,9 +2169,17 @@ export default function BillingPage() {
           net_total: netTotal,
           purchase_price: item.purchase_price || 0,
           discount_percent: discPercent,
-          available: item.available_quantity || 0,
+          // What this line could use: the batch's shelf stock plus the units it already holds
+          available: (() => {
+            const batch = availableBatches.find((b) => b.id === item.inventory_id);
+            if (!batch) return item.available_quantity || 0;
+            const held = item.stock_deducted !== undefined ? Number(item.stock_deducted) || 0 : qty;
+            return (parseInt(batch.available_quantity ?? batch.available_units) || 0) + held;
+          })(),
           is_manual: !item.inventory_id,
           salt_composition: item.salt_composition || "",
+          units_per_pack: item.units_per_pack || 1,
+          hsn_no: item.hsn_no || "",
           original_quantity: item.quantity, // Track original for inventory adjustment
           cgst: item.cgst !== undefined ? item.cgst : "",
           sgst: item.sgst !== undefined ? item.sgst : "",
@@ -1995,7 +2238,7 @@ export default function BillingPage() {
           const cgstVal = Math.max(0, parseFloat(updated.cgst) || 0);
           const sgstVal = Math.max(0, parseFloat(updated.sgst) || 0);
 
-          if (field === "unit_price" || updated.exclusive_price === undefined || updated.exclusive_price === null || isNaN(updated.exclusive_price) || updated.exclusive_price === 0) {
+          if (field === "unit_price" || field === "cgst" || field === "sgst" || updated.exclusive_price === undefined || updated.exclusive_price === null || isNaN(updated.exclusive_price) || updated.exclusive_price === 0) {
             updated.exclusive_price = unitPrice / (1 + (cgstVal + sgstVal) / 100);
           }
 
@@ -2020,12 +2263,19 @@ export default function BillingPage() {
 
   // Handle selecting inventory for editing items
   const handleSelectInventoryForEditRow = (itemId, inventoryItem) => {
-    let availableBatches = (inventoryItem.batches || []).filter(b => (b.available_quantity || 0) > 0);
+    const isGlobalOrEmpty =
+      inventoryItem.source === "global" ||
+      !inventoryItem.batches ||
+      inventoryItem.batches.length === 0;
+
+    let availableBatches = (inventoryItem.batches || []).filter(
+      (b) => (b.available_quantity || 0) > 0
+    );
     if (availableBatches.length === 0) {
       availableBatches = inventoryItem.batches || [];
     }
 
-    if (nearExpiryBatchFilter) {
+    if (nearExpiryBatchFilter && availableBatches.length > 0) {
       availableBatches.sort((a, b) => {
         if (!a.expiry_date) return 1;
         if (!b.expiry_date) return -1;
@@ -2040,32 +2290,50 @@ export default function BillingPage() {
         if (item.id !== itemId) return item;
 
         const qty = parseInt(item.quantity) || 1;
-        const unitPrice = defaultBatch.mrp_per_unit || defaultBatch.mrp || 0;
+        const unitPrice =
+          defaultBatch.mrp_per_unit ||
+          defaultBatch.mrp ||
+          inventoryItem.mrp_per_unit ||
+          inventoryItem.mrp ||
+          0;
         const purchasePrice =
-          defaultBatch.cost_per_unit || defaultBatch.purchase_price || 0;
-        const cgstVal = defaultBatch.cgst !== undefined ? Math.max(0, parseFloat(defaultBatch.cgst) || 0) : 0;
-        const sgstVal = defaultBatch.sgst !== undefined ? Math.max(0, parseFloat(defaultBatch.sgst) || 0) : 0;
+          defaultBatch.cost_per_unit ||
+          defaultBatch.purchase_price ||
+          inventoryItem.purchase_price ||
+          0;
+        const cgstVal =
+          defaultBatch.cgst !== undefined
+            ? Math.max(0, parseFloat(defaultBatch.cgst) || 0)
+            : 0;
+        const sgstVal =
+          defaultBatch.sgst !== undefined
+            ? Math.max(0, parseFloat(defaultBatch.sgst) || 0)
+            : 0;
         const exclPrice = unitPrice / (1 + (cgstVal + sgstVal) / 100);
-        const itemDiscount = (qty * exclPrice) * ((parseFloat(item.discount_percent) || 0) / 100);
-        const netTotal = (qty * exclPrice - itemDiscount) * (1 + (cgstVal + sgstVal) / 100);
+        const itemDiscount =
+          qty * exclPrice * ((parseFloat(item.discount_percent) || 0) / 100);
+        const netTotal =
+          (qty * exclPrice - itemDiscount) * (1 + (cgstVal + sgstVal) / 100);
 
         return {
           ...item,
-          inventory_id: defaultBatch.id,
-          product_name: inventoryItem.product_name,
+          inventory_id: isGlobalOrEmpty ? null : defaultBatch.id,
+          product_name: inventoryItem.product_name || inventoryItem.name,
           salt_composition: inventoryItem.salt_composition || "",
-          batch_no: defaultBatch.batch_no,
-          expiry_date: defaultBatch.expiry_date || "",
+          batch_no: isGlobalOrEmpty ? "" : defaultBatch.batch_no || "",
+          expiry_date: isGlobalOrEmpty ? "" : defaultBatch.expiry_date || "",
           unit_price: unitPrice,
           exclusive_price: exclPrice,
           net_total: netTotal,
           purchase_price: purchasePrice,
-          available:
-            defaultBatch.available_quantity ||
-            defaultBatch.available_units ||
-            0,
+          available: isGlobalOrEmpty
+            ? 0
+            : defaultBatch.available_quantity ||
+              defaultBatch.available_units ||
+              0,
           units_per_pack: inventoryItem.units_per_pack || 1,
-          is_manual: false,
+          is_manual: isGlobalOrEmpty,
+          source: inventoryItem.source || "inventory",
           cgst: defaultBatch.cgst !== undefined ? defaultBatch.cgst : "",
           sgst: defaultBatch.sgst !== undefined ? defaultBatch.sgst : "",
           available_batches: availableBatches,
@@ -2078,6 +2346,8 @@ export default function BillingPage() {
     setHighlightedEditingSuggestion(-1);
     setIsMouseOverEditingSuggestions(false);
     setActiveEditingItemId(null);
+    if (!isGlobalOrEmpty && availableBatches.length > 0) setAutoOpenBatchFor(itemId);
+    else focusQtyFor(itemId);
   };
 
   const handleManualEntryForEdit = (itemId, productName) => {
@@ -2192,13 +2462,15 @@ export default function BillingPage() {
             inventory_id: item.inventory_id || null,
             product_name: item.product_name,
             batch_no: item.batch_no,
-            expiry_date: item.expiry_date,
+            hsn_no: item.hsn_no || null,
+            expiry_date: item.expiry_date ? expiryToIso(item.expiry_date) || item.expiry_date : null,
             quantity: parseInt(item.quantity) || 1,
             unit_price: parseFloat(item.unit_price) || 0,
             purchase_price: parseFloat(item.purchase_price) || 0,
             discount_percent: parseFloat(item.discount_percent) || 0,
             cgst: parseFloat(item.cgst) || 0,
             sgst: parseFloat(item.sgst) || 0,
+            units_per_pack: parseInt(units_per_pack) || null,
             item_total: parseFloat(net_total) || 0,
           })
         ),
@@ -2301,18 +2573,73 @@ export default function BillingPage() {
     }
   };
 
-  const handleGeneratePdf = async (billId) => {
+  // Bill PDF with or without the UPI payment QR (the choice is remembered)
+  const { pharmacy: authPharmacy } = useAuth() || {};
+  const hasUpiId = /^[a-zA-Z0-9._-]{2,256}@[a-zA-Z][a-zA-Z0-9.-]{1,63}$/.test(String(authPharmacy?.upi_id || "").trim());
+  const [pdfWithQr, setPdfWithQr] = useState(() => {
     try {
-      toast.info("Generating PDF...");
-      const response = await axios.post(`${API}/bills/${billId}/pdf`);
+      return localStorage.getItem("dd-bill-pdf-qr") !== "0";
+    } catch {
+      return true;
+    }
+  });
+  const choosePdfQr = (v) => {
+    setPdfWithQr(v);
+    try {
+      localStorage.setItem("dd-bill-pdf-qr", v ? "1" : "0");
+    } catch {}
+  };
+  const [pdfFor, setPdfFor] = useState(null); // bill picked from the list
+  const generateBillPdf = async (billId, withQr) => {
+    const win = window.open("", "_blank"); // inside the click, so pop-up blockers allow it
+    try {
+      const response = await axios.post(`${API}/bills/${billId}/pdf`, { upi_qr: !!(withQr && hasUpiId) });
       if (response.data.pdf_url) {
-        window.open(response.data.pdf_url, "_blank");
-        toast.success("PDF generated successfully");
-      }
+        if (win) win.location.href = response.data.pdf_url;
+        else window.open(response.data.pdf_url, "_blank");
+      } else win?.close();
     } catch (error) {
+      win?.close();
       console.error("PDF generation error:", error);
       toast.error(error.response?.data?.detail || "Failed to generate PDF");
     }
+  };
+  const handleGeneratePdf = (billId) => setPdfFor(bills.find((b) => b.id === billId) || { id: billId });
+
+  // "With UPI QR" / "Without QR" choice, used by both PDF prompts
+  const pdfQrChoice = (bill) => {
+    const total = Number(bill?.grand_total ?? bill?.total_amount) || 0;
+    const paid = bill?.total_paid !== undefined ? Number(bill.total_paid) || 0 : bill?.is_paid ? total : Number(bill?.advance_amount) || 0;
+    const due = Math.max(0, Math.round((total - paid) * 100) / 100);
+    const qrAmount = due > 0 ? due : total;
+    return (
+      <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="UPI payment QR on the bill">
+        {[
+          [true, "With UPI QR", hasUpiId ? (bill ? `Scan to pay ₹${qrAmount.toFixed(2)}${due > 0 ? "" : " (bill total)"}` : "Scan to pay the bill amount") : "Add your UPI ID in Settings"],
+          [false, "Without QR", "Plain bill"],
+        ].map(([v, label, hint]) => {
+          const active = (pdfWithQr && hasUpiId) === v;
+          const disabled = v && !hasUpiId;
+          return (
+            <button
+              key={label}
+              type="button"
+              role="radio"
+              aria-checked={active}
+              disabled={disabled}
+              onClick={() => choosePdfQr(v)}
+              className={`rounded-xl border p-3 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${active ? "border-orange-500 bg-orange-500/10" : "border-border hover:border-orange-500/40"}`}
+            >
+              <span className="flex items-center gap-1.5 text-sm font-bold text-foreground">
+                {v ? <QrCode className="h-4 w-4 text-orange-500" /> : <FileText className="h-4 w-4 text-muted-foreground" />}
+                {label}
+              </span>
+              <span className="mt-0.5 block text-[11px] text-muted-foreground">{hint}</span>
+            </button>
+          );
+        })}
+      </div>
+    );
   };
 
   // Toggle expanded bill row
@@ -2337,6 +2664,42 @@ export default function BillingPage() {
   const validItems = billItems.filter(
     (item) => item.product_name && item.product_name.trim() !== ""
   );
+
+  // Refill reminder: when each chosen medicine runs out at its daily dose
+  const reminderItems = (refillReminder.selected_items.length
+    ? validItems.filter((i) => refillReminder.selected_items.some((s) => s.product_name === i.product_name))
+    : validItems
+  ).map((i) => {
+    const d = refillReminder.doses[i.product_name] || {};
+    return {
+      product_name: i.product_name,
+      batch_no: i.batch_no || null,
+      quantity: parseInt(i.quantity) || 0,
+      unit_price: i.unit_price,
+      units: parseInt(i.quantity) || 0,
+      dose_input: d.dose ?? "1",
+      dose_per_day: parseDose(d.dose ?? "1"),
+      days: d.days || "",
+      days_input: d.days || "",
+    };
+  });
+  const refillCalc = refillPlan(billingDate, reminderItems);
+  const refillRec = refillCalc.recommendation;
+  const setDose = (name, patch) =>
+    setRefillReminder((prev) => ({ ...prev, mode: "auto", doses: { ...prev.doses, [name]: { dose: "1", days: "", ...prev.doses[name], ...patch } } }));
+  // Auto mode keeps the dates on the recommendation
+  useEffect(() => {
+    if (!refillReminder.enabled || refillReminder.mode !== "auto" || !refillRec) return;
+    if (refillReminder.reminder_date === refillRec.reminder_date && refillReminder.refill_target_date === refillRec.refill_target_date && refillReminder.days_supply === refillRec.days_supply) return;
+    setRefillReminder((prev) => ({
+      ...prev,
+      days_supply: refillRec.days_supply,
+      remind_before_days: refillRec.remind_before_days,
+      refill_target_date: refillRec.refill_target_date,
+      reminder_date: refillRec.reminder_date,
+    }));
+    // eslint-disable-next-line
+  }, [refillReminder.enabled, refillReminder.mode, refillRec?.reminder_date, refillRec?.refill_target_date, refillRec?.days_supply]);
   const subtotal = validItems.reduce((sum, item) => {
     const qty = parseInt(item.quantity) || 0;
     const unitPrice = parseFloat(item.unit_price) || 0;
@@ -2455,83 +2818,44 @@ export default function BillingPage() {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => setShowShortcuts(true)}
+                onClick={() => shortcutLayer?.toggleHelp(true)}
                 data-testid="shortcuts-btn"
-                className="h-8 text-xs font-bold rounded-xl border-border/70"
+                title={`Keyboard shortcuts (?)`}
+                className="h-8 text-xs font-bold rounded-xl border-border/70 max-md:hidden"
               >
                 <Keyboard className="w-3.5 h-3.5 mr-1.5 text-muted-foreground" />
                 Shortcuts
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setUpiQr({ amount: "", note: "" })}
+                data-testid="upi-qr-btn"
+                data-kbd={formatCombo("alt+q")}
+                title={`Show a UPI QR for any amount (${formatCombo("alt+q")})`}
+                className="h-8 text-xs font-bold rounded-xl border-border/70"
+              >
+                <QrCode className="w-3.5 h-3.5 mr-1.5 text-muted-foreground" />
+                UPI QR
               </Button>
               <Button
                 size="sm"
                 className="h-8 px-3.5 text-xs font-extrabold bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white rounded-xl shadow-xs border-none"
                 onClick={handleStartNewBill}
                 data-testid="new-bill-btn"
+                data-shortcut="new"
+                data-kbd={formatCombo("alt+n")}
                 disabled={showNewBill || editingBillId}
               >
                 <Plus className="w-3.5 h-3.5 mr-1 stroke-[3]" />
-                {getOS() === "mac" ? "New Bill (⌥N)" : "New Bill (Alt+N)"}
+                New Bill<span className="max-md:hidden"> ({formatCombo("alt+n")})</span>
               </Button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Keyboard Shortcuts Dialog */}
-      <Dialog open={showShortcuts} onOpenChange={setShowShortcuts}>
-        <DialogContent className="glass bg-card/95 backdrop-blur-xl border border-border/80 shadow-2xl rounded-2xl p-6 max-w-md">
-          <DialogHeader className="pb-2 border-b border-border/50">
-            <DialogTitle className="text-xl font-bold flex items-center gap-2 text-foreground">
-              <Keyboard className="w-5 h-5 text-primary" />
-              Keyboard Shortcuts
-            </DialogTitle>
-          </DialogHeader>
-          <div className="grid gap-3 py-4 max-h-[380px] overflow-y-auto pr-1">
-            <div className="flex justify-between items-center p-3 bg-muted/40 hover:bg-muted/65 border border-border/40 rounded-xl transition-all duration-200">
-              <span className="text-sm font-semibold text-foreground/80">New Bill</span>
-              <kbd className="px-2 py-1 bg-background border border-border/80 rounded-lg text-xs font-mono shadow-sm">
-                {getOS() === "mac" ? "⌥ + N" : "Alt + N"}
-              </kbd>
-            </div>
-            <div className="flex justify-between items-center p-3 bg-muted/40 hover:bg-muted/65 border border-border/40 rounded-xl transition-all duration-200">
-              <span className="text-sm font-semibold text-foreground/80">Add Item</span>
-              <kbd className="px-2 py-1 bg-background border border-border/80 rounded-lg text-xs font-mono shadow-sm">
-                {getOS() === "mac" ? "⌥ + A" : "Alt + A"}
-              </kbd>
-            </div>
-            <div className="flex justify-between items-center p-3 bg-muted/40 hover:bg-muted/65 border border-border/40 rounded-xl transition-all duration-200">
-              <span className="text-sm font-semibold text-foreground/80">Save Bill</span>
-              <kbd className="px-2 py-1 bg-background border border-border/80 rounded-lg text-xs font-mono shadow-sm">
-                {getOS() === "mac" ? "⌘ + Enter / ⌥ + S" : "Ctrl + Enter / Alt + S"}
-              </kbd>
-            </div>
-            <div className="flex justify-between items-center p-3 bg-muted/40 hover:bg-muted/65 border border-border/40 rounded-xl transition-all duration-200">
-              <span className="text-sm font-semibold text-foreground/80">Update Bill</span>
-              <kbd className="px-2 py-1 bg-background border border-border/80 rounded-lg text-xs font-mono shadow-sm">
-                {getOS() === "mac" ? "⌘ + Enter / ⌥ + U" : "Ctrl + Enter / Alt + U"}
-              </kbd>
-            </div>
-            <div className="flex justify-between items-center p-3 bg-muted/40 hover:bg-muted/65 border border-border/40 rounded-xl transition-all duration-200">
-              <span className="text-sm font-semibold text-foreground/80">Save Item / Next Field</span>
-              <kbd className="px-2 py-1 bg-background border border-border/80 rounded-lg text-xs font-mono shadow-sm">
-                Enter / Tab
-              </kbd>
-            </div>
-            <div className="flex justify-between items-center p-3 bg-muted/40 hover:bg-muted/65 border border-border/40 rounded-xl transition-all duration-200">
-              <span className="text-sm font-semibold text-foreground/80">Fill Default (on empty field)</span>
-              <kbd className="px-2 py-1 bg-background border border-border/80 rounded-lg text-xs font-mono shadow-sm">
-                Tab
-              </kbd>
-            </div>
-            <div className="flex justify-between items-center p-3 bg-muted/40 hover:bg-muted/65 border border-border/40 rounded-xl transition-all duration-200">
-              <span className="text-sm font-semibold text-foreground/80">Cancel / Close</span>
-              <kbd className="px-2 py-1 bg-background border border-border/80 rounded-lg text-xs font-mono shadow-sm">
-                Escape
-              </kbd>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
+
 
       {/* Customer Profile Modal */}
       <Dialog
@@ -2616,11 +2940,11 @@ export default function BillingPage() {
 
                 {/* Infinite Scrollable / Paginated bills viewport */}
                 <div className="border border-border/50 rounded-xl overflow-hidden bg-background/30 backdrop-blur-sm max-h-[420px] overflow-y-auto">
-                  <Table>
+                  <Table mobileCards>
                     <TableHeader className="sticky top-0 bg-muted/90 backdrop-blur-md z-[20]">
                       <TableRow>
-                        <TableHead className="h-8 w-12"></TableHead>
-                        <TableHead className="h-8 text-[11px] font-bold">Bill No</TableHead>
+                        <TableHead data-card="corner" className="h-8 w-12"></TableHead>
+                        <TableHead data-card="title" className="h-8 text-[11px] font-bold">Bill No</TableHead>
                         <TableHead className="h-8 text-[11px] font-bold">Date</TableHead>
                         <TableHead className="h-8 text-[11px] font-bold text-center">Items</TableHead>
                         <TableHead className="h-8 text-[11px] font-bold text-right">Amount</TableHead>
@@ -2688,10 +3012,10 @@ export default function BillingPage() {
                                         Items Sold
                                       </p>
                                       <div className="border border-border/50 rounded-xl overflow-hidden bg-background/30 max-h-48 overflow-y-auto">
-                                        <Table>
+                                        <Table mobileCards>
                                           <TableHeader className="bg-muted/40">
                                             <TableRow className="border-b border-border/40">
-                                              <TableHead className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider py-1.5">
+                                              <TableHead data-card="title" className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider py-1.5">
                                                 Product
                                               </TableHead>
                                               <TableHead className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider py-1.5">
@@ -3020,36 +3344,80 @@ export default function BillingPage() {
                     setDoctorSearch(e.target.value);
                     setShowDoctorSuggestions(true);
                   }}
-                  onFocus={() => setShowDoctorSuggestions(true)}
+                  onFocus={() => {
+                    setShowDoctorSuggestions(true);
+                    if (doctorSuggestions.length === 0) {
+                      fetchDoctors(1, doctorSearch, false);
+                    }
+                  }}
                   onBlur={() =>
-                    setTimeout(() => setShowDoctorSuggestions(false), 200)
+                    setTimeout(() => setShowDoctorSuggestions(false), 250)
                   }
                   className="h-9 text-xs font-semibold rounded-xl border-border bg-background text-foreground shadow-2xs focus-visible:ring-2 focus-visible:ring-primary/30 focus-visible:border-primary"
                   data-testid="doctor-search"
                 />
-                {showDoctorSuggestions &&
-                  doctorSuggestions.length > 0 && (
-                    <div className="absolute z-[100] w-full mt-1 bg-card/95 backdrop-blur-md border border-border shadow-xl rounded-xl max-h-48 overflow-y-auto top-full overflow-x-hidden transition-all duration-150 animate-in fade-in slide-in-from-top-2">
-                      {doctorSuggestions.map((doc, idx) => (
-                        <div
-                          key={idx}
-                          className="p-2.5 hover:bg-primary/10 cursor-pointer border-b border-border/50 last:border-0 transition-colors duration-150"
-                          onMouseDown={() => {
-                            setDoctorName(doc.name);
-                            setDoctorSearch("");
-                            setShowDoctorSuggestions(false);
-                          }}
-                        >
-                          <p className="font-semibold text-sm">{doc.name}</p>
+                {showDoctorSuggestions && (
+                  <div
+                    className="absolute z-[100] w-[320px] -left-36 sm:left-0 mt-1 bg-card/95 backdrop-blur-md border border-border shadow-2xl rounded-xl max-h-60 overflow-y-auto top-full custom-scrollbar transition-all duration-150 animate-in fade-in slide-in-from-top-2"
+                    onScroll={(e) => {
+                      const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
+                      if (scrollHeight - scrollTop <= clientHeight + 40 && hasMoreDoctors && !loadingDoctors) {
+                        loadMoreDoctors();
+                      }
+                    }}
+                  >
+                    {doctorSuggestions.map((doc, idx) => (
+                      <div
+                        key={`${doc.id || doc.name}-${idx}`}
+                        className="p-2.5 hover:bg-primary/10 cursor-pointer border-b border-border/40 last:border-0 transition-colors duration-150"
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          handleSelectDoctor(doc);
+                        }}
+                      >
+                        <div className="flex items-center justify-between gap-1.5 mb-0.5">
+                          <p className="font-semibold text-xs text-foreground truncate">
+                            {doc.name}
+                          </p>
+                          {doc.source === "global" ? (
+                            <span className="text-[9px] px-1.5 py-0.2 rounded-full font-bold bg-amber-500/10 text-amber-500 border border-amber-500/20 shrink-0">
+                              Verified
+                            </span>
+                          ) : (
+                            <span className="text-[9px] px-1.5 py-0.2 rounded-full font-bold bg-blue-500/10 text-blue-400 border border-blue-500/20 shrink-0">
+                              My Doctor
+                            </span>
+                          )}
                         </div>
-                      ))}
-                    </div>
-                  )}
+                        <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground truncate font-mono">
+                          {doc.license_number || doc.registration_no ? (
+                            <span>Reg: {doc.license_number || doc.registration_no}</span>
+                          ) : null}
+                          {doc.clinic ? <span>• {doc.clinic}</span> : null}
+                          {doc.city || doc.state ? (
+                            <span>• {[doc.city, doc.state].filter(Boolean).join(", ")}</span>
+                          ) : null}
+                        </div>
+                      </div>
+                    ))}
+                    {loadingDoctors && (
+                      <div className="py-2.5 text-center flex items-center justify-center gap-1.5 text-xs text-muted-foreground">
+                        <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+                        <span>Loading doctors...</span>
+                      </div>
+                    )}
+                    {!loadingDoctors && doctorSuggestions.length === 0 && (
+                      <div className="p-3 text-center text-xs text-muted-foreground italic">
+                        No doctors match "{doctorSearch}"
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
 
             {/* Right: Customer Stats + Units / Total Summary Pill + Close */}
-            <div className="flex items-center gap-2 shrink-0 self-end lg:self-center">
+            <div className="flex items-center gap-2 shrink-0 self-end lg:self-center max-md:w-full max-md:flex-wrap max-md:self-stretch">
               {selectedCustomerStats && (
                 <div className="flex items-center gap-2 bg-primary/5 px-3 py-1 rounded-xl border border-primary/15 h-9 text-xs font-semibold animate-in fade-in">
                   <div className="flex items-center gap-1">
@@ -3091,7 +3459,7 @@ export default function BillingPage() {
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-9 w-9 rounded-xl hover:bg-muted/80 text-muted-foreground hover:text-foreground"
+                className="h-9 w-9 rounded-xl hover:bg-muted/80 text-muted-foreground hover:text-foreground max-md:hidden"
                 onClick={handleCancelNewBill}
                 title="Close"
               >
@@ -3102,16 +3470,16 @@ export default function BillingPage() {
 
             {/* Items Table - Inline Editable */}
             <div className="border border-border/70 rounded-xl overflow-hidden shadow-sm bg-background/50 backdrop-blur-md mt-4">
-              <Table wrapperClassName="max-h-[300px]">
+              <Table mobileCards wrapperClassName="max-h-[300px]">
                 <TableHeader className="sticky top-0 bg-muted/90 backdrop-blur-md z-[50] border-b border-border/80">
                   <TableRow className="hover:bg-transparent border-b border-border/80">
-                    <TableHead className="w-[180px] font-bold text-foreground/80 text-xs uppercase tracking-wider">
+                    <TableHead data-card="title" className="w-[180px] font-bold text-foreground/80 text-xs uppercase tracking-wider">
                       Product *
                     </TableHead>
                     <TableHead className="w-[100px] font-bold text-foreground/80 text-xs uppercase tracking-wider">
                       Salt
                     </TableHead>
-                    <TableHead className="w-[70px] font-bold text-foreground/80 text-xs uppercase tracking-wider">
+                    <TableHead data-card="full" className="w-[70px] font-bold text-foreground/80 text-xs uppercase tracking-wider">
                       Batch
                     </TableHead>
                     <TableHead className="w-[60px] text-center font-bold text-foreground/80 text-xs uppercase tracking-wider">
@@ -3138,7 +3506,7 @@ export default function BillingPage() {
                     <TableHead className="w-[80px] text-right font-bold text-foreground/80 text-xs uppercase tracking-wider">
                       Total
                     </TableHead>
-                    <TableHead className="w-[60px] text-center font-bold text-foreground/80 text-xs uppercase tracking-wider">
+                    <TableHead data-card="corner" className="w-[60px] text-center font-bold text-foreground/80 text-xs uppercase tracking-wider">
                       Actions
                     </TableHead>
                   </TableRow>
@@ -3334,6 +3702,15 @@ export default function BillingPage() {
                                             <span className="text-[10px] px-2 py-0.5 bg-emerald-500/10 text-emerald-500 dark:text-emerald-400 border border-emerald-500/20 rounded-full font-bold">
                                               In Stock: {invItem.available_quantity || invItem.available_units} units
                                             </span>
+                                          ) : invItem.source === "global" ? (
+                                            <span className="text-[10px] px-2 py-0.5 bg-blue-500/10 text-blue-500 dark:text-blue-400 border border-blue-500/20 rounded-full font-bold flex items-center gap-1">
+                                              <Globe className="w-2.5 h-2.5" />
+                                              Global Medicine
+                                            </span>
+                                          ) : invItem.is_custom_catalog || invItem.source === "catalog" ? (
+                                            <span className="text-[10px] px-2 py-0.5 bg-purple-500/10 text-purple-400 border border-purple-500/20 rounded-full font-bold">
+                                              My Catalog
+                                            </span>
                                           ) : (
                                             <span className="text-[10px] px-2 py-0.5 bg-rose-500/10 text-rose-500 border border-rose-500/20 rounded-full font-bold">
                                               Out of Stock
@@ -3367,6 +3744,30 @@ export default function BillingPage() {
 
                                       {/* Row 3: Footer details - Rate, MRP, Batch & Expiry */}
                                       {(() => {
+                                        if (invItem.source === "global") {
+                                          return (
+                                            <div className="mt-1.5 flex items-center justify-between text-xs text-muted-foreground/90 flex-wrap pt-1 border-t border-border/40 font-mono">
+                                              <div className="flex items-center gap-3">
+                                                {invItem.purchase_price !== undefined && Number(invItem.purchase_price) > 0 && (
+                                                  <span className="text-emerald-500 font-bold">
+                                                    PTR: ₹{Number(invItem.purchase_price || 0).toFixed(2)}
+                                                  </span>
+                                                )}
+                                                <span className="text-orange-500 font-bold">
+                                                  MRP: ₹{Number(invItem.mrp_per_unit || invItem.mrp || 0).toFixed(2)}
+                                                </span>
+                                                {invItem.pack_type && (
+                                                  <span className="text-[10px] font-sans px-2 py-0.5 bg-muted rounded border border-border">
+                                                    {invItem.pack_type} ({invItem.units_per_pack || 1}u)
+                                                  </span>
+                                                )}
+                                              </div>
+                                              <span className="text-[10px] text-blue-400 font-sans font-bold bg-blue-500/10 px-2 py-0.5 rounded border border-blue-500/20">
+                                                Negative Billing Available
+                                              </span>
+                                            </div>
+                                          );
+                                        }
                                         const expInfo = getNearestExpiryInfo(invItem);
                                         return (
                                           <div className="mt-1.5 flex items-center justify-between text-xs text-muted-foreground/90 flex-wrap pt-1 border-t border-border/40 font-mono">
@@ -3448,9 +3849,17 @@ export default function BillingPage() {
                               className="h-8 text-xs border-border/80 focus-visible:ring-1 focus-visible:ring-primary focus-visible:border-primary rounded-lg transition-all duration-200 w-16"
                             />
                           ) : (item.available_batches && item.available_batches.length > 0) ? (
-                            <Select
+                            <BatchPicker
+                              batches={item.available_batches}
                               value={item.inventory_id}
-                              onValueChange={(selectedInvId) => {
+                              fallbackLabel={item.batch_no}
+                              autoOpen={autoOpenBatchFor === item.id}
+                              onAutoOpened={() => setAutoOpenBatchFor(null)}
+                              onPicked={() => focusQtyFor(item.id)}
+                              nearExpiry={nearExpiryBatchFilter}
+                              onToggleNearExpiry={() => setNearExpiryBatchFilter((prev) => !prev)}
+                              accent="primary"
+                              onSelect={(selectedInvId) => {
                                 const selectedBatch = item.available_batches.find(b => b.id === selectedInvId);
                                 if (selectedBatch) {
                                   const qty = parseInt(item.quantity) || 1;
@@ -3486,101 +3895,7 @@ export default function BillingPage() {
                                   );
                                 }
                               }}
-                            >
-                              <SelectTrigger className="h-8 text-xs font-mono font-bold border-border/80 bg-background text-foreground rounded-lg w-28 focus:ring-1 focus:ring-primary shadow-2xs">
-                                <SelectValue>
-                                  {item.available_batches?.find(b => b.id === item.inventory_id)?.batch_no || item.batch_no || "Select Batch"}
-                                </SelectValue>
-                              </SelectTrigger>
-                              <SelectContent className="border-2 border-border shadow-2xl rounded-2xl z-[99999] w-[460px] min-w-[460px] p-2 bg-background dark:bg-zinc-950 text-foreground opacity-100 font-sans">
-                                <div className="px-3 py-1.5 mb-1.5 border-b border-border/70 text-[11px] font-black uppercase text-muted-foreground flex items-center justify-between bg-muted/60 rounded-t-xl">
-                                  <span>Available Batches</span>
-                                  <button
-                                    type="button"
-                                    onMouseDown={(e) => {
-                                      e.preventDefault();
-                                      e.stopPropagation();
-                                      setNearExpiryBatchFilter((prev) => !prev);
-                                    }}
-                                    className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold border transition-all duration-150 flex items-center gap-1 cursor-pointer ${
-                                      nearExpiryBatchFilter
-                                        ? "bg-amber-500 text-white border-amber-600 shadow-xs"
-                                        : "bg-background hover:bg-muted text-muted-foreground border-border"
-                                    }`}
-                                    title="Click to sort batches by earliest expiry date first"
-                                  >
-                                    <Clock className="w-3 h-3" />
-                                    <span>Near Expiry {nearExpiryBatchFilter ? "ON" : ""}</span>
-                                  </button>
-                                </div>
-                                {(() => {
-                                  const rawBatches = item.available_batches || [];
-                                  const displayBatches = nearExpiryBatchFilter
-                                    ? [...rawBatches].sort((a, b) => {
-                                        const tA = a.expiry_date ? new Date(a.expiry_date).getTime() : Infinity;
-                                        const tB = b.expiry_date ? new Date(b.expiry_date).getTime() : Infinity;
-                                        return (isNaN(tA) ? Infinity : tA) - (isNaN(tB) ? Infinity : tB);
-                                      })
-                                    : rawBatches;
-
-                                  return displayBatches.slice(0, visibleBatchesLimit[item.id] || 15).map((b, idx) => (
-                                    <SelectItem
-                                      key={b.id}
-                                      value={b.id}
-                                      textValue={b.batch_no}
-                                      className="text-xs py-2.5 px-3 my-1 rounded-xl border border-border/40 hover:border-border cursor-pointer focus:bg-primary/10 transition-colors"
-                                    >
-                                      <div className="flex flex-col gap-1 w-full pr-4">
-                                        <div className="flex items-center justify-between gap-3">
-                                          <div className="flex items-center gap-2">
-                                            <span className="font-mono font-black text-foreground text-sm">
-                                              {b.batch_no}
-                                            </span>
-                                            {nearExpiryBatchFilter && idx === 0 && (
-                                              <span className="text-[10px] bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/40 px-2 py-0.5 rounded-md font-black shadow-2xs">
-                                                Near Expiry
-                                              </span>
-                                            )}
-                                          </div>
-                                          <span className="text-[11px] font-extrabold text-emerald-600 dark:text-emerald-400 bg-emerald-500/15 border border-emerald-500/30 px-2.5 py-0.5 rounded-full">
-                                            {b.available_quantity || 0} units available
-                                          </span>
-                                        </div>
-                                        <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground font-mono pt-0.5">
-                                          <span>Exp: <strong className="text-foreground font-bold">{b.expiry_date || "N/A"}</strong></span>
-                                          {b.supplier_name ? (
-                                            <span className="text-muted-foreground font-semibold truncate max-w-[210px]" title={b.supplier_name}>
-                                              Supp: <strong className="text-foreground/90">{b.supplier_name}</strong>
-                                            </span>
-                                          ) : (
-                                            <span className="text-muted-foreground/60 font-medium">Supp: -</span>
-                                          )}
-                                        </div>
-                                      </div>
-                                    </SelectItem>
-                                  ));
-                                })()}
-                                {item.available_batches.length > (visibleBatchesLimit[item.id] || 15) && (
-                                  <div className="p-1 border-t border-border/20">
-                                    <Button
-                                      variant="ghost"
-                                      size="sm"
-                                      className="w-full h-7 text-[10px] font-bold text-amber-500 hover:text-amber-600 hover:bg-amber-500/5 transition-all"
-                                      onMouseDown={(e) => {
-                                        e.preventDefault();
-                                        e.stopPropagation();
-                                        setVisibleBatchesLimit(prev => ({
-                                          ...prev,
-                                          [item.id]: (visibleBatchesLimit[item.id] || 15) + 15
-                                        }));
-                                      }}
-                                    >
-                                      Show More Batches...
-                                    </Button>
-                                  </div>
-                                )}
-                              </SelectContent>
-                            </Select>
+                            />
                           ) : (
                             <span className="text-xs text-muted-foreground font-mono">
                               {item.batch_no || "-"}
@@ -3616,6 +3931,7 @@ export default function BillingPage() {
                                   : null
                               }
                               type="number"
+                              data-qty-for={item.id}
                               value={item.quantity || ""}
                               onFocus={(e) => e.target.select()}
                               onChange={(e) =>
@@ -3831,8 +4147,9 @@ export default function BillingPage() {
             </div>
 
             {/* Tip */}
-            <p className="text-xs text-muted-foreground bg-muted/45 p-3 rounded-xl border border-border/50 backdrop-blur-sm">
-              💡 <strong>Tip:</strong> Search by product name or salt composition. All fields are editable. Use Alt+A to quickly add a new row.
+            <p className="text-xs text-muted-foreground bg-muted/45 p-3 rounded-xl border border-border/50 backdrop-blur-sm flex items-center gap-1.5">
+              <Sparkles className="w-4 h-4 text-primary shrink-0" />
+              <span><strong>Tip:</strong> Search by product name or salt composition. All fields are editable. Enter moves to the next field; {formatCombo("alt+a")} adds a row, {formatCombo("mod+enter")} saves.</span>
             </p>
 
             {/* Totals & Actions */}
@@ -3846,16 +4163,26 @@ export default function BillingPage() {
                     data-testid="add-item-btn"
                     className="h-9 px-4 border-border/80 hover:bg-muted/60 rounded-xl transition-all duration-200"
                   >
-                    <Plus className="h-4 w-4 mr-1.5 text-primary" /> Add Item (Alt+A)
+                    <Plus className="h-4 w-4 mr-1.5 text-primary" /> Add Item<span className="max-md:hidden">&nbsp;({formatCombo("alt+a")})</span>
                   </Button>
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => window.open("/scan-bill", "_blank")}
+                    onClick={() => setScannerModalOpen(true)}
                     data-testid="scan-for-bill-btn"
                     className="h-9 px-4 border-amber-500/40 text-amber-600 dark:text-amber-400 bg-amber-500/10 hover:bg-amber-500/20 rounded-xl transition-all duration-200 shadow-2xs font-extrabold cursor-pointer"
                   >
                     <Camera className="h-4 w-4 mr-1.5" /> Scan for Bill
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setLabelScanOpen(true)}
+                    data-testid="scan-item-qr-btn"
+                    title="Scan the QR label stuck on a pack (printed from Purchases)"
+                    className="h-9 px-4 border-border/80 hover:bg-muted/60 rounded-xl transition-all duration-200 font-bold"
+                  >
+                    <QrCode className="h-4 w-4 mr-1.5" /> Scan item QR
                   </Button>
                   <div className="flex items-center gap-2 bg-muted/20 px-3 h-9 rounded-xl border border-border/50">
                     <Checkbox
@@ -3954,13 +4281,280 @@ export default function BillingPage() {
                 {negativeBilledQty > 0 && (
                   <div className="p-3.5 bg-amber-500/10 border border-amber-500/25 rounded-xl text-sm animate-in fade-in duration-200">
                     <p className="text-amber-700 font-bold flex items-center gap-1.5">
-                      ⚠️ Negative Billing Alert:
+                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                      Negative Billing Alert:
                     </p>
                     <p className="text-amber-600/90 mt-1 font-medium text-xs leading-relaxed">
                       {inventoryBilledQty} units from inventory, {negativeBilledQty} units negatively billed.
                     </p>
                   </div>
                 )}
+
+                {/* Patient Restock / Refill Reminder Card */}
+                <div className={`p-3.5 rounded-2xl border transition-all duration-200 ${
+                  refillReminder.enabled 
+                    ? "bg-gradient-to-br from-indigo-500/10 via-purple-500/5 to-primary/5 border-indigo-500/30 shadow-sm" 
+                    : "bg-muted/15 border-border/60 hover:border-border"
+                }`}>
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <div className={`w-8 h-8 rounded-xl flex items-center justify-center transition-colors ${
+                        refillReminder.enabled ? "bg-indigo-500 text-white shadow-xs" : "bg-muted text-muted-foreground"
+                      }`}>
+                        <RotateCcw className={`w-4 h-4 ${refillReminder.enabled ? "text-white" : ""}`} />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <Label htmlFor="enable-refill-reminder" className="text-xs font-bold text-foreground cursor-pointer select-none">
+                            Patient Refill / Restock Reminder
+                          </Label>
+                          <Badge className={refillReminder.enabled ? "bg-indigo-500/15 text-indigo-500 border border-indigo-500/30 text-[9px] font-bold" : "bg-muted text-muted-foreground text-[9px]"}>
+                            {refillReminder.enabled ? "Active" : "Optional"}
+                          </Badge>
+                        </div>
+                        <p className="text-[11px] text-muted-foreground font-medium">
+                          Alert pharmacy when customer's medicine supply runs low
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <Checkbox
+                        id="enable-refill-reminder"
+                        checked={refillReminder.enabled}
+                        onCheckedChange={(val) => {
+                          const isEnabled = !!val;
+                          const { targetDate, reminderDate } = calculateReminderDates(billingDate, refillReminder.days_supply, refillReminder.remind_before_days);
+                          setRefillReminder((prev) => ({
+                            ...prev,
+                            enabled: isEnabled,
+                            refill_target_date: targetDate,
+                            reminder_date: reminderDate,
+                            selected_items: isEnabled && prev.selected_items.length === 0 ? validItems : prev.selected_items,
+                          }));
+                        }}
+                        className="data-[state=checked]:bg-indigo-600 data-[state=checked]:border-indigo-600"
+                      />
+                      <Label htmlFor="enable-refill-reminder" className="text-xs font-semibold text-foreground/80 cursor-pointer select-none">
+                        {refillReminder.enabled ? "Enabled" : "Enable Reminder"}
+                      </Label>
+                    </div>
+                  </div>
+
+                  {refillReminder.enabled && (
+                    <div className="mt-3 pt-3 border-t border-indigo-500/20 space-y-3 animate-in fade-in slide-in-from-top-2 duration-200">
+                      {/* Dosage calculator: units sold ÷ dose per day = days it lasts */}
+                      {reminderItems.length > 0 && (
+                        <div className="space-y-1.5">
+                          <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Dose per day (½ = 0.5) · or days it lasts</p>
+                          {refillCalc.rows.map((r) => {
+                            const badDose = !r.days && !r.dose_per_day;
+                            return (
+                              <div key={r.product_name} className="flex flex-wrap items-center gap-2 rounded-xl border border-indigo-500/15 bg-background/60 px-2.5 py-1.5">
+                                <span className="min-w-0 flex-1 truncate text-xs font-bold text-foreground" title={r.product_name}>
+                                  {r.product_name}
+                                  <span className="ml-1.5 font-mono text-[10px] font-semibold text-muted-foreground">{r.units} units</span>
+                                </span>
+                                <div className="flex items-center gap-1">
+                                  {["0.5", "1", "2", "3"].map((v) => (
+                                    <button
+                                      key={v}
+                                      type="button"
+                                      onClick={() => setDose(r.product_name, { dose: v, days: "" })}
+                                      className={`h-6 min-w-[1.75rem] rounded-md border px-1.5 text-[10px] font-bold ${!r.days_input && String(r.dose_input) === v ? "border-indigo-500 bg-indigo-500 text-white" : "border-border/70 text-muted-foreground hover:border-indigo-500/50"}`}
+                                    >
+                                      {v === "0.5" ? "½" : v}
+                                    </button>
+                                  ))}
+                                  <Input
+                                    aria-label={`Dose per day for ${r.product_name}`}
+                                    inputMode="decimal"
+                                    value={r.days_input ? "" : r.dose_input}
+                                    placeholder="dose"
+                                    onChange={(e) => setDose(r.product_name, { dose: e.target.value, days: "" })}
+                                    className={`h-6 w-14 rounded-md px-1.5 text-center text-[11px] font-bold ${badDose ? "border-rose-500" : ""}`}
+                                  />
+                                  <span className="text-[10px] text-muted-foreground">/day or</span>
+                                  <Input
+                                    aria-label={`Days ${r.product_name} lasts`}
+                                    inputMode="numeric"
+                                    value={refillReminder.doses[r.product_name]?.days || ""}
+                                    placeholder="days"
+                                    onChange={(e) => setDose(r.product_name, { days: e.target.value.replace(/\D/g, "").slice(0, 3) })}
+                                    className="h-6 w-14 rounded-md px-1.5 text-center text-[11px] font-bold"
+                                  />
+                                </div>
+                                <span className={`w-full text-[10px] font-semibold sm:w-auto ${r.days ? "text-indigo-600 dark:text-indigo-400" : "text-rose-500"}`}>
+                                  {r.days ? `Lasts ${r.days} day${r.days === 1 ? "" : "s"} · runs out ${fmtDay(r.runs_out_on)}` : "Enter a dose (e.g. 1, ½, 1½) or days"}
+                                </span>
+                              </div>
+                            );
+                          })}
+                          {refillRec && (
+                            <div className={`flex flex-wrap items-center justify-between gap-2 rounded-xl px-2.5 py-1.5 text-[11px] ${refillReminder.mode === "auto" ? "bg-indigo-500/10 text-indigo-700 dark:text-indigo-300" : "bg-amber-500/10 text-amber-700 dark:text-amber-300"}`}>
+                              <span>
+                                <strong>Recommended:</strong> remind on {fmtDay(refillRec.reminder_date)}
+                                {refillRec.remind_before_days > 0 ? `, ${refillRec.remind_before_days} day${refillRec.remind_before_days === 1 ? "" : "s"} before` : ", the day"} {reminderItems.length > 1 ? `${refillRec.driver} (first to run out)` : refillRec.driver} runs out on {fmtDay(refillRec.refill_target_date)}.
+                                {refillReminder.mode === "custom" && " You've set custom dates."}
+                              </span>
+                              {refillReminder.mode === "custom" && (
+                                <button type="button" onClick={() => setRefillReminder((prev) => ({ ...prev, mode: "auto" }))} className="rounded-md bg-indigo-600 px-2 py-0.5 text-[10px] font-bold text-white">
+                                  Use recommended
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Quick Presets */}
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="text-[11px] font-bold text-muted-foreground mr-1 flex items-center gap-1">
+                          <Clock className="w-3 h-3 text-indigo-500" /> Or a fixed period:
+                        </span>
+                        {[
+                          { days: 15, remindBefore: 3, label: "15 Days" },
+                          { days: 30, remindBefore: 5, label: "30 Days (Standard)" },
+                          { days: 45, remindBefore: 5, label: "45 Days" },
+                          { days: 60, remindBefore: 7, label: "60 Days" },
+                          { days: 90, remindBefore: 10, label: "90 Days" },
+                        ].map((preset) => {
+                          const isSelected = refillReminder.days_supply === preset.days && refillReminder.remind_before_days === preset.remindBefore;
+                          return (
+                            <Button
+                              key={preset.days}
+                              type="button"
+                              size="sm"
+                              variant={isSelected ? "default" : "outline"}
+                              onClick={() => {
+                                const { targetDate, reminderDate } = calculateReminderDates(billingDate, preset.days, preset.remindBefore);
+                                setRefillReminder((prev) => ({
+                                  ...prev,
+                                  mode: "custom",
+                                  days_supply: preset.days,
+                                  remind_before_days: preset.remindBefore,
+                                  refill_target_date: targetDate,
+                                  reminder_date: reminderDate,
+                                }));
+                              }}
+                              className={`h-6 px-2 text-[10px] font-bold rounded-lg transition-all ${
+                                isSelected 
+                                  ? "bg-indigo-600 hover:bg-indigo-700 text-white shadow-xs" 
+                                  : "border-border/70 hover:bg-indigo-500/10 hover:text-indigo-600"
+                              }`}
+                            >
+                              {preset.label}
+                            </Button>
+                          );
+                        })}
+                      </div>
+
+                      {/* Date Pickers */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5">
+                        <div className="space-y-1">
+                          <Label className="text-[10px] font-bold text-foreground/80 flex items-center gap-1">
+                            <Calendar className="w-3 h-3 text-indigo-500" /> Expected Refill Date
+                          </Label>
+                          <Input
+                            type="date"
+                            value={refillReminder.refill_target_date}
+                            onChange={(e) => {
+                              const newTarget = e.target.value;
+                              const d = new Date(newTarget);
+                              d.setDate(d.getDate() - parseInt(refillReminder.remind_before_days || 5));
+                              setRefillReminder((prev) => ({
+                                ...prev,
+                                mode: "custom",
+                                refill_target_date: newTarget,
+                                reminder_date: !isNaN(d.getTime()) ? d.toISOString().slice(0, 10) : prev.reminder_date,
+                              }));
+                            }}
+                            className="h-8 text-xs font-semibold rounded-xl border-border bg-background/80"
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <Label className="text-[10px] font-bold text-foreground/80 flex items-center gap-1 text-indigo-600 dark:text-indigo-400">
+                            <Bell className="w-3 h-3 text-indigo-500" /> Reminder Alert Date *
+                          </Label>
+                          <Input
+                            type="date"
+                            value={refillReminder.reminder_date}
+                            onChange={(e) =>
+                              setRefillReminder((prev) => ({
+                                ...prev,
+                                mode: "custom",
+                                reminder_date: e.target.value,
+                              }))
+                            }
+                            className="h-8 text-xs font-semibold rounded-xl border-indigo-500/40 bg-background/80 focus-visible:ring-indigo-500"
+                          />
+                        </div>
+
+                        <div className="space-y-1 sm:col-span-2 md:col-span-1">
+                          <Label className="text-[10px] font-bold text-foreground/80">
+                            Notes / Dosage
+                          </Label>
+                          <Input
+                            type="text"
+                            placeholder="e.g., Monthly BP & Sugar meds"
+                            value={refillReminder.notes}
+                            onChange={(e) =>
+                              setRefillReminder((prev) => ({
+                                ...prev,
+                                notes: e.target.value,
+                              }))
+                            }
+                            className="h-8 text-xs font-semibold rounded-xl border-border bg-background/80"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Medicines Selection for Reminder */}
+                      {validItems.length > 0 && (
+                        <div className="pt-2 border-t border-indigo-500/10">
+                          <div className="flex items-center justify-between mb-1.5">
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                              Medicines for refill reminder:
+                            </span>
+                            <span className="text-[10px] font-bold text-indigo-500">
+                              {refillReminder.selected_items.length === 0 ? validItems.length : refillReminder.selected_items.length} of {validItems.length} selected
+                            </span>
+                          </div>
+                          <div className="flex flex-wrap gap-1.5">
+                            {validItems.map((item, idx) => {
+                              const isSelected = refillReminder.selected_items.length === 0 || refillReminder.selected_items.some((i) => i.product_name === item.product_name);
+                              return (
+                                <button
+                                  key={idx}
+                                  type="button"
+                                  onClick={() => {
+                                    setRefillReminder((prev) => {
+                                      const currentSelected = prev.selected_items.length === 0 ? [...validItems] : [...prev.selected_items];
+                                      const exists = currentSelected.some((i) => i.product_name === item.product_name);
+                                      const updated = exists
+                                        ? currentSelected.filter((i) => i.product_name !== item.product_name)
+                                        : [...currentSelected, item];
+                                      return { ...prev, selected_items: updated };
+                                    });
+                                  }}
+                                  className={`px-2 py-0.5 rounded-lg text-[11px] font-bold border flex items-center gap-1 transition-all ${
+                                    isSelected
+                                      ? "bg-indigo-500/15 text-indigo-600 dark:text-indigo-400 border-indigo-500/30"
+                                      : "bg-muted/40 text-muted-foreground border-border/50 line-through opacity-60"
+                                  }`}
+                                >
+                                  <Check className={`w-3 h-3 ${isSelected ? "text-indigo-500" : "opacity-0"}`} />
+                                  {item.product_name}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
 
               <div className="space-y-3.5">
@@ -4250,38 +4844,79 @@ export default function BillingPage() {
                     setDoctorSearch(e.target.value);
                     setShowDoctorSuggestions(true);
                   }}
-                  onFocus={() => setShowDoctorSuggestions(true)}
+                  onFocus={() => {
+                    setShowDoctorSuggestions(true);
+                    if (doctorSuggestions.length === 0) {
+                      fetchDoctors(1, doctorSearch, false);
+                    }
+                  }}
                   onBlur={() =>
-                    setTimeout(() => setShowDoctorSuggestions(false), 200)
+                    setTimeout(() => setShowDoctorSuggestions(false), 250)
                   }
                   className="h-9 text-xs font-semibold rounded-xl border-border bg-background text-foreground shadow-2xs focus-visible:ring-2 focus-visible:ring-amber-500/30 focus-visible:border-amber-500"
                 />
-                {showDoctorSuggestions &&
-                  doctorSuggestions.length > 0 && (
-                    <div className="absolute z-[100] w-full mt-1 bg-card/95 backdrop-blur-md border border-border shadow-xl rounded-xl max-h-48 overflow-y-auto top-full overflow-x-hidden transition-all duration-150 animate-in fade-in slide-in-from-top-2">
-                      {doctorSuggestions.map((doc, idx) => (
-                        <div
-                          key={idx}
-                          className="p-2.5 hover:bg-amber-500/10 cursor-pointer border-b border-border/50 last:border-0 transition-colors duration-150"
-                          onMouseDown={() => {
-                            setEditingBillData({
-                              ...editingBillData,
-                              doctor: doc.name,
-                            });
-                            setDoctorSearch("");
-                            setShowDoctorSuggestions(false);
-                          }}
-                        >
-                          <p className="font-semibold text-sm">{doc.name}</p>
+                {showDoctorSuggestions && (
+                  <div
+                    className="absolute z-[100] w-[320px] -left-36 sm:left-0 mt-1 bg-card/95 backdrop-blur-md border border-border shadow-2xl rounded-xl max-h-60 overflow-y-auto top-full custom-scrollbar transition-all duration-150 animate-in fade-in slide-in-from-top-2"
+                    onScroll={(e) => {
+                      const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
+                      if (scrollHeight - scrollTop <= clientHeight + 40 && hasMoreDoctors && !loadingDoctors) {
+                        loadMoreDoctors();
+                      }
+                    }}
+                  >
+                    {doctorSuggestions.map((doc, idx) => (
+                      <div
+                        key={`${doc.id || doc.name}-${idx}`}
+                        className="p-2.5 hover:bg-amber-500/10 cursor-pointer border-b border-border/40 last:border-0 transition-colors duration-150"
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          handleSelectEditingDoctor(doc);
+                        }}
+                      >
+                        <div className="flex items-center justify-between gap-1.5 mb-0.5">
+                          <p className="font-semibold text-xs text-foreground truncate">
+                            {doc.name}
+                          </p>
+                          {doc.source === "global" ? (
+                            <span className="text-[9px] px-1.5 py-0.2 rounded-full font-bold bg-amber-500/10 text-amber-500 border border-amber-500/20 shrink-0">
+                              Verified
+                            </span>
+                          ) : (
+                            <span className="text-[9px] px-1.5 py-0.2 rounded-full font-bold bg-blue-500/10 text-blue-400 border border-blue-500/20 shrink-0">
+                              My Doctor
+                            </span>
+                          )}
                         </div>
-                      ))}
-                    </div>
-                  )}
+                        <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground truncate font-mono">
+                          {doc.license_number || doc.registration_no ? (
+                            <span>Reg: {doc.license_number || doc.registration_no}</span>
+                          ) : null}
+                          {doc.clinic ? <span>• {doc.clinic}</span> : null}
+                          {doc.city || doc.state ? (
+                            <span>• {[doc.city, doc.state].filter(Boolean).join(", ")}</span>
+                          ) : null}
+                        </div>
+                      </div>
+                    ))}
+                    {loadingDoctors && (
+                      <div className="py-2.5 text-center flex items-center justify-center gap-1.5 text-xs text-muted-foreground">
+                        <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-500" />
+                        <span>Loading doctors...</span>
+                      </div>
+                    )}
+                    {!loadingDoctors && doctorSuggestions.length === 0 && (
+                      <div className="p-3 text-center text-xs text-muted-foreground italic">
+                        No doctors match "{doctorSearch}"
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
 
             {/* Right: Customer Financial Summary Pill + Units / Total Stats Summary Pill + Close */}
-            <div className="flex items-center gap-2 shrink-0 self-end lg:self-center">
+            <div className="flex items-center gap-2 shrink-0 self-end lg:self-center max-md:w-full max-md:flex-wrap max-md:self-stretch">
               {selectedCustomerStats && (
                 <div className="hidden sm:flex items-center gap-2 bg-amber-500/10 border border-amber-500/20 px-3 py-1 rounded-xl shadow-2xs h-9 text-[10px] font-bold font-mono">
                   <span className="text-muted-foreground uppercase text-[9px]">Debt:</span>
@@ -4316,7 +4951,7 @@ export default function BillingPage() {
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-9 w-9 rounded-xl hover:bg-muted/80 text-muted-foreground hover:text-foreground"
+                className="h-9 w-9 rounded-xl hover:bg-muted/80 text-muted-foreground hover:text-foreground max-md:hidden"
                 onClick={handleCancelEditBill}
                 title="Close"
               >
@@ -4327,16 +4962,16 @@ export default function BillingPage() {
 
             {/* Items Table - Inline Editable */}
             <div className="border border-border/70 rounded-xl overflow-hidden shadow-sm bg-background/50 backdrop-blur-md mt-4">
-              <Table wrapperClassName="max-h-[300px]">
+              <Table mobileCards wrapperClassName="max-h-[300px]">
                 <TableHeader className="sticky top-0 bg-muted/90 backdrop-blur-md z-[50] border-b border-border/80">
                   <TableRow className="hover:bg-transparent border-b border-border/80">
-                    <TableHead className="w-[180px] font-bold text-foreground/80 text-xs uppercase tracking-wider">
+                    <TableHead data-card="title" className="w-[180px] font-bold text-foreground/80 text-xs uppercase tracking-wider">
                       Product *
                     </TableHead>
                     <TableHead className="w-[100px] font-bold text-foreground/80 text-xs uppercase tracking-wider">
                       Salt
                     </TableHead>
-                    <TableHead className="w-[70px] font-bold text-foreground/80 text-xs uppercase tracking-wider">
+                    <TableHead data-card="full" className="w-[70px] font-bold text-foreground/80 text-xs uppercase tracking-wider">
                       Batch
                     </TableHead>
                     <TableHead className="w-[60px] text-center font-bold text-foreground/80 text-xs uppercase tracking-wider">
@@ -4366,7 +5001,7 @@ export default function BillingPage() {
                     <TableHead className="w-[80px] text-right font-bold text-foreground/80 text-xs uppercase tracking-wider">
                       Total
                     </TableHead>
-                    <TableHead className="w-[60px] text-center font-bold text-foreground/80 text-xs uppercase tracking-wider">
+                    <TableHead data-card="corner" className="w-[60px] text-center font-bold text-foreground/80 text-xs uppercase tracking-wider">
                       Actions
                     </TableHead>
                   </TableRow>
@@ -4559,6 +5194,15 @@ export default function BillingPage() {
                                                 <span className="text-[10px] px-2 py-0.5 bg-emerald-500/10 text-emerald-500 dark:text-emerald-400 border border-emerald-500/20 rounded-full font-bold">
                                                   In Stock: {invItem.available_quantity || invItem.available_units} units
                                                 </span>
+                                              ) : invItem.source === "global" ? (
+                                                <span className="text-[10px] px-2 py-0.5 bg-blue-500/10 text-blue-500 dark:text-blue-400 border border-blue-500/20 rounded-full font-bold flex items-center gap-1">
+                                                  <Globe className="w-2.5 h-2.5" />
+                                                  Global Medicine
+                                                </span>
+                                              ) : invItem.is_custom_catalog || invItem.source === "catalog" ? (
+                                                <span className="text-[10px] px-2 py-0.5 bg-purple-500/10 text-purple-400 border border-purple-500/20 rounded-full font-bold">
+                                                  My Catalog
+                                                </span>
                                               ) : (
                                                 <span className="text-[10px] px-2 py-0.5 bg-rose-500/10 text-rose-500 border border-rose-500/20 rounded-full font-bold">
                                                   Out of Stock
@@ -4592,6 +5236,30 @@ export default function BillingPage() {
 
                                           {/* Row 3: Footer details - Rate, MRP, Batch & Expiry */}
                                           {(() => {
+                                            if (invItem.source === "global") {
+                                              return (
+                                                <div className="mt-1.5 flex items-center justify-between text-xs text-muted-foreground/90 flex-wrap pt-1 border-t border-border/40 font-mono">
+                                                  <div className="flex items-center gap-3">
+                                                    {invItem.purchase_price !== undefined && Number(invItem.purchase_price) > 0 && (
+                                                      <span className="text-emerald-500 font-bold">
+                                                        PTR: ₹{Number(invItem.purchase_price || 0).toFixed(2)}
+                                                      </span>
+                                                    )}
+                                                    <span className="text-orange-500 font-bold">
+                                                      MRP: ₹{Number(invItem.mrp_per_unit || invItem.mrp || 0).toFixed(2)}
+                                                    </span>
+                                                    {invItem.pack_type && (
+                                                      <span className="text-[10px] font-sans px-2 py-0.5 bg-muted rounded border border-border">
+                                                        {invItem.pack_type} ({invItem.units_per_pack || 1}u)
+                                                      </span>
+                                                    )}
+                                                  </div>
+                                                  <span className="text-[10px] text-blue-400 font-sans font-bold bg-blue-500/10 px-2 py-0.5 rounded border border-blue-500/20">
+                                                    Negative Billing Available
+                                                  </span>
+                                                </div>
+                                              );
+                                            }
                                             const expInfo = getNearestExpiryInfo(invItem);
                                             return (
                                               <div className="mt-1.5 flex items-center justify-between text-xs text-muted-foreground/90 flex-wrap pt-1 border-t border-border/40 font-mono">
@@ -4654,9 +5322,17 @@ export default function BillingPage() {
                         </TableCell>
                         <TableCell>
                           {(!item.is_manual && item.available_batches && item.available_batches.length > 0) ? (
-                            <Select
+                            <BatchPicker
+                              batches={item.available_batches}
                               value={item.inventory_id}
-                              onValueChange={(selectedInvId) => {
+                              fallbackLabel={item.batch_no}
+                              autoOpen={autoOpenBatchFor === item.id}
+                              onAutoOpened={() => setAutoOpenBatchFor(null)}
+                              onPicked={() => focusQtyFor(item.id)}
+                              nearExpiry={nearExpiryBatchFilter}
+                              onToggleNearExpiry={() => setNearExpiryBatchFilter((prev) => !prev)}
+                              accent="amber"
+                              onSelect={(selectedInvId) => {
                                 const selectedBatch = item.available_batches.find(b => b.id === selectedInvId);
                                 if (selectedBatch) {
                                   const qty = parseInt(item.quantity) || 1;
@@ -4692,101 +5368,7 @@ export default function BillingPage() {
                                   );
                                 }
                               }}
-                            >
-                              <SelectTrigger className="h-8 text-xs font-mono font-bold border-border/80 bg-background text-foreground rounded-lg w-28 focus:ring-1 focus:ring-amber-500 shadow-2xs">
-                                <SelectValue>
-                                  {item.available_batches?.find(b => b.id === item.inventory_id)?.batch_no || item.batch_no || "Select Batch"}
-                                </SelectValue>
-                              </SelectTrigger>
-                              <SelectContent className="border-2 border-border shadow-2xl rounded-2xl z-[99999] w-[460px] min-w-[460px] p-2 bg-background dark:bg-zinc-950 text-foreground opacity-100 font-sans">
-                                <div className="px-3 py-1.5 mb-1.5 border-b border-border/70 text-[11px] font-black uppercase text-muted-foreground flex items-center justify-between bg-muted/60 rounded-t-xl">
-                                  <span>Available Batches</span>
-                                  <button
-                                    type="button"
-                                    onMouseDown={(e) => {
-                                      e.preventDefault();
-                                      e.stopPropagation();
-                                      setNearExpiryBatchFilter((prev) => !prev);
-                                    }}
-                                    className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold border transition-all duration-150 flex items-center gap-1 cursor-pointer ${
-                                      nearExpiryBatchFilter
-                                        ? "bg-amber-500 text-white border-amber-600 shadow-xs"
-                                        : "bg-background hover:bg-muted text-muted-foreground border-border"
-                                    }`}
-                                    title="Click to sort batches by earliest expiry date first"
-                                  >
-                                    <Clock className="w-3 h-3" />
-                                    <span>Near Expiry {nearExpiryBatchFilter ? "ON" : ""}</span>
-                                  </button>
-                                </div>
-                                {(() => {
-                                  const rawBatches = item.available_batches || [];
-                                  const displayBatches = nearExpiryBatchFilter
-                                    ? [...rawBatches].sort((a, b) => {
-                                        const tA = a.expiry_date ? new Date(a.expiry_date).getTime() : Infinity;
-                                        const tB = b.expiry_date ? new Date(b.expiry_date).getTime() : Infinity;
-                                        return (isNaN(tA) ? Infinity : tA) - (isNaN(tB) ? Infinity : tB);
-                                      })
-                                    : rawBatches;
-
-                                  return displayBatches.slice(0, visibleBatchesLimit[item.id] || 15).map((b, idx) => (
-                                    <SelectItem
-                                      key={b.id}
-                                      value={b.id}
-                                      textValue={b.batch_no}
-                                      className="text-xs py-2.5 px-3 my-1 rounded-xl border border-border/40 hover:border-border cursor-pointer focus:bg-amber-500/10 transition-colors"
-                                    >
-                                      <div className="flex flex-col gap-1 w-full pr-4">
-                                        <div className="flex items-center justify-between gap-3">
-                                          <div className="flex items-center gap-2">
-                                            <span className="font-mono font-black text-foreground text-sm">
-                                              {b.batch_no}
-                                            </span>
-                                            {nearExpiryBatchFilter && idx === 0 && (
-                                              <span className="text-[10px] bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/40 px-2 py-0.5 rounded-md font-black shadow-2xs">
-                                                Near Expiry
-                                              </span>
-                                            )}
-                                          </div>
-                                          <span className="text-[11px] font-extrabold text-emerald-600 dark:text-emerald-400 bg-emerald-500/15 border border-emerald-500/30 px-2.5 py-0.5 rounded-full">
-                                            {b.available_quantity || 0} units available
-                                          </span>
-                                        </div>
-                                        <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground font-mono pt-0.5">
-                                          <span>Exp: <strong className="text-foreground font-bold">{b.expiry_date || "N/A"}</strong></span>
-                                          {b.supplier_name ? (
-                                            <span className="text-muted-foreground font-semibold truncate max-w-[210px]" title={b.supplier_name}>
-                                              Supp: <strong className="text-foreground/90">{b.supplier_name}</strong>
-                                            </span>
-                                          ) : (
-                                            <span className="text-muted-foreground/60 font-medium">Supp: -</span>
-                                          )}
-                                        </div>
-                                      </div>
-                                    </SelectItem>
-                                  ));
-                                })()}
-                                {item.available_batches.length > (visibleBatchesLimit[item.id] || 15) && (
-                                  <div className="p-1 border-t border-border/20">
-                                    <Button
-                                      variant="ghost"
-                                      size="sm"
-                                      className="w-full h-7 text-[10px] font-bold text-amber-500 hover:text-amber-600 hover:bg-amber-500/5 transition-all"
-                                      onMouseDown={(e) => {
-                                        e.preventDefault();
-                                        e.stopPropagation();
-                                        setVisibleBatchesLimit(prev => ({
-                                          ...prev,
-                                          [item.id]: (visibleBatchesLimit[item.id] || 15) + 15
-                                        }));
-                                      }}
-                                    >
-                                      Show More Batches...
-                                    </Button>
-                                  </div>
-                                )}
-                              </SelectContent>
-                            </Select>
+                            />
                           ) : (
                             <Input
                               value={item.batch_no || ""}
@@ -4815,21 +5397,25 @@ export default function BillingPage() {
                         </TableCell>
                         <TableCell>
                           <Input
-                            type="date"
-                            value={item.expiry_date || ""}
+                            type="text"
+                            inputMode="numeric"
+                            placeholder="MM/YY"
+                            maxLength={5}
+                            value={formatExpiryInput(item.expiry_date || "")}
                             onChange={(e) =>
                               handleEditItemFieldChange(
                                 item.id,
                                 "expiry_date",
-                                e.target.value
+                                formatExpiryInput(e.target.value)
                               )
                             }
-                            className="h-8 text-xs text-center border-border/80 focus-visible:ring-1 focus-visible:ring-amber-500 focus-visible:border-amber-500 rounded-lg transition-all duration-200 w-28"
+                            className="h-8 text-xs text-center border-border/80 focus-visible:ring-1 focus-visible:ring-amber-500 focus-visible:border-amber-500 rounded-lg transition-all duration-200 w-24"
                           />
                         </TableCell>
                         <TableCell>
                           <Input
                             type="number"
+                            data-qty-for={item.id}
                             value={item.quantity || ""}
                             onFocus={(e) => e.target.select()}
                             onChange={(e) =>
@@ -5177,6 +5763,7 @@ export default function BillingPage() {
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                 <Input
                   placeholder="Search bills by bill number, customer, doctor, batch, product, notes..."
+                  data-shortcut="search"
                   className="pl-9 h-9 text-xs font-medium rounded-xl border-border/70 bg-card/60 backdrop-blur-md"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
@@ -5188,28 +5775,16 @@ export default function BillingPage() {
                 variant="outline"
                 size="sm"
                 className="h-9 text-xs font-bold rounded-xl bg-gradient-to-r from-amber-500/10 to-orange-500/10 border-amber-500/30 text-amber-600 dark:text-amber-400 hover:border-amber-500/50 cursor-pointer shadow-2xs"
-                onClick={() => window.open("/scan-bill", "_blank")}
+                onClick={() => openScanner("/scan-bill")}
                 data-testid="scan-bill-list-btn"
               >
                 <Camera className="w-4 h-4 mr-1.5 text-amber-500" />
                 <span>Scan for Bill</span>
               </Button>
-              <Select
+              <CustomerFilter
                 value={filterCustomer}
-                onValueChange={handleCustomerFilterChange}
-              >
-                <SelectTrigger className="w-44 h-9 text-xs font-semibold border-border/70 rounded-xl bg-card/60 backdrop-blur-md">
-                  <SelectValue placeholder="All Customers" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Customers</SelectItem>
-                  {customers?.map((c) => (
-                    <SelectItem key={c.id} value={c.id}>
-                      {c.name || c.mobile || "Unknown"}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                onChange={handleCustomerFilterChange}
+              />
 
               <Select
                 value={filterBillType}
@@ -5501,13 +6076,13 @@ export default function BillingPage() {
                             Top Grossing Products
                           </h4>
                           <div className="border border-border/70 rounded-2xl overflow-hidden glass bg-card/20">
-                            <Table>
+                            <Table mobileCards>
                               <TableHeader className="bg-muted/40">
                                 <TableRow>
-                                  <TableHead className="w-12 text-center text-xs font-bold text-muted-foreground uppercase tracking-wider">
+                                  <TableHead data-card="hide" className="w-12 text-center text-xs font-bold text-muted-foreground uppercase tracking-wider">
                                     #
                                   </TableHead>
-                                  <TableHead className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Product Name</TableHead>
+                                  <TableHead data-card="title" className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Product Name</TableHead>
                                   <TableHead className="text-center text-xs font-bold text-muted-foreground uppercase tracking-wider">
                                     Units Sold
                                   </TableHead>
@@ -5595,14 +6170,14 @@ export default function BillingPage() {
                 <p className="text-xs text-muted-foreground">Scan products from "Scan for Bill" page to create draft bills.</p>
               </div>
             ) : (
-              <Table>
+              <Table mobileCards>
                 <TableHeader className="bg-muted/40">
                   <TableRow className="border-b border-border/60">
-                    <TableHead className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Draft No / Timestamp</TableHead>
+                    <TableHead data-card="title" className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Draft No / Timestamp</TableHead>
                     <TableHead className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Customer Name</TableHead>
                     <TableHead className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Items</TableHead>
                     <TableHead className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Est. Amount</TableHead>
-                    <TableHead className="text-right text-xs font-bold text-muted-foreground uppercase tracking-wider">Actions</TableHead>
+                    <TableHead data-card="actions" className="text-right text-xs font-bold text-muted-foreground uppercase tracking-wider">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -5660,20 +6235,20 @@ export default function BillingPage() {
       {!showNewBill && !editingBillId && activeViewTab !== "drafts" && (
         <Card className="data-table glass bg-card/45 backdrop-blur-xl border border-border/70 shadow-lg rounded-2xl overflow-hidden mt-3">
           <div className="overflow-x-auto">
-            <Table>
+            <Table mobileCards>
               <TableHeader className="bg-muted/40">
                 <TableRow className="border-b border-border/60">
-                  <TableHead className="w-12"></TableHead>
-                  <TableHead className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Bill No / Timestamp</TableHead>
-                  <TableHead className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Customer</TableHead>
+                  <TableHead className="w-12" data-card="corner"></TableHead>
+                  <TableHead className="text-xs font-bold text-muted-foreground uppercase tracking-wider" data-card="title">Bill No / Timestamp</TableHead>
+                  <TableHead className="text-xs font-bold text-muted-foreground uppercase tracking-wider" data-card="full">Customer</TableHead>
                   <TableHead className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Items</TableHead>
                   <TableHead className="text-right text-xs font-bold text-muted-foreground uppercase tracking-wider">Amount</TableHead>
                   <TableHead className="text-right text-xs font-bold text-muted-foreground uppercase tracking-wider">Profit</TableHead>
                   <TableHead className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Status</TableHead>
-                  <TableHead className="text-center text-xs font-bold text-muted-foreground uppercase tracking-wider">Actions</TableHead>
+                  <TableHead className="text-center text-xs font-bold text-muted-foreground uppercase tracking-wider" data-card="actions">Actions</TableHead>
                 </TableRow>
               </TableHeader>
-              <TableBody className={tableLoading ? "opacity-50 pointer-events-none transition-opacity duration-200" : "transition-opacity duration-200"}>
+              <TableBody data-rows className={tableLoading ? "opacity-50 pointer-events-none transition-opacity duration-200" : "transition-opacity duration-200"}>
                 {bills.length === 0 ? (
                   <TableRow>
                     <TableCell
@@ -5695,6 +6270,9 @@ export default function BillingPage() {
                         <TableRow
                           id={`record-${bill.id}`}
                           data-testid={`bill-row-${bill.id}`}
+                          data-row
+                          tabIndex={0}
+                          aria-expanded={!!isExpanded}
                           className={`cursor-pointer hover:bg-muted/30 transition-all border-b border-border/40 ${isExpanded ? "bg-muted/10" : ""}`}
                           onClick={() => toggleBillExpand(bill.id)}
                         >
@@ -5782,7 +6360,8 @@ export default function BillingPage() {
                                 variant="ghost"
                                 size="icon"
                                 onClick={() => handleStartEditBill(bill)}
-                                title="Edit Bill"
+                                title="Edit Bill (E)"
+                                data-row-key="e"
                                 className="h-8 w-8 rounded-xl hover:bg-amber-500/10 text-muted-foreground hover:text-amber-600 transition-all duration-200"
                                 data-testid={`edit-bill-${bill.id}`}
                               >
@@ -5792,18 +6371,51 @@ export default function BillingPage() {
                                 variant="ghost"
                                 size="icon"
                                 onClick={() => handleGeneratePdf(bill.id)}
-                                title="Generate PDF"
+                                title="Generate PDF (P)"
+                                data-row-key="p"
                                 className="h-8 w-8 rounded-xl hover:bg-primary/10 text-muted-foreground hover:text-primary transition-all duration-200"
                                 data-testid={`pdf-btn-${bill.id}`}
                               >
                                 <FileText className="w-4 h-4" />
                               </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => whatsApp.share(bill)}
+                                disabled={whatsApp.busyId === bill.id}
+                                title={`${bill.customer_mobile ? `Send on WhatsApp to ${bill.customer_mobile}` : "Send on WhatsApp"} (W)`}
+                                data-row-key="w"
+                                aria-label="Send bill on WhatsApp"
+                                className="h-8 w-8 rounded-xl hover:bg-[#25D366]/10 text-muted-foreground hover:text-[#1da851] transition-all duration-200"
+                                data-testid={`whatsapp-bill-${bill.id}`}
+                              >
+                                {whatsApp.busyId === bill.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <WhatsAppIcon className="w-4 h-4" />}
+                              </Button>
+                              {!bill.is_paid && (() => {
+                                const paid = bill.total_paid !== undefined ? Number(bill.total_paid) || 0 : Number(bill.advance_amount) || 0;
+                                const due = Math.max(0, Math.round((billTotal - paid) * 100) / 100);
+                                return due >= 1 ? (
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={() => setUpiQr({ amount: due, note: bill.bill_no, auto: true })}
+                                    title={`UPI QR for the ₹${due.toFixed(2)} due (Q)`}
+                                    data-row-key="q"
+                                    aria-label="UPI QR for the amount due"
+                                    className="h-8 w-8 rounded-xl hover:bg-orange-500/10 text-muted-foreground hover:text-orange-600 transition-all duration-200"
+                                    data-testid={`upi-qr-bill-${bill.id}`}
+                                  >
+                                    <QrCode className="w-4 h-4" />
+                                  </Button>
+                                ) : null;
+                              })()}
                               {!bill.is_paid && (
                                 <Button
                                   variant="ghost"
                                   size="icon"
                                   onClick={() => handleMarkPaid(bill.id)}
-                                  title="Mark as Paid"
+                                  title="Mark as Paid (M)"
+                                  data-row-key="m"
                                   className="h-8 w-8 rounded-xl hover:bg-emerald-500/10 text-muted-foreground hover:text-emerald-600 transition-all duration-200"
                                   data-testid={`mark-paid-btn-${bill.id}`}
                                 >
@@ -5816,7 +6428,8 @@ export default function BillingPage() {
                                 onClick={() =>
                                   setDeleteDialog({ open: true, bill })
                                 }
-                                title="Delete Bill"
+                                title="Delete Bill (Del)"
+                                data-row-key="delete"
                                 className="h-8 w-8 rounded-xl hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-all duration-200"
                                 data-testid={`delete-bill-btn-${bill.id}`}
                               >
@@ -5829,15 +6442,15 @@ export default function BillingPage() {
                         {isExpanded && bill.items && bill.items.length > 0 && (
                           <TableRow className="bg-muted/15 border-b border-border/40">
                             <TableCell colSpan={8} className="p-0">
-                              <div className="p-6 pl-12">
+                              <div className="p-6 pl-12 max-md:p-3">
                                 <p className="text-xs font-bold text-muted-foreground/80 uppercase tracking-wider mb-3">
                                   Items Sold
                                 </p>
                                 <div className="border border-border/50 rounded-xl overflow-hidden bg-background/30">
-                                  <Table>
+                                  <Table mobileCards>
                                     <TableHeader className="bg-muted/40">
                                       <TableRow className="border-b border-border/40">
-                                        <TableHead className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
+                                        <TableHead data-card="title" className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
                                           Product
                                         </TableHead>
                                         <TableHead className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
@@ -5863,6 +6476,9 @@ export default function BillingPage() {
                                         </TableHead>
                                         <TableHead className="text-xs font-bold text-right text-muted-foreground uppercase tracking-wider">
                                           Profit
+                                        </TableHead>
+                                        <TableHead data-card-label="Short book" className="text-xs font-bold text-center text-muted-foreground uppercase tracking-wider">
+                                          Short book
                                         </TableHead>
                                         {bill.is_advance_paid && (
                                           <TableHead className="text-xs font-bold text-center text-muted-foreground uppercase tracking-wider">
@@ -5929,6 +6545,37 @@ export default function BillingPage() {
                                             >
                                               ₹{item.profit.toFixed(2)}
                                             </TableCell>
+                                            <TableCell className="text-center">
+                                              {item.short_book ? (
+                                                <button
+                                                  type="button"
+                                                  onClick={() => navigate("/short-book")}
+                                                  className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-bold text-emerald-600 dark:text-emerald-400"
+                                                  title={`Added ${new Date(item.short_book.added_at).toLocaleDateString("en-IN")} · open Short Book`}
+                                                >
+                                                  <Check className="h-3 w-3" /> {item.short_book.quantity} {item.short_book.unit}
+                                                </button>
+                                              ) : (
+                                                <Button
+                                                  variant="outline"
+                                                  size="sm"
+                                                  onClick={() =>
+                                                    setShortBookFor({
+                                                      bill,
+                                                      line: idx,
+                                                      item,
+                                                      quantity: item.units_per_pack > 1 ? String(Math.max(1, Math.ceil(qty / item.units_per_pack))) : String(qty),
+                                                      unit: item.units_per_pack > 1 ? "packs" : "units",
+                                                      notes: "",
+                                                    })
+                                                  }
+                                                  className="h-7 rounded-lg px-2 text-[11px] font-bold"
+                                                  title="Note this medicine to reorder"
+                                                >
+                                                  <Plus className="mr-1 h-3 w-3" /> Short book
+                                                </Button>
+                                              )}
+                                            </TableCell>
                                             {bill.is_advance_paid && (
                                               <TableCell className="text-center">
                                                 {item.delivery_status === "Delivered" ? (
@@ -5968,7 +6615,7 @@ export default function BillingPage() {
                                      {(bill.negative_billed_qty > 0 ||
                                        bill.items?.some((i) => i.is_manual)) && (
                                       <span className="text-amber-600 dark:text-amber-400 text-xs font-semibold flex items-center gap-1">
-                                        ⚠️{" "}
+                                        <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0 inline" />{" "}
                                         {bill.inventory_billed_qty ||
                                           bill.items
                                             ?.filter((i) => !i.is_manual)
@@ -6259,7 +6906,7 @@ export default function BillingPage() {
               Are you sure you want to delete bill <span className="font-mono font-bold text-foreground">{deleteDialog.bill?.bill_no}</span>? This action is permanent.
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <AlertDialogFooter className="flex-col sm:flex-row gap-2 mt-4">
+          <AlertDialogFooter className="flex-col sm:flex-row flex-wrap sm:justify-end gap-2 mt-4">
             <AlertDialogCancel className="rounded-xl border-border/80 hover:bg-muted/80 h-10 px-4 transition-all">
               Cancel
             </AlertDialogCancel>
@@ -6292,7 +6939,14 @@ export default function BillingPage() {
           }
         }}
       >
-        <AlertDialogContent className="glass bg-card/95 backdrop-blur-xl border border-border/80 shadow-2xl rounded-2xl p-6">
+        <AlertDialogContent
+          className="glass bg-card/95 backdrop-blur-xl border border-border/80 shadow-2xl rounded-2xl p-6"
+          onCloseAutoFocus={(e) => {
+            // Next customer: Enter on New Bill
+            e.preventDefault();
+            setTimeout(() => document.querySelector('[data-testid="new-bill-btn"]')?.focus(), 50);
+          }}
+        >
           <AlertDialogHeader className="space-y-3">
             <AlertDialogTitle className="text-xl font-bold flex items-center gap-2 text-primary">
               <FileText className="w-5 h-5 text-primary" />
@@ -6302,6 +6956,7 @@ export default function BillingPage() {
               Would you like to generate and view a PDF receipt for this newly recorded bill?
             </AlertDialogDescription>
           </AlertDialogHeader>
+          {pdfQrChoice(bills.find((b) => b.id === pdfConfirmDialog.billId) || null)}
           <AlertDialogFooter className="gap-2 mt-4">
             <AlertDialogCancel className="rounded-xl border-border/80 hover:bg-muted/80 h-10 px-4 transition-all">
               Skip
@@ -6310,16 +6965,7 @@ export default function BillingPage() {
               className="rounded-xl bg-gradient-to-r from-primary to-primary/90 hover:from-primary/95 hover:to-primary text-primary-foreground shadow-md shadow-primary/20 h-10 px-4 font-semibold transition-all hover:scale-[1.02] active:scale-[0.98]"
               onClick={async () => {
                 if (!pdfConfirmDialog.billId) return;
-                try {
-                  const pdfRes = await axios.post(
-                    `${API}/bills/${pdfConfirmDialog.billId}/pdf`
-                  );
-                  if (pdfRes.data.pdf_url) {
-                    window.open(pdfRes.data.pdf_url, "_blank");
-                  }
-                } catch (e) {
-                  toast.error("Failed to generate PDF");
-                }
+                await generateBillPdf(pdfConfirmDialog.billId, pdfWithQr);
                 setPdfConfirmDialog({ open: false, billId: null });
                 handleCancelNewBill();
                 fetchData();
@@ -6479,8 +7125,8 @@ export default function BillingPage() {
 
       {/* TABS & ACTION NAVBAR */}
       {(showNewBill || editingBillId) && createPortal(
-        <div className="fixed bottom-0 left-0 right-0 z-[100] flex items-center justify-between bg-card/95 backdrop-blur-xl border-t-2 border-border shadow-2xl px-6 py-3.5 gap-4 overflow-x-auto scroller-hide overflow-y-hidden mb-0 transition-all duration-300">
-          <div className="flex items-center gap-2 overflow-x-auto scroller-hide">
+        <div className="fixed bottom-0 left-0 right-0 z-[100] flex items-center justify-between bg-card/95 backdrop-blur-xl border-t-2 border-border shadow-2xl px-6 py-3.5 gap-4 overflow-x-auto scroller-hide overflow-y-hidden mb-0 transition-all duration-300 mobile-action-bar max-md:flex-wrap max-md:gap-2 max-md:px-3 max-md:pt-2.5 max-md:pb-[calc(0.625rem+env(safe-area-inset-bottom))]">
+          <div className="flex items-center gap-2 overflow-x-auto scroller-hide max-md:w-full empty:hidden">
             {showNewBill &&
               tabs.map((tab, idx) => {
                 const isActive = tab.id === activeTabId;
@@ -6539,20 +7185,22 @@ export default function BillingPage() {
             )}
           </div>
 
-          <div className="flex items-center gap-3 shrink-0 ml-auto border-l border-border pl-6">
+          <div className="flex items-center gap-3 shrink-0 ml-auto border-l border-border pl-6 max-md:w-full max-md:ml-0 max-md:border-l-0 max-md:pl-0 max-md:gap-2">
             <Button
               variant="ghost"
               onClick={showNewBill ? handleCancelNewBill : handleCancelEditBill}
-              className="text-muted-foreground hover:text-foreground"
+              className="text-muted-foreground hover:text-foreground max-md:flex-1 max-md:border max-md:border-border"
             >
-              Cancel (Esc)
+              Cancel<span className="max-md:hidden">&nbsp;(Esc)</span>
             </Button>
 
             {showNewBill ? (
               <Button
                 onClick={handleSubmitBill}
+                data-shortcut="save"
+                data-kbd={formatCombo("mod+enter")}
                 disabled={submitting || validItems.length === 0}
-                className="btn-primary shadow-lg shadow-primary/20 min-w-[140px]"
+                className="btn-primary shadow-lg shadow-primary/20 min-w-[140px] max-md:flex-[2] max-md:min-w-0"
               >
                 {submitting ? (
                   <>
@@ -6563,8 +7211,8 @@ export default function BillingPage() {
                   <div className="flex items-center gap-2">
                     <CreditCard className="w-4 h-4" />
                     <span>Create Bill</span>
-                    <kbd className="hidden sm:inline-block ml-1 opacity-70 text-[9px] font-mono border border-white/20 px-1 rounded">
-                      {getOS() === "mac" ? "⌘Enter" : "Ctrl+Enter"}
+                    <kbd className="hidden md:inline-block ml-1 opacity-70 text-[9px] font-mono border border-white/20 px-1 rounded">
+                      {formatCombo("mod+enter")}
                     </kbd>
                   </div>
                 )}
@@ -6572,8 +7220,10 @@ export default function BillingPage() {
             ) : (
               <Button
                 onClick={handleSaveEditBill}
+                data-shortcut="save"
+                data-kbd={formatCombo("mod+enter")}
                 disabled={submitting || validEditItems.length === 0}
-                className="btn-primary bg-yellow-600 hover:bg-yellow-700 shadow-lg shadow-yellow-600/20 min-w-[140px]"
+                className="btn-primary bg-yellow-600 hover:bg-yellow-700 shadow-lg shadow-yellow-600/20 min-w-[140px] max-md:flex-[2] max-md:min-w-0"
               >
                 {submitting ? (
                   <>
@@ -6584,7 +7234,7 @@ export default function BillingPage() {
                   <div className="flex items-center gap-2">
                     <Save className="w-4 h-4" />
                     <span>Update Bill</span>
-                    <kbd className="hidden sm:inline-block ml-1 opacity-70 text-[9px] font-mono border border-white/20 px-1 rounded">
+                    <kbd className="hidden md:inline-block ml-1 opacity-70 text-[9px] font-mono border border-white/20 px-1 rounded">
                       Alt+U
                     </kbd>
                   </div>
@@ -6600,6 +7250,117 @@ export default function BillingPage() {
         onOpenChange={setScannerModalOpen}
         onTransferToBill={handleTransferScannedItemsToBill}
       />
+      <AlertDialog open={confirmDiscardBill} onOpenChange={setConfirmDiscardBill}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Discard this bill?</AlertDialogTitle>
+            <AlertDialogDescription>The items you added will be cleared. Press Esc or Keep editing to go back.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep editing</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-rose-600 text-white hover:bg-rose-700"
+              onClick={() => {
+                setConfirmDiscardBill(false);
+                handleCancelNewBill();
+              }}
+            >
+              Discard bill
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <Dialog open={!!shortBookFor} onOpenChange={(o) => !o && setShortBookFor(null)}>
+        <DialogContent className="max-w-md rounded-3xl p-5 sm:p-6">
+          <DialogHeader>
+            <DialogTitle className="text-base font-black">Add to short book</DialogTitle>
+            <DialogDescription className="text-xs">
+              {shortBookFor?.item.product_name} · sold {shortBookFor?.item.quantity} units on {shortBookFor?.bill.bill_no}
+            </DialogDescription>
+          </DialogHeader>
+          {shortBookFor && (
+            <form onSubmit={saveShortBook} className="space-y-3">
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <Label htmlFor="sb-qty" className="text-xs font-bold">Reorder quantity</Label>
+                  <Input
+                    id="sb-qty"
+                    type="number"
+                    min="1"
+                    inputMode="numeric"
+                    autoFocus
+                    value={shortBookFor.quantity}
+                    onChange={(e) => setShortBookFor((s) => ({ ...s, quantity: e.target.value }))}
+                    className="mt-1 h-10 rounded-xl font-mono text-base font-bold"
+                  />
+                </div>
+                <div>
+                  <Label className="text-xs font-bold">In</Label>
+                  <div className="mt-1 grid h-10 grid-cols-2 gap-1 rounded-xl border border-border p-1" role="radiogroup">
+                    {["packs", "units"].map((u) => (
+                      <button key={u} type="button" role="radio" aria-checked={shortBookFor.unit === u} onClick={() => setShortBookFor((s) => ({ ...s, unit: u }))} className={`rounded-lg text-xs font-bold ${shortBookFor.unit === u ? "bg-orange-600 text-white" : "text-muted-foreground"}`}>
+                        {u === "packs" ? `Packs${shortBookFor.item.units_per_pack > 1 ? ` of ${shortBookFor.item.units_per_pack}` : ""}` : "Units"}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <div>
+                <Label htmlFor="sb-note" className="text-xs font-bold">Note</Label>
+                <Input id="sb-note" value={shortBookFor.notes} onChange={(e) => setShortBookFor((s) => ({ ...s, notes: e.target.value }))} placeholder="Optional, e.g. regular customer" className="mt-1 h-10 rounded-xl" maxLength={300} />
+              </div>
+              <DialogFooter className="gap-2">
+                <Button type="button" variant="outline" onClick={() => setShortBookFor(null)} className="rounded-xl text-xs font-bold">
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={shortBookSaving} className="rounded-xl bg-orange-600 text-xs font-bold text-white hover:bg-orange-700" data-shortcut="save">
+                  {shortBookSaving ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Plus className="mr-1.5 h-4 w-4" />}
+                  Add to short book
+                </Button>
+              </DialogFooter>
+            </form>
+          )}
+        </DialogContent>
+      </Dialog>
+      <Dialog open={!!pdfFor} onOpenChange={(o) => !o && setPdfFor(null)}>
+        <DialogContent className="max-w-md rounded-3xl p-5 sm:p-6">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base font-black">
+              <FileText className="h-5 w-5 text-orange-500" /> Bill PDF
+            </DialogTitle>
+            <DialogDescription className="text-xs">{pdfFor?.bill_no ? `${pdfFor.bill_no} · ${pdfFor.customer_name || "Walk-in"}` : ""}</DialogDescription>
+          </DialogHeader>
+          {pdfFor && pdfQrChoice(pdfFor.bill_no ? pdfFor : null)}
+          <DialogFooter className="gap-2">
+            <Button type="button" variant="outline" onClick={() => setPdfFor(null)} className="rounded-xl text-xs font-bold">
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              autoFocus
+              data-shortcut="save"
+              onClick={() => {
+                const id = pdfFor.id;
+                setPdfFor(null);
+                generateBillPdf(id, pdfWithQr);
+              }}
+              className="rounded-xl bg-orange-600 text-xs font-bold text-white hover:bg-orange-700"
+            >
+              <FileText className="mr-1.5 h-4 w-4" /> Generate PDF
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <ItemQrScanDialog
+        open={labelScanOpen}
+        onClose={() => setLabelScanOpen(false)}
+        onItem={(item) => {
+          setLabelScanOpen(false);
+          addFromLabel(item);
+        }}
+      />
+      <UpiQrDialog open={!!upiQr} onOpenChange={(o) => !o && setUpiQr(null)} initialAmount={upiQr?.amount ?? ""} note={upiQr?.note || ""} autoGenerate={!!upiQr?.auto} />
+      {whatsApp.dialog}
     </div>
   );
 }

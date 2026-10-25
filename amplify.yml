@@ -3,11 +3,32 @@ frontend:
   phases:
     preBuild:
       commands:
-        - cd frontend
-        - npm install --legacy-peer-deps
+        - |
+          if [ "$AWS_APP_ID" = "d8zdjo53e2w9h" ] || [ "$AMPLIFY_MONOREPO_APP_ROOT" = "admin-frontend" ] || [ "$BUILD_TARGET" = "admin" ]; then
+            echo "🚀 Target detected: admin-frontend"
+            cd admin-frontend
+            npm install
+          else
+            echo "🚀 Target detected: main frontend"
+            cd frontend
+            npm install --legacy-peer-deps
+          fi
     build:
       commands:
-        - npm run build
+        - |
+          if [ "$AWS_APP_ID" = "d8zdjo53e2w9h" ] || [ "$AMPLIFY_MONOREPO_APP_ROOT" = "admin-frontend" ] || [ "$BUILD_TARGET" = "admin" ]; then
+            echo "🔨 Building admin-frontend (Vite)..."
+            cd admin-frontend
+            npm run build
+            cd ..
+            mkdir -p frontend/build
+            rm -rf frontend/build/*
+            cp -r admin-frontend/dist/* frontend/build/
+          else
+            echo "🔨 Building main frontend (React)..."
+            cd frontend
+            npm run build
+          fi
   artifacts:
     baseDirectory: frontend/build
     files:
@@ -15,3 +36,4 @@ frontend:
   cache:
     paths:
       - frontend/node_modules/**/*
+      - admin-frontend/node_modules/**/*

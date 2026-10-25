@@ -4,6 +4,14 @@ const mongoose = require("mongoose");
 const { auth } = require("../middleware/auth");
 
 const { requireSubscription } = require("../middleware/subscription");
+const { medicineKey } = require("../services/search/normalize");
+
+const {
+  searchGlobalMedicines,
+  tenantTokenMatch,
+  scoreMatch,
+  batchMatchScore,
+} = require("../services/search/medicineSearch");
 
 // Safe regex escaping helper
 const escapeRegex = (str) => {
@@ -11,93 +19,25 @@ const escapeRegex = (str) => {
   return String(str).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 };
 
-// Helper function to create fuzzy regex patterns
-const createFuzzyRegex = (query) => {
-  if (!query || query.length < 2) return [];
+// Normalize medicine name for cross-collection deduplication
+// Same medicine, same key: pack counts, punctuation and form spellings
+// ("TAB"/"Tablet") don't make catalog and global results look different
+const normalizeMedName = (str) => medicineKey(str);
 
-  const clean = String(query).replace(/[.*+?^${}()|[\]\\]/g, "");
-  if (!clean || clean.length < 2) {
-    return [escapeRegex(query)];
-  }
-
-  const patterns = [escapeRegex(query)];
-
-  // Allow one character variation or missing letter
-  if (clean.length > 3) {
-    const chars = clean.split("");
-    for (let i = 0; i < chars.length; i++) {
-      const fuzzy = [...chars.slice(0, i), ".", ...chars.slice(i + 1)].map(c => c === "." ? "." : escapeRegex(c)).join("");
-      patterns.push(fuzzy);
-    }
-  }
-
-  // Allow adjacent character swap
-  if (clean.length > 4) {
-    const chars = clean.split("");
-    for (let i = 0; i < chars.length - 1; i++) {
-      const swapped = [...chars];
-      [swapped[i], swapped[i + 1]] = [swapped[i + 1], swapped[i]];
-      patterns.push(swapped.map(c => escapeRegex(c)).join(""));
-    }
-  }
-
-  return patterns;
-};
-
-// Helper to calculate Levenshtein distance for ranking
-const levenshteinDistance = (str1, str2) => {
-  const matrix = [];
-  for (let i = 0; i <= str2.length; i++) {
-    matrix[i] = [i];
-  }
-  for (let j = 0; j <= str1.length; j++) {
-    matrix[0][j] = j;
-  }
-  for (let i = 1; i <= str2.length; i++) {
-    for (let j = 1; j <= str1.length; j++) {
-      if (str2.charAt(i - 1) === str1.charAt(j - 1)) {
-        matrix[i][j] = matrix[i - 1][j - 1];
-      } else {
-        matrix[i][j] = Math.min(
-          matrix[i - 1][j - 1] + 1,
-          matrix[i][j - 1] + 1,
-          matrix[i - 1][j] + 1
-        );
-      }
-    }
-  }
-  return matrix[str2.length][str1.length];
-};
-
-// Calculate similarity score (0-100)
-const calculateSimilarity = (query, text) => {
-  if (!text) return 0;
-  const queryLower = query.toLowerCase();
-  const textLower = text.toLowerCase();
-
-  // Exact match
-  if (textLower === queryLower) return 100;
-
-  // Starts with
-  if (textLower.startsWith(queryLower)) return 90;
-
-  // Contains
-  if (textLower.includes(queryLower)) return 70;
-
-  // Fuzzy match using Levenshtein
-  const distance = levenshteinDistance(queryLower, textLower);
-  const maxLen = Math.max(queryLower.length, textLower.length);
-  const similarity = ((maxLen - distance) / maxLen) * 60;
-
-  return Math.max(0, similarity);
-};
-
-// POST /api/medicines/enrich (AI Autofill)
-router.post("/enrich", auth, requireSubscription(), async (req, res, next) => {
+// POST & GET /api/medicines/enrich (AI Autofill)
+router.all("/enrich", auth, requireSubscription(), async (req, res, next) => {
   try {
-    const { product_name } = req.body;
-    if (!product_name)
+    const productNameRaw =
+      req.body?.product_name ||
+      req.body?.name ||
+      req.query?.product_name ||
+      req.query?.name ||
+      req.query?.q;
+
+    const product_name = (productNameRaw || "").trim();
+    if (!product_name) {
       return res.status(400).json({ detail: "Product name required" });
+    }
 
     const { GoogleGenerativeAI } = require("@google/generative-ai");
     const apiKey = process.env.EMERGENT_LLM_KEY || process.env.GEMINI_API_KEY;
@@ -110,28 +50,26 @@ router.post("/enrich", auth, requireSubscription(), async (req, res, next) => {
 
     const prompt = `You are a pharmaceutical database system.
 
-For the medicine named "${product_name}", return ONLY:
-1. Exact salt composition
-2. Official marketing company (brand owner)
+For the medicine named "${product_name}", return:
+1. Exact active salt composition
+2. Official marketing company (brand owner / manufacturer)
+3. Standard dosage form (e.g. tablet, capsule, syrup, injection, ointment, drops, etc.)
+4. Standard pack type (Strip, Bottle, Tube, Packet, Box, Unit)
+5. Standard units per pack (integer number)
 
 STRICT RULES:
 - Do NOT guess
 - Do NOT hallucinate
-- If unsure, return empty string
+- If unsure of a field, return empty string or null
 - Prefer well-known verified pharma companies only
 
-Respond ONLY in JSON:
+Respond ONLY in JSON format:
 {
   "salt_composition": "string",
-  "manufacturer": "string"
-}
-One example:
-product - Dologel-CT Gel
-
-your response should be:
-{
-    "salt_composition": "Choline Salicylate 9% w/w, Lignocaine Hydrochloride 0.5% w/w",
-    "manufacturer": "Dr. Reddy's Laboratories Ltd"
+  "manufacturer": "string",
+  "dosage_form": "string",
+  "pack_type": "string",
+  "units_per_pack": 10
 }
 `;
 
@@ -153,6 +91,9 @@ your response should be:
     res.json({
       salt_composition: parsed.salt_composition || "",
       manufacturer: parsed.manufacturer || "",
+      dosage_form: parsed.dosage_form || "",
+      pack_type: parsed.pack_type || "",
+      units_per_pack: parsed.units_per_pack || null,
     });
   } catch (error) {
     console.error("Gemini enrichment error:", error);
@@ -173,38 +114,165 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
         .json({ detail: "Search query must be at least 2 characters" });
     }
 
-    const searchLower = q.toLowerCase();
-    const parsedLimit = parseInt(limit);
-    const parsedPage = parseInt(page);
+    // Not cached: results carry live stock. The global catalogue layer is
+    // cached inside searchGlobalMedicines.
+    const trimmedQ = String(q).trim();
+    const searchLower = trimmedQ.toLowerCase();
+    const parsedLimit = Math.min(parseInt(limit) || 20, 100);
+    const parsedPage = Math.max(parseInt(page) || 1, 1);
     const skip = (parsedPage - 1) * parsedLimit;
-    // Increase internal search limit to ensure sorting works across pages for fuzzy search
-    const internalLimit = parsedLimit * parsedPage + 100;
+    // Fixed candidate pool so ranking (and therefore paging) is stable
+    const internalLimit = Math.max(200, parsedLimit * parsedPage);
     const enableFuzzy = fuzzy === "true";
 
-    const escapedQ = escapeRegex(q);
-    const searchRegex = { $regex: escapedQ, $options: "i" };
+    const escapedQ = escapeRegex(trimmedQ);
 
-    // Create fuzzy regex patterns if enabled
-    let fuzzyConditions = [];
-    if (enableFuzzy && q.length > 3) {
-      const fuzzyPatterns = createFuzzyRegex(q);
-      fuzzyConditions = fuzzyPatterns.map((pattern) => ({
-        $or: [
-          { product_name: { $regex: pattern, $options: "i" } },
-          { salt_composition: { $regex: pattern, $options: "i" } },
-        ],
-      }));
+    // ========== 1. SEARCH USER'S CUSTOM PRODUCT CATALOG (products collection) ==========
+    let processedCatalog = [];
+    const seenNormalizedNames = new Set();
+    const seenProductIds = new Set();
+    const catalogProductNames = new Set();
+    try {
+      const catalogQuery = {
+        pharmacy_id: pharmacyId,
+        ...tenantTokenMatch(trimmedQ, ["name", "product_name", "salt_composition", "manufacturer"]),
+      };
+
+      const catalogMatches = await db
+        .collection("products")
+        .find(catalogQuery)
+        .limit(internalLimit)
+        .toArray();
+
+      // Batch-fetch inventory batches for all catalog items in ONE query
+      const catalogIds = catalogMatches.map(c => c.id).filter(Boolean);
+      const catalogNames = catalogMatches.map(c => c.name || c.product_name).filter(Boolean);
+      let allCatalogBatches = [];
+      if (catalogIds.length > 0 || catalogNames.length > 0) {
+        allCatalogBatches = await db.collection("inventory").find({
+          pharmacy_id: pharmacyId,
+          $or: [
+            ...(catalogIds.length > 0 ? [{ product_id: { $in: catalogIds } }] : []),
+            ...(catalogNames.length > 0 ? [{ product_name: { $in: catalogNames } }] : [])
+          ]
+        }).toArray();
+      }
+
+      const batchesByProductId = new Map();
+      const batchesByProductName = new Map();
+      for (const b of allCatalogBatches) {
+        if (b.product_id) {
+          const pid = String(b.product_id);
+          if (!batchesByProductId.has(pid)) batchesByProductId.set(pid, []);
+          batchesByProductId.get(pid).push(b);
+        }
+        if (b.product_name) {
+          const pnm = b.product_name.toLowerCase();
+          if (!batchesByProductName.has(pnm)) batchesByProductName.set(pnm, []);
+          batchesByProductName.get(pnm).push(b);
+        }
+      }
+
+      for (const cp of catalogMatches) {
+        const pName = (cp.name || cp.product_name || "").trim();
+        if (!pName) continue;
+        const norm = normalizeMedName(pName);
+        if (seenNormalizedNames.has(norm)) continue;
+        seenNormalizedNames.add(norm);
+        if (cp.id) seenProductIds.add(String(cp.id));
+        if (cp.product_id) seenProductIds.add(String(cp.product_id));
+        catalogProductNames.add(pName.toLowerCase());
+
+        const batches = (cp.id && batchesByProductId.get(String(cp.id))) ||
+          batchesByProductName.get(pName.toLowerCase()) || [];
+        const totalStock = batches.reduce((sum, b) => sum + (b.available_quantity || 0), 0);
+        const firstBatch = batches[0] || null;
+
+        const pUnits = cp.units_per_pack || firstBatch?.units_per_pack || 1;
+        const pMrp = typeof cp.mrp === "number" && cp.mrp > 0
+          ? cp.mrp
+          : (firstBatch?.mrp_pack || (firstBatch?.mrp ? firstBatch.mrp * pUnits : 0));
+        const pUnitMrp = typeof cp.unit_mrp === "number" && cp.unit_mrp > 0
+          ? cp.unit_mrp
+          : (pMrp > 0 && pUnits > 0 ? parseFloat((pMrp / pUnits).toFixed(2)) : 0);
+        const pTrade = typeof cp.trade_price === "number" && cp.trade_price > 0
+          ? cp.trade_price
+          : (typeof cp.purchase_price === "number" && cp.purchase_price > 0
+            ? cp.purchase_price
+            : (firstBatch?.pack_price || (firstBatch?.purchase_price ? firstBatch.purchase_price * pUnits : (pMrp > 0 ? parseFloat((pMrp * 0.7).toFixed(2)) : 0))));
+
+        const pPack = cp.package_details || cp.packaging_label || `${pUnits} ${cp.dosage_form || "units"}`;
+        const pTaxRate = cp.tax_rate !== undefined ? cp.tax_rate : 5;
+        const pCgst = cp.cgst !== undefined ? cp.cgst : pTaxRate / 2;
+        const pSgst = cp.sgst !== undefined ? cp.sgst : pTaxRate / 2;
+        const pHsn = cp.hsn_no || cp.hsn_code || firstBatch?.hsn_no || "";
+
+        // Matched every query token in the DB filter, so floor the score
+        const bestSim = scoreMatch(trimmedQ, pName, cp.salt_composition || "") || 35;
+
+        processedCatalog.push({
+          _id: cp._id ? String(cp._id) : undefined,
+          id: cp.id,
+          product_id: cp.id,
+          product_code: `MED-${cp.id}`,
+          name: pName,
+          product_name: pName,
+          source: totalStock > 0 ? "inventory" : "catalog",
+          is_custom_catalog: true,
+          manufacturer: cp.manufacturer || firstBatch?.manufacturer || "",
+          manufacturer_name: cp.manufacturer || firstBatch?.manufacturer || "",
+          salt_composition: cp.salt_composition || firstBatch?.salt_composition || "",
+          short_composition1: cp.salt_composition || firstBatch?.salt_composition || "",
+          category: cp.category || "medicine",
+          dosage_form: cp.dosage_form || firstBatch?.pack_type || "tablet",
+          pack_type: cp.pack_type || firstBatch?.pack_type || "Strip",
+          units_per_pack: pUnits,
+          units: pUnits,
+          packaging_label: cp.packaging_label || pPack,
+          package_details: pPack,
+          pack_size: pPack,
+          pack_size_label: pPack,
+          hsn_no: pHsn,
+          hsn_code: pHsn,
+          tax_rate: pTaxRate,
+          cgst: pCgst,
+          sgst: pSgst,
+          mrp: pMrp,
+          "price(₹)": pMrp,
+          unit_mrp: pUnitMrp,
+          mrp_per_unit: pUnitMrp,
+          trade_price: pTrade,
+          purchase_price: pTrade,
+          rate_pack: pTrade,
+          available_quantity: totalStock,
+          stock_status: totalStock > 0 ? "In Stock" : "My Catalog",
+          batch_no: firstBatch?.batch_no || "",
+          expiry_date: firstBatch?.expiry_date || "",
+          batches: batches.map(b => ({
+            id: b.id,
+            batch_no: b.batch_no,
+            expiry_date: b.expiry_date,
+            available_quantity: b.available_quantity,
+            purchase_price: b.purchase_price,
+            mrp: b.mrp,
+          })),
+          fuzzyScore: 100 + bestSim,
+          matchQuality: "exact",
+        });
+      }
+    } catch (catErr) {
+      console.error("Catalog search error in medicines route:", catErr.message);
     }
 
-    // ========== 1. SEARCH USER'S INVENTORY ==========
+    // ========== 2. SEARCH USER'S INVENTORY ==========
     const inventoryMatchStage = {
       pharmacy_id: pharmacyId,
-      $or: [
-        { product_name: searchRegex },
-        { salt_composition: searchRegex },
-        { batch_no: searchRegex },
-        ...(enableFuzzy && fuzzyConditions.length > 0 ? fuzzyConditions : []),
-      ],
+      ...(catalogProductNames.size > 0
+        ? { product_name: { $nin: Array.from(catalogProductNames).map(n => new RegExp(`^${escapeRegex(n)}$`, "i")) } }
+        : {}),
+      ...tenantTokenMatch(trimmedQ, ["product_name", "salt_composition"], {
+        wholeQueryFields: ["batch_no"],
+      }),
     };
 
     const inventoryPipeline = [
@@ -240,6 +308,8 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
           mrp: { $first: "$mrp" },
           created_at: { $max: "$created_at" },
           supplier_id: { $first: "$supplier_id" },
+          cgst: { $first: "$cgst" },
+          sgst: { $first: "$sgst" },
           batches: {
             $push: {
               id: "$id",
@@ -362,6 +432,9 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
           mrp: "$mrp",
           units_per_pack: "$units_per_pack",
           pack_type: "$pack_type",
+          hsn_no: "$hsn_no",
+          cgst: "$cgst",
+          sgst: "$sgst",
           "price(₹)": "$mrp",
           supplier_name: "$supplier.name",
           supplier_id: "$supplier_id",
@@ -384,9 +457,11 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
     if (enableFuzzy) {
       processedInventory = inventoryResults
         .map((item) => {
-          const nameSim = calculateSimilarity(q, item.product_name);
-          const saltSim = calculateSimilarity(q, item.salt_composition);
-          const bestSim = Math.max(nameSim, saltSim);
+          const bestSim =
+            Math.max(
+              scoreMatch(trimmedQ, item.product_name, item.salt_composition || ""),
+              batchMatchScore(trimmedQ, item.batches)
+            ) || 35;
 
           // Boost score for in-stock items
           const stockBoost = item.stock_status === "In Stock" ? 10 : 0;
@@ -402,140 +477,189 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
         .sort((a, b) => b.fuzzyScore - a.fuzzyScore);
     }
 
-    // Get inventory product names to exclude from global search
-    const inventoryProductNames = processedInventory.map((item) =>
-      item.product_name?.toLowerCase()
-    );
+    // Deduplicate inventory against custom catalog
+    const deduplicatedInventory = [];
+    for (const item of processedInventory) {
+      const norm = normalizeMedName(item.product_name);
+      if (seenNormalizedNames.has(norm)) continue;
+      if (item.id && seenProductIds.has(String(item.id))) continue;
+      if (item.product_id && seenProductIds.has(String(item.product_id))) continue;
 
-    // ========== 2. SEARCH GLOBAL MEDICINES ==========
-    const globalMatchConditions = {
-      $or: [
-        { name: searchRegex },
-        { short_composition1: searchRegex },
-        { short_composition2: searchRegex },
-        ...(enableFuzzy && fuzzyConditions.length > 0
-          ? fuzzyConditions.map((fc) => ({
-              $or: [
-                { name: fc.$or[0].product_name || fc.$or[0].salt_composition },
-                {
-                  short_composition1:
-                    fc.$or[0].product_name || fc.$or[0].salt_composition,
-                },
-                {
-                  short_composition2:
-                    fc.$or[0].product_name || fc.$or[0].salt_composition,
-                },
-              ],
-            }))
-          : []),
-      ],
-    };
-
-    // Exclude inventory matches if we have them
-    if (inventoryProductNames.length > 0) {
-      globalMatchConditions.name = {
-        ...globalMatchConditions.name,
-        $nin: inventoryProductNames.map((name) => new RegExp(`^${name}$`, "i")),
-      };
+      seenNormalizedNames.add(norm);
+      if (item.id) seenProductIds.add(String(item.id));
+      if (item.product_id) seenProductIds.add(String(item.product_id));
+      deduplicatedInventory.push(item);
     }
 
-    const globalMedicines = await db
-      .collection("global_medicines")
-      .find(globalMatchConditions, {
-        projection: {
-          _id: 0,
-          id: 1,
-          name: 1,
-          "price(₹)": 1,
-          manufacturer_name: 1,
-          pack_size_label: 1,
-          short_composition1: 1,
-          short_composition2: 1,
-        },
-      })
-      .limit(internalLimit)
-      .toArray();
+    // ========== 3. SEARCH GLOBAL MEDICINES (Centralized Prod DB) ==========
+    let processedGlobal = [];
+    try {
+      // Index-backed n-gram lookup, ranked and deduped by normalised name
+      const rawGlobal = await searchGlobalMedicines(trimmedQ, { limit: internalLimit });
 
-    // Process global results with fuzzy scoring
-    let processedGlobal = globalMedicines.map((med) => {
-      const nameSim = calculateSimilarity(q, med.name);
-      const compSim = calculateSimilarity(
-        q,
-        `${med.short_composition1 || ""} ${med.short_composition2 || ""}`
-      );
-      const bestSim = Math.max(nameSim, compSim);
+      // Map raw documents into unified contract for frontend and DEDUPLICATE against local catalog/inventory!
+      const deduplicatedGlobal = [];
+      for (const med of rawGlobal) {
+        const medName = (med.name || med.product_name || "").trim();
+        if (!medName) continue;
+        const norm = normalizeMedName(medName);
 
-      return {
-        ...med,
-        source: "global",
-        product_name: med.name,
-        manufacturer: med.manufacturer_name,
-        stock_status: "Not in inventory",
-        available_quantity: 0,
-        fuzzyScore: bestSim,
-        matchQuality:
-          bestSim >= 90 ? "exact" : bestSim >= 70 ? "good" : "fuzzy",
-      };
-    });
+        // Strict Check: If this medicine is already in local catalog or local inventory, SKIP IT!
+        if (seenNormalizedNames.has(norm)) continue;
+        if (med.product_id && seenProductIds.has(String(med.product_id))) continue;
+        if (med.id && seenProductIds.has(String(med.id))) continue;
 
-    if (enableFuzzy) {
-      processedGlobal = processedGlobal
-        .filter((item) => item.fuzzyScore > 30)
-        .sort((a, b) => b.fuzzyScore - a.fuzzyScore);
-    } else {
-      // Standard sorting without fuzzy
-      processedGlobal.sort((a, b) => {
-        const aName = (a.name || "").toLowerCase();
-        const bName = (b.name || "").toLowerCase();
-        const aComp =
-          `${a.short_composition1 || ""} ${a.short_composition2 || ""}`.toLowerCase();
-        const bComp =
-          `${b.short_composition1 || ""} ${b.short_composition2 || ""}`.toLowerCase();
+        seenNormalizedNames.add(norm);
+        if (med.product_id) seenProductIds.add(String(med.product_id));
+        if (med.id) seenProductIds.add(String(med.id));
 
-        if (aName === searchLower) return -1;
-        if (bName === searchLower) return 1;
-        if (aName.startsWith(searchLower) && !bName.startsWith(searchLower))
-          return -1;
-        if (!aName.startsWith(searchLower) && bName.startsWith(searchLower))
-          return 1;
-        if (aComp.startsWith(searchLower) && !bComp.startsWith(searchLower))
-          return -1;
-        if (!aComp.startsWith(searchLower) && bComp.startsWith(searchLower))
-          return 1;
-        return 0;
-      });
+        const medMfg = med.manufacturer_name || med.manufacturer || "";
+        const medSalt = med.active_ingredients || [med.short_composition1, med.short_composition2].map(s => (s || "").trim()).filter(Boolean).join(", ") || "";
+        const medMrp = typeof med.mrp === "number" ? med.mrp : (parseFloat(med["price(₹)"]) || 0);
+
+        // Parse units per pack from pack_size_label if units_per_pack is missing
+        let medUnits = typeof med.units_per_pack === "number" && med.units_per_pack > 0 ? med.units_per_pack : 1;
+        const packLabel = med.packaging_label || med.package_details || med.pack_size_label || med.pack_size || "";
+        if (medUnits <= 1 && packLabel) {
+          const matchNum = packLabel.match(/\d+/);
+          if (matchNum) {
+            const parsed = parseInt(matchNum[0]);
+            if (!isNaN(parsed) && parsed > 0 && parsed <= 500) {
+              medUnits = parsed;
+            }
+          }
+        }
+
+        const medUnitMrp = typeof med.unit_mrp === "number" && med.unit_mrp > 0
+          ? med.unit_mrp
+          : (medUnits > 0 && medMrp > 0 ? parseFloat((medMrp / medUnits).toFixed(2)) : medMrp);
+        const medSellingPrice = typeof med.selling_price === "number" ? med.selling_price : (parseFloat(med.price) || medMrp);
+        const medTradePrice = typeof med.trade_price === "number" && med.trade_price > 0
+          ? med.trade_price
+          : (typeof med.purchase_price === "number" && med.purchase_price > 0 ? med.purchase_price : parseFloat((medMrp * 0.7).toFixed(2)));
+        const medTaxRate = typeof med.tax_rate === "number" ? med.tax_rate : (med.gst_percentage || 5);
+        const medHsn = med.hsn_code || med.hsn_no || "300490";
+
+        // Extract dosage form
+        let medDosage = med.dosage_form || "";
+        if (!medDosage && packLabel) {
+          const lowerPack = packLabel.toLowerCase();
+          if (lowerPack.includes("tablet")) medDosage = "tablet";
+          else if (lowerPack.includes("capsule")) medDosage = "capsule";
+          else if (lowerPack.includes("syrup") || lowerPack.includes("suspension")) medDosage = "syrup";
+          else if (lowerPack.includes("injection")) medDosage = "injection";
+          else if (lowerPack.includes("gel") || lowerPack.includes("ointment")) medDosage = "gel";
+          else if (lowerPack.includes("drop")) medDosage = "drops";
+        }
+
+        const bestSim = med._score || 0;
+
+        deduplicatedGlobal.push({
+          _id: med._id ? String(med._id) : undefined,
+          id: med.product_id || med.id || (med._id ? String(med._id) : undefined),
+          product_id: med.product_id || med.id || (med._id ? String(med._id) : undefined),
+          product_code: med.product_code || `MED-${med.product_id || med.id || ""}`,
+          product_slug: med.product_slug || "",
+          name: medName,
+          product_name: medName,
+          brand: med.brand || "",
+          manufacturer: medMfg,
+          manufacturer_name: medMfg,
+          dosage_form: medDosage || "tablet",
+          product_category: med.product_category || med.type || "allopathy",
+          packaging_label: packLabel || `${medUnits} units`,
+          package_details: packLabel || `${medUnits} units`,
+          pack_size: packLabel || `${medUnits} units`,
+          pack_size_label: packLabel || `${medUnits} units`,
+          pack_type: med.pack_type || (medDosage === "syrup" ? "Bottle" : "Strip"),
+          units_per_pack: medUnits,
+          mrp: medMrp,
+          "price(₹)": medMrp,
+          unit_mrp: medUnitMrp,
+          mrp_per_unit: medUnitMrp,
+          selling_price: medSellingPrice,
+          trade_price: medTradePrice,
+          purchase_price: medTradePrice,
+          rate_pack: medTradePrice,
+          tax_rate: medTaxRate,
+          cgst: medTaxRate / 2,
+          sgst: medTaxRate / 2,
+          hsn_code: medHsn,
+          hsn_no: medHsn,
+          salt_composition: medSalt,
+          short_composition1: medSalt,
+          short_composition2: "",
+          active_ingredients: medSalt,
+          prescription_required: med.prescription_required || false,
+          image_url: med.image_url || med.image || "",
+          thumbnail_url: med.thumbnail_url || med.thumb_image || "",
+          rank_score: med.rank_score || med.popularity_score || 0,
+          source: "global",
+          stock_status: "Global Catalog",
+          available_quantity: 0,
+          fuzzyScore: bestSim,
+          matchQuality: bestSim >= 90 ? "exact" : bestSim >= 70 ? "good" : "fuzzy",
+        });
+      }
+      processedGlobal = deduplicatedGlobal;
+    } catch (globalErr) {
+      console.error("Global medicines search error:", globalErr.message);
     }
 
-    // ========== 3. COMBINE AND FINAL SORT ==========
-    // Merge and re-rank all results
-    const allResults = [...processedInventory, ...processedGlobal];
+    // ========== 4. COMBINE AND FINAL SORT ==========
+    // "if keywords matches closely to any catalog in inventory show that first below from. global_medicines"
+    const allResults = [...processedCatalog, ...deduplicatedInventory, ...processedGlobal];
 
-    // Final ranking: Inventory first (especially in-stock), then by fuzzy score
     const rankedResults = allResults.sort((a, b) => {
-      // Source priority: inventory > global
-      if (a.source === "inventory" && b.source === "global") {
-        // Check if inventory item is in stock
-        if (a.stock_status === "In Stock") return -1;
-        // Out-of-stock inventory still comes before global if fuzzy score is close
-        if ((a.fuzzyScore || 0) >= (b.fuzzyScore || 0) - 10) return -1;
-        return 1;
-      }
-      if (a.source === "global" && b.source === "inventory") {
-        if (b.stock_status === "In Stock") return 1;
-        if ((b.fuzzyScore || 0) >= (a.fuzzyScore || 0) - 10) return 1;
-        return -1;
+      const aIsLocal = a.is_custom_catalog || a.source === "catalog" || a.source === "inventory";
+      const bIsLocal = b.is_custom_catalog || b.source === "catalog" || b.source === "inventory";
+
+      const aScore = a.fuzzyScore || 0;
+      const bScore = b.fuzzyScore || 0;
+
+      // Close match threshold: score >= 60 means name starts with or closely matches keyword
+      const aCloseMatch = aIsLocal && aScore >= 60;
+      const bCloseMatch = bIsLocal && bScore >= 60;
+
+      // 1. Closely matching catalog/inventory items ALWAYS come FIRST!
+      if (aCloseMatch && !bCloseMatch) return -1;
+      if (!aCloseMatch && bCloseMatch) return 1;
+
+      // 2. If both are closely matching local items:
+      if (aCloseMatch && bCloseMatch) {
+        if (bScore !== aScore) return bScore - aScore;
+        const aInStock = (a.available_quantity || 0) > 0;
+        const bInStock = (b.available_quantity || 0) > 0;
+        if (aInStock && !bInStock) return -1;
+        if (!aInStock && bInStock) return 1;
+        if (a.is_custom_catalog && !b.is_custom_catalog) return -1;
+        if (!a.is_custom_catalog && b.is_custom_catalog) return 1;
       }
 
-      // Both same source: sort by fuzzy score
-      return (b.fuzzyScore || 0) - (a.fuzzyScore || 0);
+      // 3. Otherwise sort by relevance / fuzzy score
+      if (bScore !== aScore) {
+        return bScore - aScore;
+      }
+
+      // 4. If same relevance score, prefer local over global
+      if (aIsLocal && !bIsLocal) return -1;
+      if (!aIsLocal && bIsLocal) return 1;
+
+      // 5. Deterministic order for local ties so pages never overlap
+      // (global items keep their popularity order from the catalogue).
+      if (aIsLocal && bIsLocal) {
+        return (a.product_name || "").localeCompare(b.product_name || "");
+      }
+      return 0;
     });
 
     const paginatedResults = rankedResults.slice(skip, skip + parsedLimit);
     const has_more = rankedResults.length > skip + parsedLimit;
 
-    res.json({
+    const responsePayload = {
       medicines: paginatedResults,
       meta: {
+        total_catalog: processedCatalog.length,
         total_inventory: processedInventory.length,
         total_global: processedGlobal.length,
         returned: paginatedResults.length,
@@ -552,7 +676,9 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
             .length,
         },
       },
-    });
+    };
+
+    res.json(responsePayload);
   } catch (error) {
     next(error);
   }
@@ -574,22 +700,15 @@ router.get(
         return res.json({ suggestions: [] });
       }
 
-      const parsedLimit = parseInt(limit);
-      const searchLower = q.toLowerCase();
-      const escapedQ = escapeRegex(q);
+      const parsedLimit = Math.min(parseInt(limit) || 10, 50);
 
-      // Quick prefix search with fallback to fuzzy
       let inventoryResults = await db
         .collection("inventory")
         .aggregate([
           {
             $match: {
               pharmacy_id: pharmacyId,
-              $or: [
-                { product_name: { $regex: `^${escapedQ}`, $options: "i" } },
-                { product_name: { $regex: escapedQ, $options: "i" } },
-                { batch_no: { $regex: escapedQ, $options: "i" } },
-              ],
+              ...tenantTokenMatch(q, ["product_name"], { wholeQueryFields: ["batch_no"] }),
             }
           },
           {
@@ -608,62 +727,13 @@ router.get(
         ])
         .toArray();
 
-      // If few results, try fuzzy
-      if (inventoryResults.length < 3 && q.length > 3) {
-        const cleanFuzzy = String(q).replace(/[.*+?^${}()|[\]\\]/g, "");
-        if (cleanFuzzy.length >= 2) {
-          const fuzzyPattern = cleanFuzzy.split("").map(c => escapeRegex(c)).join(".*?");
-          const fuzzyResults = await db
-            .collection("inventory")
-            .aggregate([
-              {
-                $match: {
-                  pharmacy_id: pharmacyId,
-                  $or: [
-                    { product_name: { $regex: fuzzyPattern, $options: "i" } },
-                    { batch_no: { $regex: fuzzyPattern, $options: "i" } },
-                  ],
-                  product_name: { $not: { $regex: `^${escapedQ}`, $options: "i" } }, // Exclude already found
-                }
-              },
-              {
-                $group: {
-                  _id: "$product_name",
-                  product_name: { $first: "$product_name" },
-                  product_id: { $first: "$product_id" },
-                  batch_no: { $first: "$batch_no" },
-                  mrp: { $first: "$mrp" },
-                  units_per_pack: { $first: "$units_per_pack" },
-                  pack_type: { $first: "$pack_type" },
-                  available_quantity: { $sum: "$available_quantity" }
-                }
-              },
-              { $limit: parsedLimit - inventoryResults.length }
-            ])
-            .toArray();
-
-          inventoryResults = [...inventoryResults, ...fuzzyResults];
-        }
+      // Global medicines suggestions with projection
+      let globalResults = [];
+      try {
+        globalResults = await searchGlobalMedicines(q, { limit: parsedLimit });
+      } catch (err2) {
+        console.warn("Global suggestions lookup failed:", err2.message);
       }
-
-      // Global medicines suggestions
-      const globalResults = await db
-        .collection("global_medicines")
-        .find(
-          {
-            name: { $regex: `^${escapedQ}`, $options: "i" },
-          },
-          {
-            projection: {
-              _id: 0,
-              name: 1,
-              id: 1,
-              source: { $literal: "global" },
-            },
-          }
-        )
-        .limit(parsedLimit)
-        .toArray();
 
       // Combine and deduplicate
       const seen = new Set(
@@ -677,19 +747,23 @@ router.get(
           inStock: r.available_quantity > 0,
         })),
         ...globalResults
-          .filter((r) => !seen.has(r.name.toLowerCase()))
+          .filter((r) => !seen.has((r.product_name || r.name || "").toLowerCase()))
           .map((r) => ({
-            text: r.name,
-            value: r.id,
+            text: r.name || r.product_name,
+            value: r.product_id || r.id,
             source: "global",
             inStock: false,
+            manufacturer: r.manufacturer_name || r.manufacturer,
+            mrp: r.mrp,
           })),
       ].slice(0, parsedLimit);
 
-      res.json({
+      const resultPayload = {
         suggestions: combined,
         query: q,
-      });
+      };
+
+      res.json(resultPayload);
     } catch (error) {
       next(error);
     }

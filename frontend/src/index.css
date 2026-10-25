@@ -30,8 +30,8 @@ div[style*="Made with Emergent"] {
     --secondary-foreground: 0 0% 98%;
     --muted: 0 0% 13%;
     --muted-foreground: 240 5% 65%;
-    --accent: 32 100% 50%;
-    --accent-foreground: 0 0% 100%;
+    --accent: 0 0% 15%;
+    --accent-foreground: 0 0% 98%;
     --destructive: 0 84% 60%;
     --destructive-foreground: 0 0% 100%;
     --border: 0 0% 16%;
@@ -59,8 +59,8 @@ div[style*="Made with Emergent"] {
     --secondary-foreground: 222 47% 11%;
     --muted: 210 25% 94%;
     --muted-foreground: 215 16% 45%;
-    --accent: 32 95% 54%;
-    --accent-foreground: 0 0% 100%;
+    --accent: 210 25% 92%;
+    --accent-foreground: 222 47% 11%;
     --destructive: 0 84% 60%;
     --destructive-foreground: 0 0% 100%;
     --border: 214.3 31.8% 85%;
@@ -209,17 +209,72 @@ div[style*="Made with Emergent"] {
 }
 
 /* Input styles */
-input[type="text"],
-input[type="email"],
-input[type="password"],
-input[type="number"],
-input[type="tel"],
-input[type="date"],
-input[type="datetime-local"],
-input[type="month"],
-textarea,
-select {
-  @apply bg-background/50 border-input focus:border-primary focus:ring-1 focus:ring-primary/50 rounded-lg transition-all placeholder:text-muted-foreground/50;
+input[type="text"]:not(.wave-input),
+input[type="email"]:not(.wave-input),
+input[type="password"]:not(.wave-input),
+input[type="number"]:not(.wave-input),
+input[type="tel"]:not(.wave-input),
+input[type="date"]:not(.wave-input),
+input[type="datetime-local"]:not(.wave-input),
+input[type="month"]:not(.wave-input) {
+  border: none !important;
+  border-bottom: 1.5px solid #515151 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  transition: border-color 0.2s ease;
+}
+
+.light input[type="text"]:not(.wave-input),
+.light input[type="email"]:not(.wave-input),
+.light input[type="password"]:not(.wave-input),
+.light input[type="number"]:not(.wave-input),
+.light input[type="tel"]:not(.wave-input),
+.light input[type="date"]:not(.wave-input),
+.light input[type="datetime-local"]:not(.wave-input),
+.light input[type="month"]:not(.wave-input) {
+  border-bottom-color: #cbd5e1 !important;
+}
+
+input[type="text"]:focus:not(.wave-input),
+input[type="email"]:focus:not(.wave-input),
+input[type="password"]:focus:not(.wave-input),
+input[type="number"]:focus:not(.wave-input),
+input[type="tel"]:focus:not(.wave-input),
+input[type="date"]:focus:not(.wave-input),
+input[type="datetime-local"]:focus:not(.wave-input),
+input[type="month"]:focus:not(.wave-input) {
+  outline: none !important;
+  border-bottom-color: #ff751f !important;
+  box-shadow: 0 1px 0 #ff751f, 0 0 8px rgba(255, 117, 31, 0.4) !important;
+}
+
+/* Select & Dropdown Trigger Styles - Borderless with bottom line */
+select,
+[data-radix-select-trigger],
+button[role="combobox"] {
+  border: none !important;
+  border-bottom: 1.5px solid #515151 !important;
+  border-radius: 0 !important;
+  background-color: transparent !important;
+  box-shadow: none !important;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.light select,
+.light [data-radix-select-trigger],
+.light button[role="combobox"] {
+  border-bottom-color: #cbd5e1 !important;
+}
+
+select:focus,
+[data-radix-select-trigger]:focus,
+[data-radix-select-trigger][data-state="open"],
+button[role="combobox"]:focus,
+button[role="combobox"][data-state="open"] {
+  outline: none !important;
+  border-bottom-color: #ff751f !important;
+  box-shadow: 0 1px 0 #ff751f, 0 0 8px rgba(255, 117, 31, 0.4) !important;
 }
 
 input[type="date"],
@@ -348,6 +403,134 @@ input[type="month"]::-webkit-calendar-picker-indicator {
 .currency {
   font-family: "JetBrains Mono", monospace;
   @apply tabular-nums;
+}
+
+/* ----------------------------------------------------
+   Silky 60fps/120fps GPU-Accelerated Micro-Animations
+   ---------------------------------------------------- */
+
+/* 1. Shimmer Wave Animation for Skeleton Loaders */
+@keyframes shimmerWave {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.shimmer-wave {
+  background: linear-gradient(
+    90deg,
+    hsl(var(--muted) / 0.5) 0%,
+    hsl(var(--primary) / 0.15) 35%,
+    hsl(var(--muted) / 0.8) 50%,
+    hsl(var(--primary) / 0.15) 65%,
+    hsl(var(--muted) / 0.5) 100%
+  ) !important;
+  background-size: 200% 100% !important;
+  animation: shimmerWave 2s cubic-bezier(0.4, 0, 0.2, 1) infinite !important;
+}
+
+/* 2. Micro-interactions & Physics-based Easings */
+.hover-lift {
+  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.25s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.25s ease !important;
+  will-change: transform;
+}
+
+.hover-lift:hover {
+  transform: translateY(-3px) !important;
+  box-shadow: 0 12px 28px -6px rgba(0, 0, 0, 0.18), 0 0 16px -2px hsl(var(--primary) / 0.12) !important;
+}
+
+.card-interactive {
+  transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.28s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.28s ease !important;
+  will-change: transform;
+}
+
+.card-interactive:hover {
+  transform: translateY(-2px) !important;
+  border-color: hsl(var(--primary) / 0.4) !important;
+  box-shadow: 0 10px 24px -6px rgba(0, 0, 0, 0.14), 0 0 12px -2px hsl(var(--primary) / 0.1) !important;
+}
+
+/* 3. Button Tactile Press Feedback */
+.btn-tactile {
+  transition: transform 0.15s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.15s ease, background-color 0.15s ease !important;
+}
+
+.btn-tactile:active {
+  transform: scale(0.96) !important;
+}
+
+/* 4. Attention-Grabbing Bell Wiggle */
+@keyframes bellWiggle {
+  0%, 100% { transform: rotate(0deg); }
+  15% { transform: rotate(14deg); }
+  30% { transform: rotate(-12deg); }
+  45% { transform: rotate(8deg); }
+  60% { transform: rotate(-6deg); }
+  75% { transform: rotate(3deg); }
+}
+
+.animate-bell-wiggle {
+  animation: bellWiggle 1.4s ease-in-out infinite;
+  transform-origin: top center;
+}
+
+/* 5. Button Light Sweep Sheen Effect */
+.btn-shine {
+  position: relative;
+  overflow: hidden;
+}
+
+.btn-shine::after {
+  content: "";
+  position: absolute;
+  top: -50%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  background: linear-gradient(
+    60deg,
+    transparent 40%,
+    rgba(255, 255, 255, 0.2) 50%,
+    transparent 60%
+  );
+  transform: translateX(-100%);
+  transition: transform 0.6s ease;
+}
+
+.btn-shine:hover::after {
+  transform: translateX(100%);
+}
+
+/* 6. Staggered Page Content Fade-Slide Entrances */
+@keyframes fadeInUpSubtle {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-stagger-1 {
+  animation: fadeInUpSubtle 0.35s cubic-bezier(0.16, 1, 0.3, 1) 0.05s both;
+}
+
+.animate-stagger-2 {
+  animation: fadeInUpSubtle 0.35s cubic-bezier(0.16, 1, 0.3, 1) 0.1s both;
+}
+
+.animate-stagger-3 {
+  animation: fadeInUpSubtle 0.35s cubic-bezier(0.16, 1, 0.3, 1) 0.15s both;
+}
+
+.animate-stagger-4 {
+  animation: fadeInUpSubtle 0.35s cubic-bezier(0.16, 1, 0.3, 1) 0.2s both;
 }
 
 /* Animations */
@@ -842,12 +1025,556 @@ aside.fixed,
 }
 
 /* 4. Chrome/Safari Autofill Background & Color Overrides */
+/* Chrome/Safari Autofill Background & Color Overrides */
 input:-webkit-autofill,
 input:-webkit-autofill:hover,
 input:-webkit-autofill:focus,
 input:-webkit-autofill:active {
   -webkit-text-fill-color: hsl(var(--foreground)) !important;
-  -webkit-box-shadow: 0 0 0px 1000px hsl(var(--card) / 0.85) inset !important;
-  transition: background-color 5000s ease-in-out 0s;
-  border-color: hsl(var(--primary) / 0.5) !important;
+  -webkit-box-shadow: 0 0 0px 1000px hsl(var(--background)) inset !important;
+  box-shadow: 0 0 0px 1000px hsl(var(--background)) inset !important;
+  transition: background-color 9999999s ease-in-out 0s;
+  caret-color: hsl(var(--foreground)) !important;
+  background-color: transparent !important;
+}
+
+/* ==========================================================================
+   PURE BORDERLESS WAVE GROUP ANIMATED FLOATING INPUT
+   ========================================================================== */
+.wave-group {
+  position: relative;
+  width: 100%;
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+.wave-group.has-label {
+  margin-top: 14px;
+  margin-bottom: 4px;
+}
+
+.wave-group .wave-input {
+  font-size: 15px;
+  padding: 8px 10px 8px 4px;
+  display: block;
+  width: 100%;
+  border: none !important;
+  border-bottom: 1.5px solid #515151 !important;
+  background: transparent !important;
+  color: hsl(var(--foreground)) !important;
+  font-weight: 500;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  transition: border-color 0.2s ease;
+}
+
+.light .wave-group .wave-input {
+  border-bottom-color: #cbd5e1 !important;
+}
+
+.wave-group.has-left-icon .wave-input {
+  padding-left: 32px;
+}
+
+.wave-group.has-right-icon .wave-input {
+  padding-right: 36px;
+}
+
+.wave-group .wave-input:focus {
+  outline: none !important;
+  border-bottom-color: #515151 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.light .wave-group .wave-input:focus {
+  border-bottom-color: #cbd5e1 !important;
+}
+
+.wave-group .wave-label {
+  color: #888888;
+  font-size: 14px;
+  font-weight: 400;
+  position: absolute;
+  pointer-events: none;
+  left: 4px;
+  top: 8px;
+  display: flex;
+  user-select: none;
+}
+
+.wave-group.has-left-icon .wave-label {
+  left: 32px;
+}
+
+.wave-group .wave-char {
+  display: inline-block;
+  transition: 0.22s cubic-bezier(0.4, 0, 0.2, 1) all;
+  transition-delay: calc(var(--index) * 0.03s);
+}
+
+.wave-group .wave-required-star {
+  color: #ff751f !important;
+  font-weight: 800;
+  display: inline-block;
+}
+
+/* Floating animation: raises label and required asterisk up smoothly above the underline */
+.wave-group .wave-input:focus ~ .wave-label .wave-char,
+.wave-group.has-value .wave-label .wave-char,
+.wave-group .wave-input:not(:placeholder-shown) ~ .wave-label .wave-char,
+.wave-group .wave-input:-webkit-autofill ~ .wave-label .wave-char {
+  transform: translateY(-22px);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: #ff751f;
+}
+
+.wave-group.has-value:not(.is-focused):not(:focus-within) .wave-label .wave-char {
+  color: #888888;
+}
+
+.wave-group.has-value:not(.is-focused):not(:focus-within) .wave-label .wave-required-star {
+  color: #ff751f !important;
+}
+
+.wave-group .wave-bar {
+  position: relative;
+  display: block;
+  width: 100%;
+}
+
+.wave-group .wave-bar:before,
+.wave-group .wave-bar:after {
+  content: '';
+  height: 2px;
+  width: 0;
+  bottom: 0px;
+  position: absolute;
+  background: #ff751f;
+  transition: 0.25s cubic-bezier(0.4, 0, 0.2, 1) all;
+  -webkit-transition: 0.25s cubic-bezier(0.4, 0, 0.2, 1) all;
+  box-shadow: 0 0 8px rgba(255, 117, 31, 0.6);
+}
+
+.wave-group .wave-bar:before {
+  left: 50%;
+}
+
+.wave-group .wave-bar:after {
+  right: 50%;
+}
+
+.wave-group .wave-input:focus ~ .wave-bar:before,
+.wave-group .wave-input:focus ~ .wave-bar:after,
+.wave-group.is-focused .wave-bar:before,
+.wave-group.is-focused .wave-bar:after {
+  width: 50%;
+}
+
+/* Error State */
+.wave-group.has-error .wave-input {
+  border-bottom-color: #ef4444 !important;
+}
+
+.wave-group.has-error .wave-bar:before,
+.wave-group.has-error .wave-bar:after {
+  background: #ef4444;
+  box-shadow: 0 0 8px rgba(239, 68, 68, 0.6);
+}
+
+.wave-group.has-error .wave-label .wave-char {
+  color: #ef4444 !important;
+}
+
+/* Chrome / Safari / Edge Autofill Override - Clean Transparent No Disturbance */
+.wave-group input:-webkit-autofill,
+.wave-group input:-webkit-autofill:hover,
+.wave-group input:-webkit-autofill:focus,
+.wave-group input:-webkit-autofill:active {
+  -webkit-text-fill-color: hsl(var(--foreground)) !important;
+  -webkit-box-shadow: 0 0 0px 1000px hsl(var(--background)) inset !important;
+  box-shadow: 0 0 0px 1000px hsl(var(--background)) inset !important;
+  transition: background-color 9999999s ease-in-out 0s;
+  caret-color: hsl(var(--foreground)) !important;
+  background-color: transparent !important;
+}
+
+
+
+/* ---------- AI scanner ---------- */
+@keyframes ai-scan-sweep {
+  0% { transform: translateY(-10%); opacity: 0; }
+  10% { opacity: 1; }
+  90% { opacity: 1; }
+  100% { transform: translateY(1000%); opacity: 0; }
+}
+@keyframes ai-border-spin {
+  to { --ai-angle: 360deg; }
+}
+@keyframes ai-text-shimmer {
+  0% { background-position: 200% 50%; }
+  100% { background-position: -200% 50%; }
+}
+@keyframes ai-blob {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(6%, -8%) scale(1.12); }
+}
+@keyframes ai-pop-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+@property --ai-angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+.ai-scan-beam {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 10%;
+  background: linear-gradient(180deg, transparent, rgba(249, 115, 22, 0.55) 70%, rgba(168, 85, 247, 0.9));
+  box-shadow: 0 6px 18px rgba(168, 85, 247, 0.55);
+  animation: ai-scan-sweep 1.6s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+.ai-glow-border {
+  position: relative;
+  isolation: isolate;
+}
+.ai-glow-border::before {
+  content: "";
+  position: absolute;
+  inset: -1.5px;
+  border-radius: inherit;
+  padding: 1.5px;
+  background: conic-gradient(from var(--ai-angle), #f97316, #ec4899, #a855f7, #3b82f6, #f97316);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  animation: ai-border-spin 3s linear infinite;
+  z-index: -1;
+}
+.ai-shimmer-text {
+  background: linear-gradient(90deg, #f97316, #ec4899, #a855f7, #f97316);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: ai-text-shimmer 3s linear infinite;
+}
+.ai-blob {
+  animation: ai-blob 9s ease-in-out infinite;
+}
+.ai-pop-in {
+  animation: ai-pop-in 0.35s ease-out both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ai-scan-beam, .ai-glow-border::before, .ai-shimmer-text, .ai-blob, .ai-pop-in { animation: none; }
+}
+
+/* ----------------------------------------------------
+   Phone layout (below md / 768px). Desktop and tablet are untouched.
+------------------------------------------------------- */
+@keyframes mobile-sheet-up {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+@keyframes mobile-sheet-down {
+  from { transform: translateY(0); }
+  to { transform: translateY(100%); }
+}
+
+@media (max-width: 767.98px) {
+  /* A create/edit form brings its own Save bar; it takes the tab bar's place */
+  body:has(.mobile-action-bar) [data-testid="mobile-bottom-nav"] {
+    display: none;
+  }
+  body:has(.mobile-action-bar) [data-testid="dashboard-layout"] main {
+    padding-bottom: calc(8.5rem + env(safe-area-inset-bottom)) !important;
+  }
+  html, body {
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior-y: none;
+  }
+
+  /* Dialogs become bottom sheets, like a native app */
+  .mobile-sheet {
+    left: 0 !important;
+    right: 0 !important;
+    top: auto !important;
+    bottom: 0 !important;
+    transform: none !important;
+    width: 100% !important;
+    max-width: none !important;
+    max-height: 92dvh !important;
+    margin: 0 !important;
+    border-radius: 1.5rem 1.5rem 0 0 !important;
+    border-left: 0 !important;
+    border-right: 0 !important;
+    border-bottom: 0 !important;
+    padding-bottom: calc(1.25rem + env(safe-area-inset-bottom)) !important;
+    overflow-y: auto !important;
+    animation: mobile-sheet-up 0.28s cubic-bezier(0.2, 0.8, 0.2, 1) both !important;
+  }
+  .mobile-sheet[data-state="closed"] {
+    animation: mobile-sheet-down 0.2s ease-in both !important;
+  }
+  .mobile-sheet::before {
+    content: "";
+    display: block;
+    width: 2.5rem;
+    height: 0.3rem;
+    border-radius: 999px;
+    background: hsl(var(--muted-foreground) / 0.35);
+    margin: -0.5rem auto 0.25rem;
+    grid-column: 1 / -1;
+  }
+
+  /* Product suggestions hang under the field across the full screen width */
+  [data-suggestions-dropdown="true"],
+  [data-batch-dropdown="true"] {
+    left: 8px !important;
+    right: 8px !important;
+    width: auto !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    max-height: min(320px, 45dvh) !important;
+  }
+
+  /* Stat tiles: two compact columns instead of one tall stack */
+  .mobile-stat-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 0.5rem !important;
+  }
+  .mobile-stat-grid > :last-child:nth-child(odd) {
+    grid-column: 1 / -1;
+  }
+  .mobile-stat-grid > * > [class*="p-6"],
+  .mobile-stat-grid > * > [class*="p-5"] {
+    padding: 0.75rem !important;
+    gap: 0.6rem !important;
+  }
+  .mobile-stat-grid .w-12.h-12 {
+    width: 2.25rem !important;
+    height: 2.25rem !important;
+  }
+  .mobile-stat-grid .w-6.h-6 {
+    width: 1.1rem !important;
+    height: 1.1rem !important;
+  }
+  .mobile-stat-grid .p-3 {
+    padding: 0.5rem !important;
+  }
+  /* Tiles laid out "value ... icon": the value needs the whole width */
+  .mobile-stat-grid .flex.justify-between > :last-child:not(:first-child) {
+    display: none !important;
+  }
+  .mobile-stat-grid .text-2xl,
+  .mobile-stat-grid h3 {
+    font-size: 1.05rem !important;
+    line-height: 1.35rem !important;
+  }
+  .mobile-stat-grid > * > [class*="p-6"] > div:last-child {
+    min-width: 0;
+  }
+  .mobile-stat-grid p.uppercase {
+    font-size: 9.5px !important;
+    letter-spacing: 0.03em !important;
+    line-height: 1.2;
+  }
+
+  /* Tables marked mobileCards: every row becomes a card */
+  /* The box a card list sits in steps back: the cards are the surface */
+  *:has(> .table-cards-wrap) {
+    border-color: transparent !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+    overflow: visible !important;
+  }
+  .table-cards-wrap {
+    overflow: visible !important;
+    max-height: none !important;
+    height: auto !important;
+  }
+  table.table-cards {
+    display: block;
+    width: 100% !important;
+    min-width: 0 !important;
+    table-layout: auto !important;
+  }
+  table.table-cards > thead {
+    display: none;
+  }
+  table.table-cards > tbody,
+  table.table-cards > tfoot {
+    display: block;
+  }
+  table.table-cards > tbody > tr,
+  table.table-cards > tfoot > tr {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.5rem 0.75rem;
+    padding: 0.75rem 0.8rem;
+    margin: 0 0 0.6rem;
+    border: 1px solid hsl(var(--border)) !important;
+    border-radius: 1rem;
+    background: hsl(var(--card));
+    position: relative;
+  }
+  table.table-cards > tbody > tr > td,
+  table.table-cards > tfoot > tr > td {
+    display: block;
+    padding: 0 !important;
+    width: auto !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    height: auto !important;
+    border: 0 !important;
+    text-align: left !important;
+    white-space: normal;
+  }
+  table.table-cards td[data-label]:not([data-label=""])::before {
+    content: attr(data-label);
+    display: block;
+    margin-bottom: 0.2rem;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1.2;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: hsl(var(--muted-foreground));
+  }
+  table.table-cards td[data-card="title"],
+  table.table-cards td[data-card="full"],
+  table.table-cards td[data-card="actions"],
+  table.table-cards td[colspan] {
+    grid-column: 1 / -1;
+  }
+  table.table-cards td[data-card="title"] {
+    order: -1;
+    font-size: 0.95rem;
+  }
+  /* Fields fill their cell (desktop widths are sized for columns) */
+  table.table-cards td input:not([type="checkbox"]):not([type="radio"]),
+  table.table-cards td textarea,
+  table.table-cards td [role="combobox"],
+  table.table-cards td button[aria-haspopup="dialog"] {
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: none !important;
+  }
+  table.table-cards td div:has(> input:not([type="checkbox"]):not([type="radio"])),
+  table.table-cards td div:has(> .wave-group),
+  table.table-cards td div:has(> [role="combobox"]),
+  table.table-cards td div:has(> button[aria-haspopup="dialog"]) {
+    width: 100% !important;
+    max-width: none !important;
+    min-width: 0 !important;
+    flex: 1 1 auto;
+  }
+  table.table-cards td[data-card="full"] > button,
+  table.table-cards td[data-card="full"] > div > button:only-child {
+    width: 100% !important;
+  }
+  table.table-cards td[data-card="title"]::before,
+  table.table-cards td[data-card="corner"]::before,
+  table.table-cards td[data-card="actions"]::before {
+    display: none !important;
+  }
+  table.table-cards td[data-card="actions"] {
+    order: 99;
+    padding-top: 0.6rem !important;
+    border-top: 1px dashed hsl(var(--border)) !important;
+  }
+  table.table-cards td[data-card="actions"] > * {
+    justify-content: flex-end;
+  }
+  table.table-cards td[data-card="hide"] {
+    display: none !important;
+  }
+  table.table-cards td[data-card="corner"] {
+    position: absolute;
+    top: 0.55rem;
+    right: 0.55rem;
+  }
+  table.table-cards > tbody > tr:has(> td[data-card="corner"]) > td[data-card="title"] {
+    padding-right: 2.5rem !important;
+  }
+  /* Cell content reads left to right inside a card */
+  table.table-cards td:not([data-card="actions"]):not([data-card="corner"]) > .flex {
+    justify-content: flex-start !important;
+  }
+  table.table-cards td:not([data-card="actions"]):not([data-card="corner"]):not([data-card="title"]):not([data-card="full"]) > .flex-col.items-center {
+    align-items: flex-start !important;
+  }
+  table.table-cards td:not([data-card="actions"]) > .flex + div {
+    justify-content: flex-start !important;
+  }
+  table.table-cards td[data-card="actions"] > .flex {
+    justify-content: flex-end !important;
+    flex-wrap: wrap;
+  }
+  table.table-cards td[data-card="actions"] button {
+    min-height: 2.25rem;
+    min-width: 2.25rem;
+  }
+  /* Item lists inside an expanded card: denser, three across */
+  table.table-cards table.table-cards > tbody > tr {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.4rem 0.6rem;
+    padding: 0.65rem 0.7rem;
+    margin-bottom: 0.45rem;
+    background: hsl(var(--muted) / 0.35);
+  }
+  /* A row that is only one wide cell (empty state, expanded details) */
+  table.table-cards > tbody > tr:has(> td:only-child) {
+    display: block;
+  }
+  /* Expanded details attach to the card above them */
+  table.table-cards > tbody > tr.card-detail,
+  table.table-cards > tbody > tr:has(> td[colspan]:only-child):not(:first-child) {
+    margin-top: -0.85rem;
+    border-top: 0 !important;
+    border-top-left-radius: 0;
+    border-top-right-radius: 0;
+  }
+  table.table-cards > tbody > tr:has(+ tr.card-detail),
+  table.table-cards > tbody > tr:has(+ tr > td[colspan]:only-child) {
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+    margin-bottom: 0.25rem;
+  }
+  table.table-cards > tbody > tr:has(> td:only-child) > td:only-child {
+    padding: 0 !important;
+  }
+}
+
+/* Hold Alt (⌥): every control marked data-kbd shows its shortcut */
+html.kbd-hints [data-kbd]:not(.fixed):not(.absolute):not(.sticky) {
+  position: relative;
+}
+html.kbd-hints [data-kbd]::after {
+  content: attr(data-kbd);
+  position: absolute;
+  top: -9px;
+  right: -7px;
+  z-index: 60;
+  padding: 3px 5px;
+  border-radius: 6px;
+  background: #ea580c;
+  color: #fff;
+  font: 700 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  pointer-events: none;
+}
+/* Focused list rows (keyboard) */
+[data-row]:focus-visible {
+  outline: 2px solid rgb(249 115 22 / 0.7);
+  outline-offset: -2px;
 }

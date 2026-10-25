@@ -1,6 +1,7 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Outlet, NavLink, useNavigate, useLocation } from "react-router-dom";
-import { useAuth } from "../App";
+import axios from "axios";
+import { API, useAuth } from "../App";
 import { Button } from "./ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "./ui/avatar";
 import { Sheet, SheetContent, SheetTrigger } from "./ui/sheet";
@@ -37,56 +38,74 @@ import {
   Sparkles,
   CalendarX,
   RotateCcw,
+  LifeBuoy,
+  ClipboardList,
 } from "lucide-react";
 
 import RecentActivitySidebar from "./RecentActivitySidebar";
-import { useKeyboardShortcut, formatShortcut } from "../hooks/useKeyboard";
-import AgentWidget from "./Agent/AgentWidget";
+import { formatCombo, isVisible } from "../lib/shortcuts";
+import { ShortcutProvider } from "./shortcuts/Shortcuts";
+import AssistantLauncher from "./assistant/AssistantLauncher";
 import PlanBadge from "./PlanBadge";
+import NotificationCenter from "./NotificationCenter";
+import { MobileBottomNav } from "./MobileNav";
+import TopNav from "./TopNav";
+import { AI_LOGO_SRC } from "./scan/ScanUI";
 
 const navItems = [
-  { path: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { path: "/dashboard", label: "Dashboard", icon: LayoutDashboard, shortcut: "alt+h" },
   {
     path: "/inventory",
     label: "Inventory",
     icon: Package,
-    shortcut: ["alt", "i"],
+    shortcut: "alt+i",
   },
   {
     path: "/purchases",
     label: "Purchases",
     icon: ShoppingCart,
-    shortcut: ["alt", "p"],
+    shortcut: "alt+p",
   },
-  { path: "/billing", label: "Billing", icon: Receipt, shortcut: ["alt", "b"] },
+  { path: "/billing", label: "Billing", icon: Receipt, shortcut: "alt+b" },
   {
     path: "/suppliers",
     label: "Suppliers",
     icon: Truck,
-    shortcut: ["alt", "s"],
+    shortcut: "alt+s",
   },
   {
     path: "/customers",
     label: "Customers",
     icon: Users,
-    shortcut: ["alt", "c"],
+    shortcut: "alt+c",
   },
   {
     path: "/expiry",
     label: "Expiry",
     icon: CalendarX,
-    shortcut: ["alt", "e"],
+    shortcut: "alt+e",
   },
   {
     path: "/returns",
     label: "Returns",
     icon: RotateCcw,
-    shortcut: ["alt", "r"],
+    shortcut: "alt+r",
   },
+  { path: "/short-book", label: "Short Book", icon: ClipboardList, shortcut: "alt+o" },
   { path: "/users", label: "Users", icon: UserCog, adminOnly: true },
-  { path: "/reports", label: "Reports", icon: BarChart3 },
-  { path: "/settings", label: "Settings", icon: Settings },
+  { path: "/reports", label: "Reports", icon: BarChart3, shortcut: "alt+y" },
+  { path: "/settings", label: "Settings", icon: Settings, shortcut: "alt+," },
+  // In the user menu and the phone's More sheet, not the top bar
+  { path: "/support", label: "Help & Support", icon: LifeBuoy, menuOnly: true },
 ];
+
+// "AGENTIC Plan", or "AGENTIC Trial · 3d left" while on the free trial
+const planLabel = (user) => {
+  const sub = user?.subscription;
+  if (sub?.status === "TRIAL") return `${sub.plan} Trial · ${sub.days_left}d left`;
+  if (user?.subscription_plan) return `${user.subscription_plan} Plan`;
+  return "No active plan";
+};
 
 export default function DashboardLayout() {
   const { user, pharmacy, logout, updateSetting, isAdmin } = useAuth();
@@ -103,16 +122,65 @@ export default function DashboardLayout() {
   });
 
   const filteredItems = navItems.filter((item) => !item.adminOnly || isAdmin);
+  const topNavItems = useMemo(() => filteredItems.filter((item) => !item.menuOnly), [isAdmin]); // eslint-disable-line
 
-  // Keyboard Shortcuts
-  useKeyboardShortcut(["alt", "i"], () => navigate("/inventory"));
-  useKeyboardShortcut(["alt", "p"], () => navigate("/purchases"));
-  useKeyboardShortcut(["alt", "b"], () => navigate("/billing"));
-  useKeyboardShortcut(["alt", "s"], () => navigate("/suppliers"));
-  useKeyboardShortcut(["alt", "c"], () => navigate("/customers"));
-  useKeyboardShortcut(["alt", "e"], () => navigate("/expiry"));
-  useKeyboardShortcut(["alt", "r"], () => navigate("/returns"));
-  useKeyboardShortcut(["alt", "a"], () => toggleActivity());
+  // Support replies not seen yet (badge in the user menu)
+  const [supportUnread, setSupportUnread] = useState(0);
+  useEffect(() => {
+    let live = true;
+    const check = () =>
+      axios
+        .get(`${API}/support/unread`)
+        .then((r) => live && setSupportUnread(r.data?.count || 0))
+        .catch(() => {});
+    check();
+    const t = setInterval(check, 3 * 60 * 1000);
+    window.addEventListener("support-read", check);
+    return () => {
+      live = false;
+      clearInterval(t);
+      window.removeEventListener("support-read", check);
+    };
+  }, [location.pathname]);
+
+  // Global keyboard shortcuts (pages add their own with useShortcuts; theirs win)
+  const visible = (selector) => [...document.querySelectorAll(selector)].find((el) => isVisible(el) && !el.disabled);
+  const globalShortcuts = [
+    ...filteredItems
+      .filter((item) => item.shortcut)
+      .map((item) => ({ combo: item.shortcut, label: item.label, group: "Go to", run: () => navigate(item.path) })),
+    { combo: "alt+j", label: "DavaDesk AI", group: "Go to", run: () => navigate("/assistant") },
+    {
+      combo: "alt+n",
+      label: "New (bill, purchase, note… on this page; else a new bill)",
+      run: () => {
+        const btn = visible('[data-shortcut="new"]');
+        if (btn) return btn.click();
+        navigate("/billing", { state: { newBill: true } });
+      },
+    },
+    {
+      combo: "alt+k",
+      label: "Search this page",
+      run: () => {
+        const el = visible('[data-shortcut="search"]') || visible('main input[type="search"], main input[placeholder^="Search"]');
+        if (!el) return false;
+        el.focus();
+        el.select?.();
+      },
+    },
+    { combo: "/", label: "Search this page", run: () => globalShortcuts.find((b) => b.combo === "alt+k").run() },
+    {
+      combo: "mod+enter",
+      hidden: true,
+      run: () => {
+        const btn = visible('[data-shortcut="save"]');
+        if (!btn) return false;
+        btn.click();
+      },
+    },
+    { combo: "alt+l", label: "Recent activity panel", run: () => toggleActivity() },
+  ];
 
   // Listen to dark/light theme mutations
   useEffect(() => {
@@ -200,19 +268,20 @@ export default function DashboardLayout() {
   };
 
   return (
+    <ShortcutProvider globals={globalShortcuts}>
     <TooltipProvider delayDuration={0}>
       <div
-        className="h-screen w-screen max-h-screen bg-background flex flex-col select-none overflow-hidden"
+        className="h-screen w-screen max-h-screen max-md:h-[100dvh] max-md:max-h-[100dvh] bg-background flex flex-col select-none overflow-hidden"
         data-testid="dashboard-layout"
       >
         {/* Fixed Glassy Top Header Navigation Bar */}
-        <header className="h-16 shrink-0 w-full z-50 border-b border-border/80 dark:border-border/50 bg-background/90 dark:bg-zinc-950/90 backdrop-blur-xl transition-colors duration-200">
-          <div className="w-full h-full px-4 sm:px-6 flex items-center justify-between gap-4">
+        <header className="h-16 max-md:h-14 max-md:pt-[env(safe-area-inset-top)] max-md:box-content shrink-0 w-full z-50 border-b border-border/80 dark:border-border/50 bg-background/90 dark:bg-zinc-950/90 backdrop-blur-xl transition-colors duration-200">
+          <div className="w-full h-full px-4 sm:px-6 max-md:px-3 flex items-center justify-between gap-4 max-md:gap-2">
             {/* Left Brand Identifier */}
-            <div className="flex items-center gap-3 shrink-0">
+            <div className="flex items-center gap-3 min-w-0 shrink">
               {/* Mobile Drawer Sheet Trigger */}
               <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
-                <SheetTrigger asChild className="lg:hidden">
+                <SheetTrigger asChild className="hidden md:inline-flex lg:hidden">
                   <Button
                     variant="ghost"
                     size="icon"
@@ -236,19 +305,19 @@ export default function DashboardLayout() {
                           className="w-10 h-10 rounded-xl object-cover border border-border/50 shadow-sm"
                         />
                       ) : (
-                        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-orange-500 to-amber-500 flex items-center justify-center text-white font-black text-base shadow-md shadow-orange-500/20">
-                          {pharmacy?.name?.charAt(0) || "P"}
-                        </div>
+                        <img
+                          src="/assets/svgs/logoBrand/logoOnlyWithoutBackground.svg"
+                          alt="DavaDesk"
+                          className="w-10 h-10 object-contain"
+                        />
                       )}
                       <div>
                         <h2 className="font-black text-sm text-foreground leading-tight">
-                          {pharmacy?.name || "Pharmalogy"}
+                          {pharmacy?.name || "DavaDesk"}
                         </h2>
                         <span className="text-[10px] text-orange-600 dark:text-orange-400 font-extrabold flex items-center gap-1 mt-0.5">
                           <Sparkles className="w-2.5 h-2.5 text-orange-500" />
-                          {user?.subscription_plan
-                            ? `${user.subscription_plan} Plan`
-                            : "Agentic Plan"}
+                          {planLabel(user)}
                         </span>
                       </div>
                     </div>
@@ -262,13 +331,13 @@ export default function DashboardLayout() {
                             key={item.path}
                             to={item.path}
                             onClick={() => setMobileOpen(false)}
-                            className={`flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold transition-all ${
+                            className={`group flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold transition-all ${
                               isItemActive
                                 ? "bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-md shadow-orange-500/25"
                                 : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
                             }`}
                           >
-                            <item.icon className="w-5 h-5 shrink-0" />
+                            <item.icon className={`w-5 h-5 shrink-0 transition-transform duration-300 ease-out ${isItemActive ? "" : "group-hover:-rotate-12 group-hover:scale-110"}`} />
                             <span>{item.label}</span>
                           </NavLink>
                         );
@@ -296,7 +365,8 @@ export default function DashboardLayout() {
               {/* Desktop Logo & Name */}
               <div
                 onClick={() => navigate("/dashboard")}
-                className="flex items-center gap-3 cursor-pointer group"
+                className="flex items-center gap-3 cursor-pointer group min-w-0"
+                title={pharmacy?.name || "DavaDesk"}
               >
                 {pharmacy?.logo_url ? (
                   <img
@@ -305,99 +375,72 @@ export default function DashboardLayout() {
                     className="w-9 h-9 rounded-xl object-cover border border-border/60 shadow-sm group-hover:scale-105 transition-transform"
                   />
                 ) : (
-                  <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-orange-500 to-amber-500 flex items-center justify-center text-white font-black text-sm shadow-md shadow-orange-500/20 group-hover:scale-105 transition-transform">
-                    {pharmacy?.name?.charAt(0) || "P"}
-                  </div>
+                  <img
+                    src="/assets/svgs/logoBrand/logoOnlyWithoutBackground.svg"
+                    alt="DavaDesk"
+                    className="w-9 h-9 object-contain group-hover:scale-105 transition-transform"
+                  />
                 )}
-                <div className="hidden sm:flex flex-col">
-                  <span className="font-black text-sm tracking-tight text-foreground group-hover:text-orange-500 transition-colors leading-tight">
-                    {pharmacy?.name || "Pharmalogy"}
+                <div className="flex flex-col min-w-0 max-w-[160px] max-md:max-w-[140px] 2xl:max-w-[220px]">
+                  <span className="font-black text-sm tracking-tight text-foreground group-hover:text-orange-500 transition-colors leading-tight truncate">
+                    {pharmacy?.name || "DavaDesk"}
                   </span>
-                  <span className="text-[10px] text-orange-600 dark:text-orange-400 font-extrabold flex items-center gap-1">
+                  <span className="text-[10px] text-orange-600 dark:text-orange-400 font-extrabold flex items-center gap-1 truncate">
                     <Sparkles className="w-2.5 h-2.5 text-orange-500" />
-                    {user?.subscription_plan
-                      ? `${user.subscription_plan} Plan`
-                      : "Agentic Plan"}
+                    {planLabel(user)}
                   </span>
                 </div>
               </div>
             </div>
 
-            {/* Center Top Horizontal Navigation Bar (Desktop / Large Screens) */}
-            <nav className="hidden lg:flex items-center gap-1 bg-muted/40 dark:bg-muted/20 p-1.5 rounded-2xl border border-border/60 dark:border-border/40 shadow-xs max-w-full overflow-x-auto scrollbar-none">
-              {filteredItems.map((item) => {
-                const isItemActive = checkIsActive(item.path);
-                return (
-                  <Tooltip key={item.path}>
-                    <TooltipTrigger asChild>
-                      <NavLink
-                        to={item.path}
-                        className={`relative flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all duration-300 ease-out active:scale-95 whitespace-nowrap ${
-                          isItemActive
-                            ? "bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-md shadow-orange-500/25 scale-[1.02]"
-                            : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
-                        }`}
-                        data-testid={`nav-${item.path.slice(1)}`}
-                      >
-                        <item.icon className="w-4 h-4 shrink-0 transition-transform duration-300" />
-                        <span>{item.label}</span>
-                      </NavLink>
-                    </TooltipTrigger>
-                    {item.shortcut && (
-                      <TooltipContent
-                        side="bottom"
-                        className="font-mono text-[10px] font-bold"
-                      >
-                        Shortcut: {formatShortcut(item.shortcut)}
-                      </TooltipContent>
-                    )}
-                  </Tooltip>
-                );
-              })}
-            </nav>
+            {/* Top menu (desktop): fits on one line, overflow goes under "More" */}
+            <TopNav items={topNavItems} isActive={checkIsActive} />
 
             {/* Right Controls Panel */}
-            <div className="flex items-center gap-2.5 shrink-0">
+            <div className="flex items-center gap-2.5 max-md:gap-1.5 shrink-0">
+              {/* Phone: DavaDesk AI lives in the header instead of a floating bubble */}
+              <button
+                type="button"
+                onClick={() => navigate("/assistant")}
+                aria-label="Open DavaDesk AI"
+                className="md:hidden flex h-9 w-9 items-center justify-center rounded-xl border border-border/60 active:scale-95"
+              >
+                <img src={AI_LOGO_SRC} alt="" className="h-7 w-7 rounded-full" />
+              </button>
+
               {/* Theme Toggle Button */}
               <Button
                 variant="ghost"
                 size="icon"
                 onClick={toggleTheme}
                 data-testid="theme-toggle-btn"
-                className="relative hover:bg-muted/80 rounded-xl transition-all active:scale-95 border border-border/60 dark:border-border/40 h-9 w-9"
+                className="group relative hover:bg-muted/80 rounded-xl transition-all duration-200 hover:scale-105 active:scale-90 border border-border/60 dark:border-border/40 h-9 w-9 cursor-pointer"
                 title={isDark ? "Switch to Light Mode" : "Switch to Dark Mode"}
               >
                 {isDark ? (
-                  <Sun className="w-4.5 h-4.5 text-amber-400 drop-shadow-[0_0_8px_rgba(251,191,36,0.4)]" />
+                  <Sun className="w-4.5 h-4.5 text-amber-400 drop-shadow-[0_0_8px_rgba(251,191,36,0.4)] transition-transform duration-300 group-hover:rotate-45" />
                 ) : (
-                  <Moon className="w-4.5 h-4.5 text-orange-600 drop-shadow-[0_0_8px_rgba(234,88,12,0.3)]" />
+                  <Moon className="w-4.5 h-4.5 text-orange-600 drop-shadow-[0_0_8px_rgba(234,88,12,0.3)] transition-transform duration-300 group-hover:-rotate-12" />
                 )}
               </Button>
 
-              {/* Notification Button */}
-              <Button
-                variant="ghost"
-                size="icon"
-                className="relative hover:bg-muted/80 rounded-xl border border-border/60 dark:border-border/40 h-9 w-9"
-                data-testid="notifications-btn"
-              >
-                <Bell className="w-4.5 h-4.5 text-foreground" />
-                <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-destructive rounded-full shadow shadow-destructive/50 animate-pulse"></span>
-              </Button>
+              {/* Notification Center */}
+              <NotificationCenter />
 
               {/* Recent Activity Panel Toggle */}
               <Button
                 variant="ghost"
                 size="icon"
                 onClick={toggleActivity}
-                className={`relative rounded-xl border border-border/60 dark:border-border/40 h-9 w-9 transition-all duration-200 ${
+                className={`group relative max-md:hidden rounded-xl border border-border/60 dark:border-border/40 h-9 w-9 transition-all duration-200 hover:scale-105 active:scale-95 cursor-pointer ${
                   activityOpen
-                    ? "bg-orange-500/15 text-orange-500 border-orange-500/40"
-                    : "hover:bg-muted/80"
+                    ? "bg-orange-500/15 text-orange-500 border-orange-500/40 shadow-xs"
+                    : "hover:bg-muted/80 text-foreground"
                 }`}
-                title="Recent Activity (Alt + A)"
+                title={`Recent Activity (${formatCombo("alt+l")})`}
+                data-kbd={formatCombo("alt+l")}
               >
-                <Activity className="w-4.5 h-4.5" />
+                <Activity className="w-4.5 h-4.5 text-foreground dark:text-foreground transition-transform duration-200 group-hover:scale-110" />
               </Button>
 
               {/* User Avatar & Dropdown Menu */}
@@ -405,40 +448,58 @@ export default function DashboardLayout() {
                 <DropdownMenuTrigger asChild>
                   <Button
                     variant="ghost"
-                    className="flex items-center gap-2 hover:bg-muted/80 px-2.5 py-1.5 rounded-xl border border-border/60 dark:border-border/40 transition-all h-9"
+                    className="flex items-center gap-2 hover:bg-muted/80 text-foreground px-2.5 max-md:px-1 py-1.5 rounded-xl border border-border/60 dark:border-border/40 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98] h-9 cursor-pointer"
                     data-testid="user-menu-btn"
                   >
-                    <Avatar className="w-7 h-7 ring-1 ring-border/60 shadow-xs shrink-0">
+                    <Avatar className="w-7 h-7 ring-1 ring-border/60 shadow-xs shrink-0 transition-transform duration-200 group-hover:scale-105">
                       <AvatarImage src={user?.image_url} />
                       <AvatarFallback className="bg-orange-500/20 text-orange-600 dark:text-orange-400 text-xs font-black">
                         {user?.name?.charAt(0)?.toUpperCase()}
                       </AvatarFallback>
                     </Avatar>
-                    <span className="hidden sm:inline text-xs font-extrabold text-foreground max-w-[100px] truncate">
+                    <span className="hidden xl:inline text-xs font-extrabold text-foreground max-w-[120px] truncate" title={user?.name}>
                       {user?.name}
                     </span>
-                    <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
+                    <ChevronDown className="w-3.5 h-3.5 text-muted-foreground max-md:hidden" />
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent
                   align="end"
-                  className="w-52 mt-1 border border-border/80 dark:border-border/50 shadow-xl rounded-2xl p-1.5 bg-background/95 backdrop-blur-xl"
+                  className="w-56 mt-1 border border-border/80 dark:border-border/50 shadow-xl rounded-2xl p-1.5 bg-background/95 backdrop-blur-xl animate-in fade-in-0 zoom-in-95 duration-200"
                 >
+                  <div className="px-3 py-2 min-w-0">
+                    <p className="text-xs font-extrabold text-foreground truncate">{user?.name}</p>
+                    <p className="text-[11px] font-semibold text-muted-foreground truncate">{user?.email}</p>
+                  </div>
+                  <DropdownMenuSeparator className="bg-border/50 my-1" />
                   <DropdownMenuItem
                     onClick={() => navigate("/settings")}
                     data-testid="settings-dropdown"
-                    className="cursor-pointer font-bold py-2 px-3 rounded-xl group hover:bg-orange-500/10 focus:bg-orange-500/10 focus:text-orange-600 dark:focus:text-orange-400"
+                    className="cursor-pointer font-bold py-2 px-3 rounded-xl group hover:bg-orange-500/10 focus:bg-orange-500/10 text-foreground hover:text-orange-600 focus:text-orange-600 dark:hover:text-orange-400 dark:focus:text-orange-400 transition-colors"
                   >
-                    <Settings className="w-4 h-4 mr-2.5 text-orange-500 group-hover:rotate-45 transition-transform" />
+                    <Settings className="w-4 h-4 mr-2.5 text-orange-500 group-hover:rotate-45 transition-transform duration-200" />
                     Settings
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() => navigate("/support", { state: { from: location.pathname } })}
+                    data-testid="support-dropdown"
+                    className="cursor-pointer font-bold py-2 px-3 rounded-xl group hover:bg-orange-500/10 focus:bg-orange-500/10 text-foreground hover:text-orange-600 focus:text-orange-600 dark:hover:text-orange-400 dark:focus:text-orange-400 transition-colors"
+                  >
+                    <LifeBuoy className="w-4 h-4 mr-2.5 text-orange-500" />
+                    Help & Support
+                    {supportUnread > 0 && (
+                      <span className="ml-auto rounded-full bg-violet-600 px-1.5 py-0.5 text-[10px] font-black text-white" aria-label={`${supportUnread} new replies`}>
+                        {supportUnread}
+                      </span>
+                    )}
                   </DropdownMenuItem>
                   <DropdownMenuSeparator className="bg-border/50 my-1" />
                   <DropdownMenuItem
                     onClick={handleLogout}
                     data-testid="logout-btn"
-                    className="text-destructive focus:text-destructive-foreground focus:bg-destructive cursor-pointer font-bold py-2 px-3 rounded-xl group"
+                    className="text-destructive hover:bg-destructive/10 focus:bg-destructive/10 focus:text-destructive hover:text-destructive cursor-pointer font-bold py-2 px-3 rounded-xl group transition-colors"
                   >
-                    <LogOut className="w-4 h-4 mr-2.5 text-destructive group-focus:text-white transition-colors" />
+                    <LogOut className="w-4 h-4 mr-2.5 text-destructive transition-transform group-hover:translate-x-0.5" />
                     Logout
                   </DropdownMenuItem>
                 </DropdownMenuContent>
@@ -449,10 +510,20 @@ export default function DashboardLayout() {
 
         {/* Full-Width Seamless Page Content Area */}
         <div className="flex-1 min-h-0 relative flex overflow-hidden w-full">
-          <main className="flex-1 h-full overflow-y-auto p-2 sm:p-3 lg:p-3 w-full flex flex-col">
+          <main
+            className={`flex-1 h-full overflow-y-auto w-full flex flex-col ${
+              location.pathname.startsWith("/purchases") || location.pathname.startsWith("/billing")
+                ? "p-2.5 sm:p-3.5 lg:px-4 lg:py-3"
+                : "p-4 max-md:px-3 sm:p-6 lg:p-7"
+            }`}
+          >
             <div
               key={location.pathname}
-              className="flex-1 w-full flex flex-col animate-in fade-in duration-300 ease-out"
+              className={`flex-1 w-full flex flex-col animate-in fade-in-0 slide-in-from-bottom-2 duration-300 ease-out ${
+                location.pathname.startsWith("/purchases") || location.pathname.startsWith("/billing")
+                  ? "max-w-none"
+                  : "max-w-[1650px] mx-auto"
+              }`}
             >
               <Outlet />
             </div>
@@ -479,9 +550,22 @@ export default function DashboardLayout() {
           </div>
         </div>
 
-        {/* Global AI Agent Interface widget */}
-        <AgentWidget user={user} />
+        {/* Phone: bottom tab bar */}
+        <MobileBottomNav
+          items={filteredItems}
+          isActive={checkIsActive}
+          onLogout={handleLogout}
+          onOpenActivity={() => !activityOpen && toggleActivity()}
+          pharmacy={pharmacy}
+          planLabel={planLabel(user)}
+        />
+
+        {/* DavaDesk AI launcher (phones use the header button) */}
+        <div className="max-md:hidden">
+          <AssistantLauncher />
+        </div>
       </div>
     </TooltipProvider>
+    </ShortcutProvider>
   );
 }
