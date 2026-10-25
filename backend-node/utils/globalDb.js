@@ -1,6 +1,14 @@
 const mongoose = require("mongoose");
 const { ensureSshTunnel, LOCAL_TUNNEL_PORT } = require("./tunnel");
 
+// One host and no replicaSet: talk to that host directly. Without this the
+// driver follows the replica set's own member address (localhost:27017),
+// which doesn't exist on the far side of an SSH tunnel or Docker bridge.
+const directOpts = (url) => {
+  const hosts = String(url || "").replace(/^mongodb:\/\/([^@/]*@)?/, "").split(/[/?]/)[0];
+  return /^mongodb:\/\//.test(url) && !hosts.includes(",") && !/[?&]replicaSet=/.test(url) ? { directConnection: true } : {};
+};
+
 let globalClient = null;
 let connectingPromise = null;
 let isGlobalConnectionAttempted = false;
@@ -92,6 +100,7 @@ function initBackgroundGlobalClient() {
           minPoolSize: 1,
           serverSelectionTimeoutMS: 4000,
           connectTimeoutMS: 10000,
+          ...directOpts(globalUri),
         });
         try {
           await client.connect();
