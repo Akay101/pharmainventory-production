@@ -3,6 +3,7 @@ import { useSearchParams, useLocation } from "react-router-dom";
 import { v4 as uuidv4 } from "uuid";
 import { createPortal } from "react-dom";
 import axios from "axios";
+import RecordDates from "../components/RecordDates";
 import { API, useAuth } from "../App";
 import {
   Card,
@@ -212,6 +213,7 @@ const SupplierSelector = ({
   showAllOption = false,
   className = "",
   disabled = false,
+  openSignal = 0, // bump to open it from the keyboard (e.g. saving without a supplier)
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -229,6 +231,15 @@ const SupplierSelector = ({
   const [creatingSup, setCreatingSup] = useState(false);
   const dropdownRef = useRef(null);
   const scrollContainerRef = useRef(null);
+  const triggerRef = useRef(null);
+  const openedBySignal = useRef(false);
+
+  useEffect(() => {
+    if (!openSignal || disabled) return;
+    openedBySignal.current = true;
+    setIsOpen(true);
+    triggerRef.current?.scrollIntoView({ block: "nearest" });
+  }, [openSignal]); // eslint-disable-line
 
   const handleCreateSupplier = async () => {
     if (!newSupName.trim()) return;
@@ -295,6 +306,10 @@ const SupplierSelector = ({
       setSuppliers((prev) => (append ? [...prev, ...data] : data));
       setHasMore(hasMoreData);
       setPage(p);
+      if (!append && openedBySignal.current && data.length) {
+        openedBySignal.current = false;
+        setHighlightedIndex(0);
+      }
     } catch (err) {
       if (!axios.isCancel(err)) {
         console.error("Failed to fetch suppliers", err);
@@ -315,6 +330,8 @@ const SupplierSelector = ({
     }
     onSelect(supplier);
     setIsOpen(false);
+    // Back on the field so Cmd/Ctrl+Enter can save straight away
+    setTimeout(() => triggerRef.current?.focus(), 0);
   };
 
   useEffect(() => {
@@ -348,6 +365,11 @@ const SupplierSelector = ({
 
   // Keyboard navigation
   const handleKeyDown = (e) => {
+    // Cmd/Ctrl+Enter is the page's save shortcut, not a pick
+    if (e.metaKey || e.ctrlKey) {
+      if (isOpen) setIsOpen(false);
+      return;
+    }
     if (!isOpen) {
       if (e.key === "Enter" || e.key === "ArrowDown" || e.key === "ArrowUp") {
         setIsOpen(true);
@@ -433,6 +455,8 @@ const SupplierSelector = ({
         }`}
         onClick={() => !disabled && setIsOpen(!isOpen)}
         tabIndex={0}
+        ref={triggerRef}
+        data-testid="supplier-selector"
       >
         <span
           className={`truncate ${!selectedId || selectedId === "" ? "text-muted-foreground/60" : "font-semibold text-foreground"}`}
@@ -962,6 +986,19 @@ const PriceTrendChart = ({
   );
 };
 
+// Part payments: never more than what's still owed on the purchase
+const purchaseRemaining = (p) =>
+  p ? Math.max(0, Math.round(((Number(p.total_amount) || 0) - (Number(p.amount_paid) || 0)) * 100) / 100) : 0;
+const partPaymentError = (p, raw) => {
+  if (!p || raw === "" || raw === null || raw === undefined) return "";
+  const amt = Number(raw);
+  const left = purchaseRemaining(p);
+  if (!Number.isFinite(amt) || amt <= 0) return "Enter an amount more than ₹0";
+  if (left <= 0) return "This purchase is already fully paid";
+  if (Math.round(amt * 100) / 100 > left) return `Only ₹${left.toFixed(2)} is left to pay. Enter ₹${left.toFixed(2)} or less.`;
+  return "";
+};
+
 export default function PurchasesPage() {
   // Data state
   const [purchases, setPurchases] = useState([]);
@@ -1020,6 +1057,7 @@ export default function PurchasesPage() {
   // Payment Tracking State
   const [paymentStatus, setPaymentStatus] = useState("Unpaid");
   const [amountPaid, setAmountPaid] = useState("");
+  const [supplierPickerSignal, setSupplierPickerSignal] = useState(0);
   const [paymentMode, setPaymentMode] = useState("");
 
   // Infinite scroll suggestion state
@@ -1385,11 +1423,12 @@ export default function PurchasesPage() {
     if (!inputElement) return;
 
     const rect = inputElement.getBoundingClientRect();
-    const dropdownWidth = Math.max(620, Math.min(window.innerWidth * 0.5, 780));
+    // Wide enough to show name, maker, pack, rates and stock on one line
+    const dropdownWidth = Math.min(window.innerWidth - 32, Math.max(860, Math.min(window.innerWidth * 0.72, 1100)));
 
     const spaceBelow = window.innerHeight - rect.bottom;
     const spaceAbove = rect.top;
-    const dropdownMaxHeight = 320;
+    const dropdownMaxHeight = 440;
     const positionAbove =
       spaceBelow < dropdownMaxHeight && spaceAbove > spaceBelow;
 
@@ -3421,7 +3460,8 @@ export default function PurchasesPage() {
 
   const handleSubmitPurchase = async () => {
     if (!selectedSupplier) {
-      toast.error("Please select a supplier");
+      toast.error("Please select a supplier", { description: "Pick one with ↑/↓ and Enter, then save again" });
+      setSupplierPickerSignal((n) => n + 1);
       return;
     }
 
@@ -4133,8 +4173,9 @@ export default function PurchasesPage() {
 
   // ============ ADD PARTIAL PAYMENT ============
   const handleAddNewPayment = async () => {
-    if (!newPaymentAmount || parseFloat(newPaymentAmount) <= 0) {
-      toast.error("Please enter a valid amount");
+    const err = partPaymentError(paymentDialog.purchase, newPaymentAmount);
+    if (err || !newPaymentAmount) {
+      toast.error(err || "Enter the amount paid");
       return;
     }
     setSubmitting(true);
@@ -4162,8 +4203,7 @@ export default function PurchasesPage() {
 
   const handleMarkAsPaid = async (purchase) => {
     try {
-      const remainingAmount =
-        purchase.total_amount - (purchase.amount_paid || 0);
+      const remainingAmount = purchaseRemaining(purchase);
       if (remainingAmount <= 0) return;
 
       await axios.post(`${API}/purchases/${purchase.id}/payments`, {
@@ -4173,7 +4213,7 @@ export default function PurchasesPage() {
       toast.success("Purchase marked as Paid");
       await fetchPurchases(pagination.page);
     } catch (error) {
-      toast.error("Failed to mark as paid");
+      toast.error(error.response?.data?.detail || "Failed to mark as paid");
     }
   };
 
@@ -4210,9 +4250,12 @@ export default function PurchasesPage() {
       {/* Restore Draft Dialog */}
       <Dialog
         open={paymentDialog.open}
-        onOpenChange={(open) =>
-          !open && setPaymentDialog({ open: false, purchase: null })
-        }
+        onOpenChange={(open) => {
+          if (!open) {
+            setPaymentDialog({ open: false, purchase: null });
+            setNewPaymentAmount("");
+          }
+        }}
       >
         <DialogContent>
           <DialogHeader>
@@ -4220,22 +4263,49 @@ export default function PurchasesPage() {
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <Label>Amount (₹)</Label>
+              {paymentDialog.purchase && (
+                <div className="grid grid-cols-3 gap-2 rounded-xl border border-border/70 bg-muted/30 p-2.5 text-center">
+                  <div>
+                    <p className="text-[10px] font-bold uppercase text-muted-foreground">Total</p>
+                    <p className="font-mono text-sm font-bold">₹{(Number(paymentDialog.purchase.total_amount) || 0).toFixed(2)}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-bold uppercase text-muted-foreground">Paid</p>
+                    <p className="font-mono text-sm font-bold text-green-600">₹{(Number(paymentDialog.purchase.amount_paid) || 0).toFixed(2)}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-bold uppercase text-muted-foreground">Left to pay</p>
+                    <p className="font-mono text-sm font-black text-red-500" data-testid="pay-part-remaining">₹{purchaseRemaining(paymentDialog.purchase).toFixed(2)}</p>
+                  </div>
+                </div>
+              )}
+              <div className="flex items-center justify-between">
+                <Label>Amount (₹)</Label>
+                {paymentDialog.purchase && purchaseRemaining(paymentDialog.purchase) > 0 && (
+                  <button
+                    type="button"
+                    className="text-[11px] font-bold text-primary hover:underline"
+                    onClick={() => setNewPaymentAmount(String(purchaseRemaining(paymentDialog.purchase)))}
+                  >
+                    Pay all ₹{purchaseRemaining(paymentDialog.purchase).toFixed(2)}
+                  </button>
+                )}
+              </div>
               <Input
                 type="number"
                 min="0"
                 step="0.01"
+                max={paymentDialog.purchase ? purchaseRemaining(paymentDialog.purchase) : undefined}
                 placeholder="0.00"
                 value={newPaymentAmount}
                 onChange={(e) => setNewPaymentAmount(e.target.value)}
+                aria-invalid={!!partPaymentError(paymentDialog.purchase, newPaymentAmount)}
+                className={partPaymentError(paymentDialog.purchase, newPaymentAmount) ? "border-red-500 focus-visible:ring-red-500/30" : ""}
+                data-testid="pay-part-amount"
               />
-              {paymentDialog.purchase && (
-                <p className="text-xs text-muted-foreground">
-                  Remaining Balance: ₹
-                  {(
-                    paymentDialog.purchase.total_amount -
-                    (paymentDialog.purchase.amount_paid || 0)
-                  ).toFixed(2)}
+              {partPaymentError(paymentDialog.purchase, newPaymentAmount) && (
+                <p className="text-xs font-semibold text-red-500" data-testid="pay-part-error">
+                  {partPaymentError(paymentDialog.purchase, newPaymentAmount)}
                 </p>
               )}
             </div>
@@ -4267,7 +4337,7 @@ export default function PurchasesPage() {
             <Button
               className="w-full btn-primary"
               onClick={handleAddNewPayment}
-              disabled={submitting}
+              disabled={submitting || !newPaymentAmount || !!partPaymentError(paymentDialog.purchase, newPaymentAmount)}
             >
               {submitting ? "Saving..." : "Save Payment"}
             </Button>
@@ -4339,6 +4409,7 @@ export default function PurchasesPage() {
                   selectedId={selectedSupplier}
                   knownSuppliers={suppliers}
                   disabled={processingRowId !== null}
+                  openSignal={supplierPickerSignal}
                   onSelect={(s) => {
                     setSelectedSupplier(s.id);
                     if (!suppliers.find((x) => x.id === s.id)) {
@@ -5218,8 +5289,8 @@ export default function PurchasesPage() {
                                 position: "fixed",
                                 top: dropdownPosition.top,
                                 left: dropdownPosition.left,
-                                width: dropdownPosition.width || 640,
-                                maxHeight: "320px",
+                                width: dropdownPosition.width || 860,
+                                maxHeight: "440px",
                                 transform: dropdownPosition.transform || "none",
                                 overscrollBehavior: "contain",
                                 WebkitOverflowScrolling: "touch",
@@ -6093,7 +6164,7 @@ export default function PurchasesPage() {
                                 type="number"
                                 min="1"
                                 autoFocus
-                                value={item.units || item.units_per_pack || "1"}
+                                value={item.units !== undefined && item.units !== null ? item.units : item.units_per_pack || ""}
                                 onChange={(e) =>
                                   handleItemFieldChange(
                                     item.id,
@@ -6869,7 +6940,7 @@ export default function PurchasesPage() {
               <TableHeader>
                 <TableRow>
                   <TableHead data-card="corner" className="w-[40px]"></TableHead>
-                  <TableHead data-card="title">Invoice / Timestamp</TableHead>
+                  <TableHead data-card="title">Invoice / Dates</TableHead>
                   <TableHead data-card="full">
                     <Button
                       variant="ghost"
@@ -6940,20 +7011,7 @@ export default function PurchasesPage() {
                               index)}{" "}
                           - {purchase.invoice_no || "-"}
                         </div>
-                        <div className="text-[11px] text-muted-foreground font-medium mt-0.5">
-                          {new Date(
-                            purchase.purchase_date ||
-                              purchase.created_at ||
-                              new Date()
-                          ).toLocaleString("en-IN", {
-                            day: "2-digit",
-                            month: "short",
-                            year: "numeric",
-                            hour: "2-digit",
-                            minute: "2-digit",
-                            hour12: true,
-                          })}
-                        </div>
+                        <RecordDates date={purchase.purchase_date} createdAt={purchase.created_at} dateLabel="Purchased" />
                       </TableCell>
                       <TableCell className="font-medium">
                         {purchase.supplier_name}

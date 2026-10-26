@@ -82,11 +82,11 @@ const DEFAULT_REGISTRY = [
   },
   {
     key: "shortage_threshold",
-    label: "Shortage List Threshold",
+    label: "Low Stock / Shortage Threshold (units)",
     type: "number",
     default: 10,
     category: "Preferences",
-    description: "Default minimum stock quantity threshold for Shortage List alert.",
+    description: "A medicine with this many units or fewer (and not expired) shows under Low Stock and the Shortage List. Set a different number for any medicine with custom thresholds; 0 on a medicine stops tracking it.",
   },
   {
     key: "lock_unpaid_purchases",

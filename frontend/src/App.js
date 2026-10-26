@@ -31,6 +31,7 @@ import ExpiryPage from "./pages/ExpiryPage";
 import ReturnsPage from "./pages/ReturnsPage";
 import SupportPage from "./pages/SupportPage";
 import ShortBookPage from "./pages/ShortBookPage";
+import RestockPage from "./pages/RestockPage";
 
 // Layout
 import DashboardLayout from "./components/DashboardLayout";
@@ -490,6 +491,7 @@ function App() {
             <Route path="reports" element={<ReportsPage />} />
             <Route path="support" element={<SupportPage />} />
             <Route path="short-book" element={<ShortBookPage />} />
+            <Route path="restock" element={<RestockPage />} />
           </Route>
 
           {/* Catch all */}

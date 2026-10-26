@@ -43,10 +43,10 @@ export function toBillLines(cards) {
       product_name: item.product_name,
       salt_composition: item.salt_composition,
       batch_no: item.batch_no,
-      quantity: item.quantity,
+      quantity: Number(item.quantity) || 1,
       available_quantity: item.available_quantity,
-      mrp: item.mrp,
-      unit_price: item.mrp,
+      mrp: Number(item.mrp) || 0,
+      unit_price: Number(item.mrp) || 0,
       purchase_price: item.purchase_price,
       cgst: item.cgst,
       sgst: item.sgst,
@@ -142,7 +142,7 @@ function ScanCard({ card, index, onUpdate, onRemove, onScan, canRemove }) {
           <div>
             <label className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Qty (units)</label>
             <div className="mt-0.5 flex h-9 items-center rounded-lg border border-border bg-background">
-              <button type="button" className="h-full px-2 text-muted-foreground hover:text-foreground" onClick={() => setItem({ quantity: Math.max(1, item.quantity - 1) })}>
+              <button type="button" className="h-full px-2 text-muted-foreground hover:text-foreground" onClick={() => setItem({ quantity: Math.max(1, (Number(item.quantity) || 1) - 1) })}>
                 <Minus className="h-3.5 w-3.5" />
               </button>
               <input
@@ -150,10 +150,11 @@ function ScanCard({ card, index, onUpdate, onRemove, onScan, canRemove }) {
                 inputMode="numeric"
                 min={1}
                 value={item.quantity}
-                onChange={(e) => setItem({ quantity: Math.max(1, parseInt(e.target.value) || 1) })}
+                onChange={(e) => setItem({ quantity: e.target.value === "" ? "" : Math.max(1, parseInt(e.target.value) || 1) })}
+                onBlur={() => item.quantity === "" && setItem({ quantity: 1 })}
                 className="w-full min-w-0 bg-transparent text-center text-sm font-semibold outline-none"
               />
-              <button type="button" className="h-full px-2 text-muted-foreground hover:text-foreground" onClick={() => setItem({ quantity: item.quantity + 1 })}>
+              <button type="button" className="h-full px-2 text-muted-foreground hover:text-foreground" onClick={() => setItem({ quantity: (Number(item.quantity) || 0) + 1 })}>
                 <Plus className="h-3.5 w-3.5" />
               </button>
             </div>
@@ -172,7 +173,7 @@ function ScanCard({ card, index, onUpdate, onRemove, onScan, canRemove }) {
                 type="number"
                 inputMode="decimal"
                 value={item.mrp}
-                onChange={(e) => setItem({ mrp: parseFloat(e.target.value) || 0 })}
+                onChange={(e) => setItem({ mrp: e.target.value === "" ? "" : parseFloat(e.target.value) || 0 })}
                 className="mt-0.5 h-9 w-full rounded-lg border border-border bg-background px-2 text-sm"
               />
             )}

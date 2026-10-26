@@ -1,8 +1,11 @@
 // Mini QR labels for stock batches, stuck on the pack so it can be billed by
 // scanning (Billing: scanner in the product search, or "Scan item QR").
 //
-// QR payload: DD1|<inventory id>|<batch>|<YYYY-MM expiry>|<MRP per unit>|<name>
-// The id is what billing uses; the rest is printed and kept for reference.
+// QR payload: "DD2:<inventory id as 32 hex digits>" (36 characters: a version-2
+// QR, 25×25 modules, so a mini label scans from further away and much faster).
+// Batch, expiry, MRP and name are printed next to the code, not in it.
+// Older labels use "DD1|<inventory id>|<batch>|<YYYY-MM expiry>|<MRP>|<name>"
+// and still scan. The id is what billing uses.
 const PDFDocument = require("pdfkit");
 const QRCode = require("qrcode");
 
@@ -24,13 +27,23 @@ const clean = (v) => String(v ?? "").replace(/[|\r\n]/g, " ").trim();
 const ym = (d) => (/^\d{4}-\d{2}/.test(String(d || "")) ? String(d).slice(0, 7) : "");
 const mmYY = (d) => (/^\d{4}-\d{2}/.test(String(d || "")) ? `${String(d).slice(5, 7)}/${String(d).slice(2, 4)}` : "-");
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 function encodeLabel(b) {
+  // Compact form for UUID ids (every stock batch); the long form otherwise
+  if (UUID_RE.test(String(b.id || ""))) return `DD2:${b.id.replace(/-/g, "").toUpperCase()}`;
   return [PREFIX, b.id, clean(b.batch_no).slice(0, 20), ym(b.expiry_date), Number(b.mrp || 0).toFixed(2), clean(b.product_name).slice(0, 20)].join("|");
 }
 
 // "DD1|<id>|..." (or a bare id) -> { id, batch_no, expiry, mrp, name }
 function parseLabel(raw) {
   const s = String(raw || "").trim();
+  // "DD2:<32 hex>" (case-insensitive: some USB scanners change letter case)
+  const compact = s.match(/^DD2:([0-9a-f]{32})$/i);
+  if (compact) {
+    const h = compact[1].toLowerCase();
+    return { id: `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}` };
+  }
   const parts = s.split("|");
   if (parts[0] === PREFIX && /^[A-Za-z0-9-]{8,64}$/.test(parts[1] || "")) {
     return { id: parts[1], batch_no: parts[2] || "", expiry: parts[3] || "", mrp: Number(parts[4]) || null, name: parts.slice(5).join("|") };

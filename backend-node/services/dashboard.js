@@ -179,12 +179,14 @@ async function inventoryHealth(db, pharmacyId, today, t) {
           $group: {
             _id: { $ifNull: ["$product_id", "$product_name"] },
             name: { $first: "$product_name" },
+            _key: { $first: { $toLower: { $trim: { input: { $ifNull: ["$product_name", ""] } } } } },
             units: { $sum: { $max: [{ $ifNull: ["$available_quantity", 0] }, 0] } },
             units_per_pack: { $first: "$units_per_pack" },
             last_supplier_id: { $last: "$supplier_id" },
           },
         },
-        { $match: { units: { $lte: t.lowStock } } },
+        // Only medicines on the shortage list (their own or the global threshold)
+        { $match: { _key: { $in: t.shortNames || [] } } },
         { $sort: { units: 1, name: 1 } },
       ])
       .toArray(),
@@ -407,7 +409,10 @@ async function overview(db, { pharmacyId, userId }) {
   const mStart = monthStart(today);
   const lastMonthToDate = prevMonthSameDay(today);
   const lastMonthStart = monthStart(lastMonthToDate);
-  const t = await thresholds(db, userId);
+  // Low stock / expiry follow the same levels as Inventory (custom thresholds included)
+  const { stockLevels, namesIn } = require("./stockLevels");
+  const lv = await stockLevels(db, { id: userId, pharmacy_id: pharmacyId });
+  const t = { ...lv.settings, shortNames: namesIn(lv.levels, ["low", "out"]) };
 
   const [todayS, yesterdayS, monthS, lastMonthS, trend, hours, mix, top, inventory, recv, pay, purchasesMonth, newCustomers, customers, recent] =
     await Promise.all([

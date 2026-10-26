@@ -3,6 +3,7 @@ import { useSearchParams, useLocation, useNavigate } from "react-router-dom";
 import { v4 as uuidv4 } from "uuid";
 import { createPortal } from "react-dom";
 import axios from "axios";
+import RecordDates from "../components/RecordDates";
 import { API, useAuth } from "../App";
 import {
   Card,
@@ -96,6 +97,7 @@ import { toast } from "sonner";
 import CustomerFilter from "../components/CustomerFilter";
 import BatchPicker from "../components/BatchPicker";
 import PlanBadge from "../components/PlanBadge";
+import { TierBadge } from "../components/customers/CustomerTiers";
 import Loader from "../components/Loader";
 import BillingScannerModal from "../components/BillingScannerModal";
 import { formatDate, formatExpiry, formatExpiryInput, expiryToIso, openScanner } from "./utils";
@@ -105,6 +107,7 @@ import { useShortcuts, useShortcutLayer } from "../components/shortcuts/Shortcut
 import UpiQrDialog from "../components/UpiQr";
 import { useWhatsAppShare, WhatsAppIcon } from "../components/ShareBillWhatsApp";
 import { ItemQrScanDialog, findItemLabel, resolveItemLabel } from "../components/ItemQr";
+import { SuggestionList, ProductDetailsSheet, SUGGESTION_FILTERS, filterSuggestions } from "../components/billing/ProductSuggestions";
 
 const LOCAL_STORAGE_KEY_BILL = "pharmalogy_bill_draft";
 
@@ -164,6 +167,17 @@ const getPaymentModeIcon = (mode, sizeClass = "w-3.5 h-3.5") => {
   return null;
 };
 
+// Udhar payments: never more than what's still due on the bill
+const billPaymentError = ({ amount, remainingUnpaid }) => {
+  if (amount === "" || amount === null || amount === undefined) return "";
+  const amt = Math.round(Number(amount) * 100) / 100;
+  const left = Math.round((Number(remainingUnpaid) || 0) * 100) / 100;
+  if (!Number.isFinite(amt) || amt <= 0) return "Enter an amount more than ₹0";
+  if (left <= 0) return "This bill is already fully paid";
+  if (amt > left) return `Only ₹${left.toFixed(2)} is due. Enter ₹${left.toFixed(2)} or less.`;
+  return "";
+};
+
 export default function BillingPage() {
   const location = useLocation();
   // Data state
@@ -186,11 +200,16 @@ export default function BillingPage() {
     customer_email: "",
   });
   const [selectedCustomerStats, setSelectedCustomerStats] = useState(null);
-  const [billDiscount, setBillDiscount] = useState(0);
+  const [billDiscount, setBillDiscount] = useState(""); // text so it can be cleared; parse when used
   const [isPaid, setIsPaid] = useState(true);
   const [paymentMode, setPaymentMode] = useState("");
   const [isAdvancePaid, setIsAdvancePaid] = useState(false);
   const [advanceAmount, setAdvanceAmount] = useState("");
+  // Udhar: goods handed over now, part (or none) paid now, the rest owed by the customer
+  const [isCredit, setIsCredit] = useState(false);
+  // Tier of the customer picked for this bill (badge + automatic discount)
+  const [pickedCustomerTier, setPickedCustomerTier] = useState(null);
+  const [paidNow, setPaidNow] = useState("");
   const [recordPaymentDialog, setRecordPaymentDialog] = useState({
     open: false,
     billId: "",
@@ -215,6 +234,8 @@ export default function BillingPage() {
     doses: {}, // product_name -> { dose: "1", days: "", reorder: packs or units to order }
     lead: null, // remind this many days before it runs out (null = recommended)
   });
+
+  const reminderDateRef = useRef(null);
 
   const calculateReminderDates = useCallback((bDate, daysSupply = 30, remindBefore = 5) => {
     try {
@@ -583,6 +604,9 @@ export default function BillingPage() {
   // Dropdown keyboard navigation
   const [activeDropdownIndex, setActiveDropdownIndex] = useState(-1);
   const [highlightedSuggestion, setHighlightedSuggestion] = useState(-1);
+  // Product suggestions: All / In stock / Near expiry, and the details panel
+  const [suggestionFilter, setSuggestionFilter] = useState("all");
+  const [detailsFor, setDetailsFor] = useState(null); // { item, rowId, mode: "new" | "edit" }
 
   const [activeBillItemId, setActiveBillItemId] = useState(null);
   const [isMouseOverSuggestions, setIsMouseOverSuggestions] = useState(false);
@@ -645,19 +669,21 @@ export default function BillingPage() {
     return () => cancelAnimationFrame(rafId);
   }, [showInventorySuggestions, showEditingInventorySuggestions, activeBillItemId, activeEditingItemId]);
 
-  // Keyboard navigation scroll-into-view
+  // Keyboard navigation scroll-into-view. The first option scrolls the list to
+  // the very top so the sticky header never hides it.
+  const revealSuggestion = (id, index) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const list = el.closest('[data-suggestions-dropdown="true"]');
+    if (index === 0 && list) list.scrollTop = 0;
+    else el.scrollIntoView({ block: "nearest" });
+  };
   useEffect(() => {
-    if (showInventorySuggestions && highlightedSuggestion >= 0) {
-      const el = document.getElementById(`suggestion-new-${highlightedSuggestion}`);
-      el?.scrollIntoView({ block: "nearest" });
-    }
+    if (showInventorySuggestions && highlightedSuggestion >= 0) revealSuggestion(`suggestion-new-${highlightedSuggestion}`, highlightedSuggestion);
   }, [highlightedSuggestion, showInventorySuggestions]);
 
   useEffect(() => {
-    if (showEditingInventorySuggestions && highlightedEditingSuggestion >= 0) {
-      const el = document.getElementById(`suggestion-edit-${highlightedEditingSuggestion}`);
-      el?.scrollIntoView({ block: "nearest" });
-    }
+    if (showEditingInventorySuggestions && highlightedEditingSuggestion >= 0) revealSuggestion(`suggestion-edit-${highlightedEditingSuggestion}`, highlightedEditingSuggestion);
   }, [highlightedEditingSuggestion, showEditingInventorySuggestions]);
 
   useEffect(() => {
@@ -673,7 +699,7 @@ export default function BillingPage() {
 
   // Default payment mode settings synchronization
   useEffect(() => {
-    if (!isPaid && !isAdvancePaid) {
+    if (!isPaid && !isAdvancePaid && !(isCredit && parseFloat(paidNow) > 0)) {
       if (paymentMode !== "") {
         setPaymentMode("");
       }
@@ -683,7 +709,7 @@ export default function BillingPage() {
     if (defaultMode && defaultMode !== "none" && paymentMode === "") {
       setPaymentMode(defaultMode);
     }
-  }, [settings, paymentMode, isPaid, isAdvancePaid]);
+  }, [settings, paymentMode, isPaid, isAdvancePaid, isCredit, paidNow]);
 
   // Pagination
   const [page, setPage] = useState(1);
@@ -761,7 +787,7 @@ export default function BillingPage() {
             active.data.billingDate || new Date().toISOString().slice(0, 10)
           );
           setBillItems(active.data.billItems || []);
-          setBillDiscount(active.data.billDiscount || 0);
+          setBillDiscount(active.data.billDiscount || "");
           setIsPaid(active.data.isPaid !== false);
           setPaymentMode(active.data.paymentMode || "");
         }
@@ -789,6 +815,8 @@ export default function BillingPage() {
                   doctorName,
                   isAdvancePaid,
                   advanceAmount,
+                  isCredit,
+                  paidNow,
                 },
               }
             : t
@@ -811,6 +839,8 @@ export default function BillingPage() {
     doctorName,
     isAdvancePaid,
     advanceAmount,
+    isCredit,
+    paidNow,
     activeTabId,
     user?.id,
   ]);
@@ -845,7 +875,7 @@ export default function BillingPage() {
         doctorName: "",
         billingDate: new Date().toISOString().slice(0, 10),
         billItems: [defaultRow],
-        billDiscount: 0,
+        billDiscount: "",
         isPaid: true,
         paymentMode: initialMode,
         isAdvancePaid: false,
@@ -863,11 +893,13 @@ export default function BillingPage() {
     setDoctorName("");
     setBillingDate(new Date().toISOString().slice(0, 10));
     setBillItems([defaultRow]);
-    setBillDiscount(0);
+    setBillDiscount("");
     setIsPaid(true);
     setPaymentMode(initialMode);
     setIsAdvancePaid(false);
     setAdvanceAmount("");
+    setIsCredit(false);
+    setPaidNow("");
     setShowNewBill(true);
     setTimeout(() => productInputRef.current?.focus(), 150);
   };
@@ -891,11 +923,13 @@ export default function BillingPage() {
       target.data.billingDate || new Date().toISOString().slice(0, 10)
     );
     setBillItems(target.data.billItems || []);
-    setBillDiscount(target.data.billDiscount || 0);
+    setBillDiscount(target.data.billDiscount || "");
     setIsPaid(target.data.isPaid !== false);
     setPaymentMode(target.data.paymentMode || "");
     setIsAdvancePaid(target.data.isAdvancePaid || false);
     setAdvanceAmount(target.data.advanceAmount || "");
+    setIsCredit(target.data.isCredit || false);
+    setPaidNow(target.data.paidNow || "");
     setShowNewBill(true);
     setTimeout(() => productInputRef.current?.focus(), 150);
   };
@@ -922,11 +956,13 @@ export default function BillingPage() {
       setDoctorName("");
       setBillingDate(new Date().toISOString().slice(0, 10));
       setBillItems([]);
-      setBillDiscount(0);
+      setBillDiscount("");
       setIsPaid(true);
       setPaymentMode("");
       setIsAdvancePaid(false);
       setAdvanceAmount("");
+      setIsCredit(false);
+      setPaidNow("");
       setShowNewBill(false);
     }
 
@@ -1548,10 +1584,12 @@ export default function BillingPage() {
       customer_mobile: "",
       customer_email: "",
     });
-    setBillDiscount(0);
+    setBillDiscount("");
     setIsPaid(true);
     setIsAdvancePaid(false);
     setAdvanceAmount("");
+    setIsCredit(false);
+    setPaidNow("");
     setPaymentMode("");
     setNewItemRow(null);
     setRefillReminder((prev) => ({ ...prev, enabled: false, refill_target_date: "", reminder_date: "", notes: "", selected_items: [], mode: "auto", doses: {}, lead: null }));
@@ -1718,6 +1756,64 @@ export default function BillingPage() {
     }, 200);
   };
 
+  const expiryWarningDays = Number(settings?.expiry_warning_days) || 90;
+  const visibleSuggestions = filterSuggestions(inventorySuggestions, suggestionFilter, expiryWarningDays);
+  const visibleEditingSuggestions = filterSuggestions(editingInventorySuggestions, suggestionFilter, expiryWarningDays);
+  // Alt+1/2/3: suggestion filter; Alt+D: details of the highlighted medicine
+  const suggestionHotkey = (e, list, highlighted, setHighlighted, rowId, mode) => {
+    if (!e.altKey || e.ctrlKey || e.metaKey) return false;
+    const f = SUGGESTION_FILTERS.find((x) => e.code === `Digit${x.key}`);
+    if (f) {
+      e.preventDefault();
+      setSuggestionFilter(f.id);
+      setHighlighted(-1);
+      return true;
+    }
+    if (e.code === "KeyD") {
+      e.preventDefault();
+      const item = list[highlighted] || list[0];
+      if (item) openSuggestionDetails(item, rowId, mode);
+      return true;
+    }
+    return false;
+  };
+  // Width/position shared with Purchases: ~72% of the screen, 860-1100 px
+  const suggestionBoxStyle = () => {
+    const vw = window.innerWidth || 1200;
+    const width = Math.min(vw - 32, Math.max(860, Math.min(vw * 0.72, 1100)));
+    return {
+      position: "fixed",
+      top: dropdownPosition.top,
+      left: Math.max(16, Math.min(dropdownPosition.left, vw - width - 16)),
+      width,
+      maxHeight: "440px",
+      transform: dropdownPosition.transform || "none",
+      overscrollBehavior: "contain",
+      // Keyboard-highlighted rows stop below the sticky header, not under it
+      scrollPaddingTop: "44px",
+      scrollPaddingBottom: "64px",
+      WebkitOverflowScrolling: "touch",
+    };
+  };
+  // The details panel replaces the dropdown while it's open
+  const openSuggestionDetails = (item, rowId, mode) => {
+    if (mode === "edit") {
+      setShowEditingInventorySuggestions(false);
+      setIsMouseOverEditingSuggestions(false);
+    } else {
+      setShowInventorySuggestions(false);
+      setIsMouseOverSuggestions(false);
+    }
+    setDetailsFor({ item, rowId, mode });
+  };
+  const pickDetailsItem = (item) => {
+    const target = detailsFor;
+    setDetailsFor(null);
+    if (!target) return;
+    if (target.mode === "edit") handleSelectInventoryForEditRow(target.rowId, item);
+    else handleSelectInventoryForRow(target.rowId, item);
+  };
+
   // Handle dropdown keyboard navigation
   const handleDropdownKeyDown = (e, itemId) => {
     const label = e.key === "Enter" ? findItemLabel(e.currentTarget.value) : null;
@@ -1733,8 +1829,12 @@ export default function BillingPage() {
       return;
     }
     if (!showInventorySuggestions) return;
+    if (suggestionHotkey(e, visibleSuggestions, highlightedSuggestion, setHighlightedSuggestion, itemId, "new")) return;
 
-    const totalOptions = 1 + inventorySuggestions.length;
+    // Medicines first, Manual entry last
+    const hasManual = !!(inventorySearch && inventorySearch.length >= 2);
+    const totalOptions = visibleSuggestions.length + (hasManual ? 1 : 0);
+    if (totalOptions === 0 && e.key !== "Escape") return;
 
     if (e.key === "ArrowDown") {
       e.preventDefault();
@@ -1746,20 +1846,10 @@ export default function BillingPage() {
       );
     } else if (e.key === "Enter" && highlightedSuggestion >= 0) {
       e.preventDefault();
-      if (
-        highlightedSuggestion === 0 &&
-        inventorySearch &&
-        inventorySearch.length >= 2
-      ) {
+      if (visibleSuggestions[highlightedSuggestion]) {
+        handleSelectInventoryForRow(itemId, visibleSuggestions[highlightedSuggestion]);
+      } else if (hasManual && highlightedSuggestion === visibleSuggestions.length) {
         handleManualEntry(itemId, inventorySearch);
-      } else if (
-        highlightedSuggestion > 0 &&
-        inventorySuggestions[highlightedSuggestion - 1]
-      ) {
-        handleSelectInventoryForRow(
-          itemId,
-          inventorySuggestions[highlightedSuggestion - 1]
-        );
       }
       setHighlightedSuggestion(-1);
     } else if (e.key === "Escape") {
@@ -1811,6 +1901,12 @@ export default function BillingPage() {
         customer_mobile: customer.mobile,
         customer_email: customer.email || "",
       });
+      setPickedCustomerTier(customer.tier ? customer : null);
+      // Their tier / personal discount, unless a discount was already typed
+      if (customer.auto_apply_discount && customer.discount_percent > 0 && !(parseFloat(billDiscount) > 0)) {
+        setBillDiscount(customer.discount_percent);
+        toast.success(`${customer.discount_percent}% ${customer.discount_source === "customer" ? "personal" : (customer.tier_label || "").toLowerCase()} discount applied for ${customer.name}`);
+      }
     }
 
     setCustomerSearch(customer.name);
@@ -2016,8 +2112,16 @@ export default function BillingPage() {
       return;
     }
 
-    if (settings?.billing_payment_mode_mandatory && (isPaid || isAdvancePaid) && (!paymentMode || paymentMode === "none")) {
+    if (settings?.billing_payment_mode_mandatory && (isPaid || isAdvancePaid || (isCredit && parseFloat(paidNow) > 0)) && (!paymentMode || paymentMode === "none")) {
       toast.error("Payment mode is mandatory for paid or advance paid bills. Please select Cash, UPI, or Card.");
+      return;
+    }
+    if (isCredit && (parseFloat(paidNow) || 0) < 0) {
+      toast.error("Paid now can't be negative");
+      return;
+    }
+    if (isCredit && grandTotal > 0 && Math.round((parseFloat(paidNow) || 0) * 100) > Math.round(grandTotal * 100)) {
+      toast.error(`Paid now can't be more than the bill total ₹${grandTotal.toFixed(2)}. Turn off Udhar if it's fully paid.`);
       return;
     }
 
@@ -2075,11 +2179,13 @@ export default function BillingPage() {
             item_total: parseFloat(net_total) || 0,
           })
         ),
-        discount_percent: billDiscount,
+        discount_percent: parseFloat(billDiscount) || 0,
         is_paid: isPaid,
         payment_mode: (paymentMode && paymentMode !== "none") ? paymentMode : null,
         is_advance_paid: isAdvancePaid,
         advance_amount: isAdvancePaid ? (parseFloat(advanceAmount) || 0) : 0,
+        is_credit: isCredit,
+        paid_now: isCredit ? (parseFloat(paidNow) || 0) : 0,
         draft_id: pendingDraftId || null,
         refill_reminder: refillReminder.enabled ? {
           enabled: true,
@@ -2128,6 +2234,8 @@ export default function BillingPage() {
       discount_percent: bill.discount_percent || 0,
       notes: bill.notes || "",
       is_paid: bill.is_paid,
+      is_credit: !!bill.is_credit,
+      paid_now: bill.is_credit && Number(bill.total_paid) > 0 ? String(bill.total_paid) : "",
       payment_mode: bill.payment_mode || "",
       billing_date: bill.billing_date || bill.created_at?.slice(0, 10),
       doctor: bill.doctor || "",
@@ -2381,8 +2489,11 @@ export default function BillingPage() {
 
   const handleEditDropdownKeyDown = (e, itemId) => {
     if (!showEditingInventorySuggestions) return;
+    if (suggestionHotkey(e, visibleEditingSuggestions, highlightedEditingSuggestion, setHighlightedEditingSuggestion, itemId, "edit")) return;
 
-    const totalOptions = 1 + editingInventorySuggestions.length;
+    const hasManual = !!(editingInventorySearch && editingInventorySearch.length >= 2);
+    const totalOptions = visibleEditingSuggestions.length + (hasManual ? 1 : 0);
+    if (totalOptions === 0 && e.key !== "Escape") return;
 
     if (e.key === "ArrowDown") {
       e.preventDefault();
@@ -2394,20 +2505,10 @@ export default function BillingPage() {
       );
     } else if (e.key === "Enter" && highlightedEditingSuggestion >= 0) {
       e.preventDefault();
-      if (
-        highlightedEditingSuggestion === 0 &&
-        editingInventorySearch &&
-        editingInventorySearch.length >= 2
-      ) {
+      if (visibleEditingSuggestions[highlightedEditingSuggestion]) {
+        handleSelectInventoryForEditRow(itemId, visibleEditingSuggestions[highlightedEditingSuggestion]);
+      } else if (hasManual && highlightedEditingSuggestion === visibleEditingSuggestions.length) {
         handleManualEntryForEdit(itemId, editingInventorySearch);
-      } else if (
-        highlightedEditingSuggestion > 0 &&
-        editingInventorySuggestions[highlightedEditingSuggestion - 1]
-      ) {
-        handleSelectInventoryForEditRow(
-          itemId,
-          editingInventorySuggestions[highlightedEditingSuggestion - 1]
-        );
       }
       setHighlightedEditingSuggestion(-1);
     } else if (e.key === "Escape") {
@@ -2438,8 +2539,17 @@ export default function BillingPage() {
       return;
     }
 
-    if (settings?.billing_payment_mode_mandatory && (editingBillData.is_paid || editingBillData.is_advance_paid) && (!editingBillData.payment_mode || editingBillData.payment_mode === "none")) {
+    const editPaidNow = parseFloat(editingBillData.paid_now) || 0;
+    if (settings?.billing_payment_mode_mandatory && (editingBillData.is_paid || editingBillData.is_advance_paid || (editingBillData.is_credit && editPaidNow > 0)) && (!editingBillData.payment_mode || editingBillData.payment_mode === "none")) {
       toast.error("Payment mode is mandatory for paid or advance paid bills. Please select Cash, UPI, or Card.");
+      return;
+    }
+    if (editingBillData.is_credit && editPaidNow < 0) {
+      toast.error("Paid now can't be negative");
+      return;
+    }
+    if (editingBillData.is_credit && Math.round(editPaidNow * 100) > Math.round(editGrandTotal * 100)) {
+      toast.error(`Paid now can't be more than the bill total ₹${editGrandTotal.toFixed(2)}. Mark it Paid instead.`);
       return;
     }
 
@@ -2480,7 +2590,9 @@ export default function BillingPage() {
           })
         ),
         discount_percent: parseFloat(editingBillData.discount_percent) || 0,
-        is_paid: editingBillData.is_paid,
+        is_paid: editingBillData.is_credit ? false : editingBillData.is_paid,
+        is_credit: !!editingBillData.is_credit,
+        ...(editingBillData.is_credit ? { paid_now: editPaidNow, is_advance_paid: false } : {}),
         payment_mode: (editingBillData.payment_mode && editingBillData.payment_mode !== "none") ? editingBillData.payment_mode : null,
         notes: editingBillData.notes || null,
       });
@@ -2522,15 +2634,12 @@ export default function BillingPage() {
 
   const handleRecordPaymentSubmit = async () => {
     try {
-      const amt = parseFloat(recordPaymentDialog.amount);
-      if (isNaN(amt) || amt <= 0) {
-        toast.error("Please enter a valid amount");
+      const err = billPaymentError(recordPaymentDialog);
+      if (err || recordPaymentDialog.amount === "") {
+        toast.error(err || "Enter the amount paid");
         return;
       }
-      if (amt > recordPaymentDialog.remainingUnpaid + 0.01) {
-        toast.error("Amount paid cannot exceed remaining amount");
-        return;
-      }
+      const amt = Math.round(parseFloat(recordPaymentDialog.amount) * 100) / 100;
       await axios.post(`${API}/bills/${recordPaymentDialog.billId}/record-payment`, {
         amount: amt,
         payment_mode: recordPaymentDialog.paymentMode
@@ -2729,7 +2838,7 @@ export default function BillingPage() {
     const itemTotal = qty * exclPrice * (1 - discPercent / 100) * (1 + (cgstVal + sgstVal) / 100);
     return sum + itemTotal;
   }, 0);
-  const discountAmount = subtotal * (billDiscount / 100);
+  const discountAmount = subtotal * ((parseFloat(billDiscount) || 0) / 100);
   const grandTotal = subtotal - discountAmount;
 
   useEffect(() => {
@@ -2785,25 +2894,6 @@ export default function BillingPage() {
       setEditGrandTotalInput(editGrandTotal.toFixed(2));
     }
   }, [editGrandTotal, isEditingEditGrandTotal]);
-
-  // Auto-scroll logic for dropdown suggestions
-  useEffect(() => {
-    if (showInventorySuggestions) {
-      const el = document.getElementById(
-        `suggestion-new-${highlightedSuggestion}`
-      );
-      if (el) el.scrollIntoView({ block: "nearest" });
-    }
-  }, [highlightedSuggestion, showInventorySuggestions]);
-
-  useEffect(() => {
-    if (showEditingInventorySuggestions) {
-      const el = document.getElementById(
-        `suggestion-edit-${highlightedEditingSuggestion}`
-      );
-      if (el) el.scrollIntoView({ block: "nearest" });
-    }
-  }, [highlightedEditingSuggestion, showEditingInventorySuggestions]);
 
   const editTotalCost = validEditItems.reduce((sum, item) => {
     const qty = parseInt(item.quantity) || 0;
@@ -3184,6 +3274,7 @@ export default function BillingPage() {
                 <Label className="flex items-center justify-between text-[11px] font-extrabold text-foreground/80">
                   <span className="flex items-center gap-1">
                     Customer Name *
+                    {pickedCustomerTier && pickedCustomerTier.id === customerInfo.customer_id && <TierBadge customer={pickedCustomerTier} />}
                   </span>
                   {customerInfo.customer_id && (
                     <Button
@@ -3623,210 +3714,24 @@ export default function BillingPage() {
                                     setActiveBillItemId(null);
                                   }
                                 }}
-                                style={{
-                                  position: "fixed",
-                                  top: dropdownPosition.top,
-                                  left: Math.max(16, Math.min(dropdownPosition.left, (window.innerWidth || 1200) - 560)),
-                                  width: Math.max(540, dropdownPosition.width || 540),
-                                  minWidth: "540px",
-                                  maxWidth: "calc(100vw - 32px)",
-                                  maxHeight: "320px",
-                                  transform: dropdownPosition.transform || "none",
-                                  overscrollBehavior: "contain",
-                                  WebkitOverflowScrolling: "touch",
-                                }}
+                                style={suggestionBoxStyle()}
                               >
-                                {/* Header bar showing search term & matches count */}
-                                {inventorySearch && (
-                                  <div className="px-3.5 py-1.5 bg-muted/90 backdrop-blur-md border-b border-border text-xs font-semibold text-muted-foreground flex items-center justify-between sticky top-0 z-10">
-                                    <div className="flex items-center gap-2">
-                                      <span>Suggestions for "{inventorySearch}"</span>
-                                      {inventorySuggestions.length > 0 && (
-                                        <span className="text-[10px] bg-blue-500/10 text-blue-500 dark:text-blue-400 px-2 py-0.5 rounded-full font-bold border border-blue-500/20">
-                                          {inventorySuggestions.length} matches
-                                        </span>
-                                      )}
-                                    </div>
-                                  </div>
-                                )}
-
-                                {/* Loader State using Our Custom Loader Component */}
-                                {loadingInventorySuggestions ? (
-                                  <div className="h-[130px] w-full flex flex-col items-center justify-center bg-card/95 backdrop-blur-md p-4">
-                                    <Loader
-                                      size="sm"
-                                      text="Searching inventory..."
-                                      variant="inline"
-                                    />
-                                  </div>
-                                ) : (
-                                  <>
-
-                                {/* Manual Entry Option */}
-                                {inventorySearch &&
-                                  inventorySearch.length >= 2 && (
-                                    <div
-                                      id="suggestion-new-0"
-                                      className={`p-3 cursor-pointer border-b border-border transition-colors duration-150 ${highlightedSuggestion === 0 ? "bg-amber-500/20 text-amber-600 font-semibold" : "hover:bg-amber-500/10 bg-amber-500/5 text-amber-600"}`}
-                                      onMouseDown={(e) => {
-                                        e.preventDefault();
-                                        handleManualEntry(
-                                          item.id,
-                                          inventorySearch
-                                        );
-                                      }}
-                                      onMouseEnter={() =>
-                                        setHighlightedSuggestion(0)
-                                      }
-                                    >
-                                      <div className="flex items-center gap-2">
-                                        <Plus className="w-4 h-4 text-amber-500" />
-                                        <div>
-                                          <p className="font-medium text-sm">
-                                            Manual Entry: "{inventorySearch}"
-                                          </p>
-                                          <p className="text-xs text-muted-foreground font-normal">
-                                            Add item not in inventory
-                                          </p>
-                                        </div>
-                                      </div>
-                                    </div>
-                                  )}
-
-                                {/* Inventory Items */}
-                                {inventorySuggestions.map(
-                                  (invItem, suggIdx) => (
-                                    <div
-                                      key={invItem.id}
-                                      id={`suggestion-new-${suggIdx + 1}`}
-                                      className={`p-3 cursor-pointer border-b border-border/50 last:border-0 transition-colors duration-150 ${highlightedSuggestion === suggIdx + 1 ? "bg-orange-500/15" : "hover:bg-muted/50"}`}
-                                      onMouseDown={(e) => {
-                                        e.preventDefault();
-                                        handleSelectInventoryForRow(
-                                          item.id,
-                                          invItem
-                                        );
-                                      }}
-                                      onMouseEnter={() =>
-                                        setHighlightedSuggestion(suggIdx + 1)
-                                      }
-                                    >
-                                      {/* Row 1: Name + Stock Badge + Price */}
-                                      <div className="flex items-center justify-between gap-2 mb-1">
-                                        <div className="font-bold text-sm text-foreground flex items-center gap-2 flex-wrap">
-                                          <span>{invItem.product_name}</span>
-                                          {(invItem.available_quantity || invItem.available_units || 0) > 0 ? (
-                                            <span className="text-[10px] px-2 py-0.5 bg-emerald-500/10 text-emerald-500 dark:text-emerald-400 border border-emerald-500/20 rounded-full font-bold">
-                                              In Stock: {invItem.available_quantity || invItem.available_units} units
-                                            </span>
-                                          ) : invItem.source === "global" ? (
-                                            <span className="text-[10px] px-2 py-0.5 bg-blue-500/10 text-blue-500 dark:text-blue-400 border border-blue-500/20 rounded-full font-bold flex items-center gap-1">
-                                              <Globe className="w-2.5 h-2.5" />
-                                              Global Medicine
-                                            </span>
-                                          ) : invItem.is_custom_catalog || invItem.source === "catalog" ? (
-                                            <span className="text-[10px] px-2 py-0.5 bg-purple-500/10 text-purple-400 border border-purple-500/20 rounded-full font-bold">
-                                              My Catalog
-                                            </span>
-                                          ) : (
-                                            <span className="text-[10px] px-2 py-0.5 bg-rose-500/10 text-rose-500 border border-rose-500/20 rounded-full font-bold">
-                                              Out of Stock
-                                            </span>
-                                          )}
-                                        </div>
-                                        <div className="flex items-center gap-2 shrink-0 font-mono">
-                                          <span className="font-mono text-xs font-black text-orange-500">
-                                            ₹{Number(invItem.mrp_per_unit || invItem.mrp || 0).toFixed(2)}/unit
-                                          </span>
-                                        </div>
-                                      </div>
-
-                                      {/* Row 2: Supplier / MFG & Salt */}
-                                      <div className="flex items-center gap-2 text-xs text-muted-foreground flex-wrap">
-                                        {invItem.supplier_name ? (
-                                          <span className="font-semibold text-foreground/80">
-                                            Supplier: {invItem.supplier_name}
-                                          </span>
-                                        ) : invItem.manufacturer || invItem.manufacturer_name ? (
-                                          <span className="font-semibold text-foreground/80">
-                                            MFG: {invItem.manufacturer || invItem.manufacturer_name}
-                                          </span>
-                                        ) : null}
-                                        {invItem.salt_composition && (
-                                          <span className="text-orange-400 font-medium">
-                                            • Salt: {invItem.salt_composition}
-                                          </span>
-                                        )}
-                                      </div>
-
-                                      {/* Row 3: Footer details - Rate, MRP, Batch & Expiry */}
-                                      {(() => {
-                                        if (invItem.source === "global") {
-                                          return (
-                                            <div className="mt-1.5 flex items-center justify-between text-xs text-muted-foreground/90 flex-wrap pt-1 border-t border-border/40 font-mono">
-                                              <div className="flex items-center gap-3">
-                                                {invItem.purchase_price !== undefined && Number(invItem.purchase_price) > 0 && (
-                                                  <span className="text-emerald-500 font-bold">
-                                                    PTR: ₹{Number(invItem.purchase_price || 0).toFixed(2)}
-                                                  </span>
-                                                )}
-                                                <span className="text-orange-500 font-bold">
-                                                  MRP: ₹{Number(invItem.mrp_per_unit || invItem.mrp || 0).toFixed(2)}
-                                                </span>
-                                                {invItem.pack_type && (
-                                                  <span className="text-[10px] font-sans px-2 py-0.5 bg-muted rounded border border-border">
-                                                    {invItem.pack_type} ({invItem.units_per_pack || 1}u)
-                                                  </span>
-                                                )}
-                                              </div>
-                                              <span className="text-[10px] text-blue-400 font-sans font-bold bg-blue-500/10 px-2 py-0.5 rounded border border-blue-500/20">
-                                                Negative Billing Available
-                                              </span>
-                                            </div>
-                                          );
-                                        }
-                                        const expInfo = getNearestExpiryInfo(invItem);
-                                        return (
-                                          <div className="mt-1.5 flex items-center justify-between text-xs text-muted-foreground/90 flex-wrap pt-1 border-t border-border/40 font-mono">
-                                            <div className="flex items-center gap-3">
-                                              {invItem.purchase_price !== undefined && (
-                                                <span className="text-blue-500 font-bold">
-                                                  Rate: ₹{Number(invItem.purchase_price || 0).toFixed(2)}
-                                                </span>
-                                              )}
-                                              <span>
-                                                MRP: ₹{Number(invItem.mrp_per_unit || invItem.mrp || 0).toFixed(2)}
-                                              </span>
-                                            </div>
-                                            <div className="flex items-center gap-2">
-                                              {expInfo.isMultiple ? (
-                                                <>
-                                                  <span className="px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 font-bold text-[10px] border border-amber-500/30">
-                                                    {expInfo.batchCount} Batches
-                                                  </span>
-                                                  <span>
-                                                    Nearest Exp: <span className="font-bold text-foreground">{expInfo.expiryLabel}</span>
-                                                  </span>
-                                                </>
-                                              ) : (
-                                                <>
-                                                  <span>
-                                                    Batch: <span className="font-bold text-foreground">{expInfo.batchLabel}</span>
-                                                  </span>
-                                                  <span>
-                                                    Exp: <span className="font-bold text-foreground">{expInfo.expiryLabel}</span>
-                                                  </span>
-                                                </>
-                                              )}
-                                            </div>
-                                          </div>
-                                        );
-                                      })()}
-                                    </div>
-                                  )
-                                )}
-                                  </>
-                                )}
+                                <SuggestionList
+                                  idPrefix="suggestion-new"
+                                  search={inventorySearch}
+                                  allSuggestions={inventorySuggestions}
+                                  suggestions={visibleSuggestions}
+                                  loading={loadingInventorySuggestions}
+                                  highlighted={highlightedSuggestion}
+                                  setHighlighted={setHighlightedSuggestion}
+                                  filter={suggestionFilter}
+                                  setFilter={setSuggestionFilter}
+                                  warningDays={expiryWarningDays}
+                                  getNearestExpiryInfo={getNearestExpiryInfo}
+                                  onSelect={(invItem) => handleSelectInventoryForRow(item.id, invItem)}
+                                  onManual={() => handleManualEntry(item.id, inventorySearch)}
+                                  onDetails={(invItem) => openSuggestionDetails(invItem, item.id, "new")}
+                                />
                               </div>,
                               document.body
                             )}
@@ -4211,6 +4116,8 @@ export default function BillingPage() {
                         if (val) {
                           setIsAdvancePaid(false);
                           setAdvanceAmount("");
+                          setIsCredit(false);
+                          setPaidNow("");
                         } else {
                           setPaymentMode("");
                         }
@@ -4230,6 +4137,8 @@ export default function BillingPage() {
                         setIsAdvancePaid(val);
                         if (val) {
                           setIsPaid(false);
+                          setIsCredit(false);
+                          setPaidNow("");
                         } else {
                           setAdvanceAmount("");
                           setPaymentMode("");
@@ -4240,6 +4149,59 @@ export default function BillingPage() {
                       Advance Paid
                     </Label>
                   </div>
+
+                  {/* Udhar: hand over the goods, take what they pay now, the rest goes to their dues */}
+                  <div className={`flex items-center gap-2 px-3 h-9 rounded-xl border transition-colors ${isCredit ? "bg-rose-500/10 border-rose-500/40" : "bg-muted/20 border-border/50"}`}>
+                    <Checkbox
+                      id="isCredit"
+                      checked={isCredit}
+                      disabled={settings?.lock_unpaid_bills}
+                      onCheckedChange={(val) => {
+                        setIsCredit(!!val);
+                        if (val) {
+                          setIsPaid(false);
+                          setIsAdvancePaid(false);
+                          setAdvanceAmount("");
+                        } else {
+                          setPaidNow("");
+                          setIsPaid(true);
+                        }
+                      }}
+                      className="data-[state=checked]:bg-rose-600 data-[state=checked]:border-rose-600"
+                      data-testid="credit-toggle"
+                    />
+                    <Label htmlFor="isCredit" className="text-sm font-semibold text-foreground/80 cursor-pointer select-none">
+                      Udhar (Credit)
+                    </Label>
+                  </div>
+
+                  {isCredit && (
+                    <div className="flex flex-wrap items-center gap-2 animate-in fade-in slide-in-from-left-2 duration-200">
+                      <div className="relative">
+                        <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-xs font-bold text-muted-foreground">₹</span>
+                        <input
+                          type="number"
+                          min="0"
+                          inputMode="decimal"
+                          placeholder="Paid now"
+                          value={paidNow}
+                          onChange={(e) => setPaidNow(e.target.value)}
+                          className="h-9 w-32 rounded-xl border border-border/80 bg-background pl-6 pr-2 text-xs font-semibold outline-none focus:border-rose-500 focus:ring-2 focus:ring-rose-500/20"
+                          aria-label="Amount paid now"
+                          data-testid="paid-now"
+                        />
+                      </div>
+                      <span className="rounded-lg bg-rose-500/10 px-2.5 py-1 text-xs font-bold text-rose-600 dark:text-rose-400" data-testid="udhar-amount">
+                        Udhar ₹{Math.max(0, grandTotal - (parseFloat(paidNow) || 0)).toFixed(2)}
+                        <span className="ml-1 font-semibold text-rose-600/80 dark:text-rose-400/80">
+                          → {customerInfo.customer_name ? `${customerInfo.customer_name.split(" ")[0]}'s dues` : "customer's dues"}
+                        </span>
+                      </span>
+                      {(parseFloat(paidNow) || 0) > grandTotal && grandTotal > 0 && (
+                        <span className="text-[11px] font-semibold text-red-500">More than the bill total ₹{grandTotal.toFixed(2)}</span>
+                      )}
+                    </div>
+                  )}
 
                   {isAdvancePaid && (
                     <div className="flex items-center gap-2 animate-in fade-in slide-in-from-left-2 duration-200">
@@ -4257,9 +4219,9 @@ export default function BillingPage() {
                     <Select
                       value={paymentMode}
                       onValueChange={setPaymentMode}
-                      disabled={!isPaid && !isAdvancePaid}
+                      disabled={!isPaid && !isAdvancePaid && !(isCredit && parseFloat(paidNow) > 0)}
                     >
-                      <SelectTrigger className="h-9 w-36 bg-muted/20 border border-border/50 rounded-xl text-xs font-semibold" disabled={!isPaid && !isAdvancePaid}>
+                      <SelectTrigger className="h-9 w-36 bg-muted/20 border border-border/50 rounded-xl text-xs font-semibold" disabled={!isPaid && !isAdvancePaid && !(isCredit && parseFloat(paidNow) > 0)}>
                         <SelectValue placeholder="Payment Mode">
                           {paymentMode && paymentMode !== "none" ? (
                             <div className="flex items-center gap-1.5">
@@ -4364,8 +4326,8 @@ export default function BillingPage() {
                         <p className="text-[11px] font-semibold text-muted-foreground">Add medicines to the bill first.</p>
                       ) : (
                         <>
-                          {/* One row per medicine: how much they take a day -> how long it lasts -> what to reorder */}
-                          <div className="space-y-1.5">
+                          {/* One card per medicine: dose a day -> how long it lasts -> what to restock */}
+                          <div className="space-y-2">
                             {validItems.map((item) => {
                               const on = refillReminder.selected_items.length === 0 || refillReminder.selected_items.some((x) => x.product_name === item.product_name);
                               const r = refillCalc.rows.find((x) => x.product_name === item.product_name);
@@ -4377,58 +4339,65 @@ export default function BillingPage() {
                                   const next = has ? cur.filter((x) => x.product_name !== item.product_name) : [...cur, item];
                                   return { ...prev, selected_items: next.length ? next : prev.selected_items };
                                 });
+                              const boxInput =
+                                "h-8 rounded-lg border border-border bg-background px-2 text-center text-xs font-bold text-foreground outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20";
                               return (
                                 <div
                                   key={item.product_name}
-                                  className={`rounded-xl border px-2.5 py-2 transition-colors ${on ? "border-indigo-500/20 bg-background/70" : "border-border/50 bg-muted/20 opacity-60"}`}
+                                  className={`rounded-xl border p-3 transition-colors ${on ? "border-indigo-500/25 bg-background/80" : "border-border/50 bg-muted/20 opacity-60"}`}
                                 >
-                                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-                                    <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2">
-                                      <Checkbox checked={on} onCheckedChange={toggle} className="data-[state=checked]:bg-indigo-600 data-[state=checked]:border-indigo-600" />
-                                      <span className="truncate text-xs font-bold text-foreground" title={item.product_name}>{item.product_name}</span>
-                                      <span className="shrink-0 font-mono text-[10px] font-semibold text-muted-foreground">{parseInt(item.quantity) || 0} sold</span>
-                                    </label>
-                                    {on && r && (
-                                      <div className="flex items-center gap-1">
-                                        <span className="mr-0.5 text-[10px] font-semibold text-muted-foreground">Takes</span>
-                                        {["0.5", "1", "2", "3"].map((v) => (
-                                          <button
-                                            key={v}
-                                            type="button"
-                                            onClick={() => setDose(item.product_name, { dose: v, days: "" })}
-                                            className={`h-6 min-w-[1.75rem] rounded-md border px-1.5 text-[10px] font-bold ${!r.days_input && String(r.dose_input) === v ? "border-indigo-500 bg-indigo-500 text-white" : "border-border/70 text-muted-foreground hover:border-indigo-500/50"}`}
-                                          >
-                                            {v === "0.5" ? "½" : v}
-                                          </button>
-                                        ))}
-                                        <Input
-                                          aria-label={`Dose per day for ${item.product_name}`}
-                                          inputMode="decimal"
-                                          value={["0.5", "1", "2", "3"].includes(String(r.dose_input)) ? "" : r.dose_input}
-                                          placeholder="1½"
-                                          onChange={(e) => setDose(item.product_name, { dose: e.target.value || "1", days: "" })}
-                                          className="h-6 w-14 rounded-md px-1 text-center text-[11px] font-bold"
-                                        />
-                                        <span className="text-[10px] font-semibold text-muted-foreground">a day</span>
-                                      </div>
-                                    )}
-                                  </div>
+                                  <label className="flex cursor-pointer items-center gap-2">
+                                    <Checkbox checked={on} onCheckedChange={toggle} className="data-[state=checked]:bg-indigo-600 data-[state=checked]:border-indigo-600" />
+                                    <span className="min-w-0 truncate text-sm font-bold text-foreground" title={item.product_name}>{item.product_name}</span>
+                                    <span className="shrink-0 rounded-md bg-muted px-1.5 py-0.5 font-mono text-[10px] font-semibold text-muted-foreground">{parseInt(item.quantity) || 0} sold</span>
+                                  </label>
+
                                   {on && r && (
-                                    <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2 pl-6">
-                                      <span className={`text-[11px] font-semibold ${r.days ? "text-indigo-600 dark:text-indigo-400" : "text-rose-500"}`}>
-                                        {r.days ? `Lasts ${r.days} day${r.days === 1 ? "" : "s"}, until ${fmtDay(r.runs_out_on)}` : "Pick how many they take a day"}
-                                      </span>
-                                      <span className="flex items-center gap-1.5 text-[11px] font-semibold text-muted-foreground">
-                                        Restock
-                                        <Input
-                                          aria-label={`Quantity to restock for ${item.product_name}`}
-                                          inputMode="numeric"
-                                          value={r.reorder_input}
-                                          onChange={(e) => setDose(item.product_name, { reorder: e.target.value.replace(/[^\d]/g, "").slice(0, 4) })}
-                                          className="h-6 w-12 rounded-md px-1 text-center text-[11px] font-bold"
-                                        />
-                                        {upp > 1 ? `pack${r.reorder_input === "1" ? "" : "s"} of ${upp}` : "units"}
-                                      </span>
+                                    <div className="mt-3 grid gap-3 sm:grid-cols-[1.4fr_1fr_1fr] sm:items-end">
+                                      <div>
+                                        <p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Dose per day</p>
+                                        <div className="flex flex-wrap items-center gap-1.5">
+                                          {["0.5", "1", "2", "3"].map((v) => (
+                                            <button
+                                              key={v}
+                                              type="button"
+                                              onClick={() => setDose(item.product_name, { dose: v, days: "" })}
+                                              className={`h-8 min-w-[2.25rem] rounded-lg border px-2 text-xs font-bold transition-colors ${!r.days_input && String(r.dose_input) === v ? "border-indigo-600 bg-indigo-600 text-white" : "border-border text-foreground hover:border-indigo-500/60"}`}
+                                            >
+                                              {v === "0.5" ? "½" : v}
+                                            </button>
+                                          ))}
+                                          <input
+                                            aria-label={`Other dose per day for ${item.product_name}`}
+                                            inputMode="decimal"
+                                            value={["0.5", "1", "2", "3"].includes(String(r.dose_input)) ? "" : r.dose_input}
+                                            placeholder="1½"
+                                            onChange={(e) => setDose(item.product_name, { dose: e.target.value || "1", days: "" })}
+                                            className={`${boxInput} w-16`}
+                                          />
+                                        </div>
+                                      </div>
+                                      <div>
+                                        <p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Lasts</p>
+                                        <p className={`flex h-8 items-center text-xs font-bold ${r.days ? "text-indigo-600 dark:text-indigo-400" : "text-rose-500"}`}>
+                                          {r.days ? `${r.days} day${r.days === 1 ? "" : "s"} · till ${fmtDay(r.runs_out_on)}` : "Pick a dose"}
+                                        </p>
+                                      </div>
+                                      <div>
+                                        <p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Restock</p>
+                                        <div className="flex items-center gap-1.5">
+                                          <input
+                                            aria-label={`Quantity to restock for ${item.product_name}`}
+                                            inputMode="numeric"
+                                            value={r.reorder_input}
+                                            onChange={(e) => setDose(item.product_name, { reorder: e.target.value.replace(/[^\d]/g, "").slice(0, 4) })}
+                                            className={`${boxInput} w-16`}
+                                          />
+                                          <span className="text-xs font-semibold text-muted-foreground">
+                                            {upp > 1 ? `pack${r.reorder_input === "1" ? "" : "s"} of ${upp}` : `unit${r.reorder_input === "1" ? "" : "s"}`}
+                                          </span>
+                                        </div>
+                                      </div>
                                     </div>
                                   )}
                                 </div>
@@ -4450,29 +4419,55 @@ export default function BillingPage() {
                                       key={n}
                                       type="button"
                                       onClick={() => setRefillReminder((prev) => ({ ...prev, mode: "auto", lead: n }))}
-                                      className={`h-6 rounded-lg border px-2 text-[10px] font-bold transition-colors ${active ? "border-indigo-600 bg-indigo-600 text-white" : "border-indigo-500/30 text-indigo-700 hover:bg-indigo-500/10 dark:text-indigo-300"}`}
+                                      className={`h-7 rounded-lg border px-2.5 text-[11px] font-bold transition-colors ${active ? "border-indigo-600 bg-indigo-600 text-white" : "border-indigo-500/30 text-indigo-700 hover:bg-indigo-500/10 dark:text-indigo-300"}`}
                                     >
                                       {n === 0 ? "On the day" : `${n} day${n === 1 ? "" : "s"} before`}
                                     </button>
                                   );
                                 })}
-                                <label className={`relative flex h-6 cursor-pointer items-center gap-1 rounded-lg border px-2 text-[10px] font-bold ${refillReminder.mode === "custom" ? "border-indigo-600 bg-indigo-600 text-white" : "border-indigo-500/30 text-indigo-700 hover:bg-indigo-500/10 dark:text-indigo-300"}`}>
-                                  <Calendar className="h-3 w-3" /> Pick a date
+                                <span className="relative inline-flex">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const el = reminderDateRef.current;
+                                      if (!el) return;
+                                      try {
+                                        el.showPicker();
+                                      } catch {
+                                        el.focus();
+                                        el.click();
+                                      }
+                                    }}
+                                    className={`flex h-7 items-center gap-1 rounded-lg border px-2.5 text-[11px] font-bold transition-colors ${refillReminder.mode === "custom" ? "border-indigo-600 bg-indigo-600 text-white" : "border-indigo-500/30 text-indigo-700 hover:bg-indigo-500/10 dark:text-indigo-300"}`}
+                                  >
+                                    <Calendar className="h-3.5 w-3.5" />
+                                    {refillReminder.mode === "custom" && refillReminder.reminder_date ? fmtDay(refillReminder.reminder_date) : "Pick a date"}
+                                  </button>
+                                  {/* Native picker anchored under the button (opened with showPicker) */}
                                   <input
+                                    ref={reminderDateRef}
                                     type="date"
+                                    tabIndex={-1}
                                     aria-label="Reminder date"
                                     min={billingDate}
                                     value={refillReminder.reminder_date || ""}
                                     onChange={(e) => e.target.value && setRefillReminder((prev) => ({ ...prev, mode: "custom", reminder_date: e.target.value }))}
-                                    className="absolute inset-0 cursor-pointer opacity-0"
+                                    className="pointer-events-none absolute bottom-0 left-0 h-0 w-full opacity-0"
                                   />
-                                </label>
+                                </span>
                               </div>
                               <p className="text-[11px] leading-relaxed text-indigo-800 dark:text-indigo-200">
                                 <strong>{customerInfo.customer_name || "The customer"}</strong> runs out of {refillRec.driver}
                                 {reminderItems.length > 1 ? " (first)" : ""} on <strong>{fmtDay(refillRec.refill_target_date)}</strong>. You'll be reminded on{" "}
                                 <strong>{fmtDay(refillReminder.reminder_date)}</strong>, and tapping the reminder opens a purchase ready to restock{" "}
-                                {refillCalc.rows.filter((x) => x.reorder_units > 0).map((x) => `${x.reorder_input} ${x.units_per_pack > 1 ? `× ${x.units_per_pack}` : "units"} ${x.product_name}`).join(", ") || "these medicines"}.
+                                {refillCalc.rows
+                                  .filter((x) => x.reorder_units > 0)
+                                  .map((x) =>
+                                    x.units_per_pack > 1
+                                      ? `${x.reorder_input} pack${x.reorder_input === "1" ? "" : "s"} of ${x.product_name}`
+                                      : `${x.reorder_input} unit${x.reorder_input === "1" ? "" : "s"} of ${x.product_name}`
+                                  )
+                                  .join(", ") || "these medicines"}.
                               </p>
                             </div>
                           )}
@@ -4489,9 +4484,18 @@ export default function BillingPage() {
                   <Input
                     type="number"
                     value={billDiscount}
-                    onChange={(e) =>
-                      setBillDiscount(parseFloat(e.target.value) || 0)
-                    }
+                    placeholder="0"
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      if (v === "") return setBillDiscount("");
+                      const n = parseFloat(v);
+                      if (isNaN(n) || n < 0) return;
+                      if (n > 100) {
+                        toast.error("Discount can't be more than 100%");
+                        return setBillDiscount("100");
+                      }
+                      setBillDiscount(v);
+                    }}
                     min="0"
                     max="100"
                     className="h-9 w-24 text-center border-border/80 focus-visible:ring-1 focus-visible:ring-primary focus-visible:border-primary rounded-xl transition-all duration-200 bg-background/50"
@@ -4501,7 +4505,7 @@ export default function BillingPage() {
                   <span>Subtotal</span>
                   <span className="font-mono text-foreground">₹{subtotal.toFixed(2)}</span>
                 </div>
-                {billDiscount > 0 && (
+                {(parseFloat(billDiscount) || 0) > 0 && (
                   <div className="flex justify-between items-center text-sm font-bold text-destructive">
                     <span>Discount ({billDiscount}%)</span>
                     <span className="font-mono">-₹{discountAmount.toFixed(2)}</span>
@@ -4530,7 +4534,7 @@ export default function BillingPage() {
                           return;
                         }
                         if (newGrandTotal > subtotal) {
-                          setBillDiscount(0);
+                          setBillDiscount("");
                           return;
                         }
                         if (newGrandTotal < 0) {
@@ -4743,12 +4747,15 @@ export default function BillingPage() {
                   type="number"
                   placeholder="0"
                   value={editingBillData.discount_percent || ""}
-                  onChange={(e) =>
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    const n = parseFloat(v);
+                    if (v !== "" && (isNaN(n) || n < 0)) return;
                     setEditingBillData({
                       ...editingBillData,
-                      discount_percent: parseFloat(e.target.value) || 0,
-                    })
-                  }
+                      discount_percent: v === "" ? "" : n > 100 ? "100" : v,
+                    });
+                  }}
                   min="0"
                   max="100"
                   className="h-9 text-xs font-semibold rounded-xl border-border bg-background text-foreground shadow-2xs focus-visible:ring-2 focus-visible:ring-amber-500/30 focus-visible:border-amber-500"
@@ -5023,211 +5030,24 @@ export default function BillingPage() {
                                     setActiveEditingItemId(null);
                                   }
                                 }}
-                                style={{
-                                  position: "fixed",
-                                  top: dropdownPosition.top,
-                                  left: Math.max(16, Math.min(dropdownPosition.left, (window.innerWidth || 1200) - 560)),
-                                  width: Math.max(540, dropdownPosition.width || 540),
-                                  minWidth: "540px",
-                                  maxWidth: "calc(100vw - 32px)",
-                                  maxHeight: "320px",
-                                  transform: dropdownPosition.transform || "none",
-                                  overscrollBehavior: "contain",
-                                  WebkitOverflowScrolling: "touch",
-                                }}
+                                style={suggestionBoxStyle()}
                               >
-                                {/* Header bar showing search term & matches count */}
-                                {editingInventorySearch && (
-                                  <div className="px-3.5 py-1.5 bg-muted/90 backdrop-blur-md border-b border-border text-xs font-semibold text-muted-foreground flex items-center justify-between sticky top-0 z-10">
-                                    <div className="flex items-center gap-2">
-                                      <span>Suggestions for "{editingInventorySearch}"</span>
-                                      {editingInventorySuggestions.length > 0 && (
-                                        <span className="text-[10px] bg-amber-500/10 text-amber-500 px-2 py-0.5 rounded-full font-bold border border-amber-500/20">
-                                          {editingInventorySuggestions.length} matches
-                                        </span>
-                                      )}
-                                    </div>
-                                  </div>
-                                )}
-
-                                {/* Loader State using Our Custom Loader Component */}
-                                {loadingEditingInventorySuggestions ? (
-                                  <div className="h-[130px] w-full flex flex-col items-center justify-center bg-card/95 backdrop-blur-md p-4">
-                                    <Loader
-                                      size="sm"
-                                      text="Searching inventory..."
-                                      variant="inline"
-                                    />
-                                  </div>
-                                ) : (
-                                  <>
-                                    {/* Manual Entry Option */}
-                                    {editingInventorySearch &&
-                                      editingInventorySearch.length >= 2 && (
-                                        <div
-                                          id="suggestion-edit-0"
-                                          className={`p-3 cursor-pointer border-b border-border transition-colors duration-150 ${highlightedEditingSuggestion === 0 ? "bg-amber-500/20 text-amber-600 font-semibold" : "hover:bg-amber-500/10 bg-amber-500/5 text-amber-600"}`}
-                                          onMouseDown={(e) => {
-                                            e.preventDefault();
-                                            handleManualEntryForEdit(
-                                              item.id,
-                                              editingInventorySearch
-                                            );
-                                          }}
-                                          onMouseEnter={() =>
-                                            setHighlightedEditingSuggestion(0)
-                                          }
-                                        >
-                                          <div className="flex items-center gap-2">
-                                            <Plus className="w-4 h-4 text-amber-500" />
-                                            <div>
-                                              <p className="font-semibold text-sm">
-                                                Manual Entry: "{editingInventorySearch}"
-                                              </p>
-                                              <p className="text-xs text-muted-foreground font-normal">
-                                                Add item not in inventory
-                                              </p>
-                                            </div>
-                                          </div>
-                                        </div>
-                                      )}
-
-                                    {/* Inventory Items */}
-                                    {editingInventorySuggestions.map(
-                                      (invItem, suggIdx) => (
-                                        <div
-                                          key={invItem.id}
-                                          id={`suggestion-edit-${suggIdx + 1}`}
-                                          className={`p-3 cursor-pointer border-b border-border/50 last:border-0 transition-colors duration-150 ${highlightedEditingSuggestion === suggIdx + 1 ? "bg-amber-500/20" : "hover:bg-muted/50"}`}
-                                          onMouseDown={(e) => {
-                                            e.preventDefault();
-                                            handleSelectInventoryForEditRow(
-                                              item.id,
-                                              invItem
-                                            );
-                                          }}
-                                          onMouseEnter={() =>
-                                            setHighlightedEditingSuggestion(
-                                              suggIdx + 1
-                                            )
-                                          }
-                                        >
-                                          {/* Row 1: Name + Stock Badge + Price */}
-                                          <div className="flex items-center justify-between gap-2 mb-1">
-                                            <div className="font-bold text-sm text-foreground flex items-center gap-2 flex-wrap">
-                                              <span>{invItem.product_name}</span>
-                                              {(invItem.available_quantity || invItem.available_units || 0) > 0 ? (
-                                                <span className="text-[10px] px-2 py-0.5 bg-emerald-500/10 text-emerald-500 dark:text-emerald-400 border border-emerald-500/20 rounded-full font-bold">
-                                                  In Stock: {invItem.available_quantity || invItem.available_units} units
-                                                </span>
-                                              ) : invItem.source === "global" ? (
-                                                <span className="text-[10px] px-2 py-0.5 bg-blue-500/10 text-blue-500 dark:text-blue-400 border border-blue-500/20 rounded-full font-bold flex items-center gap-1">
-                                                  <Globe className="w-2.5 h-2.5" />
-                                                  Global Medicine
-                                                </span>
-                                              ) : invItem.is_custom_catalog || invItem.source === "catalog" ? (
-                                                <span className="text-[10px] px-2 py-0.5 bg-purple-500/10 text-purple-400 border border-purple-500/20 rounded-full font-bold">
-                                                  My Catalog
-                                                </span>
-                                              ) : (
-                                                <span className="text-[10px] px-2 py-0.5 bg-rose-500/10 text-rose-500 border border-rose-500/20 rounded-full font-bold">
-                                                  Out of Stock
-                                                </span>
-                                              )}
-                                            </div>
-                                            <div className="flex items-center gap-2 shrink-0 font-mono">
-                                              <span className="font-mono text-xs font-black text-amber-500">
-                                                ₹{Number(invItem.mrp_per_unit || invItem.mrp || 0).toFixed(2)}/unit
-                                              </span>
-                                            </div>
-                                          </div>
-
-                                          {/* Row 2: Supplier / MFG & Salt */}
-                                          <div className="flex items-center gap-2 text-xs text-muted-foreground flex-wrap">
-                                            {invItem.supplier_name ? (
-                                              <span className="font-semibold text-foreground/80">
-                                                Supplier: {invItem.supplier_name}
-                                              </span>
-                                            ) : invItem.manufacturer || invItem.manufacturer_name ? (
-                                              <span className="font-semibold text-foreground/80">
-                                                MFG: {invItem.manufacturer || invItem.manufacturer_name}
-                                              </span>
-                                            ) : null}
-                                            {invItem.salt_composition && (
-                                              <span className="text-amber-500 font-medium">
-                                                • Salt: {invItem.salt_composition}
-                                              </span>
-                                            )}
-                                          </div>
-
-                                          {/* Row 3: Footer details - Rate, MRP, Batch & Expiry */}
-                                          {(() => {
-                                            if (invItem.source === "global") {
-                                              return (
-                                                <div className="mt-1.5 flex items-center justify-between text-xs text-muted-foreground/90 flex-wrap pt-1 border-t border-border/40 font-mono">
-                                                  <div className="flex items-center gap-3">
-                                                    {invItem.purchase_price !== undefined && Number(invItem.purchase_price) > 0 && (
-                                                      <span className="text-emerald-500 font-bold">
-                                                        PTR: ₹{Number(invItem.purchase_price || 0).toFixed(2)}
-                                                      </span>
-                                                    )}
-                                                    <span className="text-orange-500 font-bold">
-                                                      MRP: ₹{Number(invItem.mrp_per_unit || invItem.mrp || 0).toFixed(2)}
-                                                    </span>
-                                                    {invItem.pack_type && (
-                                                      <span className="text-[10px] font-sans px-2 py-0.5 bg-muted rounded border border-border">
-                                                        {invItem.pack_type} ({invItem.units_per_pack || 1}u)
-                                                      </span>
-                                                    )}
-                                                  </div>
-                                                  <span className="text-[10px] text-blue-400 font-sans font-bold bg-blue-500/10 px-2 py-0.5 rounded border border-blue-500/20">
-                                                    Negative Billing Available
-                                                  </span>
-                                                </div>
-                                              );
-                                            }
-                                            const expInfo = getNearestExpiryInfo(invItem);
-                                            return (
-                                              <div className="mt-1.5 flex items-center justify-between text-xs text-muted-foreground/90 flex-wrap pt-1 border-t border-border/40 font-mono">
-                                                <div className="flex items-center gap-3">
-                                                  {invItem.purchase_price !== undefined && (
-                                                    <span className="text-blue-500 font-bold">
-                                                      Rate: ₹{Number(invItem.purchase_price || 0).toFixed(2)}
-                                                    </span>
-                                                  )}
-                                                  <span>
-                                                    MRP: ₹{Number(invItem.mrp_per_unit || invItem.mrp || 0).toFixed(2)}
-                                                  </span>
-                                                </div>
-                                                <div className="flex items-center gap-2">
-                                                  {expInfo.isMultiple ? (
-                                                    <>
-                                                      <span className="px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 font-bold text-[10px] border border-amber-500/30">
-                                                        {expInfo.batchCount} Batches
-                                                      </span>
-                                                      <span>
-                                                        Nearest Exp: <span className="font-bold text-foreground">{expInfo.expiryLabel}</span>
-                                                      </span>
-                                                    </>
-                                                  ) : (
-                                                    <>
-                                                      <span>
-                                                        Batch: <span className="font-bold text-foreground">{expInfo.batchLabel}</span>
-                                                      </span>
-                                                      <span>
-                                                        Exp: <span className="font-bold text-foreground">{expInfo.expiryLabel}</span>
-                                                      </span>
-                                                    </>
-                                                  )}
-                                                </div>
-                                              </div>
-                                            );
-                                          })()}
-                                        </div>
-                                      )
-                                    )}
-                                  </>
-                                )}
+                                <SuggestionList
+                                  idPrefix="suggestion-edit"
+                                  search={editingInventorySearch}
+                                  allSuggestions={editingInventorySuggestions}
+                                  suggestions={visibleEditingSuggestions}
+                                  loading={loadingEditingInventorySuggestions}
+                                  highlighted={highlightedEditingSuggestion}
+                                  setHighlighted={setHighlightedEditingSuggestion}
+                                  filter={suggestionFilter}
+                                  setFilter={setSuggestionFilter}
+                                  warningDays={expiryWarningDays}
+                                  getNearestExpiryInfo={getNearestExpiryInfo}
+                                  onSelect={(invItem) => handleSelectInventoryForEditRow(item.id, invItem)}
+                                  onManual={() => handleManualEntryForEdit(item.id, editingInventorySearch)}
+                                  onDetails={(invItem) => openSuggestionDetails(invItem, item.id, "edit")}
+                                />
                               </div>,
                               document.body
                             )}
@@ -5517,6 +5337,7 @@ export default function BillingPage() {
                         setEditingBillData({
                           ...editingBillData,
                           is_paid: v,
+                          is_credit: v ? false : editingBillData.is_credit,
                           due_date: v ? null : editingBillData.due_date,
                           payment_mode: v ? (editingBillData.payment_mode || "Cash") : "",
                         })
@@ -5524,6 +5345,27 @@ export default function BillingPage() {
                     />
                     <Label htmlFor="editIsPaid" className="text-sm font-semibold text-foreground/80 cursor-pointer select-none">
                       Paid
+                    </Label>
+                  </div>
+                  <div className={`flex items-center gap-2 px-3 h-9 rounded-xl border ${editingBillData.is_credit ? "border-rose-500/40 bg-rose-500/10" : "border-border/50 bg-muted/20"}`}>
+                    <Checkbox
+                      id="editIsCredit"
+                      data-testid="edit-credit-toggle"
+                      checked={!!editingBillData.is_credit}
+                      disabled={settings?.lock_unpaid_bills}
+                      onCheckedChange={(v) =>
+                        setEditingBillData({
+                          ...editingBillData,
+                          is_credit: !!v,
+                          is_paid: v ? false : editingBillData.is_paid,
+                          is_advance_paid: v ? false : editingBillData.is_advance_paid,
+                          paid_now: v ? editingBillData.paid_now : "",
+                          payment_mode: v ? editingBillData.payment_mode : editingBillData.is_paid ? editingBillData.payment_mode : "",
+                        })
+                      }
+                    />
+                    <Label htmlFor="editIsCredit" className="text-sm font-semibold text-foreground/80 cursor-pointer select-none">
+                      Udhar
                     </Label>
                   </div>
                   <div className="flex items-center gap-2">
@@ -5535,9 +5377,9 @@ export default function BillingPage() {
                           payment_mode: val,
                         })
                       }
-                      disabled={!editingBillData.is_paid}
+                      disabled={!editingBillData.is_paid && !(editingBillData.is_credit && parseFloat(editingBillData.paid_now) > 0)}
                     >
-                      <SelectTrigger className="h-9 w-36 bg-muted/20 border border-border/50 rounded-xl text-xs font-semibold" disabled={!editingBillData.is_paid}>
+                      <SelectTrigger className="h-9 w-36 bg-muted/20 border border-border/50 rounded-xl text-xs font-semibold" disabled={!editingBillData.is_paid && !(editingBillData.is_credit && parseFloat(editingBillData.paid_now) > 0)}>
                         <SelectValue placeholder="Payment Mode">
                           {editingBillData.payment_mode && editingBillData.payment_mode !== "none" ? (
                             <div className="flex items-center gap-1.5">
@@ -5573,6 +5415,34 @@ export default function BillingPage() {
                     </Select>
                   </div>
                 </div>
+
+                {editingBillData.is_credit && (
+                  <div className="flex flex-wrap items-center gap-2 animate-in fade-in slide-in-from-left-2 duration-200">
+                    <Input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      placeholder="Paid now ₹"
+                      value={editingBillData.paid_now}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        if (v !== "" && Number(v) < 0) return;
+                        setEditingBillData({ ...editingBillData, paid_now: v });
+                      }}
+                      className={`h-9 w-32 rounded-xl text-sm font-semibold ${(parseFloat(editingBillData.paid_now) || 0) > editGrandTotal + 0.004 ? "border-red-500" : ""}`}
+                      data-testid="edit-paid-now"
+                    />
+                    <span className="text-xs font-bold text-rose-600 dark:text-rose-400">
+                      Udhar ₹{Math.max(0, editGrandTotal - (parseFloat(editingBillData.paid_now) || 0)).toFixed(2)}
+                      <span className="ml-1 font-semibold text-rose-600/80 dark:text-rose-400/80">
+                        → {editingBillData.customer_name ? `${editingBillData.customer_name.split(" ")[0]}'s dues` : "customer's dues"}
+                      </span>
+                    </span>
+                    {(parseFloat(editingBillData.paid_now) || 0) > editGrandTotal + 0.004 && (
+                      <span className="text-[11px] font-semibold text-red-500">More than the bill total ₹{editGrandTotal.toFixed(2)}</span>
+                    )}
+                  </div>
+                )}
 
                 <div className="flex flex-wrap gap-4 items-end">
                   {/* Due Date */}
@@ -6165,7 +6035,7 @@ export default function BillingPage() {
               <TableHeader className="bg-muted/40">
                 <TableRow className="border-b border-border/60">
                   <TableHead className="w-12" data-card="corner"></TableHead>
-                  <TableHead className="text-xs font-bold text-muted-foreground uppercase tracking-wider" data-card="title">Bill No / Timestamp</TableHead>
+                  <TableHead className="text-xs font-bold text-muted-foreground uppercase tracking-wider" data-card="title">Bill No / Dates</TableHead>
                   <TableHead className="text-xs font-bold text-muted-foreground uppercase tracking-wider" data-card="full">Customer</TableHead>
                   <TableHead className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Items</TableHead>
                   <TableHead className="text-right text-xs font-bold text-muted-foreground uppercase tracking-wider">Amount</TableHead>
@@ -6217,16 +6087,7 @@ export default function BillingPage() {
                           </TableCell>
                           <TableCell className="font-mono text-sm text-foreground py-2.5">
                             <div className="font-bold">#{serialNum} - {bill.bill_no}</div>
-                            <div className="text-[11px] text-muted-foreground font-medium mt-0.5">
-                              {new Date(bill.created_at || bill.billing_date || new Date()).toLocaleString("en-IN", {
-                                day: "2-digit",
-                                month: "short",
-                                year: "numeric",
-                                hour: "2-digit",
-                                minute: "2-digit",
-                                hour12: true
-                              })}
-                            </div>
+                            <RecordDates date={bill.billing_date} createdAt={bill.created_at} dateLabel="Billed" />
                           </TableCell>
 
                           <TableCell className="py-3">
@@ -6253,7 +6114,7 @@ export default function BillingPage() {
                               bill.profit >= 0 ? "text-emerald-600 dark:text-emerald-500" : "text-destructive"
                             }`}
                           >
-                            ₹{bill.profit.toFixed(2)}
+                            ₹{(Number(bill.profit) || 0).toFixed(2)}
                           </TableCell>
 
                           <TableCell className="text-center">
@@ -6989,12 +6850,29 @@ export default function BillingPage() {
               <Label className="text-xs font-bold text-muted-foreground/80 uppercase tracking-wider">Amount Paid (₹)</Label>
               <Input
                 type="number"
+                min="0"
+                step="0.01"
+                max={recordPaymentDialog.remainingUnpaid}
                 placeholder="0.00"
                 value={recordPaymentDialog.amount}
                 onChange={(e) => setRecordPaymentDialog((prev) => ({ ...prev, amount: e.target.value }))}
-                className="h-10 border-border/80 rounded-xl focus-visible:ring-1 focus-visible:ring-primary focus-visible:border-primary font-mono font-bold"
+                aria-invalid={!!billPaymentError(recordPaymentDialog)}
+                className={`h-10 border-border/80 rounded-xl focus-visible:ring-1 focus-visible:ring-primary focus-visible:border-primary font-mono font-bold ${billPaymentError(recordPaymentDialog) ? "border-red-500" : ""}`}
+                data-testid="record-payment-amount"
               />
-              <span className="text-[10px] text-muted-foreground/80 block mt-0.5">Remaining unpaid: ₹{recordPaymentDialog.remainingUnpaid.toFixed(2)}</span>
+              <div className="flex items-center justify-between mt-0.5">
+                <span className="text-[10px] text-muted-foreground/80">Due on this bill: <b className="text-foreground">₹{recordPaymentDialog.remainingUnpaid.toFixed(2)}</b></span>
+                <button
+                  type="button"
+                  className="text-[10px] font-bold text-primary hover:underline"
+                  onClick={() => setRecordPaymentDialog((prev) => ({ ...prev, amount: prev.remainingUnpaid.toFixed(2) }))}
+                >
+                  Pay all
+                </button>
+              </div>
+              {billPaymentError(recordPaymentDialog) && (
+                <p className="text-xs font-semibold text-red-500" data-testid="record-payment-error">{billPaymentError(recordPaymentDialog)}</p>
+              )}
             </div>
             <div className="space-y-1.5">
               <Label className="text-xs font-bold text-muted-foreground/80 uppercase tracking-wider">Payment Mode</Label>
@@ -7039,12 +6917,13 @@ export default function BillingPage() {
             <AlertDialogCancel className="rounded-xl border-border/80 hover:bg-muted/80 h-10 px-4 transition-all">
               Cancel
             </AlertDialogCancel>
-            <AlertDialogAction
+            <Button
               onClick={handleRecordPaymentSubmit}
+              disabled={recordPaymentDialog.amount === "" || !!billPaymentError(recordPaymentDialog)}
               className="rounded-xl bg-primary text-primary-foreground hover:bg-primary/90 shadow-md shadow-primary/10 h-10 px-4 font-semibold transition-all"
             >
               Record Payment
-            </AlertDialogAction>
+            </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -7284,6 +7163,13 @@ export default function BillingPage() {
           setLabelScanOpen(false);
           addFromLabel(item);
         }}
+      />
+      <ProductDetailsSheet
+        item={detailsFor?.item}
+        open={!!detailsFor}
+        onOpenChange={(o) => !o && setDetailsFor(null)}
+        onUse={pickDetailsItem}
+        warningDays={expiryWarningDays}
       />
       <UpiQrDialog open={!!upiQr} onOpenChange={(o) => !o && setUpiQr(null)} initialAmount={upiQr?.amount ?? ""} note={upiQr?.note || ""} autoGenerate={!!upiQr?.auto} />
       {whatsApp.dialog}

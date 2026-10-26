@@ -1,0 +1,6 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    { "name": "ddtest-fe", "runtimeExecutable": "node", "runtimeArgs": ["/private/tmp/claude-501/-Users-abcom-Documents-pharmalogy-app/6ef408ee-eb21-42bf-859e-1471bcaa17f1/scratchpad/spa-server.js", "/private/tmp/claude-501/-Users-abcom-Documents-pharmalogy-app/6ef408ee-eb21-42bf-859e-1471bcaa17f1/scratchpad/fe-build", "3011"], "port": 3011 }
+  ]
+}

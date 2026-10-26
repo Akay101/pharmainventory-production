@@ -6,6 +6,7 @@ const { auth } = require("../middleware/auth");
 const { requireSubscription } = require("../middleware/subscription");
 const { checkAndProcessDueReminders, createNotification } = require("../services/notifications");
 const { logActivity } = require("../utils/activityLogger");
+const restock = require("../services/restock");
 
 /**
  * GET /api/reminders
@@ -109,6 +110,74 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
  * POST /api/reminders
  * Create a new restock / refill reminder
  */
+// GET /api/reminders/restock?view=open|due|done|all&search=
+// Restock list: every refill reminder with its medicines, stock on hand vs the
+// restock quantity, and the restock status (auto-done when stock covers it).
+router.get("/restock", auth, requireSubscription(), async (req, res, next) => {
+  try {
+    const db = mongoose.connection.db;
+    const view = ["open", "due", "done", "all"].includes(req.query.view) ? req.query.view : "open";
+    const q = { pharmacy_id: req.user.pharmacy_id, "items.0": { $exists: true } };
+    const search = String(req.query.search || "").trim().slice(0, 80);
+    if (search) {
+      const esc = search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      q.$or = [{ customer_name: { $regex: esc, $options: "i" } }, { customer_mobile: { $regex: esc } }, { "items.product_name": { $regex: esc, $options: "i" } }, { bill_no: { $regex: esc, $options: "i" } }];
+    }
+    const docs = await db.collection("reminders").find(q, { projection: { _id: 0 } }).sort({ reminder_date: 1, created_at: -1 }).limit(500).toArray();
+    // Done ones are already settled; only open ones need a stock check
+    const open = docs.filter((r) => r.restock?.status !== "DONE");
+    const evaluated = new Map((await restock.evaluate(db, req.user, open)).map((r) => [r.id, r]));
+    const today = new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 10);
+    const all = docs.map((r) => evaluated.get(r.id) || { ...r, items: (r.items || []).map((i) => ({ ...i, needed: restock.need(i) })) });
+    const isDone = (r) => r.restock?.status === "DONE";
+    const isDue = (r) => !isDone(r) && r.reminder_date && r.reminder_date <= today;
+    const counts = { open: all.filter((r) => !isDone(r)).length, due: all.filter(isDue).length, done: all.filter(isDone).length, all: all.length };
+    const list = view === "all" ? all : view === "done" ? all.filter(isDone) : view === "due" ? all.filter(isDue) : all.filter((r) => !isDone(r));
+    res.json({ reminders: list, counts, today });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// POST /api/reminders/:id/restock {action: "done", force?} | {action: "reopen"}
+// "done" checks the stock first; when it's still short it answers 409 with the
+// shortfall, and force: true marks it done anyway (manual override).
+router.post("/:id/restock", auth, requireSubscription(), async (req, res, next) => {
+  try {
+    const db = mongoose.connection.db;
+    const { action, force } = req.body || {};
+    const r = await db.collection("reminders").findOne({ id: req.params.id, pharmacy_id: req.user.pharmacy_id }, { projection: { _id: 0 } });
+    if (!r) return res.status(404).json({ detail: "Reminder not found" });
+    const now = new Date().toISOString();
+    if (action === "reopen") {
+      const next = { status: r.purchase_draft_id ? "ORDERED" : "PENDING", reopened_at: now };
+      await db.collection("reminders").updateOne({ id: r.id, pharmacy_id: req.user.pharmacy_id }, { $set: { restock: next, updated_at: now } });
+      return res.json({ message: "Reopened", restock: next });
+    }
+    if (action !== "done") return res.status(400).json({ detail: "Unknown action" });
+    if (r.restock?.status === "DONE") return res.json({ message: "Already done", restock: r.restock });
+    const [ev] = await restock.evaluate(db, req.user, [r]);
+    if (ev.restock.status === "DONE") return res.json({ message: ev.restock.reason, restock: ev.restock, auto: true });
+    const short = ev.items.filter((i) => !i.covered).map((i) => ({ product_name: i.product_name, in_stock: i.in_stock, needed: i.needed }));
+    if (!force) {
+      return res.status(409).json({ code: "STOCK_SHORT", detail: "Stock isn't back for every medicine yet", short });
+    }
+    const done = {
+      status: "DONE",
+      done_by: "manual",
+      done_at: now,
+      done_by_user: req.user.name || req.user.id,
+      reason: "Marked done by hand",
+      short_at_done: short,
+    };
+    await db.collection("reminders").updateOne({ id: r.id, pharmacy_id: req.user.pharmacy_id }, { $set: { restock: done, updated_at: now } });
+    await logActivity(db, req.user.pharmacy_id, req.user.id, req.user.name, "UPDATE", "REMINDERS", r.id, `Restock marked done by hand for ${r.customer_name || "customer"}`, "/restock");
+    res.json({ message: "Marked done", restock: done });
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.post("/", auth, requireSubscription(), async (req, res, next) => {
   try {
     const db = mongoose.connection.db;
@@ -475,7 +544,8 @@ router.post("/:id/purchase-draft", auth, requireSubscription(), async (req, res,
       updated_at: now,
     };
     await db.collection("purchase_drafts").insertOne({ ...draft });
-    await db.collection("reminders").updateOne({ id: reminder.id, pharmacy_id: pharmacyId }, { $set: { purchase_draft_id: draft.id, updated_at: now } });
+    const restockNow = reminder.restock?.status === "DONE" ? reminder.restock : { ...(reminder.restock || {}), status: "ORDERED", ordered_at: now };
+    await db.collection("reminders").updateOne({ id: reminder.id, pharmacy_id: pharmacyId }, { $set: { purchase_draft_id: draft.id, restock: restockNow, updated_at: now } });
     res.status(201).json({ draft });
   } catch (error) {
     next(error);

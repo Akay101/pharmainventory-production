@@ -77,7 +77,7 @@ async function checkAndProcessDueReminders(db, targetPharmacyId = null) {
         .join(", ");
 
       const title = `Restock Refill Due: ${reminder.customer_name || "Customer"}`;
-      const message = `${reminder.customer_name || "Customer"} will need ${itemsText || "their medicines"} again around ${reminder.refill_target_date || "soon"}. Tap to order the stock: a purchase draft is filled in for you.`;
+      const message = `${reminder.customer_name || "Customer"} will need ${itemsText || "their medicines"} again around ${reminder.refill_target_date || "soon"}. Tap to see it in Restock, check stock and order what is short.`;
 
       await createNotification(db, {
         pharmacy_id: reminder.pharmacy_id,

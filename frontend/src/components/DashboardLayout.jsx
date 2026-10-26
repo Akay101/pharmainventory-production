@@ -42,6 +42,7 @@ import {
   ClipboardList,
   Compass,
   FileText,
+  PackageCheck,
 } from "lucide-react";
 
 import RecentActivitySidebar from "./RecentActivitySidebar";
@@ -96,6 +97,7 @@ const navItems = [
     shortcut: "alt+r",
   },
   { path: "/short-book", label: "Short Book", icon: ClipboardList, shortcut: "alt+o" },
+  { path: "/restock", label: "Restock", icon: PackageCheck, shortcut: "alt+t" },
   { path: "/users", label: "Users", icon: UserCog, adminOnly: true },
   { path: "/reports", label: "Reports", icon: BarChart3, shortcut: "alt+y" },
   { path: "/settings", label: "Settings", icon: Settings, shortcut: "alt+," },

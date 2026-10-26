@@ -144,8 +144,11 @@ export default function NotificationCenter() {
   };
 
   const handleNotificationClick = (notification) => {
+    // Refill reminders open the Restock section on that reminder
     if (notification.type === "REFILL_REMINDER" && notification.data?.reminder_id) {
-      orderRestock(notification);
+      if (!notification.is_read) handleMarkAsRead(notification.id);
+      setIsOpen(false);
+      navigate("/restock", { state: { highlightId: notification.data.reminder_id } });
       return;
     }
     if (!notification.is_read) {

@@ -3,7 +3,7 @@
 // across restarts) and caps on catalogue scraping.
 const { rateLimit, ipKeyGenerator } = require("express-rate-limit");
 const { RedisStore } = require("rate-limit-redis");
-const { connection: redis } = require("../services/ai/queue");
+const { fastConnection } = require("../services/ai/queue");
 
 // ---- NoSQL injection --------------------------------------------------------
 // `?q[$ne]=` or `{"mobile": {"$gt": ""}}` would otherwise reach Mongo filters
@@ -40,7 +40,9 @@ const scale = Math.max(1, Number(process.env.RATE_LIMIT_SCALE) || 1);
 const redisStore = (prefix) =>
   new RedisStore({
     prefix: `rl:${prefix}:`,
-    sendCommand: (command, ...args) => redis.call(command, ...args),
+    // Fail-fast connection: with Redis down the limiter errors and passes the
+    // request on (passOnStoreError) instead of waiting forever
+    sendCommand: (command, ...args) => fastConnection().call(command, ...args),
   });
 
 // Fails open if Redis is unreachable: an outage must not lock every user out

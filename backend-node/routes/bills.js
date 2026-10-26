@@ -533,6 +533,9 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
       advance_amount = 0,
       draft_id,
     } = req.body;
+    // Udhar (credit): delivered now, `paid_now` taken now, the rest owed by the customer
+    const isCredit = req.body.is_credit === true || req.body.is_credit === "true";
+    const paidNow = isCredit ? Math.max(0, Math.round((Number(req.body.paid_now) || 0) * 100) / 100) : 0;
     const db = mongoose.connection.db;
 
     // Validate payment mode against mandatory settings preference
@@ -583,7 +586,7 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
         stock_deducted: stockDeducted,
         cgst: parseFloat(item.cgst) || 0,
         sgst: parseFloat(item.sgst) || 0,
-        delivery_status: is_advance_paid ? "Pending" : "Delivered",
+        delivery_status: !isCredit && is_advance_paid ? "Pending" : "Delivered",
       });
     }
 
@@ -630,9 +633,16 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
     // Calculate final customer debt and advance increments
     let activeDebt = 0;
     let activeAdvance = 0;
-    const totalPaid = is_paid ? totalAmount : (is_advance_paid ? (Number(advance_amount) || 0) : 0);
+    if (isCredit && paidNow > totalAmount + 0.005) {
+      return res.status(400).json({ detail: "Paid now is more than the bill total. Untick Udhar and mark the bill paid instead." });
+    }
+    const totalPaid = isCredit ? paidNow : is_paid ? totalAmount : (is_advance_paid ? (Number(advance_amount) || 0) : 0);
 
-    if (is_advance_paid) {
+    if (isCredit) {
+      // Delivered now: whatever isn't paid is owed
+      activeDebt = Math.max(0, Math.round((totalAmount - paidNow) * 100) / 100);
+      activeAdvance = 0;
+    } else if (is_advance_paid) {
       activeAdvance = totalPaid;
       activeDebt = 0;
     } else {
@@ -680,18 +690,22 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
       profit: totalProfit,
       inventory_billed_qty: inventoryBilledQty,
       negative_billed_qty: negativeBilledQty,
-      is_paid,
-      is_advance_paid: is_advance_paid || false,
-      advance_amount: is_advance_paid ? (Number(advance_amount) || 0) : 0,
+      is_paid: isCredit ? activeDebt <= 0 : is_paid,
+      is_advance_paid: isCredit ? false : is_advance_paid || false,
+      advance_amount: !isCredit && is_advance_paid ? (Number(advance_amount) || 0) : 0,
+      is_credit: isCredit,
+      credit_amount: isCredit ? activeDebt : 0,
       total_paid: totalPaid,
-      payments: is_paid 
+      payments: isCredit
+        ? (paidNow > 0 ? [{ amount: paidNow, payment_mode: payment_mode || "Cash", paid_at: new Date().toISOString(), note: "Paid at billing (rest on udhar)" }] : [])
+        : is_paid
         ? [{ amount: totalAmount, payment_mode: payment_mode || "Cash", paid_at: new Date().toISOString() }]
         : (is_advance_paid && Number(advance_amount) > 0 
           ? [{ amount: Number(advance_amount), payment_mode: payment_mode || "Cash", paid_at: new Date().toISOString() }]
           : []),
-      delivery_status: is_advance_paid ? "Pending" : "Delivered",
+      delivery_status: !isCredit && is_advance_paid ? "Pending" : "Delivered",
       due_date: due_date || null,
-      payment_date: is_paid ? new Date().toISOString() : null,
+      payment_date: (isCredit ? activeDebt <= 0 : is_paid) ? new Date().toISOString() : null,
       payment_mode: payment_mode || null,
       notes: notes || null,
       doctor: doctor || null,
@@ -864,6 +878,8 @@ router.put("/:bill_id", auth, requireSubscription(), async (req, res, next) => {
       payment_mode,
       is_advance_paid,
       advance_amount,
+      is_credit,
+      paid_now,
     } = req.body;
 
     const db = mongoose.connection.db;
@@ -875,7 +891,8 @@ router.put("/:bill_id", auth, requireSubscription(), async (req, res, next) => {
 
     const isPaidFlag = is_paid === true || is_paid === 'true';
     const isAdvancePaidFlag = is_advance_paid === true || is_advance_paid === 'true';
-    if (isModeMandatory && (isPaidFlag || isAdvancePaidFlag) && (!payment_mode || !["Cash", "UPI", "Card"].includes(payment_mode))) {
+    const creditFlag = is_credit === undefined ? undefined : is_credit === true || is_credit === "true";
+    if (isModeMandatory && (isPaidFlag || isAdvancePaidFlag || (creditFlag && Number(paid_now) > 0)) && (!payment_mode || !["Cash", "UPI", "Card"].includes(payment_mode))) {
       return res.status(400).json({ detail: "Payment mode is mandatory" });
     }
 
@@ -886,6 +903,22 @@ router.put("/:bill_id", auth, requireSubscription(), async (req, res, next) => {
 
     if (!bill) {
       return res.status(404).json({ detail: "Bill not found" });
+    }
+
+    // Udhar "paid now" checks before any stock moves
+    if (creditFlag || (creditFlag === undefined && bill.is_credit && !isPaidFlag && !isAdvancePaidFlag)) {
+      const hasPaidNow = paid_now !== undefined && paid_now !== null && paid_now !== "";
+      if (hasPaidNow && (isNaN(Number(paid_now)) || Number(paid_now) < 0)) {
+        return res.status(400).json({ detail: "Paid now can't be negative" });
+      }
+      const sub = (items || []).reduce((sum, it) => sum + lineAmounts(it).itemTotal, 0);
+      const est = Math.round(sub * (1 - (Number(discount_percent) || 0) / 100) * 100) / 100;
+      const paidCheck = hasPaidNow ? Number(paid_now) : bill.is_credit ? Number(bill.total_paid) || 0 : 0;
+      if (Math.round(paidCheck * 100) / 100 > est) {
+        return res.status(400).json({
+          detail: `Paid now ₹${paidCheck.toFixed(2)} is more than the bill total ₹${est.toFixed(2)}. Mark it Paid instead.`,
+        });
+      }
     }
 
     /* ---------------- Reverse old inventory ---------------- */
@@ -1011,16 +1044,31 @@ router.put("/:bill_id", auth, requireSubscription(), async (req, res, next) => {
 
     // Calculate new active values
     let finalIsPaid = is_paid !== undefined ? is_paid : bill.is_paid;
-    const finalIsAdvancePaid = is_advance_paid !== undefined ? is_advance_paid : bill.is_advance_paid;
-    const finalAdvanceAmount = is_advance_paid !== undefined ? (Number(advance_amount) || 0) : (bill.advance_amount || 0);
+    let finalIsAdvancePaid = is_advance_paid !== undefined ? is_advance_paid : bill.is_advance_paid;
+    let finalAdvanceAmount = is_advance_paid !== undefined ? (Number(advance_amount) || 0) : (bill.advance_amount || 0);
+
+    // Udhar (credit): switched on/off in the edit, or kept from the bill
+    // unless the edit marks it paid / advance.
+    const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+    const finalIsCredit = creditFlag !== undefined ? creditFlag : !!bill.is_credit && !isPaidFlag && !isAdvancePaidFlag;
+    let creditPaid = 0;
+    let creditPaymentsKept = false;
+    if (finalIsCredit) {
+      const hasPaidNow = paid_now !== undefined && paid_now !== null && paid_now !== "";
+      creditPaid = Math.min(r2(totalAmount), hasPaidNow ? r2(paid_now) : bill.is_credit ? r2(bill.total_paid) : 0);
+      creditPaymentsKept = !!bill.is_credit && creditPaid === r2(bill.total_paid);
+      finalIsAdvancePaid = false;
+      finalAdvanceAmount = 0;
+      finalIsPaid = creditPaid >= r2(totalAmount);
+    }
 
     // A credit bill that stays on credit keeps the part-payments already
     // recorded against it; editing items must not wipe them.
-    const keepRecordedPayments = !finalIsPaid && !finalIsAdvancePaid && !bill.is_paid && !bill.is_advance_paid && (Number(bill.total_paid) || 0) > 0;
+    const keepRecordedPayments = !finalIsCredit && !finalIsPaid && !finalIsAdvancePaid && !bill.is_paid && !bill.is_advance_paid && (Number(bill.total_paid) || 0) > 0;
     const recordedPaid = keepRecordedPayments ? Number(bill.total_paid) || 0 : 0;
     if (keepRecordedPayments && recordedPaid >= totalAmount) finalIsPaid = true;
 
-    const newPaid = keepRecordedPayments ? recordedPaid : finalIsPaid ? totalAmount : (finalIsAdvancePaid ? finalAdvanceAmount : 0);
+    const newPaid = finalIsCredit ? creditPaid : keepRecordedPayments ? recordedPaid : finalIsPaid ? totalAmount : (finalIsAdvancePaid ? finalAdvanceAmount : 0);
     let newDeliveredValue = 0;
     if (finalIsAdvancePaid) {
       newDeliveredValue = processedItems.reduce((sum, i) => i.delivery_status === "Delivered" ? sum + (i.item_total || 0) : sum, 0);
@@ -1056,7 +1104,13 @@ router.put("/:bill_id", auth, requireSubscription(), async (req, res, next) => {
     /* ---------------- Update bill ---------------- */
 
     let finalPayments = bill.payments || [];
-    if (keepRecordedPayments) {
+    if (finalIsCredit) {
+      if (!creditPaymentsKept) {
+        finalPayments = creditPaid > 0
+          ? [{ amount: creditPaid, payment_mode: payment_mode || bill.payment_mode || "Cash", paid_at: new Date().toISOString(), note: "Paid (bill edited, rest on udhar)" }]
+          : [];
+      }
+    } else if (keepRecordedPayments) {
       // unchanged
     } else if (finalIsPaid) {
       finalPayments = [{ amount: totalAmount, payment_mode: payment_mode || bill.payment_mode || "Cash", paid_at: new Date().toISOString() }];
@@ -1097,6 +1151,8 @@ router.put("/:bill_id", auth, requireSubscription(), async (req, res, next) => {
       advance_amount: finalAdvanceAmount,
       total_paid: newPaid,
       payments: finalPayments,
+      is_credit: finalIsCredit,
+      credit_amount: finalIsCredit ? Math.max(0, r2(totalAmount - newPaid)) : 0,
       delivery_status: finalIsAdvancePaid 
         ? (processedItems.every(i => i.delivery_status === "Delivered") 
           ? "Delivered" 
@@ -1134,6 +1190,8 @@ router.put("/:bill_id", auth, requireSubscription(), async (req, res, next) => {
     compareField("grand_total", "Grand Total", (v) => v !== undefined && v !== null ? `₹${Number(v).toFixed(2)}` : "₹0.00");
     compareField("is_paid", "Payment Status", (v) => v ? "Paid" : "Unpaid");
     compareField("is_advance_paid", "Is Advance Paid", (v) => v ? "Yes" : "No");
+    compareField("is_credit", "Udhar", (v) => v ? "Yes" : "No");
+    compareField("total_paid", "Amount Paid", (v) => `₹${(Number(v) || 0).toFixed(2)}`);
     compareField("advance_amount", "Advance Amount", (v) => v !== undefined && v !== null ? `₹${Number(v).toFixed(2)}` : "₹0.00");
     compareField("payment_mode", "Payment Mode");
     compareField("due_date", "Due Date", (v) => v ? new Date(v).toLocaleDateString() : "");
@@ -1620,10 +1678,17 @@ router.post(
 
       const grandTotal = bill.grand_total || bill.total_amount || 0;
       const currentPaid = bill.total_paid !== undefined ? bill.total_paid : (bill.is_paid ? grandTotal : (bill.advance_amount || 0));
-      const remainingUnpaid = Math.max(0, grandTotal - currentPaid);
+      const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+      const remainingUnpaid = r2(Math.max(0, grandTotal - currentPaid));
 
-      if (paymentAmount > remainingUnpaid) {
-        return res.status(400).json({ detail: `Payment amount ₹${paymentAmount} exceeds remaining unpaid balance of ₹${remainingUnpaid}` });
+      if (remainingUnpaid <= 0) {
+        return res.status(400).json({ detail: "This bill is already fully paid" });
+      }
+      if (r2(paymentAmount) > remainingUnpaid) {
+        return res.status(400).json({
+          detail: `Only ₹${remainingUnpaid.toFixed(2)} is due on this bill (₹${r2(grandTotal).toFixed(2)} total, ₹${r2(currentPaid).toFixed(2)} paid). Enter ₹${remainingUnpaid.toFixed(2)} or less.`,
+          remaining: remainingUnpaid,
+        });
       }
 
       // Calculate old debt/advance

@@ -9,12 +9,14 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 
-// Item labels: "DD1|<inventory id>|batch|expiry|mrp|name" (backend services/itemLabels.js)
-export const isItemLabel = (v) => /^DD1\|[A-Za-z0-9-]{8,64}\|/.test(String(v || "").trim());
+// Item labels (backend services/itemLabels.js): "DD2:<32 hex>" (compact, current)
+// or "DD1|<inventory id>|batch|expiry|mrp|name" (older labels)
+const LABEL_RE = /(DD2:[0-9a-f]{32}|DD1\|[A-Za-z0-9-]{8,64}\|.*)$/i;
+export const isItemLabel = (v) => /^(DD2:[0-9a-f]{32}$|DD1\|[A-Za-z0-9-]{8,64}\|)/i.test(String(v || "").trim());
 // A scanner may type into a field that already has text: the label part and what was there before
 export function findItemLabel(v) {
-  const s = String(v || "");
-  const m = s.match(/DD1\|[A-Za-z0-9-]{8,64}\|.*$/);
+  const s = String(v || "").trim();
+  const m = s.match(LABEL_RE);
   return m ? { code: m[0].trim(), before: s.slice(0, m.index).trim() } : null;
 }
 
@@ -178,16 +180,19 @@ export function ItemQrScanDialog({ open, onClose, onItem }) {
     const detector = "BarcodeDetector" in window ? new window.BarcodeDetector({ formats: ["qr_code"] }) : null;
     const canvas = document.createElement("canvas");
     const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    let frame = 0;
 
     const handle = async (code) => {
       if (!code || code === lastCode || inflight) return;
       lastCode = code;
       if (!isItemLabel(code)) {
         setError("That QR isn't a DavaDesk item label");
+        setTimeout(() => (lastCode = ""), 1200);
         return;
       }
       inflight = true;
       setBusy(true);
+      navigator.vibrate?.(40);
       try {
         const item = await resolveItemLabel(code);
         stopped = true;
@@ -201,34 +206,56 @@ export function ItemQrScanDialog({ open, onClose, onItem }) {
       }
     };
 
+    // Draw a region of the video into the canvas at a size the decoders like.
+    // Even frames: the guide box at full camera resolution (a small label
+    // fills it). Odd frames: the whole picture, for labels held off-centre.
+    const grab = (v) => {
+      const vw = v.videoWidth;
+      const vh = v.videoHeight;
+      const crop = frame % 2 === 0;
+      const side = Math.round(Math.min(vw, vh) * 0.7);
+      const sx = crop ? Math.round((vw - side) / 2) : 0;
+      const sy = crop ? Math.round((vh - side) / 2) : 0;
+      const sw = crop ? side : vw;
+      const sh = crop ? side : vh;
+      const target = crop ? Math.min(720, side) : Math.min(800, vw);
+      canvas.width = target;
+      canvas.height = Math.round((sh / sw) * target);
+      ctx.imageSmoothingEnabled = false; // keep module edges crisp
+      ctx.drawImage(v, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+      return canvas;
+    };
+
     const tick = async () => {
       if (stopped) return;
       const v = videoRef.current;
-      if (v && v.readyState >= 2) {
+      if (v && v.readyState >= 2 && v.videoWidth && !inflight) {
         try {
+          const c = grab(v);
+          frame++;
           if (detector) {
-            const found = await detector.detect(v);
+            const found = await detector.detect(c);
             if (found[0]?.rawValue) await handle(found[0].rawValue);
           } else {
-            const w = Math.min(640, v.videoWidth);
-            const h = Math.round((v.videoHeight / v.videoWidth) * w) || 480;
-            canvas.width = w;
-            canvas.height = h;
-            ctx.drawImage(v, 0, 0, w, h);
-            const img = ctx.getImageData(0, 0, w, h);
-            const res = jsQR(img.data, w, h, { inversionAttempts: "dontInvert" });
+            const img = ctx.getImageData(0, 0, c.width, c.height);
+            const res = jsQR(img.data, c.width, c.height, { inversionAttempts: "dontInvert" });
             if (res?.data) await handle(res.data);
           }
         } catch {}
       }
-      raf = setTimeout(() => requestAnimationFrame(tick), 120);
+      // Every frame, no artificial wait
+      if (!stopped) raf = requestAnimationFrame(tick);
     };
 
     setError(null);
     navigator.mediaDevices
-      ?.getUserMedia({ video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 } }, audio: false })
+      ?.getUserMedia({ video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } }, audio: false })
       .then((s) => {
         stream = s;
+        // Continuous autofocus where the camera supports it (small labels up close)
+        const track = s.getVideoTracks()[0];
+        const caps = track?.getCapabilities?.() || {};
+        if (caps.focusMode?.includes?.("continuous")) track.applyConstraints({ advanced: [{ focusMode: "continuous" }] }).catch(() => {});
         if (stopped) return s.getTracks().forEach((t) => t.stop());
         const v = videoRef.current;
         if (v) {
@@ -242,7 +269,7 @@ export function ItemQrScanDialog({ open, onClose, onItem }) {
 
     return () => {
       stopped = true;
-      clearTimeout(raf);
+      cancelAnimationFrame(raf);
       stream?.getTracks().forEach((t) => t.stop());
     };
     // eslint-disable-next-line
@@ -273,7 +300,8 @@ export function ItemQrScanDialog({ open, onClose, onItem }) {
         </DialogHeader>
         <div className="relative aspect-[4/3] overflow-hidden rounded-2xl bg-black">
           <video ref={videoRef} playsInline muted className="h-full w-full object-cover" />
-          <div className="pointer-events-none absolute inset-[18%] rounded-2xl border-2 border-white/80 shadow-[0_0_0_9999px_rgba(0,0,0,0.35)]" />
+          {/* Guide box = the region read at full resolution every other frame */}
+          <div className="pointer-events-none absolute left-1/2 top-1/2 aspect-square h-[70%] -translate-x-1/2 -translate-y-1/2 rounded-2xl border-2 border-white/80 shadow-[0_0_0_9999px_rgba(0,0,0,0.35)]" />
           {busy && (
             <div className="absolute inset-0 flex items-center justify-center bg-black/40">
               <Loader2 className="h-8 w-8 animate-spin text-white" />

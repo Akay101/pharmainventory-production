@@ -62,6 +62,14 @@ export default function InventoryPage() {
   const [showExpired, setShowExpired] = useState(false);
   const [sidebarTab, setSidebarTab] = useState("batches");
   const [shortageCount, setShortageCount] = useState(0);
+  // Badge counts per filter and the global thresholds (from the server's stock levels)
+  const [counts, setCounts] = useState(null);
+  const [thresholdInfo, setThresholdInfo] = useState(null);
+  // A filter/search request is in flight: dim the table and show a loader
+  const [filtering, setFiltering] = useState(false);
+  const fetchSeq = useRef(0);
+  const [thresholdDraft, setThresholdDraft] = useState("");
+  const [savingThreshold, setSavingThreshold] = useState(false);
   const [deleteDialog, setDeleteDialog] = useState({ open: false, item: null, type: null });
   const [removeShortageDialog, setRemoveShortageDialog] = useState({ open: false, item: null, newThreshold: "" });
   const [addStockDialog, setAddStockDialog] = useState({ open: false, item: null, quantityToAdd: "" });
@@ -173,8 +181,12 @@ export default function InventoryPage() {
       salt_composition: productGroup.salt_composition,
       hsn_no: productGroup.hsn_no,
       category: productGroup.category || "medicine",
-      low_stock_threshold: productGroup.low_stock_threshold || 10,
-      shortage_threshold: productGroup.shortage_threshold,
+      low_stock_threshold: productGroup.threshold ?? productGroup.low_stock_threshold ?? 10,
+      shortage_threshold: productGroup.threshold ?? productGroup.shortage_threshold,
+      threshold: productGroup.threshold,
+      custom_threshold: productGroup.custom_threshold ?? null,
+      stock_state: productGroup.stock_state,
+      sellable_stock: productGroup.sellable_stock,
       total_available_stock: productGroup.total_available_stock !== undefined ? productGroup.total_available_stock : productGroup.available_quantity,
       total_stock_value: productGroup.total_stock_value,
       batch_count: batchCount,
@@ -290,6 +302,9 @@ export default function InventoryPage() {
   };
 
   const fetchInventory = useCallback(async (page = 1, highlightId = undefined) => {
+    // Only the latest request may update the table (quick filter clicks race)
+    const seq = ++fetchSeq.current;
+    setFiltering(true);
     try {
       const params = new URLSearchParams();
       if (!highlightId) {
@@ -307,6 +322,7 @@ export default function InventoryPage() {
       if (highlightId) params.append("highlight_id", highlightId);
 
       const response = await axios.get(`${API}/inventory?${params.toString()}`);
+      if (seq !== fetchSeq.current) return;
       let fetched = response.data.inventory || [];
       const todayStr = new Date().toISOString().split("T")[0];
 
@@ -326,6 +342,8 @@ export default function InventoryPage() {
       if (response.data.shortage_count !== undefined) {
         setShortageCount(response.data.shortage_count);
       }
+      if (response.data.counts) setCounts(response.data.counts);
+      if (response.data.thresholds) setThresholdInfo(response.data.thresholds);
 
       if (highlightId) {
         setTimeout(() => {
@@ -341,9 +359,33 @@ export default function InventoryPage() {
         }, 300);
       }
     } catch (error) {
-      toast.error("Failed to load inventory");
+      if (seq === fetchSeq.current) toast.error("Failed to load inventory");
+    } finally {
+      if (seq === fetchSeq.current) setFiltering(false);
     }
   }, [search, showLowStock, showShortage, showExpiringSoon, showExpired, sortBy, sortOrder, pagination.limit]);
+
+  // A medicine's own threshold (null = back to the global one)
+  const saveThreshold = async (value) => {
+    if (!detailProduct) return;
+    if (value !== null && !(Number(value) >= 0)) return toast.error("Enter 0 or more");
+    setSavingThreshold(true);
+    try {
+      const res = await axios.put(`${API}/inventory/threshold`, {
+        product_id: detailProduct.product_id || null,
+        product_name: detailProduct.product_name || detailProduct.name,
+        threshold: value === null ? null : Number(value),
+      });
+      toast.success(res.data.message);
+      setThresholdDraft("");
+      await fetchInventory(pagination.page || 1);
+      setDetailProduct((d) => (d ? { ...d, custom_threshold: res.data.custom_threshold, threshold: res.data.custom_threshold ?? thresholdInfo?.lowStock ?? d.threshold } : d));
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Couldn't save the threshold");
+    } finally {
+      setSavingThreshold(false);
+    }
+  };
 
   useEffect(() => {
     fetchData();
@@ -360,7 +402,7 @@ export default function InventoryPage() {
       fetchInventory(1);
     }, 300);
     return () => clearTimeout(debounce);
-  }, [search, showLowStock, showShortage, showExpiringSoon, sortBy, sortOrder]);
+  }, [search, showLowStock, showShortage, showExpiringSoon, showExpired, sortBy, sortOrder]);
 
   const fetchData = async () => {
     try {
@@ -585,8 +627,8 @@ export default function InventoryPage() {
             }`}
             data-testid="low-stock-filter-btn"
           >
-            <AlertTriangle className={`w-3.5 h-3.5 mr-1.5 ${showLowStock ? "text-white" : "text-amber-500"}`} />
-            Low Stock
+            {showLowStock && filtering ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <AlertTriangle className={`w-3.5 h-3.5 mr-1.5 ${showLowStock ? "text-white" : "text-amber-500"}`} />}
+            Low Stock {counts?.low > 0 && <Badge className={`ml-1.5 border-0 text-[10px] px-1.5 py-0.5 font-black rounded-full ${showLowStock ? "bg-white text-amber-600" : "bg-amber-500 text-white"}`}>{counts.low}</Badge>}
           </Button>
 
           <Button
@@ -603,7 +645,7 @@ export default function InventoryPage() {
             }`}
             data-testid="shortage-filter-btn"
           >
-            <AlertTriangle className={`w-3.5 h-3.5 mr-1.5 ${showShortage ? "text-white" : "text-orange-500"}`} />
+            {showShortage && filtering ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <AlertTriangle className={`w-3.5 h-3.5 mr-1.5 ${showShortage ? "text-white" : "text-orange-500"}`} />}
             Shortage List {shortageCount > 0 && <Badge className={`ml-1.5 border-0 text-[10px] px-1.5 py-0.5 font-black rounded-full ${showShortage ? "bg-white text-orange-600" : "bg-orange-500 text-white"}`}>{shortageCount}</Badge>}
           </Button>
 
@@ -621,8 +663,8 @@ export default function InventoryPage() {
             }`}
             data-testid="expiring-filter-btn"
           >
-            <AlertTriangle className={`w-3.5 h-3.5 mr-1.5 ${showExpiringSoon ? "text-white" : "text-amber-500"}`} />
-            Expiring Soon
+            {showExpiringSoon && filtering ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <AlertTriangle className={`w-3.5 h-3.5 mr-1.5 ${showExpiringSoon ? "text-white" : "text-amber-500"}`} />}
+            Expiring Soon {counts?.expiring > 0 && <Badge className={`ml-1.5 border-0 text-[10px] px-1.5 py-0.5 font-black rounded-full ${showExpiringSoon ? "bg-white text-amber-600" : "bg-amber-500 text-white"}`}>{counts.expiring}</Badge>}
           </Button>
 
           <Button
@@ -639,8 +681,8 @@ export default function InventoryPage() {
             }`}
             data-testid="expired-filter-btn"
           >
-            <AlertTriangle className={`w-3.5 h-3.5 mr-1.5 ${showExpired ? "text-white" : "text-rose-500"}`} />
-            Expired
+            {showExpired && filtering ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <AlertTriangle className={`w-3.5 h-3.5 mr-1.5 ${showExpired ? "text-white" : "text-rose-500"}`} />}
+            Expired {counts?.expired > 0 && <Badge className={`ml-1.5 border-0 text-[10px] px-1.5 py-0.5 font-black rounded-full ${showExpired ? "bg-white text-rose-600" : "bg-rose-500 text-white"}`}>{counts.expired}</Badge>}
           </Button>
           
           {(search || showLowStock || showShortage || showExpiringSoon || showExpired) && (
@@ -663,7 +705,14 @@ export default function InventoryPage() {
 
       {/* Inventory Table Container (Single Product per Row) */}
       <div className="border border-border/60 rounded-2xl relative overflow-hidden bg-card/60 backdrop-blur-md shadow-xs">
-        <div className="overflow-x-auto">
+        <div className="relative overflow-x-auto" aria-busy={filtering}>
+          {filtering && (
+            <div className="absolute inset-0 z-10 flex items-start justify-center bg-background/55 pt-16 backdrop-blur-[1px] animate-in fade-in duration-150" data-testid="inventory-filtering">
+              <span className="flex items-center gap-2 rounded-xl border border-border bg-card px-3.5 py-2 text-xs font-bold shadow-lg">
+                <Loader2 className="h-4 w-4 animate-spin text-primary" /> Updating list…
+              </span>
+            </div>
+          )}
           <Table mobileCards>
             <TableHeader className="border-b border-border bg-muted/60">
               <TableRow className="hover:bg-transparent">
@@ -769,9 +818,9 @@ export default function InventoryPage() {
                   const todayStr = new Date().toISOString().split("T")[0];
                   const isExpired = earliestExpiry !== "-" && earliestExpiry < todayStr;
                   const isExpiringSoon = earliestExpiry !== "-" && !isExpired && isExpiringSoonCheck(earliestExpiry);
-                  const shortageThresh = item.shortage_threshold !== undefined && item.shortage_threshold !== null ? Number(item.shortage_threshold) : (settings?.shortage_threshold || 10);
-                  const isShortage = availableUnits <= shortageThresh;
-                  const isLowStock = availableUnits <= (item.low_stock_threshold || 10);
+                  // Stock level as the server sees it (unexpired stock vs the medicine's threshold)
+                  const isShortage = false;
+                  const isLowStock = item.stock_state === "low";
                   
                   return (
                     <TableRow 
@@ -1257,9 +1306,9 @@ export default function InventoryPage() {
                       const isReturnMoved = stockStatus === "Marked for Return" || stockStatus === "In Return Note";
                       const isGeneralReturned = stockStatus === "Returned";
 
-                      const shortageThresh = detailProduct?.shortage_threshold !== undefined && detailProduct?.shortage_threshold !== null ? Number(detailProduct.shortage_threshold) : (settings?.shortage_threshold || 10);
-                      const isShortage = batch.available_quantity <= shortageThresh;
-                      const isLowStock = batch.available_quantity <= (detailProduct?.low_stock_threshold || 10);
+                      // Low stock is about the medicine as a whole, not one batch
+                      const isShortage = false;
+                      const isLowStock = detailProduct?.stock_state === "low";
 
                       // Return/expiry states come from the server; stock levels only matter for live stock
                       let statusLabel = stockStatus;
@@ -1418,13 +1467,42 @@ export default function InventoryPage() {
                   <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Category</p>
                   <p className="text-sm font-semibold text-foreground mt-0.5 capitalize">{detailProduct?.category || "Medicine"}</p>
                 </div>
-                <div>
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Low Stock Threshold</p>
-                  <p className="text-sm font-semibold text-foreground mt-0.5">{detailProduct?.low_stock_threshold || 10} units</p>
-                </div>
-                <div>
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Shortage Threshold</p>
-                  <p className="text-sm font-semibold text-foreground mt-0.5">{detailProduct?.shortage_threshold !== undefined && detailProduct?.shortage_threshold !== null ? detailProduct.shortage_threshold : (settings?.shortage_threshold || 10)} units</p>
+                <div className="col-span-2 rounded-xl border border-border/60 bg-muted/20 p-3" data-testid="threshold-editor">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Low stock / shortage threshold</p>
+                  <p className="mt-0.5 text-xs font-semibold text-muted-foreground">
+                    Listed when <strong className="text-foreground">{detailProduct?.threshold ?? thresholdInfo?.lowStock ?? 10}</strong> units or fewer are left
+                    {detailProduct?.custom_threshold !== null && detailProduct?.custom_threshold !== undefined
+                      ? detailProduct.custom_threshold === 0
+                        ? " · not tracked for this medicine"
+                        : " · custom for this medicine"
+                      : ` · global setting`}
+                    {detailProduct?.sellable_stock !== undefined && ` · ${detailProduct.sellable_stock} sellable now`}
+                  </p>
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <input
+                      type="number"
+                      min="0"
+                      value={thresholdDraft}
+                      onChange={(e) => setThresholdDraft(e.target.value)}
+                      placeholder={`${thresholdInfo?.lowStock ?? 10} (global)`}
+                      className="h-8 w-28 rounded-lg border border-border bg-background px-2 text-xs font-bold outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                      aria-label="Custom threshold for this medicine"
+                    />
+                    <Button
+                      size="sm"
+                      disabled={savingThreshold || thresholdDraft === ""}
+                      onClick={() => saveThreshold(thresholdDraft)}
+                      className="h-8 rounded-lg px-3 text-xs font-bold"
+                    >
+                      {savingThreshold ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Set for this medicine"}
+                    </Button>
+                    {detailProduct?.custom_threshold !== null && detailProduct?.custom_threshold !== undefined && (
+                      <Button size="sm" variant="outline" disabled={savingThreshold} onClick={() => saveThreshold(null)} className="h-8 rounded-lg px-3 text-xs font-bold">
+                        Use global
+                      </Button>
+                    )}
+                  </div>
+                  <p className="mt-1.5 text-[10px] text-muted-foreground">0 = don't track this medicine in Low Stock / Shortage.</p>
                 </div>
                 <div className="col-span-2">
                   <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Salt Composition</p>

@@ -1,4 +1,5 @@
 const express = require("express");
+const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 const router = express.Router();
 const mongoose = require("mongoose");
 const { v4: uuidv4 } = require("uuid");
@@ -901,6 +902,13 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
 
     if (pStatus === "Paid") pAmount = totalAmount;
     else if (pStatus === "Unpaid") pAmount = 0;
+    else if (pAmount > round2(totalAmount) + 0.005) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(400).json({
+        detail: `Paid amount ₹${pAmount.toFixed(2)} is more than the purchase total ₹${totalAmount.toFixed(2)}. Choose Paid for the full amount.`,
+      });
+    }
 
     const payments = [];
     if (pAmount > 0) {
@@ -1461,6 +1469,13 @@ router.put(
           session.endSession();
           return res.status(400).json({
             detail: "Initial paid amount is mandatory for Partial payment",
+          });
+        }
+        if (finalAmountPaid > round2(totalAmount) + 0.005) {
+          await session.abortTransaction();
+          session.endSession();
+          return res.status(400).json({
+            detail: `Paid amount ₹${finalAmountPaid.toFixed(2)} is more than the purchase total ₹${totalAmount.toFixed(2)}. Choose Paid for the full amount.`,
           });
         }
       }
@@ -2304,11 +2319,26 @@ router.post(
         return res.status(404).json({ detail: "Purchase not found" });
       }
 
-      const paymentAmount = parseFloat(amount);
-      const newAmountPaid = (purchase.amount_paid || 0) + paymentAmount;
+      const paymentAmount = round2(parseFloat(amount));
+      const total = round2(purchase.total_amount);
+      const remaining = round2(Math.max(0, total - (purchase.amount_paid || 0)));
+      if (remaining <= 0) {
+        await session.abortTransaction();
+        session.endSession();
+        return res.status(400).json({ detail: "This purchase is already fully paid" });
+      }
+      if (paymentAmount > remaining) {
+        await session.abortTransaction();
+        session.endSession();
+        return res.status(400).json({
+          detail: `Only ₹${remaining.toFixed(2)} is left to pay on this purchase (₹${total.toFixed(2)} total, ₹${round2(purchase.amount_paid || 0).toFixed(2)} paid). Enter ₹${remaining.toFixed(2)} or less.`,
+          remaining,
+        });
+      }
+      const newAmountPaid = round2((purchase.amount_paid || 0) + paymentAmount);
       let newStatus = "Partial";
 
-      if (newAmountPaid >= purchase.total_amount) {
+      if (newAmountPaid >= total) {
         newStatus = "Paid";
       }
 

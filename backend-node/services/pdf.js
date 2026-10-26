@@ -79,6 +79,9 @@ const generateBillPDF = async (bill, pharmacy, options = {}) => {
         ? Number(bill.total_paid) || 0
         : bill.is_paid ? grandTotal : Number(bill.advance_amount) || 0;
       const balance = Math.max(0, grandTotal - paid);
+      // Udhar: the customer's dues across all bills (this one included)
+      const isUdhar = !!bill.is_credit || (balance > 0.004 && !bill.is_advance_paid);
+      const customerDues = customer ? Math.max(0, Number(customer.total_debt) || 0) : null;
       const totalQty = enrichedItems.reduce((s, i) => s + i.line.qty, 0);
 
       // GST included in the amount actually charged (after all discounts)
@@ -329,7 +332,15 @@ const generateBillPDF = async (bill, pharmacy, options = {}) => {
           .font("Helvetica")
           .fontSize(6.5)
           .text(
-            balance <= 0.004 ? `PAID${bill.payment_mode ? ` (${String(bill.payment_mode).toUpperCase()})` : ""}` : paid > 0 ? "PART PAID" : "CREDIT",
+            balance <= 0.004
+              ? `PAID${bill.payment_mode ? ` (${String(bill.payment_mode).toUpperCase()})` : ""}`
+              : isUdhar
+              ? paid > 0
+                ? `UDHAR · PAID RS ${money(paid)}${bill.payment_mode ? ` (${String(bill.payment_mode).toUpperCase()})` : ""}`
+                : "UDHAR (CREDIT)"
+              : paid > 0
+              ? "PART PAID"
+              : "CREDIT",
             395,
             69,
             { width: 185 }
@@ -487,10 +498,19 @@ const generateBillPDF = async (bill, pharmacy, options = {}) => {
           doc.fillColor("#000000").font("Helvetica-Bold").fontSize(8).text("NET AMOUNT", 465, 346.5);
           doc.text(`Rs ${money(grandTotal)}`, 465, 346.5, { width: 115, align: "right" });
 
-          doc.font("Helvetica").fontSize(6.5).text("Paid", 465, 366);
-          doc.text(money(paid), 465, 366, { width: 115, align: "right" });
-          doc.font("Helvetica-Bold").fontSize(7).fillColor(balance > 0.004 ? "#b91c1c" : "#000000").text("Balance due", 465, 379);
-          doc.text(money(balance), 465, 379, { width: 115, align: "right" });
+          const showDues = isUdhar && balance > 0.004 && customerDues !== null && customerDues > 0.004;
+          const step = showDues ? 10 : 13;
+          let py = showDues ? 363 : 366;
+          doc.font("Helvetica").fontSize(6.5).text(isUdhar ? "Paid now" : "Paid", 465, py);
+          doc.text(money(paid), 465, py, { width: 115, align: "right" });
+          py += step;
+          doc.font("Helvetica-Bold").fontSize(7).fillColor(balance > 0.004 ? "#b91c1c" : "#000000").text(isUdhar && balance > 0.004 ? "Udhar (this bill)" : "Balance due", 465, py);
+          doc.text(money(balance), 465, py, { width: 115, align: "right" });
+          if (showDues) {
+            py += step;
+            doc.font("Helvetica-Bold").fontSize(7).fillColor("#b91c1c").text("Total udhar (all bills)", 465, py);
+            doc.text(money(Math.max(customerDues, balance)), 465, py, { width: 115, align: "right" });
+          }
           doc.fillColor("#000000");
         } else {
           doc

@@ -5,8 +5,9 @@ const mongoose = require("mongoose");
 const { v4: uuidv4 } = require("uuid");
 const { auth } = require("../middleware/auth");
 const { requireSubscription } = require("../middleware/subscription");
-const { thresholds: dashThresholds } = require("../services/dashboard");
+const { stockLevels, namesIn, productNameMatch, setCustomThreshold, keyOf } = require("../services/stockLevels");
 const { logActivity } = require("../utils/activityLogger");
+const { findAlternates } = require("../services/alternates");
 const { cleanProductName } = require("../services/search/normalize");
 const {
   searchGlobalMedicines,
@@ -71,81 +72,19 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
       ];
     }
 
-    // Fetch user settings for global shortage threshold
-    const userSettings = await db
-      .collection("user_settings")
-      .findOne({ user_id: req.user.id });
-    const globalThreshold =
-      userSettings?.preferences?.shortage_threshold !== undefined
-        ? Number(userSettings.preferences.shortage_threshold)
-        : 10;
+    // Stock levels (one definition for the whole app: services/stockLevels.js)
+    const levelsInfo = await stockLevels(db, req.user);
+    const { levels, counts, today, expiryCutoff } = levelsInfo;
+    const shortageCount = counts.shortage;
 
-    // Fetch all active inventory to calculate shortage per item
-    const allInventoryForShortage = await db
-      .collection("inventory")
-      .find({ pharmacy_id: req.user.pharmacy_id })
-      .toArray();
-    const shortageInventoryIds = [];
-    allInventoryForShortage.forEach((item) => {
-      const thresh =
-        item.shortage_threshold !== undefined &&
-        item.shortage_threshold !== null
-          ? Number(item.shortage_threshold)
-          : globalThreshold;
-      if (item.available_quantity <= thresh) {
-        shortageInventoryIds.push(item.id);
-      }
-    });
-
-    const shortageCount = shortageInventoryIds.length;
-
-    // Filter low stock (database query filter based on threshold comparison)
-    if (low_stock === "true") {
-      const stockSummary = await db
-        .collection("inventory")
-        .aggregate([
-          { $match: { pharmacy_id: req.user.pharmacy_id } },
-          {
-            $group: {
-              _id: "$product_id",
-              total_stock: { $sum: "$available_quantity" },
-            },
-          },
-        ])
-        .toArray();
-
-      const products = await db
-        .collection("products")
-        .find({ pharmacy_id: req.user.pharmacy_id })
-        .toArray();
-
-      const thresholds = {};
-      products.forEach((p) => (thresholds[p.id] = p.low_stock_threshold || 10));
-
-      const lowStockProductIds = stockSummary
-        .filter((s) => s.total_stock <= (thresholds[s._id] || 10))
-        .map((s) => s._id);
-
-      query.product_id = { $in: lowStockProductIds };
-    }
-
-    // Filter shortage
-    if (shortage === "true") {
-      query.id = { $in: shortageInventoryIds };
-    }
-
-    // Filter expiring soon
-    if (expiring_soon === "true") {
-      const cutoff = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000)
-        .toISOString()
-        .split("T")[0];
-      query.expiry_date = { $lte: cutoff };
-    }
-
-    // Filter expired
-    if (expired === "true") {
-      query.expiry_date = { $lt: todayStr };
-    }
+    // Filters narrow each other (AND), they never overwrite one another
+    const and = [];
+    if (low_stock === "true") and.push(productNameMatch(namesIn(levels, ["low"])));
+    if (shortage === "true") and.push(productNameMatch(namesIn(levels, ["low", "out"])));
+    if (expiring_soon === "true") and.push({ available_quantity: { $gt: 0 }, expiry_date: { $gte: today, $lte: expiryCutoff } });
+    if (expired === "true") and.push({ available_quantity: { $gt: 0 }, expiry_date: { $lt: today, $regex: /^20\d{2}-/ } });
+    if (and.length) query.$and = and;
+    const stockFilterActive = low_stock === "true" || shortage === "true";
 
     const sortDir = sort_order === "asc" ? 1 : -1;
     const parsedLimit = Math.min(Math.max(parseInt(limit) || 50, 1), 1000);
@@ -234,6 +173,8 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
         .toArray();
 
       // Merge products from products catalog that don't have inventory batches yet
+      // (not when a stock or expiry filter is on: they have no stock to filter)
+      const anyFilter = stockFilterActive || expiring_soon === "true" || expired === "true";
       const existingProductNames = new Set(
         allGrouped.map((g) => (g.product_name || g._id || "").toLowerCase())
       );
@@ -250,7 +191,7 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
         .find(productQuery)
         .toArray();
 
-      for (const cp of allCatalog) {
+      for (const cp of anyFilter ? [] : allCatalog) {
         const pName = (cp.name || cp.product_name || "").trim();
         if (!pName || existingProductNames.has(pName.toLowerCase())) continue;
         existingProductNames.add(pName.toLowerCase());
@@ -270,7 +211,6 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
           total_stock_value: 0,
           earliest_expiry: null,
           latest_created: cp.created_at || new Date().toISOString(),
-          shortage_threshold: cp.shortage_threshold || 10,
           batch_count: 0,
           batches: [],
           is_catalog_only: true,
@@ -284,8 +224,17 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
           ? allGrouped.slice(skip, skip + parsedLimit)
           : allGrouped;
 
-      const sanitizedGrouped = paginatedGrouped.map((item) => ({
+      const sanitizedGrouped = paginatedGrouped.map((item) => {
+        const lvl = levels.get(keyOf(item.product_name)) || null;
+        return {
         ...item,
+        // Effective level for badges: stock that can be sold, the threshold in force, the state
+        sellable_stock: lvl ? lvl.stock : 0,
+        threshold: lvl ? lvl.threshold : levelsInfo.settings.lowStock,
+        custom_threshold: lvl ? lvl.custom : null,
+        shortage_threshold: lvl ? lvl.threshold : levelsInfo.settings.lowStock,
+        low_stock_threshold: lvl ? lvl.threshold : levelsInfo.settings.lowStock,
+        stock_state: lvl ? lvl.state : "out",
         purchase_price:
           item.purchase_price !== undefined && item.purchase_price !== null
             ? Math.round(Number(item.purchase_price) * 100) / 100
@@ -308,11 +257,14 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
                   : b.mrp,
             }))
           : item.batches,
-      }));
+        };
+      });
 
       return res.json({
         inventory: sanitizedGrouped,
         shortage_count: shortageCount,
+        counts,
+        thresholds: levelsInfo.settings,
         pagination: {
           page: pageNum,
           limit: parsedLimit,
@@ -390,6 +342,8 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
     res.json({
       inventory: sanitizedInventory,
       shortage_count: shortageCount,
+      counts,
+      thresholds: levelsInfo.settings,
       pagination: {
         page: pageNum,
         limit: parsedLimit,
@@ -492,6 +446,23 @@ router.get(
 );
 
 // GET /api/inventory/search
+// GET /api/inventory/alternates?salt=&exclude=
+// In-stock medicines with the same salt (exact strength first, then partial)
+router.get("/alternates", auth, requireSubscription(), async (req, res, next) => {
+  try {
+    const salt = String(req.query.salt || "").trim().slice(0, 300);
+    if (!salt) return res.status(400).json({ detail: "This medicine has no salt composition to match" });
+    const out = await findAlternates(mongoose.connection.db, req.user.pharmacy_id, {
+      salt,
+      exclude: String(req.query.exclude || "").slice(0, 200),
+      limit: Math.min(parseInt(req.query.limit) || 30, 60),
+    });
+    res.json(out);
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.get("/search", auth, requireSubscription(), async (req, res, next) => {
   try {
     const q = (req.query.q || req.query.query || "").trim();
@@ -866,42 +837,19 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
 router.get("/shortage", auth, requireSubscription(), async (req, res, next) => {
   try {
     const db = mongoose.connection.db;
-
-    // Fetch user settings for global shortage threshold
-    const userSettings = await db
-      .collection("user_settings")
-      .findOne({ user_id: req.user.id });
-    const globalThreshold =
-      userSettings?.preferences?.shortage_threshold !== undefined
-        ? Number(userSettings.preferences.shortage_threshold)
-        : 10;
-
-    const allInventory = await db
-      .collection("inventory")
-      .find({ pharmacy_id: req.user.pharmacy_id })
-      .toArray();
-    const shortageItems = [];
-    allInventory.forEach((item) => {
-      const thresh =
-        item.shortage_threshold !== undefined &&
-        item.shortage_threshold !== null
-          ? Number(item.shortage_threshold)
-          : globalThreshold;
-      if (item.available_quantity <= thresh) {
-        shortageItems.push(item);
-      }
-    });
-
-    res.json({
-      inventory: shortageItems,
-      count: shortageItems.length,
-    });
+    // One row per medicine to reorder (low or out of stock), same rules as the Inventory filter
+    const { levels, settings } = await stockLevels(db, req.user);
+    const shortageItems = [...levels.values()]
+      .filter((e) => e.state === "low" || e.state === "out")
+      .map((e) => ({ product_name: e.name, product_id: e.product_id, available_quantity: e.stock, threshold: e.threshold, custom_threshold: e.custom, state: e.state }))
+      .sort((a, b) => a.available_quantity - b.available_quantity || a.product_name.localeCompare(b.product_name));
+    res.json({ inventory: shortageItems, count: shortageItems.length, global_threshold: settings.lowStock });
   } catch (error) {
     next(error);
   }
 });
 
-// GET /api/inventory/by-code?code=DD1|<id>|...  item from a scanned label (Billing)
+// GET /api/inventory/by-code?code=DD2:<hex id> (or older DD1|<id>|...)  item from a scanned label (Billing)
 router.get("/by-code", auth, requireSubscription(), async (req, res, next) => {
   try {
     const { parseLabel } = require("../services/itemLabels");
@@ -947,35 +895,12 @@ router.get("/alerts", auth, requireSubscription(), async (req, res, next) => {
         { projection: { _id: 0 } }
       )
       .toArray();
-    const t = await dashThresholds(db, req.user.id);
+    const { levels, settings: t } = await stockLevels(db, req.user);
 
-    const products = await db
-      .collection("products")
-      .find({ pharmacy_id: req.user.pharmacy_id }, { projection: { _id: 0 } })
-      .toArray();
-
-    const thresholds = {};
-    products.forEach((p) => (thresholds[p.id] = p.low_stock_threshold || t.lowStock));
-
-    // Aggregate stock by product
-    const productStock = {};
-    inventory.forEach((item) => {
-      const pid = item.product_id || item.product_name;
-      if (!productStock[pid]) {
-        productStock[pid] = { name: item.product_name, total: 0, items: [] };
-      }
-      productStock[pid].total += item.available_quantity;
-      productStock[pid].items.push(item);
-    });
-
-    // Low stock items
-    const lowStock = Object.values(productStock)
-      .filter((p) => p.total <= (thresholds[p.id] || t.lowStock))
-      .map((p) => ({
-        product_name: p.name,
-        available_quantity: p.total,
-        threshold: thresholds[p.id] || t.lowStock,
-      }));
+    // Low / out of stock medicines, same rules as the Inventory filters
+    const lowStock = [...levels.values()]
+      .filter((e) => e.state === "low" || e.state === "out")
+      .map((e) => ({ product_name: e.name, available_quantity: e.stock, threshold: e.threshold, state: e.state }));
 
     // Expiring within the user's warning window, only batches still in stock
     const cutoff = new Date(Date.now() + t.expiryWarningDays * 24 * 60 * 60 * 1000)
@@ -1410,32 +1335,36 @@ router.post("/merge", auth, requireSubscription(), async (req, res, next) => {
   }
 });
 
+// PUT /api/inventory/threshold {product_id?, product_name, threshold|null}
+// A medicine's own low stock / shortage threshold; null goes back to the global one.
+router.put("/threshold", auth, requireSubscription(), async (req, res, next) => {
+  try {
+    const { product_id, product_name, threshold } = req.body || {};
+    if (!product_id && !String(product_name || "").trim()) return res.status(400).json({ detail: "Which medicine?" });
+    if (threshold !== null && threshold !== "" && threshold !== undefined && !(Number(threshold) >= 0 && Number(threshold) <= 100000)) {
+      return res.status(400).json({ detail: "Threshold must be between 0 and 100000" });
+    }
+    const r = await setCustomThreshold(mongoose.connection.db, req.user.pharmacy_id, { productId: product_id, productName: product_name }, threshold ?? null);
+    res.json({ message: r.custom_threshold === null ? "Using the global threshold" : `Threshold set to ${r.custom_threshold}`, custom_threshold: r.custom_threshold });
+  } catch (error) {
+    next(error);
+  }
+});
+
 // PUT /api/inventory/:id
 router.put("/:id", auth, requireSubscription(), async (req, res, next) => {
   try {
     const db = mongoose.connection.db;
     const { shortage_threshold } = req.body;
-
-    const updateDoc = {};
-    if (shortage_threshold !== undefined) {
-      updateDoc.shortage_threshold =
-        shortage_threshold === null || shortage_threshold === ""
-          ? null
-          : Number(shortage_threshold);
+    const batch = await db.collection("inventory").findOne({ id: req.params.id, pharmacy_id: req.user.pharmacy_id }, { projection: { _id: 0, product_id: 1, product_name: 1 } });
+    if (!batch) return res.status(404).json({ detail: "Inventory item not found" });
+    if (shortage_threshold === undefined) return res.json({ message: "Nothing to update" });
+    if (shortage_threshold !== null && shortage_threshold !== "" && !(Number(shortage_threshold) >= 0)) {
+      return res.status(400).json({ detail: "Threshold must be 0 or more" });
     }
-
-    const result = await db
-      .collection("inventory")
-      .updateOne(
-        { id: req.params.id, pharmacy_id: req.user.pharmacy_id },
-        { $set: updateDoc }
-      );
-
-    if (result.matchedCount === 0) {
-      return res.status(404).json({ detail: "Inventory item not found" });
-    }
-
-    res.json({ message: "Inventory item updated successfully" });
+    // The threshold belongs to the medicine (all its batches), not one batch
+    const r = await setCustomThreshold(db, req.user.pharmacy_id, { productId: batch.product_id, productName: batch.product_name }, shortage_threshold);
+    res.json({ message: r.custom_threshold === null ? "Using the global threshold" : `Threshold set to ${r.custom_threshold}`, custom_threshold: r.custom_threshold });
   } catch (error) {
     next(error);
   }

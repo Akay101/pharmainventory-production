@@ -29,6 +29,7 @@ import UpiQrDialog, { UPI_ID_RE } from "../components/UpiQr";
 
 export default function SettingsPage() {
   const { user, pharmacy, setUser, setPharmacy, isAdmin, settings, settingsDefinitions, updateSetting, fetchSettings } = useAuth();
+  const [numberDrafts, setNumberDrafts] = useState({}); // typed text, so a number field can be cleared
   const [saving, setSaving] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
@@ -162,7 +163,7 @@ export default function SettingsPage() {
       
       const initialVals = {};
       items.forEach(p => {
-        initialVals[p.id] = p.shortage_threshold !== undefined && p.shortage_threshold !== null ? String(p.shortage_threshold) : "";
+        initialVals[p.id] = p.custom_threshold !== undefined && p.custom_threshold !== null ? String(p.custom_threshold) : "";
       });
       setThresholdInputValues(initialVals);
 
@@ -200,7 +201,7 @@ export default function SettingsPage() {
         setThresholdInputValues(prev => {
           const updated = { ...prev };
           items.forEach(p => {
-            updated[p.id] = p.shortage_threshold !== undefined && p.shortage_threshold !== null ? String(p.shortage_threshold) : "";
+            updated[p.id] = p.custom_threshold !== undefined && p.custom_threshold !== null ? String(p.custom_threshold) : "";
           });
           return updated;
         });
@@ -1017,8 +1018,14 @@ export default function SettingsPage() {
                           <div className="flex flex-col items-end gap-1.5">
                             <Input
                               type="number"
-                              value={settings[setting.key] !== undefined ? settings[setting.key] : setting.default}
-                              onChange={(e) => updateSetting(setting.key, Number(e.target.value))}
+                              value={numberDrafts[setting.key] !== undefined ? numberDrafts[setting.key] : settings[setting.key] !== undefined ? settings[setting.key] : setting.default}
+                              placeholder={String(setting.default ?? 0)}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                setNumberDrafts((d) => ({ ...d, [setting.key]: v }));
+                                if (v !== "" && !isNaN(Number(v))) updateSetting(setting.key, Number(v));
+                              }}
+                              onBlur={() => setNumberDrafts((d) => { const n = { ...d }; delete n[setting.key]; return n; })}
                               className="w-[120px] bg-background/50 h-9 rounded-xl border border-border/50 text-xs font-semibold text-right pr-3"
                             />
                             {setting.key === 'shortage_threshold' && (
@@ -1255,8 +1262,10 @@ export default function SettingsPage() {
                             setSavingProductId(prod.id);
                             try {
                               const val = thresholdInputValues[prod.id];
-                              await axios.put(`${API}/inventory/${prod.id}`, {
-                                shortage_threshold: val === "" || val === null ? null : Number(val),
+                              await axios.put(`${API}/inventory/threshold`, {
+                                product_id: prod.product_id || null,
+                                product_name: prod.product_name,
+                                threshold: val === "" || val === null ? null : Number(val),
                               });
                               toast.success(`Updated shortage threshold for ${prod.product_name}`);
                             } catch (err) {

@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import axios from "axios";
-import { API } from "../App";
+import { API, useAuth } from "../App";
+import { TierBadge, TierFilterBar, TierRulesDialog, CustomerTierCard, visitLine } from "../components/customers/CustomerTiers";
 import { Card, CardContent } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -67,7 +68,15 @@ export default function CustomersPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const isInitialMount = useRef(true);
+  const { isAdmin } = useAuth();
   const [customers, setCustomers] = useState([]);
+  // Tiers: filter, counts per tier, sort, rules dialog
+  const [tierFilter, setTierFilter] = useState("");
+  const [tierCounts, setTierCounts] = useState(null);
+  const [sortKey, setSortKey] = useState("");
+  const [rulesOpen, setRulesOpen] = useState(false);
+  const [listLoading, setListLoading] = useState(false);
+  const listSeq = useRef(0);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [selectedCustomer, setSelectedCustomer] = useState(null);
@@ -145,6 +154,7 @@ export default function CustomersPage() {
         axios.get(`${API}/reminders?customer_id=${customer.id}`).catch(() => ({ data: { reminders: [] } })),
       ]);
 
+      if (billsRes.data.customer) setSelectedCustomer((prev) => (prev?.id === customer.id ? { ...prev, ...billsRes.data.customer } : prev));
       setCustomerBills(billsRes.data.bills || []);
       setUnpaidBills(unpaidRes.data.unpaid_bills || []);
       setUnpaidTotal(unpaidRes.data.total_debt || 0);
@@ -258,6 +268,8 @@ export default function CustomersPage() {
 
   const fetchCustomers = useCallback(
     async (page = 1, highlightId = undefined) => {
+      const seq = ++listSeq.current;
+      setListLoading(true);
       try {
         const params = new URLSearchParams();
         if (!highlightId) {
@@ -267,13 +279,17 @@ export default function CustomersPage() {
         params.append("sort_by", sortBy);
         params.append("sort_order", sortOrder);
         if (search) params.append("search", search);
+        if (tierFilter) params.append("tier", tierFilter);
+        if (sortKey) params.append("sort", sortKey);
         if (highlightId) params.append("highlight_id", highlightId);
 
         const response = await axios.get(
           `${API}/customers?${params.toString()}`
         );
+        if (seq !== listSeq.current) return;
         setCustomers(response.data.customers);
         setPagination(response.data.pagination);
+        if (response.data.tier_counts) setTierCounts(response.data.tier_counts);
 
         if (highlightId) {
           setTimeout(() => {
@@ -293,12 +309,13 @@ export default function CustomersPage() {
           }, 300);
         }
       } catch (error) {
-        toast.error("Failed to load customers");
+        if (seq === listSeq.current) toast.error("Failed to load customers");
       } finally {
         setLoading(false);
+        if (seq === listSeq.current) setListLoading(false);
       }
     },
-    [search, sortBy, sortOrder, pagination.limit]
+    [search, sortBy, sortOrder, pagination.limit, tierFilter, sortKey]
   );
 
   useEffect(() => {
@@ -321,7 +338,7 @@ export default function CustomersPage() {
       fetchCustomers(1);
     }, 300);
     return () => clearTimeout(debounce);
-  }, [search, sortBy, sortOrder]);
+  }, [search, sortBy, sortOrder, tierFilter, sortKey]);
 
   const handlePayBill = (bill) => {
     setPayBillDialog({
@@ -547,6 +564,32 @@ export default function CustomersPage() {
         </CardContent>
       </Card>
 
+      {/* Tiers: filter by how often customers come; rules and discounts */}
+      <div className="space-y-2">
+        <TierFilterBar value={tierFilter} onChange={setTierFilter} counts={tierCounts} canEdit={isAdmin} onRules={() => setRulesOpen(true)} />
+        <div className="flex items-center gap-2 text-xs font-semibold text-muted-foreground">
+          Sort
+          <select
+            value={sortKey}
+            onChange={(e) => setSortKey(e.target.value)}
+            className="h-8 rounded-lg border border-border bg-card px-2 text-xs font-bold text-foreground outline-none focus:border-primary"
+            data-testid="customer-sort"
+          >
+            <option value="">Newest added</option>
+            <option value="recent">Last visit</option>
+            <option value="visits">Most visits</option>
+            <option value="spend">Highest spend</option>
+            <option value="name">Name</option>
+          </select>
+          {listLoading && (
+            <span className="flex items-center gap-1.5 text-primary">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" /> Updating…
+            </span>
+          )}
+        </div>
+      </div>
+      <TierRulesDialog open={rulesOpen} onClose={() => setRulesOpen(false)} onSaved={() => fetchCustomers(1)} />
+
       {/* Customer Details Dialog */}
       <Dialog open={detailsOpen} onOpenChange={setDetailsOpen}>
         <DialogContent className="max-w-3xl max-h-[88vh] overflow-hidden flex flex-col p-0 border border-border/70 bg-background/95 backdrop-blur-xl rounded-2xl shadow-2xl w-11/12">
@@ -619,6 +662,15 @@ export default function CustomersPage() {
                 </Button>
               </div>
 
+              <CustomerTierCard
+                customer={selectedCustomer}
+                canEdit={isAdmin}
+                onChanged={(c) => {
+                  setSelectedCustomer((prev) => ({ ...prev, ...c }));
+                  fetchCustomers(pagination.page || 1);
+                }}
+              />
+
               {/* Stats Overview */}
               <div className="grid grid-cols-3 gap-3">
                 <div className="p-3.5 rounded-xl bg-primary/5 border border-primary/10">
@@ -626,7 +678,7 @@ export default function CustomersPage() {
                     Total Purchases
                   </p>
                   <p className="text-xl font-black font-mono tracking-tight text-primary">
-                    ₹{selectedCustomer.total_purchases?.toLocaleString("en-IN") || 0}
+                    ₹{(selectedCustomer.stats?.spend_total ?? selectedCustomer.total_purchases ?? 0).toLocaleString("en-IN")}
                   </p>
                 </div>
                 <div
@@ -1108,7 +1160,11 @@ export default function CustomersPage() {
                   min="1"
                   value={addReminderDialog.daysSupply}
                   onChange={(e) => {
-                    const days = parseInt(e.target.value) || 30;
+                    if (e.target.value === "") {
+                      setAddReminderDialog((prev) => ({ ...prev, daysSupply: "" }));
+                      return;
+                    }
+                    const days = Math.max(1, parseInt(e.target.value) || 1);
                     const dates = computeReminderDates(days, addReminderDialog.remindBefore);
                     setAddReminderDialog((prev) => ({
                       ...prev,
@@ -1301,7 +1357,16 @@ export default function CustomersPage() {
                             {customer.name ? customer.name.charAt(0).toUpperCase() : "?"}
                           </span>
                         </div>
-                        <span className="font-bold text-foreground hover:text-primary transition-colors">{customer.name}</span>
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="font-bold text-foreground hover:text-primary transition-colors">{customer.name}</span>
+                            <TierBadge customer={customer} />
+                            {customer.discount_percent > 0 && (
+                              <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-extrabold text-primary">{customer.discount_percent}% off</span>
+                            )}
+                          </div>
+                          <p className="mt-0.5 text-[11px] font-semibold text-muted-foreground">{visitLine(customer)}</p>
+                        </div>
                       </div>
                     </TableCell>
                     <TableCell>
@@ -1313,7 +1378,10 @@ export default function CustomersPage() {
                       )}
                     </TableCell>
                     <TableCell className="text-right font-mono font-semibold text-foreground/90">
-                      ₹{customer.total_purchases?.toLocaleString("en-IN") || 0}
+                      ₹{(customer.stats?.spend_total ?? customer.total_purchases ?? 0).toLocaleString("en-IN")}
+                      {customer.stats?.visits_total > 0 && (
+                        <div className="text-[10px] font-semibold text-muted-foreground">{customer.stats.visits_total} visit{customer.stats.visits_total === 1 ? "" : "s"}</div>
+                      )}
                     </TableCell>
                     <TableCell className="text-right">
                       {customer.total_debt > 0 ? (
