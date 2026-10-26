@@ -65,7 +65,8 @@ router.get("/", async (req, res, next) => {
         ? { ...config.offer, value: config.offer.type === "FLAT" ? config.offer.value / 100 : config.offer.value }
         : { enabled: false, label: "", type: "PERCENT", value: 10, plans: [], starts_at: null, ends_at: null },
       trial: config?.trial || { enabled: true, days: 7, plan: "BEST" },
-      display: { hide_prices: false, label: "Launching soon", ...(config?.display || {}) },
+      // Same default as the app: hidden until an admin publishes prices
+      display: { hide_prices: true, label: "Launching soon", ...(config?.display || {}) },
       updated_at: config?.updated_at || null,
     });
   } catch (err) {

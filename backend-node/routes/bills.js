@@ -769,6 +769,11 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
               unit_price: num(i.unit_price),
               dose_per_day: num(i.dose_per_day),
               days_supply: parseInt(i.days_supply) || daysSupply,
+              // For the restock purchase the reminder turns into
+              product_id: i.product_id ? String(i.product_id).slice(0, 80) : null,
+              inventory_id: i.inventory_id ? String(i.inventory_id).slice(0, 80) : null,
+              units_per_pack: num(i.units_per_pack),
+              reorder_units: num(i.reorder_units),
               runs_out_on: /^\d{4}-\d{2}-\d{2}$/.test(i.runs_out_on || "") ? i.runs_out_on : null,
             }))
           : processedItems.map(i => ({

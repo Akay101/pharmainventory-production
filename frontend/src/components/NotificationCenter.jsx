@@ -120,7 +120,34 @@ export default function NotificationCenter() {
     });
   };
 
+  // Refill reminder -> a purchase draft filled from the reminder (last
+  // supplier, pack, rates, quantity); the user checks batch and expiry
+  const [orderingId, setOrderingId] = useState(null);
+  const orderRestock = async (notification, e) => {
+    e?.stopPropagation();
+    const reminderId = notification.data?.reminder_id;
+    if (!reminderId || orderingId) return;
+    if (!notification.is_read) handleMarkAsRead(notification.id);
+    setOrderingId(notification.id);
+    try {
+      const res = await axios.post(`${API}/reminders/${reminderId}/purchase-draft`);
+      setIsOpen(false);
+      navigate("/purchases", { state: { openPurchaseDraft: res.data.draft.id } });
+    } catch (err) {
+      // Older reminders without stored items: fall back to a blank purchase with the names
+      setIsOpen(false);
+      navigate("/purchases", { state: { openNew: true, restockItems: notification.data?.items || [] } });
+      if (err.response?.status !== 404) toast.error(err.response?.data?.detail || "Couldn't prepare the purchase; opened a new one instead");
+    } finally {
+      setOrderingId(null);
+    }
+  };
+
   const handleNotificationClick = (notification) => {
+    if (notification.type === "REFILL_REMINDER" && notification.data?.reminder_id) {
+      orderRestock(notification);
+      return;
+    }
     if (!notification.is_read) {
       handleMarkAsRead(notification.id);
     }
@@ -352,20 +379,13 @@ export default function NotificationCenter() {
                             <Button
                               variant="outline"
                               size="sm"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setIsOpen(false);
-                                navigate("/purchases", {
-                                  state: {
-                                    openNew: true,
-                                    restockItems: n.data?.items || [],
-                                  },
-                                });
-                              }}
+                              onClick={(e) => orderRestock(n, e)}
+                              disabled={orderingId === n.id}
                               className="h-6 px-2 text-[10px] font-extrabold text-orange-600 dark:text-orange-400 border-orange-500/30 hover:bg-orange-500/10 rounded-lg"
+                              data-testid="order-restock"
                             >
                               <Package className="w-3 h-3 mr-1" />
-                              Purchase Now
+                              {orderingId === n.id ? "Preparing..." : "Order stock"}
                             </Button>
                           )}
 

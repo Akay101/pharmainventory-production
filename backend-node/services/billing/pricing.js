@@ -81,7 +81,7 @@ const defaultPricingConfig = () => ({
   trial: { enabled: true, days: 7, plan: "BEST" }, // BEST = highest-ranked active plan
   // Before prices are announced (early access): plans show without prices and
   // can't be bought; access codes still work. Toggled from the admin panel.
-  display: { hide_prices: false, label: "Launching soon" },
+  display: { hide_prices: true, label: "Launching soon" },
   updated_at: new Date(),
 });
 

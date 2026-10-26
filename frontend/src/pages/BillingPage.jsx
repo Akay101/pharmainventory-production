@@ -100,7 +100,7 @@ import Loader from "../components/Loader";
 import BillingScannerModal from "../components/BillingScannerModal";
 import { formatDate, formatExpiry, formatExpiryInput, expiryToIso, openScanner } from "./utils";
 import { formatCombo } from "../lib/shortcuts";
-import { fmtDay, parseDose, refillPlan } from "../lib/refill";
+import { fmtDay, parseDose, refillPlan, reminderOn } from "../lib/refill";
 import { useShortcuts, useShortcutLayer } from "../components/shortcuts/Shortcuts";
 import UpiQrDialog from "../components/UpiQr";
 import { useWhatsAppShare, WhatsAppIcon } from "../components/ShareBillWhatsApp";
@@ -210,9 +210,10 @@ export default function BillingPage() {
     reminder_date: "",
     notes: "",
     selected_items: [],
-    // auto: dates follow the dose calculator; custom: the user set them
+    // auto: dates follow the dose calculator; custom: the user picked a date
     mode: "auto",
-    doses: {}, // product_name -> { dose: "1", days: "" }
+    doses: {}, // product_name -> { dose: "1", days: "", reorder: packs or units to order }
+    lead: null, // remind this many days before it runs out (null = recommended)
   });
 
   const calculateReminderDates = useCallback((bDate, daysSupply = 30, remindBefore = 5) => {
@@ -1553,7 +1554,7 @@ export default function BillingPage() {
     setAdvanceAmount("");
     setPaymentMode("");
     setNewItemRow(null);
-    setRefillReminder((prev) => ({ ...prev, enabled: false, refill_target_date: "", reminder_date: "", notes: "", selected_items: [], mode: "auto", doses: {} }));
+    setRefillReminder((prev) => ({ ...prev, enabled: false, refill_target_date: "", reminder_date: "", notes: "", selected_items: [], mode: "auto", doses: {}, lead: null }));
     clearDraft();
   };
 
@@ -2095,6 +2096,10 @@ export default function BillingPage() {
             dose_per_day: r.days_input ? null : r.dose_per_day,
             days_supply: r.days || refillReminder.days_supply,
             runs_out_on: r.runs_out_on,
+            product_id: r.product_id,
+            inventory_id: r.inventory_id,
+            units_per_pack: r.units_per_pack,
+            reorder_units: r.reorder_units,
           })),
         } : null,
       });
@@ -2671,12 +2676,21 @@ export default function BillingPage() {
     : validItems
   ).map((i) => {
     const d = refillReminder.doses[i.product_name] || {};
+    const upp = parseInt(i.units_per_pack) || 1;
+    const sold = parseInt(i.quantity) || 0;
+    // What to order when the reminder comes: by default what was sold, in packs when packed
+    const reorderInput = d.reorder ?? String(upp > 1 ? Math.max(1, Math.ceil(sold / upp)) : Math.max(1, sold));
     return {
       product_name: i.product_name,
+      product_id: i.product_id || null,
+      inventory_id: i.inventory_id || null,
+      units_per_pack: upp,
+      reorder_input: reorderInput,
+      reorder_units: Math.max(0, parseFloat(reorderInput) || 0) * (upp > 1 ? upp : 1),
       batch_no: i.batch_no || null,
-      quantity: parseInt(i.quantity) || 0,
+      quantity: sold,
       unit_price: i.unit_price,
-      units: parseInt(i.quantity) || 0,
+      units: sold,
       dose_input: d.dose ?? "1",
       dose_per_day: parseDose(d.dose ?? "1"),
       days: d.days || "",
@@ -2687,19 +2701,22 @@ export default function BillingPage() {
   const refillRec = refillCalc.recommendation;
   const setDose = (name, patch) =>
     setRefillReminder((prev) => ({ ...prev, mode: "auto", doses: { ...prev.doses, [name]: { dose: "1", days: "", ...prev.doses[name], ...patch } } }));
-  // Auto mode keeps the dates on the recommendation
+  // Auto mode keeps the dates on the calculation: N days before the first
+  // medicine runs out (N recommended, or the chip the user picked)
+  const refillLead = refillReminder.lead ?? refillRec?.remind_before_days ?? 0;
+  const autoReminderDate = refillRec ? reminderOn(billingDate, refillRec.refill_target_date, refillLead) : "";
   useEffect(() => {
     if (!refillReminder.enabled || refillReminder.mode !== "auto" || !refillRec) return;
-    if (refillReminder.reminder_date === refillRec.reminder_date && refillReminder.refill_target_date === refillRec.refill_target_date && refillReminder.days_supply === refillRec.days_supply) return;
+    if (refillReminder.reminder_date === autoReminderDate && refillReminder.refill_target_date === refillRec.refill_target_date && refillReminder.days_supply === refillRec.days_supply) return;
     setRefillReminder((prev) => ({
       ...prev,
       days_supply: refillRec.days_supply,
-      remind_before_days: refillRec.remind_before_days,
+      remind_before_days: refillLead,
       refill_target_date: refillRec.refill_target_date,
-      reminder_date: refillRec.reminder_date,
+      reminder_date: autoReminderDate,
     }));
     // eslint-disable-next-line
-  }, [refillReminder.enabled, refillReminder.mode, refillRec?.reminder_date, refillRec?.refill_target_date, refillRec?.days_supply]);
+  }, [refillReminder.enabled, refillReminder.mode, autoReminderDate, refillRec?.refill_target_date, refillRec?.days_supply]);
   const subtotal = validItems.reduce((sum, item) => {
     const qty = parseInt(item.quantity) || 0;
     const unitPrice = parseFloat(item.unit_price) || 0;
@@ -4342,215 +4359,124 @@ export default function BillingPage() {
                   </div>
 
                   {refillReminder.enabled && (
-                    <div className="mt-3 pt-3 border-t border-indigo-500/20 space-y-3 animate-in fade-in slide-in-from-top-2 duration-200">
-                      {/* Dosage calculator: units sold ÷ dose per day = days it lasts */}
-                      {reminderItems.length > 0 && (
-                        <div className="space-y-1.5">
-                          <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Dose per day (½ = 0.5) · or days it lasts</p>
-                          {refillCalc.rows.map((r) => {
-                            const badDose = !r.days && !r.dose_per_day;
-                            return (
-                              <div key={r.product_name} className="flex flex-wrap items-center gap-2 rounded-xl border border-indigo-500/15 bg-background/60 px-2.5 py-1.5">
-                                <span className="min-w-0 flex-1 truncate text-xs font-bold text-foreground" title={r.product_name}>
-                                  {r.product_name}
-                                  <span className="ml-1.5 font-mono text-[10px] font-semibold text-muted-foreground">{r.units} units</span>
-                                </span>
-                                <div className="flex items-center gap-1">
-                                  {["0.5", "1", "2", "3"].map((v) => (
-                                    <button
-                                      key={v}
-                                      type="button"
-                                      onClick={() => setDose(r.product_name, { dose: v, days: "" })}
-                                      className={`h-6 min-w-[1.75rem] rounded-md border px-1.5 text-[10px] font-bold ${!r.days_input && String(r.dose_input) === v ? "border-indigo-500 bg-indigo-500 text-white" : "border-border/70 text-muted-foreground hover:border-indigo-500/50"}`}
-                                    >
-                                      {v === "0.5" ? "½" : v}
-                                    </button>
-                                  ))}
-                                  <Input
-                                    aria-label={`Dose per day for ${r.product_name}`}
-                                    inputMode="decimal"
-                                    value={r.days_input ? "" : r.dose_input}
-                                    placeholder="dose"
-                                    onChange={(e) => setDose(r.product_name, { dose: e.target.value, days: "" })}
-                                    className={`h-6 w-14 rounded-md px-1.5 text-center text-[11px] font-bold ${badDose ? "border-rose-500" : ""}`}
-                                  />
-                                  <span className="text-[10px] text-muted-foreground">/day or</span>
-                                  <Input
-                                    aria-label={`Days ${r.product_name} lasts`}
-                                    inputMode="numeric"
-                                    value={refillReminder.doses[r.product_name]?.days || ""}
-                                    placeholder="days"
-                                    onChange={(e) => setDose(r.product_name, { days: e.target.value.replace(/\D/g, "").slice(0, 3) })}
-                                    className="h-6 w-14 rounded-md px-1.5 text-center text-[11px] font-bold"
-                                  />
-                                </div>
-                                <span className={`w-full text-[10px] font-semibold sm:w-auto ${r.days ? "text-indigo-600 dark:text-indigo-400" : "text-rose-500"}`}>
-                                  {r.days ? `Lasts ${r.days} day${r.days === 1 ? "" : "s"} · runs out ${fmtDay(r.runs_out_on)}` : "Enter a dose (e.g. 1, ½, 1½) or days"}
-                                </span>
-                              </div>
-                            );
-                          })}
-                          {refillRec && (
-                            <div className={`flex flex-wrap items-center justify-between gap-2 rounded-xl px-2.5 py-1.5 text-[11px] ${refillReminder.mode === "auto" ? "bg-indigo-500/10 text-indigo-700 dark:text-indigo-300" : "bg-amber-500/10 text-amber-700 dark:text-amber-300"}`}>
-                              <span>
-                                <strong>Recommended:</strong> remind on {fmtDay(refillRec.reminder_date)}
-                                {refillRec.remind_before_days > 0 ? `, ${refillRec.remind_before_days} day${refillRec.remind_before_days === 1 ? "" : "s"} before` : ", the day"} {reminderItems.length > 1 ? `${refillRec.driver} (first to run out)` : refillRec.driver} runs out on {fmtDay(refillRec.refill_target_date)}.
-                                {refillReminder.mode === "custom" && " You've set custom dates."}
-                              </span>
-                              {refillReminder.mode === "custom" && (
-                                <button type="button" onClick={() => setRefillReminder((prev) => ({ ...prev, mode: "auto" }))} className="rounded-md bg-indigo-600 px-2 py-0.5 text-[10px] font-bold text-white">
-                                  Use recommended
-                                </button>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      )}
-
-                      {/* Quick Presets */}
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        <span className="text-[11px] font-bold text-muted-foreground mr-1 flex items-center gap-1">
-                          <Clock className="w-3 h-3 text-indigo-500" /> Or a fixed period:
-                        </span>
-                        {[
-                          { days: 15, remindBefore: 3, label: "15 Days" },
-                          { days: 30, remindBefore: 5, label: "30 Days (Standard)" },
-                          { days: 45, remindBefore: 5, label: "45 Days" },
-                          { days: 60, remindBefore: 7, label: "60 Days" },
-                          { days: 90, remindBefore: 10, label: "90 Days" },
-                        ].map((preset) => {
-                          const isSelected = refillReminder.days_supply === preset.days && refillReminder.remind_before_days === preset.remindBefore;
-                          return (
-                            <Button
-                              key={preset.days}
-                              type="button"
-                              size="sm"
-                              variant={isSelected ? "default" : "outline"}
-                              onClick={() => {
-                                const { targetDate, reminderDate } = calculateReminderDates(billingDate, preset.days, preset.remindBefore);
-                                setRefillReminder((prev) => ({
-                                  ...prev,
-                                  mode: "custom",
-                                  days_supply: preset.days,
-                                  remind_before_days: preset.remindBefore,
-                                  refill_target_date: targetDate,
-                                  reminder_date: reminderDate,
-                                }));
-                              }}
-                              className={`h-6 px-2 text-[10px] font-bold rounded-lg transition-all ${
-                                isSelected 
-                                  ? "bg-indigo-600 hover:bg-indigo-700 text-white shadow-xs" 
-                                  : "border-border/70 hover:bg-indigo-500/10 hover:text-indigo-600"
-                              }`}
-                            >
-                              {preset.label}
-                            </Button>
-                          );
-                        })}
-                      </div>
-
-                      {/* Date Pickers */}
-                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5">
-                        <div className="space-y-1">
-                          <Label className="text-[10px] font-bold text-foreground/80 flex items-center gap-1">
-                            <Calendar className="w-3 h-3 text-indigo-500" /> Expected Refill Date
-                          </Label>
-                          <Input
-                            type="date"
-                            value={refillReminder.refill_target_date}
-                            onChange={(e) => {
-                              const newTarget = e.target.value;
-                              const d = new Date(newTarget);
-                              d.setDate(d.getDate() - parseInt(refillReminder.remind_before_days || 5));
-                              setRefillReminder((prev) => ({
-                                ...prev,
-                                mode: "custom",
-                                refill_target_date: newTarget,
-                                reminder_date: !isNaN(d.getTime()) ? d.toISOString().slice(0, 10) : prev.reminder_date,
-                              }));
-                            }}
-                            className="h-8 text-xs font-semibold rounded-xl border-border bg-background/80"
-                          />
-                        </div>
-
-                        <div className="space-y-1">
-                          <Label className="text-[10px] font-bold text-foreground/80 flex items-center gap-1 text-indigo-600 dark:text-indigo-400">
-                            <Bell className="w-3 h-3 text-indigo-500" /> Reminder Alert Date *
-                          </Label>
-                          <Input
-                            type="date"
-                            value={refillReminder.reminder_date}
-                            onChange={(e) =>
-                              setRefillReminder((prev) => ({
-                                ...prev,
-                                mode: "custom",
-                                reminder_date: e.target.value,
-                              }))
-                            }
-                            className="h-8 text-xs font-semibold rounded-xl border-indigo-500/40 bg-background/80 focus-visible:ring-indigo-500"
-                          />
-                        </div>
-
-                        <div className="space-y-1 sm:col-span-2 md:col-span-1">
-                          <Label className="text-[10px] font-bold text-foreground/80">
-                            Notes / Dosage
-                          </Label>
-                          <Input
-                            type="text"
-                            placeholder="e.g., Monthly BP & Sugar meds"
-                            value={refillReminder.notes}
-                            onChange={(e) =>
-                              setRefillReminder((prev) => ({
-                                ...prev,
-                                notes: e.target.value,
-                              }))
-                            }
-                            className="h-8 text-xs font-semibold rounded-xl border-border bg-background/80"
-                          />
-                        </div>
-                      </div>
-
-                      {/* Medicines Selection for Reminder */}
-                      {validItems.length > 0 && (
-                        <div className="pt-2 border-t border-indigo-500/10">
-                          <div className="flex items-center justify-between mb-1.5">
-                            <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                              Medicines for refill reminder:
-                            </span>
-                            <span className="text-[10px] font-bold text-indigo-500">
-                              {refillReminder.selected_items.length === 0 ? validItems.length : refillReminder.selected_items.length} of {validItems.length} selected
-                            </span>
-                          </div>
-                          <div className="flex flex-wrap gap-1.5">
-                            {validItems.map((item, idx) => {
-                              const isSelected = refillReminder.selected_items.length === 0 || refillReminder.selected_items.some((i) => i.product_name === item.product_name);
+                    <div className="mt-3 pt-3 border-t border-indigo-500/20 space-y-3 animate-in fade-in slide-in-from-top-2 duration-200" data-testid="refill-card">
+                      {validItems.length === 0 ? (
+                        <p className="text-[11px] font-semibold text-muted-foreground">Add medicines to the bill first.</p>
+                      ) : (
+                        <>
+                          {/* One row per medicine: how much they take a day -> how long it lasts -> what to reorder */}
+                          <div className="space-y-1.5">
+                            {validItems.map((item) => {
+                              const on = refillReminder.selected_items.length === 0 || refillReminder.selected_items.some((x) => x.product_name === item.product_name);
+                              const r = refillCalc.rows.find((x) => x.product_name === item.product_name);
+                              const upp = parseInt(item.units_per_pack) || 1;
+                              const toggle = () =>
+                                setRefillReminder((prev) => {
+                                  const cur = prev.selected_items.length === 0 ? [...validItems] : [...prev.selected_items];
+                                  const has = cur.some((x) => x.product_name === item.product_name);
+                                  const next = has ? cur.filter((x) => x.product_name !== item.product_name) : [...cur, item];
+                                  return { ...prev, selected_items: next.length ? next : prev.selected_items };
+                                });
                               return (
-                                <button
-                                  key={idx}
-                                  type="button"
-                                  onClick={() => {
-                                    setRefillReminder((prev) => {
-                                      const currentSelected = prev.selected_items.length === 0 ? [...validItems] : [...prev.selected_items];
-                                      const exists = currentSelected.some((i) => i.product_name === item.product_name);
-                                      const updated = exists
-                                        ? currentSelected.filter((i) => i.product_name !== item.product_name)
-                                        : [...currentSelected, item];
-                                      return { ...prev, selected_items: updated };
-                                    });
-                                  }}
-                                  className={`px-2 py-0.5 rounded-lg text-[11px] font-bold border flex items-center gap-1 transition-all ${
-                                    isSelected
-                                      ? "bg-indigo-500/15 text-indigo-600 dark:text-indigo-400 border-indigo-500/30"
-                                      : "bg-muted/40 text-muted-foreground border-border/50 line-through opacity-60"
-                                  }`}
+                                <div
+                                  key={item.product_name}
+                                  className={`rounded-xl border px-2.5 py-2 transition-colors ${on ? "border-indigo-500/20 bg-background/70" : "border-border/50 bg-muted/20 opacity-60"}`}
                                 >
-                                  <Check className={`w-3 h-3 ${isSelected ? "text-indigo-500" : "opacity-0"}`} />
-                                  {item.product_name}
-                                </button>
+                                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                                    <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2">
+                                      <Checkbox checked={on} onCheckedChange={toggle} className="data-[state=checked]:bg-indigo-600 data-[state=checked]:border-indigo-600" />
+                                      <span className="truncate text-xs font-bold text-foreground" title={item.product_name}>{item.product_name}</span>
+                                      <span className="shrink-0 font-mono text-[10px] font-semibold text-muted-foreground">{parseInt(item.quantity) || 0} sold</span>
+                                    </label>
+                                    {on && r && (
+                                      <div className="flex items-center gap-1">
+                                        <span className="mr-0.5 text-[10px] font-semibold text-muted-foreground">Takes</span>
+                                        {["0.5", "1", "2", "3"].map((v) => (
+                                          <button
+                                            key={v}
+                                            type="button"
+                                            onClick={() => setDose(item.product_name, { dose: v, days: "" })}
+                                            className={`h-6 min-w-[1.75rem] rounded-md border px-1.5 text-[10px] font-bold ${!r.days_input && String(r.dose_input) === v ? "border-indigo-500 bg-indigo-500 text-white" : "border-border/70 text-muted-foreground hover:border-indigo-500/50"}`}
+                                          >
+                                            {v === "0.5" ? "½" : v}
+                                          </button>
+                                        ))}
+                                        <Input
+                                          aria-label={`Dose per day for ${item.product_name}`}
+                                          inputMode="decimal"
+                                          value={["0.5", "1", "2", "3"].includes(String(r.dose_input)) ? "" : r.dose_input}
+                                          placeholder="1½"
+                                          onChange={(e) => setDose(item.product_name, { dose: e.target.value || "1", days: "" })}
+                                          className="h-6 w-14 rounded-md px-1 text-center text-[11px] font-bold"
+                                        />
+                                        <span className="text-[10px] font-semibold text-muted-foreground">a day</span>
+                                      </div>
+                                    )}
+                                  </div>
+                                  {on && r && (
+                                    <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2 pl-6">
+                                      <span className={`text-[11px] font-semibold ${r.days ? "text-indigo-600 dark:text-indigo-400" : "text-rose-500"}`}>
+                                        {r.days ? `Lasts ${r.days} day${r.days === 1 ? "" : "s"}, until ${fmtDay(r.runs_out_on)}` : "Pick how many they take a day"}
+                                      </span>
+                                      <span className="flex items-center gap-1.5 text-[11px] font-semibold text-muted-foreground">
+                                        Restock
+                                        <Input
+                                          aria-label={`Quantity to restock for ${item.product_name}`}
+                                          inputMode="numeric"
+                                          value={r.reorder_input}
+                                          onChange={(e) => setDose(item.product_name, { reorder: e.target.value.replace(/[^\d]/g, "").slice(0, 4) })}
+                                          className="h-6 w-12 rounded-md px-1 text-center text-[11px] font-bold"
+                                        />
+                                        {upp > 1 ? `pack${r.reorder_input === "1" ? "" : "s"} of ${upp}` : "units"}
+                                      </span>
+                                    </div>
+                                  )}
+                                </div>
                               );
                             })}
                           </div>
-                        </div>
+
+                          {/* When to be reminded */}
+                          {refillRec && (
+                            <div className="space-y-2 rounded-xl bg-indigo-500/10 px-3 py-2.5">
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                <span className="mr-1 flex items-center gap-1 text-[11px] font-bold text-indigo-700 dark:text-indigo-300">
+                                  <Bell className="h-3.5 w-3.5" /> Remind me
+                                </span>
+                                {[0, 1, 2, 3].map((n) => {
+                                  const active = refillReminder.mode === "auto" && refillLead === n;
+                                  return (
+                                    <button
+                                      key={n}
+                                      type="button"
+                                      onClick={() => setRefillReminder((prev) => ({ ...prev, mode: "auto", lead: n }))}
+                                      className={`h-6 rounded-lg border px-2 text-[10px] font-bold transition-colors ${active ? "border-indigo-600 bg-indigo-600 text-white" : "border-indigo-500/30 text-indigo-700 hover:bg-indigo-500/10 dark:text-indigo-300"}`}
+                                    >
+                                      {n === 0 ? "On the day" : `${n} day${n === 1 ? "" : "s"} before`}
+                                    </button>
+                                  );
+                                })}
+                                <label className={`relative flex h-6 cursor-pointer items-center gap-1 rounded-lg border px-2 text-[10px] font-bold ${refillReminder.mode === "custom" ? "border-indigo-600 bg-indigo-600 text-white" : "border-indigo-500/30 text-indigo-700 hover:bg-indigo-500/10 dark:text-indigo-300"}`}>
+                                  <Calendar className="h-3 w-3" /> Pick a date
+                                  <input
+                                    type="date"
+                                    aria-label="Reminder date"
+                                    min={billingDate}
+                                    value={refillReminder.reminder_date || ""}
+                                    onChange={(e) => e.target.value && setRefillReminder((prev) => ({ ...prev, mode: "custom", reminder_date: e.target.value }))}
+                                    className="absolute inset-0 cursor-pointer opacity-0"
+                                  />
+                                </label>
+                              </div>
+                              <p className="text-[11px] leading-relaxed text-indigo-800 dark:text-indigo-200">
+                                <strong>{customerInfo.customer_name || "The customer"}</strong> runs out of {refillRec.driver}
+                                {reminderItems.length > 1 ? " (first)" : ""} on <strong>{fmtDay(refillRec.refill_target_date)}</strong>. You'll be reminded on{" "}
+                                <strong>{fmtDay(refillReminder.reminder_date)}</strong>, and tapping the reminder opens a purchase ready to restock{" "}
+                                {refillCalc.rows.filter((x) => x.reorder_units > 0).map((x) => `${x.reorder_input} ${x.units_per_pack > 1 ? `× ${x.units_per_pack}` : "units"} ${x.product_name}`).join(", ") || "these medicines"}.
+                              </p>
+                            </div>
+                          )}
+                        </>
                       )}
                     </div>
                   )}

@@ -83,3 +83,14 @@ export function refillPlan(billingDate, items) {
     },
   };
 }
+
+// Reminder date `lead` days before the medicine runs out, never before the
+// day after billing (or the billing day itself for a 1-day supply)
+export function reminderOn(billingDate, runsOutOn, lead) {
+  if (!runsOutOn) return "";
+  const base = /^\d{4}-\d{2}-\d{2}$/.test(billingDate || "") ? billingDate : new Date().toISOString().slice(0, 10);
+  const days = Math.round((new Date(`${runsOutOn}T00:00:00Z`) - new Date(`${base}T00:00:00Z`)) / 864e5);
+  const earliest = addDays(base, Math.min(1, Math.max(0, days)));
+  const want = addDays(runsOutOn, -Math.max(0, lead || 0));
+  return want < earliest ? earliest : want;
+}

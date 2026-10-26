@@ -966,7 +966,7 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
 // ============ PURCHASE DRAFTS ============
 // A purchase kept for review before it touches stock: from the AI chat, the
 // scanner, or saved by hand. Same body as POST /api/purchases.
-const DRAFT_SOURCES = ["assistant", "scanner", "manual"];
+const DRAFT_SOURCES = ["assistant", "scanner", "manual", "reminder"];
 const draftTotal = (items = []) =>
   Math.round(
     items.reduce((s, i) => {

@@ -277,7 +277,8 @@ export function CreditsSheet({ open, onClose, data, refresh }) {
               {[
                 ["Available", w.available, "credits"],
                 ["Today's daily", `${fmt(w.daily.remaining)} / ${fmt(w.daily.allowance)}`, "resets at midnight"],
-                ["Bought", w.balance, "never expire"],
+                // A balance can dip below zero by one charge; show that as carried over, not "-2.2"
+                ["Bought", Math.max(0, w.balance), w.balance < 0 ? `${fmt(-w.balance)} carried over` : "never expire"],
               ].map(([k, v, sub]) => (
                 <div key={k} className="rounded-2xl border border-border p-3">
                   <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{k}</p>
@@ -289,7 +290,7 @@ export function CreditsSheet({ open, onClose, data, refresh }) {
 
             <div className="flex gap-1 rounded-xl border border-border bg-muted/60 p-1 text-sm font-semibold" role="tablist">
               {[
-                ["balance", "Buy credits", ShoppingBag],
+                ["balance", data?.prices_hidden ? "Credits" : "Buy credits", ShoppingBag],
                 ["usage", "What costs what", Info],
                 ["history", "History", History],
               ].map(([id, label, Icon]) => (
@@ -310,26 +311,43 @@ export function CreditsSheet({ open, onClose, data, refresh }) {
 
             {tab === "balance" && (
               <div className="space-y-3">
+                {data.prices_hidden && (
+                  <div className="flex items-start gap-3 rounded-2xl border border-orange-500/30 bg-gradient-to-r from-orange-500/10 to-amber-500/10 p-3.5" data-testid="early-access-ai-note">
+                    <Sparkles className="mt-0.5 h-5 w-5 shrink-0 text-orange-500" />
+                    <div className="text-sm">
+                      <p className="font-bold">You're using DavaDesk free during early access</p>
+                      <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+                        The AI limits you see now apply only during early access. The full version comes with extended AI usage, and credit packs will be available at launch.
+                      </p>
+                    </div>
+                  </div>
+                )}
                 <div className="grid gap-2 sm:grid-cols-3">
                   {data.packs.map((p) => (
                     <button
                       key={p.id}
                       type="button"
-                      disabled={!data.can_buy || !!buying}
+                      disabled={data.prices_hidden || !data.can_buy || !!buying}
                       onClick={() => buy(p)}
                       className="rounded-2xl border border-border p-3 text-left transition hover:border-orange-500/50 hover:bg-orange-500/5 disabled:opacity-60"
                     >
                       <p className="text-xs font-semibold text-muted-foreground">{p.label}</p>
                       <p className="text-2xl font-black tabular-nums">{fmt(p.credits)}</p>
                       <p className="text-xs text-muted-foreground">credits{p.bonus_credits ? ` (incl. ${fmt(p.bonus_credits)} bonus)` : ""}</p>
-                      <p className="mt-2 flex items-center gap-1.5 text-sm font-bold text-orange-500">
-                        {buying === p.id && <Loader2 className="h-4 w-4 animate-spin" />} {inr(p.price_paise)}
-                        <span className="text-[10px] font-medium text-muted-foreground">incl. {data.gst_percent}% GST</span>
-                      </p>
+                      {data.prices_hidden ? (
+                        <p className="mt-2 inline-flex items-center gap-1 rounded-full border border-orange-500/30 bg-orange-500/10 px-2 py-0.5 text-[11px] font-extrabold text-orange-600 dark:text-orange-400">
+                          <Sparkles className="h-3 w-3" /> Coming soon
+                        </p>
+                      ) : (
+                        <p className="mt-2 flex items-center gap-1.5 text-sm font-bold text-orange-500">
+                          {buying === p.id && <Loader2 className="h-4 w-4 animate-spin" />} {inr(p.price_paise)}
+                          <span className="text-[10px] font-medium text-muted-foreground">incl. {data.gst_percent}% GST</span>
+                        </p>
+                      )}
                     </button>
                   ))}
                 </div>
-                {!data.can_buy && <p className="text-xs text-muted-foreground">Only your pharmacy admin can buy credits. Ask them to top up.</p>}
+                {!data.can_buy && !data.prices_hidden && <p className="text-xs text-muted-foreground">Only your pharmacy admin can buy credits. Ask them to top up.</p>}
                 <div>
                   <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">AI engines</p>
                   <EngineCards data={data} />

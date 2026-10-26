@@ -11,6 +11,7 @@ const { auth } = require("../middleware/auth");
 const credits = require("../services/credits");
 const orders = require("../services/billing/orders");
 const { sendBillingError, BillingError } = require("../services/billing/errors");
+const pricing = require("../services/billing/pricing");
 
 const router = express.Router();
 const db = () => mongoose.connection.db;
@@ -34,6 +35,8 @@ router.get("/", auth, async (req, res, next) => {
     const engines = Object.values(credits.policy.ENGINES).map((e) => ({ ...e, ready: credits.policy.engineReady(cfg, e.id) }));
     const TIER = { question: "light", lookup: "light", report: "heavy", action: "heavy", photo: "heavy" };
     const budget = credits.wallet.planBudget(cfg, pharmacy.subscription, w);
+    // Early access: credit packs show without prices and can't be bought yet
+    const hidePrices = (await pricing.getDisplay(db())).hide_prices;
     res.json({
       wallet: credits.wallet.view(w),
       plan_daily: credits.wallet.allowanceCredits(cfg, pharmacy, w),
@@ -46,7 +49,8 @@ router.get("/", auth, async (req, res, next) => {
       }),
       packs: (cfg.packs || [])
         .filter((p) => p.active !== false)
-        .map((p) => ({ id: p.id, label: p.label, price_paise: p.price_paise, credits: credits.config.packCredits(cfg, p), bonus_credits: p.bonus_credits || 0 })),
+        .map((p) => ({ id: p.id, label: p.label, ...(hidePrices ? {} : { price_paise: p.price_paise }), credits: credits.config.packCredits(cfg, p), bonus_credits: p.bonus_credits || 0 })),
+      prices_hidden: hidePrices,
       credit_value_paise: cfg.credit_value_paise,
       gst_percent: cfg.gst_percent,
       free_mode: { enabled: !!cfg.free_mode?.enabled, messages_per_day: Number(cfg.free_mode?.messages_per_day) || 0 },
@@ -71,6 +75,9 @@ router.post("/checkout", auth, perUser(10), async (req, res, next) => {
   try {
     const parsed = packSchema.safeParse(req.body);
     if (!parsed.success) throw new BillingError("INVALID_REQUEST", "Pick a credit pack");
+    if ((await pricing.getDisplay(db())).hide_prices) {
+      throw new BillingError("PRICES_NOT_LAUNCHED", "Credit packs aren't on sale yet. They'll be available when DavaDesk launches.", 403);
+    }
     const pharmacy = await loadPharmacy(req);
     res.json(await orders.createCreditCheckout(db(), { user: req.user, pharmacy, packId: parsed.data.pack_id }));
   } catch (err) {
