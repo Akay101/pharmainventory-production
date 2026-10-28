@@ -86,8 +86,17 @@ app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 app.use(sanitizeInput);
 
 // MongoDB connection
-mongoose
-  .connect(process.env.MONGO_URL, { maxPoolSize: 50, serverSelectionTimeoutMS: 10000 })
+// In production a failed first connection exits and Docker restarts the
+// container. Locally (nodemon) that would leave the app dead until a file
+// changes, e.g. while the DB tunnel is still opening, so retry instead.
+const connectMongo = () =>
+  mongoose.connect(process.env.MONGO_URL, { maxPoolSize: 50, serverSelectionTimeoutMS: 10000 }).catch((err) => {
+    if (process.env.NODE_ENV === "production") throw err;
+    console.error(`MongoDB not reachable (${err.message}); retrying in 5s`);
+    return new Promise((resolve) => setTimeout(resolve, 5000)).then(connectMongo);
+  });
+
+connectMongo()
   .then(() => {
     console.log("Connected to MongoDB");
     // Idempotent; runs in the background so startup isn't blocked
