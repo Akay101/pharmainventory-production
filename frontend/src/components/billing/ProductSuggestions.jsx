@@ -3,6 +3,7 @@ import axios from "axios";
 import { CalendarClock, Globe, Info, Layers, Loader2, PackageCheck, Plus, Replace } from "lucide-react";
 import { API } from "../../App";
 import Loader from "../Loader";
+import { formatCombo } from "../../lib/shortcuts";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "../ui/sheet";
 
 // Product search suggestions for billing: filter chips (All / In stock / Near
@@ -122,7 +123,7 @@ export function SuggestionList({
               <button
                 key={f.id}
                 type="button"
-                title={`Alt+${f.key}`}
+                title={formatCombo(`alt+${f.key}`)}
                 onMouseDown={(e) => {
                   e.preventDefault();
                   setFilter(f.id);
@@ -188,7 +189,7 @@ export function SuggestionList({
                     <span className="font-mono text-xs font-black text-orange-500">₹{Number(invItem.mrp_per_unit || invItem.mrp || 0).toFixed(2)}/unit</span>
                     <button
                       type="button"
-                      title="Details & alternates (Alt+D)"
+                      title={`Details & alternates (${formatCombo("alt+d")})`}
                       aria-label={`Details of ${invItem.product_name}`}
                       onMouseDown={(e) => {
                         e.preventDefault();

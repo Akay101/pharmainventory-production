@@ -212,6 +212,7 @@ export default function DashboardLayout() {
     {
       combo: "mod+enter",
       hidden: true,
+      when: () => !!visible('[data-shortcut="save"]'),
       run: () => {
         const btn = visible('[data-shortcut="save"]');
         if (!btn) return false;

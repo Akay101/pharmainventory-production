@@ -29,7 +29,8 @@ export function Kbd({ combo, className = "" }) {
 
 /**
  * Page shortcuts, active while the component is mounted.
- * bindings: [{ combo, label, group?, run(e) => false|void, when?() => bool, inInputs?: bool, hidden?: bool }]
+ * bindings: [{ combo, label, group?, run(e) => false|void, when?() => bool, inInputs?: bool, hidden?: bool, save?: bool }]
+ * Save keys (⌘/Ctrl+Enter, Alt+S, Alt+U, or save: true) first commit the field being typed in.
  * The latest bindings are always used (no deps needed).
  */
 export function useShortcuts(bindings, scopeName = "This page") {
@@ -45,8 +46,20 @@ export function useShortcuts(bindings, scopeName = "This page") {
 function clickIn(root, selector) {
   const el = [...root.querySelectorAll(selector)].find((b) => isVisible(b) && !b.disabled && b.getAttribute("aria-disabled") !== "true");
   if (!el) return false;
-  el.click();
+  commitFieldThen(() => el.click());
   return true;
+}
+
+// Save keys pressed while still typing in a field (e.g. a new Grand Total):
+// leave the field first so its onBlur applies the value, then save on the next
+// tick, after React has re-rendered with it. Otherwise the save sends the old value.
+const SAVE_COMBOS = new Set(["mod+enter", "alt+enter", "alt+s", "alt+u"]);
+function commitFieldThen(fn) {
+  const el = document.activeElement;
+  if (!isTypingTarget(el)) return fn();
+  el.blur();
+  setTimeout(fn, 0);
+  return undefined;
 }
 
 // Keys for focused table rows
@@ -201,16 +214,19 @@ export function ShortcutProvider({ children, globals = [] }) {
       }
 
       // 2. page scopes (newest first), 3. globals
-      const layers = [...scopes.current].reverse().map((s) => s.ref.current || []);
-      layers.push(globalsRef.current);
-      for (const bindings of layers) {
-        for (const b of bindings) {
+      const layers = [...scopes.current].reverse().map((s) => s.ref);
+      layers.push(globalsRef);
+      for (const layerRef of layers) {
+        for (const b of layerRef.current || []) {
           if (!b || !matchesCombo(e, b.combo)) continue;
           const p = b.combo.toLowerCase();
           const modified = p.includes("alt+") || p.includes("mod+");
           if (typing && !modified && !b.inInputs) continue;
           if (b.when && !b.when()) continue;
-          if (b.run(e) === false) continue;
+          if (typing && (b.save || SAVE_COMBOS.has(p))) {
+            // Run the binding from the next render, which has the committed value
+            commitFieldThen(() => ((layerRef.current || []).find((x) => x?.combo === b.combo) || b).run(e));
+          } else if (b.run(e) === false) continue;
           e.preventDefault();
           e.stopPropagation();
           return;

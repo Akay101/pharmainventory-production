@@ -79,9 +79,8 @@ const generateBillPDF = async (bill, pharmacy, options = {}) => {
         ? Number(bill.total_paid) || 0
         : bill.is_paid ? grandTotal : Number(bill.advance_amount) || 0;
       const balance = Math.max(0, grandTotal - paid);
-      // Udhar: the customer's dues across all bills (this one included)
+      // Udhar shows as "Unpaid", for this bill only (never the customer's total dues)
       const isUdhar = !!bill.is_credit || (balance > 0.004 && !bill.is_advance_paid);
-      const customerDues = customer ? Math.max(0, Number(customer.total_debt) || 0) : null;
       const totalQty = enrichedItems.reduce((s, i) => s + i.line.qty, 0);
 
       // GST included in the amount actually charged (after all discounts)
@@ -198,6 +197,8 @@ const generateBillPDF = async (bill, pharmacy, options = {}) => {
       const tableHeaders = ["#", "ITEM", "HSN", "BATCH", "EXP", "QTY", "MRP", "DISC", "GST%", "AMOUNT"];
       const RIGHT_FROM = 5;
       const MUTED = "#64748b";
+      const SAVED = "#15803d"; // discounts given
+      const SAVED_BG = "#dcfce7";
 
       const drawPageSkeleton = (pageNum, total, isLastPage) => {
         doc.lineWidth(1);
@@ -336,8 +337,8 @@ const generateBillPDF = async (bill, pharmacy, options = {}) => {
               ? `PAID${bill.payment_mode ? ` (${String(bill.payment_mode).toUpperCase()})` : ""}`
               : isUdhar
               ? paid > 0
-                ? `UDHAR · PAID RS ${money(paid)}${bill.payment_mode ? ` (${String(bill.payment_mode).toUpperCase()})` : ""}`
-                : "UDHAR (CREDIT)"
+                ? `PART PAID · RS ${money(paid)}${bill.payment_mode ? ` (${String(bill.payment_mode).toUpperCase()})` : ""}`
+                : "UNPAID"
               : paid > 0
               ? "PART PAID"
               : "CREDIT",
@@ -487,8 +488,11 @@ const generateBillPDF = async (bill, pharmacy, options = {}) => {
             [`Bill discount${bill.discount_percent ? ` (${Number(bill.discount_percent).toFixed(2).replace(/\.?0+$/, "")}%)` : ""}`, billDiscount > 0.004 ? `- ${money(billDiscount)}` : "0.00"],
           ];
           let ty = 305;
-          rows.forEach(([label, value]) => {
-            doc.font("Helvetica").fontSize(6.5).fillColor("#000000").text(label, 465, ty);
+          rows.forEach(([label, value], i) => {
+            // Discounts given stand out: green on a light green band
+            const discounted = i > 0 && value !== "0.00";
+            if (discounted) doc.fillColor(SAVED_BG).rect(461, ty - 2.5, 123, 11).fill();
+            doc.font(discounted ? "Helvetica-Bold" : "Helvetica").fontSize(6.5).fillColor(discounted ? SAVED : "#000000").text(label, 465, ty);
             doc.text(value, 465, ty, { width: 115, align: "right" });
             ty += 12;
           });
@@ -498,19 +502,12 @@ const generateBillPDF = async (bill, pharmacy, options = {}) => {
           doc.fillColor("#000000").font("Helvetica-Bold").fontSize(8).text("NET AMOUNT", 465, 346.5);
           doc.text(`Rs ${money(grandTotal)}`, 465, 346.5, { width: 115, align: "right" });
 
-          const showDues = isUdhar && balance > 0.004 && customerDues !== null && customerDues > 0.004;
-          const step = showDues ? 10 : 13;
-          let py = showDues ? 363 : 366;
-          doc.font("Helvetica").fontSize(6.5).text(isUdhar ? "Paid now" : "Paid", 465, py);
+          let py = 366;
+          doc.font("Helvetica").fontSize(6.5).text("Paid", 465, py);
           doc.text(money(paid), 465, py, { width: 115, align: "right" });
-          py += step;
-          doc.font("Helvetica-Bold").fontSize(7).fillColor(balance > 0.004 ? "#b91c1c" : "#000000").text(isUdhar && balance > 0.004 ? "Udhar (this bill)" : "Balance due", 465, py);
+          py += 13;
+          doc.font("Helvetica-Bold").fontSize(7).fillColor(balance > 0.004 ? "#b91c1c" : "#000000").text(isUdhar && balance > 0.004 ? "Unpaid" : "Balance due", 465, py);
           doc.text(money(balance), 465, py, { width: 115, align: "right" });
-          if (showDues) {
-            py += step;
-            doc.font("Helvetica-Bold").fontSize(7).fillColor("#b91c1c").text("Total udhar (all bills)", 465, py);
-            doc.text(money(Math.max(customerDues, balance)), 465, py, { width: 115, align: "right" });
-          }
           doc.fillColor("#000000");
         } else {
           doc
@@ -604,14 +601,17 @@ const generateBillPDF = async (bill, pharmacy, options = {}) => {
           main.forEach((val, idx) => {
             const w = columnWidths[idx] - 6;
             const align = idx >= RIGHT_FROM ? "right" : "left";
+            // A discounted line: its DISC cell in green on a light green band
+            const discCell = idx === 7 && discount > 0.004;
+            if (discCell) doc.fillColor(SAVED_BG).rect(currentX + 0.5, rowY + 0.5, columnWidths[idx] - 1, ROW_H - 1).fill();
             doc
-              .fillColor("#000000")
-              .font(idx === 1 || idx === 9 ? "Helvetica-Bold" : "Helvetica")
+              .fillColor(discCell ? SAVED : "#000000")
+              .font(idx === 1 || idx === 9 || discCell ? "Helvetica-Bold" : "Helvetica")
               .fontSize(6.5)
               .text(val, currentX + 3, rowY + 3, { width: w, height: 8, align, lineBreak: false, ellipsis: true });
             if (detail[idx]) {
               doc
-                .fillColor(MUTED)
+                .fillColor(discCell ? SAVED : MUTED)
                 .font("Helvetica")
                 .fontSize(5.2)
                 .text(detail[idx], currentX + 3, rowY + 10.5, { width: w, height: 7, align, lineBreak: false, ellipsis: true });
