@@ -178,6 +178,19 @@ const billPaymentError = ({ amount, remainingUnpaid }) => {
   return "";
 };
 
+// Bill discount % that turns `subtotal` into the typed grand total. Two
+// decimals when that lands on the exact rupee-paisa total, more when it doesn't
+// (so ₹15 saves as ₹15.00, not ₹15.01).
+const discountForTotal = (subtotal, target) => {
+  const exact = ((subtotal - target) / subtotal) * 100;
+  for (const d of [2, 3, 4]) {
+    const pct = Number(exact.toFixed(d));
+    if (Math.abs(subtotal * (1 - pct / 100) - target) < 0.005) return pct;
+  }
+  return Number(exact.toFixed(6));
+};
+const fmtPct = (v) => Number((parseFloat(v) || 0).toFixed(2));
+
 export default function BillingPage() {
   const location = useLocation();
   // Data state
@@ -323,6 +336,7 @@ export default function BillingPage() {
   const invAbortRef = useRef(null);
   const editingInvSearchCacheRef = useRef(new Map());
   const editingInvAbortRef = useRef(null);
+  const editLoadRef = useRef(0); // which bill's batches are loading
   const docSearchCacheRef = useRef(new Map());
   const docAbortRef = useRef(null);
   const custSearchCacheRef = useRef(new Map());
@@ -1013,7 +1027,7 @@ export default function BillingPage() {
       { combo: "alt+a", label: "Add an item line", when: () => showNewBill, run: () => handleAddNewRow() },
       { combo: "mod+enter", label: "Save the bill", when: billFormOpen, run: () => saveOpenBill() },
       { combo: "alt+s", label: "Save the bill (while one is open)", when: billFormOpen, run: () => saveOpenBill() },
-      { combo: "alt+u", label: "Update the bill being edited", when: () => !!editingBillId, run: () => handleSaveEditBill() },
+      { combo: "alt+u", label: "Update the bill being edited", hidden: true, when: () => !!editingBillId, run: () => handleSaveEditBill() },
       { combo: "alt+q", label: "UPI payment QR", run: () => setUpiQr({ amount: "", note: "" }) },
       {
         combo: "escape",
@@ -2241,70 +2255,83 @@ export default function BillingPage() {
       doctor: bill.doctor || "",
     });
 
-    // Map existing items to editable format
-    const mappedItems = await Promise.all(
-      bill.items.map(async (item, idx) => {
-        const qty = item.quantity || 1;
-        const unitPrice = item.unit_price || item.mrp_per_unit || 0;
-        const discPercent = item.discount_percent || 0;
-        const cgstVal = item.cgst !== undefined ? Math.max(0, parseFloat(item.cgst) || 0) : 0;
-        const sgstVal = item.sgst !== undefined ? Math.max(0, parseFloat(item.sgst) || 0) : 0;
-        const exclPrice = unitPrice / (1 + (cgstVal + sgstVal) / 100);
-        const itemDiscount = (qty * exclPrice) * (discPercent / 100);
-        const netTotal = (qty * exclPrice - itemDiscount) * (1 + (cgstVal + sgstVal) / 100);
+    // The bill's own lines show at once; each line's batches (for the batch
+    // picker and stock) load in the background and fill in when they arrive
+    const load = ++editLoadRef.current;
+    const rows = bill.items.map((item, idx) => {
+      const qty = item.quantity || 1;
+      const unitPrice = item.unit_price || item.mrp_per_unit || 0;
+      const discPercent = item.discount_percent || 0;
+      const cgstVal = item.cgst !== undefined ? Math.max(0, parseFloat(item.cgst) || 0) : 0;
+      const sgstVal = item.sgst !== undefined ? Math.max(0, parseFloat(item.sgst) || 0) : 0;
+      const exclPrice = unitPrice / (1 + (cgstVal + sgstVal) / 100);
+      const itemDiscount = (qty * exclPrice) * (discPercent / 100);
+      const netTotal = (qty * exclPrice - itemDiscount) * (1 + (cgstVal + sgstVal) / 100);
+      const needsBatches = !!item.inventory_id && !item.is_manual;
+      return {
+        id: item.id || `edit-${idx}-${Date.now()}`,
+        inventory_id: item.inventory_id || null,
+        product_name: item.product_name,
+        batch_no: item.batch_no || "",
+        expiry_date: item.expiry_date || "",
+        quantity: qty,
+        unit_price: unitPrice,
+        exclusive_price: exclPrice,
+        net_total: netTotal,
+        purchase_price: item.purchase_price || 0,
+        discount_percent: discPercent,
+        available: item.available_quantity || 0,
+        is_manual: !item.inventory_id,
+        salt_composition: item.salt_composition || "",
+        units_per_pack: item.units_per_pack || 1,
+        hsn_no: item.hsn_no || "",
+        original_quantity: item.quantity, // Track original for inventory adjustment
+        cgst: item.cgst !== undefined ? item.cgst : "",
+        sgst: item.sgst !== undefined ? item.sgst : "",
+        available_batches: [],
+        batches_loading: needsBatches,
+      };
+    });
+    setEditingBillItems(rows);
 
-        let availableBatches = [];
-        if (item.inventory_id && !item.is_manual) {
-          try {
-            const res = await axios.get(
-              `${API}/inventory/search?q=${encodeURIComponent(item.product_name)}&limit=30`
-            );
-            const matchedProduct = res.data.inventory.find(
-              (inv) => inv.product_name.toLowerCase() === item.product_name.toLowerCase()
-            );
-            if (matchedProduct) {
-              availableBatches = matchedProduct.batches || [];
-            }
-          } catch (e) {
-            console.error("Failed to load batches for existing item", e);
-          }
-        }
-
-        return {
-          id: item.id || `edit-${idx}-${Date.now()}`,
-          inventory_id: item.inventory_id || null,
-          product_name: item.product_name,
-          batch_no: item.batch_no || "",
-          expiry_date: item.expiry_date || "",
-          quantity: qty,
-          unit_price: unitPrice,
-          exclusive_price: exclPrice,
-          net_total: netTotal,
-          purchase_price: item.purchase_price || 0,
-          discount_percent: discPercent,
-          // What this line could use: the batch's shelf stock plus the units it already holds
-          available: (() => {
-            const batch = availableBatches.find((b) => b.id === item.inventory_id);
-            if (!batch) return item.available_quantity || 0;
-            const held = item.stock_deducted !== undefined ? Number(item.stock_deducted) || 0 : qty;
-            return (parseInt(batch.available_quantity ?? batch.available_units) || 0) + held;
-          })(),
-          is_manual: !item.inventory_id,
-          salt_composition: item.salt_composition || "",
-          units_per_pack: item.units_per_pack || 1,
-          hsn_no: item.hsn_no || "",
-          original_quantity: item.quantity, // Track original for inventory adjustment
-          cgst: item.cgst !== undefined ? item.cgst : "",
-          sgst: item.sgst !== undefined ? item.sgst : "",
-          available_batches: availableBatches,
-        };
-      })
-    );
-
-    setEditingBillItems(mappedItems);
+    bill.items.forEach(async (item, idx) => {
+      if (!rows[idx].batches_loading) return;
+      let availableBatches = [];
+      try {
+        const res = await axios.get(
+          `${API}/inventory/search?q=${encodeURIComponent(item.product_name)}&limit=30`
+        );
+        const matchedProduct = res.data.inventory.find(
+          (inv) => inv.product_name.toLowerCase() === item.product_name.toLowerCase()
+        );
+        if (matchedProduct) availableBatches = matchedProduct.batches || [];
+      } catch (e) {
+        console.error("Failed to load batches for existing item", e);
+      }
+      if (load !== editLoadRef.current) return; // another bill opened meanwhile
+      // What this line could use: the batch's shelf stock plus the units it already holds
+      const batch = availableBatches.find((b) => b.id === item.inventory_id);
+      const held = item.stock_deducted !== undefined ? Number(item.stock_deducted) || 0 : rows[idx].quantity;
+      setEditingBillItems((prev) =>
+        prev.map((bi) =>
+          bi.id === rows[idx].id
+            ? {
+                ...bi,
+                available_batches: availableBatches,
+                batches_loading: false,
+                // Only while the line still uses its original batch
+                ...(batch && bi.inventory_id === item.inventory_id
+                  ? { available: (parseInt(batch.available_quantity ?? batch.available_units) || 0) + held }
+                  : {}),
+              }
+            : bi
+        )
+      );
+    });
   };
 
   const handleCancelEditBill = () => {
+    editLoadRef.current++;
     setEditingBillId(null);
     setEditingBillItems([]);
     setEditingBillData(null);
@@ -4507,7 +4534,7 @@ export default function BillingPage() {
                 </div>
                 {(parseFloat(billDiscount) || 0) > 0 && (
                   <div className="flex justify-between items-center text-sm font-bold text-destructive">
-                    <span>Discount ({billDiscount}%)</span>
+                    <span>Discount ({fmtPct(billDiscount)}%)</span>
                     <span className="font-mono">-₹{discountAmount.toFixed(2)}</span>
                   </div>
                 )}
@@ -4519,31 +4546,22 @@ export default function BillingPage() {
                       step="0.01"
                       value={grandTotalInput}
                       onFocus={() => setIsEditingGrandTotal(true)}
-                      onChange={(e) => setGrandTotalInput(e.target.value)}
+                      onChange={(e) => {
+                        // Applied as typed, so any way of saving (button,
+                        // shortcut) gets the new total
+                        setGrandTotalInput(e.target.value);
+                        const v = parseFloat(e.target.value);
+                        if (subtotal > 0 && !isNaN(v) && v >= 0 && v <= subtotal) setBillDiscount(discountForTotal(subtotal, v));
+                      }}
                       onKeyDown={(e) => {
-                        if (e.key === "Enter") {
+                        if (e.key === "Enter" && !e.metaKey && !e.ctrlKey) {
                           e.target.blur();
                         }
                       }}
                       onBlur={() => {
+                        const v = parseFloat(grandTotalInput);
+                        if (subtotal > 0 && !isNaN(v) && v > subtotal) setBillDiscount("");
                         setIsEditingGrandTotal(false);
-                        const newGrandTotal = parseFloat(grandTotalInput);
-                        if (!subtotal || subtotal <= 0) return;
-                        if (isNaN(newGrandTotal)) {
-                          setGrandTotalInput(grandTotal.toFixed(2));
-                          return;
-                        }
-                        if (newGrandTotal > subtotal) {
-                          setBillDiscount("");
-                          return;
-                        }
-                        if (newGrandTotal < 0) {
-                          setGrandTotalInput(grandTotal.toFixed(2));
-                          return;
-                        }
-                        const discountPercent =
-                          ((subtotal - newGrandTotal) / subtotal) * 100;
-                        setBillDiscount(parseFloat(discountPercent.toFixed(2)));
                       }}
                       className="w-36 h-9 text-right pr-3 text-lg font-black text-primary border-border/80 focus-visible:ring-1 focus-visible:ring-primary focus-visible:border-primary rounded-xl transition-all duration-200 bg-background/50"
                     />
@@ -5067,7 +5085,11 @@ export default function BillingPage() {
                           />
                         </TableCell>
                         <TableCell>
-                          {(!item.is_manual && item.available_batches && item.available_batches.length > 0) ? (
+                          {item.batches_loading ? (
+                            <div className="h-8 w-24 rounded-lg border border-border/60 bg-muted/60 animate-pulse flex items-center px-2 text-[11px] font-mono text-muted-foreground" title="Loading batches…">
+                              {item.batch_no || "…"}
+                            </div>
+                          ) : (!item.is_manual && item.available_batches && item.available_batches.length > 0) ? (
                             <BatchPicker
                               batches={item.available_batches}
                               value={item.inventory_id}
@@ -5135,6 +5157,8 @@ export default function BillingPage() {
                             <span className="text-xs font-bold text-amber-500 bg-amber-500/10 px-2 py-0.5 rounded">
                               Manual
                             </span>
+                          ) : item.batches_loading ? (
+                            <span className="inline-block h-3 w-8 rounded bg-muted animate-pulse align-middle" />
                           ) : (
                             <span className="text-xs font-semibold text-emerald-500">
                               {available > 0 ? available : "Out of Stock"}
@@ -5487,7 +5511,7 @@ export default function BillingPage() {
                 </div>
                 {editDiscountPercent > 0 && (
                   <div className="flex justify-between items-center text-sm font-bold text-destructive">
-                    <span>Discount ({editDiscountPercent}%)</span>
+                    <span>Discount ({fmtPct(editDiscountPercent)}%)</span>
                     <span className="font-mono">-₹{editDiscountAmount.toFixed(2)}</span>
                   </div>
                 )}
@@ -5500,40 +5524,23 @@ export default function BillingPage() {
                       className="w-36 h-9 text-right pr-3 text-lg font-black text-amber-600 border-border/80 focus-visible:ring-1 focus-visible:ring-amber-500 focus-visible:border-amber-500 rounded-xl transition-all duration-200 bg-background/50"
                       value={editGrandTotalInput}
                       onFocus={() => setIsEditingEditGrandTotal(true)}
-                      onChange={(e) => setEditGrandTotalInput(e.target.value)}
+                      onChange={(e) => {
+                        // Applied as typed, so any way of saving (button,
+                        // shortcut) gets the new total
+                        setEditGrandTotalInput(e.target.value);
+                        const v = parseFloat(e.target.value);
+                        if (editSubtotal > 0 && !isNaN(v) && v >= 0 && v <= editSubtotal)
+                          setEditingBillData((d) => ({ ...d, discount_percent: discountForTotal(editSubtotal, v) }));
+                      }}
                       onKeyDown={(e) => {
-                        if (e.key === "Enter") {
+                        if (e.key === "Enter" && !e.metaKey && !e.ctrlKey) {
                           e.target.blur();
                         }
                       }}
                       onBlur={() => {
+                        const v = parseFloat(editGrandTotalInput);
+                        if (editSubtotal > 0 && !isNaN(v) && v > editSubtotal) setEditingBillData((d) => ({ ...d, discount_percent: 0 }));
                         setIsEditingEditGrandTotal(false);
-                        const newGrandTotal = parseFloat(editGrandTotalInput);
-                        if (!editSubtotal || editSubtotal <= 0) return;
-                        if (isNaN(newGrandTotal)) {
-                          setEditGrandTotalInput(editGrandTotal.toFixed(2));
-                          return;
-                        }
-                        if (newGrandTotal > editSubtotal) {
-                          setEditingBillData({
-                            ...editingBillData,
-                            discount_percent: 0,
-                          });
-                          return;
-                        }
-                        if (newGrandTotal < 0) {
-                          setEditGrandTotalInput(editGrandTotal.toFixed(2));
-                          return;
-                        }
-                        const discountPercent =
-                          ((editSubtotal - newGrandTotal) / editSubtotal) * 100;
-
-                        setEditingBillData({
-                          ...editingBillData,
-                          discount_percent: parseFloat(
-                            discountPercent.toFixed(2)
-                          ),
-                        });
                       }}
                     />
                   </div>
@@ -7040,7 +7047,7 @@ export default function BillingPage() {
                     <Save className="w-4 h-4" />
                     <span>Update Bill</span>
                     <kbd className="hidden md:inline-block ml-1 opacity-70 text-[9px] font-mono border border-white/20 px-1 rounded">
-                      Alt+U
+                      {formatCombo("mod+enter")}
                     </kbd>
                   </div>
                 )}

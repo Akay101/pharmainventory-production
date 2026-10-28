@@ -19,6 +19,7 @@ import {
   Smartphone,
   Coins,
 } from "lucide-react";
+import { IS_MAC } from "../../lib/shortcuts";
 
 // Steps of the welcome tour. Each step points at an element tagged
 // data-tour="…"; `targets` are tried in order (a tab may be under "More" or the
@@ -41,7 +42,7 @@ const DESKTOP = [
     title: "Your main menu",
     body: "Every part of DavaDesk is one click away. Click a tab to switch sections; the orange tab is the page you're on. When the window is narrow, extra tabs tuck under More.",
     keys: [{ combo: "alt+b", label: "jump to a section" }],
-    note: "Alt + the first letter opens most sections.",
+    note: `${IS_MAC ? "⌥ Option" : "Alt"} + the first letter opens most sections.`,
     placement: "bottom",
   },
   {
