@@ -37,13 +37,38 @@ const sanitizeInput = (req, res, next) => {
 // RATE_LIMIT_SCALE only exists so automated tests can raise the ceilings.
 const scale = Math.max(1, Number(process.env.RATE_LIMIT_SCALE) || 1);
 
-const redisStore = (prefix) =>
-  new RedisStore({
+// While the first connection is still being made (app start), wait for it
+// briefly; once Redis is down or reconnecting, fail at once.
+const STARTING = new Set(["wait", "connecting", "connect"]);
+let firstConnect = null; // one shared wait, however many calls are pending
+const whenReady = (conn, ms = 3000) => {
+  if (conn.status === "ready" || !STARTING.has(conn.status)) return Promise.resolve();
+  firstConnect ||= new Promise((resolve) => {
+    const done = () => (clearTimeout(t), conn.off("ready", done), conn.off("error", done), resolve());
+    const t = setTimeout(done, ms);
+    conn.once("ready", done);
+    conn.once("error", done);
+  });
+  return firstConnect;
+};
+
+const redisStore = (prefix) => {
+  const store = new RedisStore({
     prefix: `rl:${prefix}:`,
     // Fail-fast connection: with Redis down the limiter errors and passes the
     // request on (passOnStoreError) instead of waiting forever
-    sendCommand: (command, ...args) => fastConnection().call(command, ...args),
+    sendCommand: async (command, ...args) => {
+      const conn = fastConnection();
+      await whenReady(conn);
+      return conn.call(command, ...args);
+    },
   });
+  // The store loads its scripts at startup and reloads them on the first
+  // failing call, so a failed startup load is recoverable, not an error
+  store.incrementScriptSha.catch(() => {});
+  store.getScriptSha.catch(() => {});
+  return store;
+};
 
 // Fails open if Redis is unreachable: an outage must not lock every user out
 function limiter(name, { windowMs, limit, message, keyGenerator, skip }) {
