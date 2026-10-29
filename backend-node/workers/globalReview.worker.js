@@ -12,15 +12,18 @@ const SOURCE = { medicine: "products", doctor: "doctors", distributor: "supplier
 
 async function processJob(job) {
   const { kind, pharmacy_id, record_id, name, details } = job.data;
+  // Jobs waiting in Redis start as soon as the worker boots, before Mongo is up
+  if (mongoose.connection.readyState !== 1) {
+    await Promise.race([mongoose.connection.asPromise(), new Promise((_, rej) => setTimeout(() => rej(new Error("MongoDB not connected yet")), 30000))]);
+  }
   const db = mongoose.connection.db;
-  if (!db) throw new Error("MongoDB not connected yet");
   // Matching against the fallback DB would report everything as missing
   if (!(await isGlobalConnected())) throw new Error("Global DB not connected yet");
 
   // Skip records that no longer exist (deleted, or their transaction aborted)
   const exists = await db
     .collection(SOURCE[kind])
-    .findOne(record_id ? { pharmacy_id, id: record_id } : { pharmacy_id, name }, { projection: { _id: 1 } });
+    .findOne(record_id !== null && record_id !== undefined ? { pharmacy_id, id: { $in: [record_id, String(record_id), Number(record_id)].filter((v) => v === v) } } : { pharmacy_id, name }, { projection: { _id: 1 } });
   if (!exists) return { skipped: "record gone" };
 
   const globals = { doctors: await getGlobalDoctorsCollection(), distributors: await getGlobalDistributorsCollection() };
