@@ -182,7 +182,11 @@ export function BroadcastProvider({ children }) {
       {children}
       <Dialog open={!!current} onOpenChange={(o) => !o && setOpenId(null)}>
         {current && (
-          <DialogContent className="max-w-xl gap-0 overflow-y-auto border-0 p-0 sm:rounded-3xl [&>button:last-child]:z-30 [&>button:last-child]:rounded-full [&>button:last-child]:bg-white/20 [&>button:last-child]:p-1.5 [&>button:last-child]:text-white [&>button:last-child]:opacity-100 [&>button:last-child]:backdrop-blur">
+          <DialogContent
+            // Clicks on the image zoom (portalled to <body>) aren't "outside" the details
+            onPointerDownOutside={(e) => e.target?.closest?.("[data-bc-zoom]") && e.preventDefault()}
+            onInteractOutside={(e) => e.target?.closest?.("[data-bc-zoom]") && e.preventDefault()}
+            className="max-w-xl gap-0 overflow-y-auto border-0 p-0 sm:rounded-3xl [&>button:last-child]:z-30 [&>button:last-child]:rounded-full [&>button:last-child]:bg-white/20 [&>button:last-child]:p-1.5 [&>button:last-child]:text-white [&>button:last-child]:opacity-100 [&>button:last-child]:backdrop-blur">
             <DialogTitle className="sr-only">{current.title}</DialogTitle>
             <DialogDescription className="sr-only">{current.summary}</DialogDescription>
             <BroadcastDetail b={current} assetUrl={assetUrl} dark={dark} onLink={onLink} />
@@ -196,9 +200,10 @@ export function BroadcastProvider({ children }) {
 // Pages where a banner would crowd the work area
 const NO_BANNER = ["/billing", "/purchases", "/assistant", "/scanner"];
 
-// Banner carousel above the page content
+// Notification card floating at the top right (full width on phones)
 export function BroadcastBannerSlot() {
   const ctx = useBroadcasts();
+  const dark = useIsDark();
   const { pathname } = useLocation();
   const [index, setIndex] = useState(0);
   const [paused, setPaused] = useState(false);
@@ -227,10 +232,18 @@ export function BroadcastBannerSlot() {
 
   if (!b || hidden) return null;
   return (
-    <div className="mb-4 shrink-0" onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)} data-testid="broadcast-banner">
+    <div
+      className="fixed right-5 top-[76px] z-40 w-[360px] max-md:left-3 max-md:right-3 max-md:top-[calc(3.5rem+env(safe-area-inset-top)+10px)] max-md:w-auto"
+      onMouseEnter={() => setPaused(true)}
+      onMouseLeave={() => setPaused(false)}
+      data-testid="broadcast-banner"
+    >
       <BroadcastBanner
         key={b.id}
         b={b}
+        dark={dark}
+        rotateMs={ROTATE_MS}
+        paused={paused}
         assetUrl={assetUrl}
         onExplore={() => ctx.open(b.id)}
         onClose={() => ctx.dismissBanner(b.id)}
