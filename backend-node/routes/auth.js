@@ -9,6 +9,7 @@ const { issueOtp, verifyOtp, sendOtpError, OtpError } = require("../services/aut
 const tokens = require("../services/auth/tokens");
 const attempts = require("../services/auth/attempts");
 const schemas = require("../services/auth/schemas");
+const resetLinks = require("../services/auth/resetLinks");
 const subscriptions = require("../services/billing/subscriptions");
 
 const BCRYPT_ROUNDS = 12;
@@ -386,6 +387,53 @@ router.post("/reset-password", async (req, res, next) => {
     res.json({ message: "Password updated. Please sign in with your new password." });
   } catch (error) {
     sendOtpError(res, error, next);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Admin-issued reset links. The token comes in the body (the page reads it
+// from the URL fragment), never in the path or query.
+
+const linkError = (res, err, next) => (err instanceof resetLinks.LinkError ? res.status(err.status).json({ code: err.code, detail: err.message }) : next(err));
+const tokenOf = (body) => (typeof body?.token === "string" ? body.token : "");
+
+// POST /api/auth/reset-link/check { token } -> who the link is for
+router.post("/reset-link/check", async (req, res, next) => {
+  res.set("Cache-Control", "no-store");
+  try {
+    const { link, user } = await resetLinks.findUsable(db(), tokenOf(req.body));
+    await db().collection(resetLinks.COLLECTION).updateOne({ id: link.id, opened_at: null }, { $set: { opened_at: new Date() } });
+    res.json({ name: String(user.name || "").split(" ")[0] || null, email: resetLinks.maskEmail(user.email), expires_at: link.expires_at });
+  } catch (error) {
+    linkError(res, error, next);
+  }
+});
+
+// POST /api/auth/reset-link/complete { token, password }
+router.post("/reset-link/complete", async (req, res, next) => {
+  res.set("Cache-Control", "no-store");
+  try {
+    const token = tokenOf(req.body);
+    const parsed = schemas.password.safeParse(req.body?.password);
+    if (!parsed.success) return res.status(400).json({ code: "VALIDATION_ERROR", field: "password", detail: parsed.error.issues[0]?.message || "Invalid password" });
+    // Checked before claiming, so a bad request doesn't burn the link
+    const { user } = await resetLinks.findUsable(db(), token);
+    const hash = await bcrypt.hash(parsed.data, BCRYPT_ROUNDS);
+    const link = await resetLinks.claim(db(), token, { ip: req.ip, ua: req.get("user-agent") });
+    if (!link || link.user_id !== user.id) throw new resetLinks.LinkError();
+
+    const now = new Date();
+    await db()
+      .collection("users")
+      .updateOne({ id: user.id }, { $set: { password_hash: hash, password_changed_at: now.toISOString() }, $unset: { password: "" }, $inc: { token_version: 1 } });
+    // Every signed-in device is signed out; other links for this user stop working
+    await tokens.revokeAllForUser(db(), user.id, "password_reset_link");
+    await db().collection(resetLinks.COLLECTION).updateMany({ user_id: user.id, used_at: null, revoked_at: null }, { $set: { revoked_at: now, revoked_reason: "PASSWORD_CHANGED" } });
+    await attempts.clearFailures(db(), `login:${user.email}`);
+    tokens.clearRefreshCookie(req, res);
+    res.json({ message: "Password updated. Please sign in with your new password.", email: user.email });
+  } catch (error) {
+    linkError(res, error, next);
   }
 });
 

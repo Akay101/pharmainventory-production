@@ -136,7 +136,7 @@ connectMongo()
 app.use("/api", apiLimiter);
 app.use(["/api/auth/login", "/api/auth/register", "/api/auth/forgot-password"], authLimiter);
 app.use(
-  ["/api/auth/verify-otp", "/api/auth/resend-otp", "/api/auth/reset-password", "/api/users/verify"],
+  ["/api/auth/verify-otp", "/api/auth/resend-otp", "/api/auth/reset-password", "/api/auth/reset-link", "/api/users/verify"],
   otpLimiter
 );
 app.use("/api/auth/refresh", refreshLimiter);

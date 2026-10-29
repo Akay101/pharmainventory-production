@@ -35,7 +35,7 @@ const KEEP = new Set([
 const isProtected = (name) => KEEP.has(name) || name.startsWith("global_") || name.startsWith("system.");
 
 // What a staff member's own deletion covers (besides the login itself)
-const STAFF_SCOPED = new Set(["refresh_tokens", "user_settings", "assistant_conversations", "stt_sessions", "notifications", "broadcast_receipts"]);
+const STAFF_SCOPED = new Set(["refresh_tokens", "user_settings", "assistant_conversations", "stt_sessions", "notifications", "broadcast_receipts", "password_reset_links"]);
 
 const escapeRegex = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const nonEmpty = (v) => typeof v === "string" && v.trim().length > 0;
