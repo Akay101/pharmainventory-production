@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const mongoose = require("mongoose");
+const { queueGlobalCheck } = require("../services/globalReview");
 const { v4: uuidv4 } = require("uuid");
 const { auth } = require("../middleware/auth");
 const { takeFromStock, returnToStock } = require("../services/stock");
@@ -423,6 +424,7 @@ router.post("/doctors/ensure-global", auth, requireSubscription(), catalogLimite
       created_at: new Date().toISOString(),
     };
     await db.collection("doctors").insertOne(newDoc);
+    queueGlobalCheck("doctor", pharmacyId, newDoc);
     res.status(201).json({ doctor: newDoc, existed: false });
   } catch (err) {
     next(err);
@@ -719,11 +721,12 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
     // Upsert doctor to pharmacy list
     if (doctor && doctor.trim()) {
       const docName = doctor.trim();
-      await db.collection("doctors").updateOne(
+      const docId = uuidv4();
+      const docUpsert = await db.collection("doctors").updateOne(
         { pharmacy_id: req.user.pharmacy_id, name: { $regex: new RegExp(`^${docName.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}$`, 'i') } },
         {
           $setOnInsert: {
-            id: uuidv4(),
+            id: docId,
             pharmacy_id: req.user.pharmacy_id,
             name: docName,
             created_at: new Date().toISOString()
@@ -731,6 +734,7 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
         },
         { upsert: true }
       );
+      if (docUpsert.upsertedCount) queueGlobalCheck("doctor", req.user.pharmacy_id, { id: docId, name: docName });
     }
 
     // If created from a draft bill, cleanup draft record
@@ -1292,11 +1296,12 @@ router.put("/:bill_id", auth, requireSubscription(), async (req, res, next) => {
     // Upsert doctor to pharmacy list
     if (doctor && doctor.trim()) {
       const docName = doctor.trim();
-      await db.collection("doctors").updateOne(
+      const docId = uuidv4();
+      const docUpsert = await db.collection("doctors").updateOne(
         { pharmacy_id: req.user.pharmacy_id, name: { $regex: new RegExp(`^${docName.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}$`, 'i') } },
         {
           $setOnInsert: {
-            id: uuidv4(),
+            id: docId,
             pharmacy_id: req.user.pharmacy_id,
             name: docName,
             created_at: new Date().toISOString()
@@ -1304,6 +1309,7 @@ router.put("/:bill_id", auth, requireSubscription(), async (req, res, next) => {
         },
         { upsert: true }
       );
+      if (docUpsert.upsertedCount) queueGlobalCheck("doctor", req.user.pharmacy_id, { id: docId, name: docName });
     }
       
     await logActivity(db, req.user.pharmacy_id, req.user.id, req.user.name, "UPDATE", "BILLING", req.params.bill_id, `Updated Bill ${bill.bill_no}`, `/billing`);

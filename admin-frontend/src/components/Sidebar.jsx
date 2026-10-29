@@ -16,6 +16,7 @@ import {
   Coins,
   LifeBuoy,
   Gift,
+  Database,
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 
@@ -50,6 +51,12 @@ export default function Sidebar({
       id: "users",
       label: "All Users",
       icon: Users,
+      section: "MONITORING",
+    },
+    {
+      id: "globaldata",
+      label: "Global Data",
+      icon: Database,
       section: "MONITORING",
     },
     {

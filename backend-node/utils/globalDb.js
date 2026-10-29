@@ -213,7 +213,16 @@ async function isMedicineDbAvailable() {
   return value;
 }
 
+// Whether the real global DB is connected (not the fallback). Background
+// checks that would read "not found" as "missing" must wait for this.
+async function isGlobalConnected() {
+  await initialConnection;
+  if (!globalClient) await initBackgroundGlobalClient();
+  return !!globalClient;
+}
+
 module.exports = {
+  isGlobalConnected,
   isMedicineDbAvailable,
   getGlobalDb,
   getGlobalMedicinesCollection,

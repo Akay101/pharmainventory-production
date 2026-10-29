@@ -27,6 +27,7 @@ async function requireAdminAuth(req, res, next) {
         role: "SUPERADMIN",
         status: "ACTIVE",
       };
+      req.adminViaToken = true;
       return next();
     }
 
@@ -123,7 +124,30 @@ function requireSuperAdmin(req, res, next) {
   next();
 }
 
+/**
+ * Middleware: Require one of the given admin roles
+ */
+const requireRole = (...roles) => (req, res, next) => {
+  if (!req.adminUser || !roles.includes(req.adminUser.role)) {
+    return res.status(403).json({ error: "Access denied for your admin role.", code: "FORBIDDEN" });
+  }
+  next();
+};
+
+/**
+ * Middleware: Require a signed-in admin (JWT session), not the system token.
+ * Used where the admin must prove who they are, e.g. with an emailed code.
+ */
+function requireSessionAdmin(req, res, next) {
+  if (req.adminViaToken || !req.adminUser?.email) {
+    return res.status(403).json({ error: "This action needs a signed-in admin account.", code: "SESSION_REQUIRED" });
+  }
+  next();
+}
+
 module.exports = {
   requireAdminAuth,
   requireSuperAdmin,
+  requireRole,
+  requireSessionAdmin,
 };

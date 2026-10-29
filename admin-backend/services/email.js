@@ -29,6 +29,10 @@ function buildAdminOtpTemplate({ toName, otp, scenario, expiryMinutes = 10 }) {
     title = "Admin Password Reset";
     subtitle = "Security Credentials Recovery";
     message = "We received a request to reset your DavaDesk admin password. Use the verification code below to proceed with setting a new password:";
+  } else if (scenario === "OFFBOARD_USER") {
+    title = "Confirm Permanent Account Deletion";
+    subtitle = "Destructive Admin Action";
+    message = "You asked to offboard and permanently delete a DavaDesk account and its data. Enter the code below to confirm. If this wasn't you, don't share it and change your admin password:";
   } else if (scenario === "INVITE") {
     title = "Admin Portal Invitation";
     subtitle = "New Administrative Team Member";
@@ -150,6 +154,7 @@ async function sendAdminOTPEmail({ toEmail, toName, otp, scenario, expiryMinutes
     LOGIN_2FA: `DavaDesk Admin - Verification Code: ${otp}`,
     PASSWORD_RESET: `DavaDesk Admin - Password Reset Code: ${otp}`,
     INVITE: "DavaDesk Admin - Team Member Setup Invitation",
+    OFFBOARD_USER: "DavaDesk Admin - Confirm account deletion",
   };
 
   const subject = subjectMap[scenario] || `DavaDesk Admin Verification Code: ${otp}`;

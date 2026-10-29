@@ -4,6 +4,7 @@ const mongoose = require("mongoose");
 const { v4: uuidv4 } = require("uuid");
 const { auth } = require("../middleware/auth");
 const { logActivity } = require("../utils/activityLogger");
+const { queueGlobalCheck } = require("../services/globalReview");
 
 const { requireSubscription } = require("../middleware/subscription");
 
@@ -193,6 +194,7 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
     };
 
     await db.collection("products").insertOne(productData);
+    queueGlobalCheck("medicine", req.user.pharmacy_id, productData);
     const { _id, ...product } = productData;
     await logActivity(db, req.user.pharmacy_id, req.user.id, req.user.name, "CREATE", "PRODUCTS", productId, `Added Product Catalog ${finalName}`, `/inventory`);
 

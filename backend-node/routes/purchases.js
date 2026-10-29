@@ -2,6 +2,7 @@ const express = require("express");
 const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 const router = express.Router();
 const mongoose = require("mongoose");
+const { queueGlobalCheck } = require("../services/globalReview");
 const { v4: uuidv4 } = require("uuid");
 const axios = require("axios");
 const multer = require("multer");
@@ -609,6 +610,7 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
       };
 
       await db.collection("suppliers").insertOne(newLocalSup, { session });
+      if (!distDetails.global_id) queueGlobalCheck("distributor", req.user.pharmacy_id, newLocalSup);
       resolvedSupplierId = newLocalSupId;
       resolvedSupplierName = newLocalSup.name;
       createdSupplier = newLocalSup;
@@ -741,6 +743,7 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
           },
           { session }
         );
+        queueGlobalCheck("medicine", req.user.pharmacy_id, { ...item, id: resolvedProductId, name: normalizedName });
       }
 
       let packQty = item.pack_quantity || item.quantity || 1;
@@ -1243,6 +1246,7 @@ router.put(
             },
             { session }
           );
+          queueGlobalCheck("medicine", pharmacyId, { ...item, id: resolvedProductId, name: normalizedName });
         }
 
         const packQty =

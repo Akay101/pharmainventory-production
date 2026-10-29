@@ -135,9 +135,12 @@ worker.on("failed", async (job, err) => {
 
 worker.on("error", (err) => console.error("[Worker] error:", err.message));
 
+// Background check of new pharmacy records against the global catalogues
+const globalReviewWorker = require("./globalReview.worker").startGlobalReviewWorker();
+
 const shutdown = async (signal) => {
   console.log(`[Worker] ${signal} received. Finishing active scans...`);
-  await worker.close();
+  await Promise.all([worker.close(), globalReviewWorker.close()]);
   await mongoose.connection.close();
   process.exit(0);
 };

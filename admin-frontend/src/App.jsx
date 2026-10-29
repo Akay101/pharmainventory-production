@@ -27,6 +27,7 @@ import SubscriptionsPage from "./pages/SubscriptionsPage";
 import CreditsPage from "./pages/CreditsPage";
 import SupportPage from "./pages/SupportPage";
 import OfferLeadsPage from "./pages/OfferLeadsPage";
+import GlobalDataPage from "./pages/GlobalDataPage";
 
 function MainDashboard() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -381,6 +382,8 @@ function MainDashboard() {
           {activeTab === "pricing" && <PricingPage activeEnv={activeEnv} />}
 
           {activeTab === "credits" && <CreditsPage activeEnv={activeEnv} />}
+
+          {activeTab === "globaldata" && <GlobalDataPage activeEnv={activeEnv} />}
         </main>
       </div>
 
@@ -422,6 +425,10 @@ function MainDashboard() {
           userId={selectedUserId}
           onClose={() => setSelectedUserId(null)}
           onChanged={loadAllData}
+          onDeleted={() => {
+            setSelectedUserId(null);
+            loadAllData();
+          }}
         />
       )}
 

@@ -18,11 +18,16 @@ import {
   Users,
   UserRound,
   Boxes,
+  Coins,
+  Plus,
+  Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { AdminAPI, apiError } from "../api";
 import BottomDrawer from "./BottomDrawer";
 import SubscriptionActionDrawer, { StatusPill, fmtDate, fmtDateTime } from "./SubscriptionActionDrawer";
+import OffboardUserModal from "./OffboardUserModal";
+import { useAuth } from "../context/AuthContext";
 
 const TONE = {
   emerald: "bg-emerald-50 border-emerald-200 text-emerald-800",
@@ -69,9 +74,61 @@ function Stat({ icon: Icon, label, value, sub }) {
   );
 }
 
-export default function UserDetailDrawer({ userId, onClose, onChanged }) {
+const inputCls = "w-full h-9 px-3 rounded-xl border border-slate-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/30";
+
+// Add AI credits to the user's pharmacy wallet (shared by its staff)
+function GrantCreditsDrawer({ user, pharmacy, balance, onClose, onDone }) {
+  const [credits, setCredits] = useState("");
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  // One id per open dialog: a double click or retry grants once
+  const [requestId] = useState(() => crypto.randomUUID());
+  const valid = Number(credits) > 0 && Number(credits) <= 1000000 && reason.trim().length >= 3;
+  const submit = async () => {
+    setBusy(true);
+    try {
+      const r = await AdminAPI.grantUserCredits(user.id, { credits: Number(credits), reason: reason.trim(), request_id: requestId });
+      toast.success(`Added ${credits} credits · balance ${r.data.balance}`);
+      onDone();
+    } catch (err) {
+      toast.error(apiError(err, "Couldn't add credits"));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <BottomDrawer isOpen onClose={onClose} title="Add AI credits" subtitle={`${pharmacy.name} · ${user.email}`} maxWidth="max-w-md">
+      <div className="space-y-3 text-xs">
+        <p className="text-slate-500">
+          Current balance <b>{balance ?? 0}</b> credits. Credits go to the pharmacy's wallet, shared by everyone in it, and never expire.
+        </p>
+        <label className="block">
+          <span className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Credits</span>
+          <input type="number" min="0" className={`${inputCls} mt-1`} value={credits} onChange={(e) => setCredits(e.target.value)} autoFocus />
+        </label>
+        <label className="block">
+          <span className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Reason (shown in the credit history)</span>
+          <input className={`${inputCls} mt-1`} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Goodwill for downtime" maxLength={300} />
+        </label>
+        <button
+          type="button"
+          disabled={busy || !valid}
+          onClick={submit}
+          className="w-full h-10 rounded-xl text-sm font-extrabold text-white bg-brand-500 hover:bg-brand-600 disabled:opacity-40 flex items-center justify-center gap-2"
+        >
+          {busy && <Loader2 className="w-4 h-4 animate-spin" />} Add credits
+        </button>
+      </div>
+    </BottomDrawer>
+  );
+}
+
+export default function UserDetailDrawer({ userId, onClose, onChanged, onDeleted }) {
+  const { user: admin } = useAuth();
+  const isSuper = admin?.role === "SUPERADMIN";
   const [data, setData] = useState(null);
   const [action, setAction] = useState(null);
+  const [panel, setPanel] = useState(null);
   // Parent passes a fresh onClose each render; keep the latest without refetching
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
@@ -244,6 +301,28 @@ export default function UserDetailDrawer({ userId, onClose, onChanged }) {
               </section>
             )}
 
+            {/* AI credits */}
+            {!isPending && data.pharmacy?.id && (
+              <section className="p-4 rounded-2xl border border-slate-200 flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h4 className="font-black text-slate-900 text-sm flex items-center gap-1.5">
+                    <Coins className="w-4 h-4 text-amber-500" /> AI credits
+                  </h4>
+                  <div className="text-slate-500 mt-0.5">
+                    Balance <b className="text-slate-900">{data.credits?.balance ?? 0}</b> · shared by the pharmacy
+                  </div>
+                </div>
+                {isSuper && (
+                  <button
+                    onClick={() => setPanel("credits")}
+                    className="flex items-center gap-1 px-3 py-2 text-[11px] font-bold rounded-xl bg-white border border-slate-200 text-slate-700 hover:bg-slate-50"
+                  >
+                    <Plus className="w-3.5 h-3.5" /> Add credits
+                  </button>
+                )}
+              </section>
+            )}
+
             {/* Usage */}
             {usage && (
               <section className="space-y-2">
@@ -340,9 +419,53 @@ export default function UserDetailDrawer({ userId, onClose, onChanged }) {
                 </ul>
               </section>
             )}
+
+            {/* Danger zone */}
+            {!isPending && isSuper && (
+              <section className="p-4 rounded-2xl border border-rose-200 bg-rose-50/40 flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h4 className="font-black text-rose-700 text-sm">Offboard & delete</h4>
+                  <div className="text-slate-600 mt-0.5">
+                    {data.user.is_primary_admin
+                      ? "Permanently deletes this owner, their pharmacy, staff logins and all its data."
+                      : "Permanently deletes this login. The pharmacy's data stays."}
+                  </div>
+                </div>
+                <button
+                  onClick={() => setPanel("offboard")}
+                  className="flex items-center gap-1 px-3 py-2 text-[11px] font-bold rounded-xl bg-white border border-rose-300 text-rose-600 hover:bg-rose-50"
+                >
+                  <Trash2 className="w-3.5 h-3.5" /> Offboard & delete
+                </button>
+              </section>
+            )}
           </div>
         )}
       </BottomDrawer>
+
+      {panel === "credits" && data?.pharmacy && (
+        <GrantCreditsDrawer
+          user={data.user}
+          pharmacy={data.pharmacy}
+          balance={data.credits?.balance}
+          onClose={() => setPanel(null)}
+          onDone={() => {
+            setPanel(null);
+            load();
+          }}
+        />
+      )}
+
+      {panel === "offboard" && (
+        <OffboardUserModal
+          userId={userId}
+          onClose={() => setPanel(null)}
+          onDeleted={() => {
+            setPanel(null);
+            onDeleted?.();
+          }}
+        />
+      )}
 
       {action && actionRow && (
         <SubscriptionActionDrawer

@@ -211,6 +211,34 @@ function getAdminDb() {
   return db;
 }
 
+// The global catalogues (global_medicines, global_doctors,
+// global_distributors) are one shared database next to production's.
+// GLOBAL_MONGO_URI wins when set (same variable as the main API); otherwise
+// the production connection's server is used.
+let globalClient = null;
+let globalConnecting = null;
+async function getGlobalDb() {
+  if (process.env.GLOBAL_MONGO_URI) {
+    if (!globalClient) {
+      globalConnecting =
+        globalConnecting ||
+        tryClientConnect(process.env.GLOBAL_MONGO_URI, 5000)
+          .then((c) => (globalClient = c))
+          .finally(() => (globalConnecting = null));
+      await globalConnecting;
+    }
+    return globalClient.db(process.env.GLOBAL_DB_NAME || "global_collections");
+  }
+  const prod = connectionPool.prod;
+  if (!prod.client || prod.status !== "connected") await connectTo("prod");
+  if (!prod.client || prod.status !== "connected") {
+    const err = new Error(`Global data needs the production database, which is unreachable: ${prod.error || "not connected"}`);
+    err.status = 503;
+    throw err;
+  }
+  return prod.client.db(process.env.GLOBAL_DB_NAME || "global_collections");
+}
+
 function getStatus() {
   return {
     dev: {
@@ -282,6 +310,7 @@ module.exports = {
   checkPing,
   getDb,
   getAdminDb,
+  getGlobalDb,
   getStatus,
   resolveDbEnv,
 };

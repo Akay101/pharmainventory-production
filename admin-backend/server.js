@@ -40,6 +40,7 @@ app.get("/api", (req, res) => {
       "/api/users",
       "/api/leads",
       "/api/promos",
+      "/api/global-data",
       "/api/analytics/funnel",
       "/api/analytics/activity-feed",
     ],
@@ -75,6 +76,7 @@ app.use("/api/subscriptions", requireAdminAuth, require("./routes/subscriptions"
 app.use("/api/credits", requireAdminAuth, require("./routes/credits"));
 app.use("/api/support", requireAdminAuth, require("./routes/support"));
 app.use("/api/offer-leads", requireAdminAuth, require("./routes/offerLeads"));
+app.use("/api/global-data", requireAdminAuth, require("./routes/globalData"));
 app.use("/api/analytics", requireAdminAuth, analyticsRoutes);
 
 
