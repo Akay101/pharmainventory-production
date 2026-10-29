@@ -586,7 +586,6 @@ export default function DashboardLayout() {
                   : "max-w-[1650px] mx-auto"
               }`}
             >
-              <BroadcastBannerSlot />
               <Outlet />
             </div>
           </main>
@@ -611,6 +610,9 @@ export default function DashboardLayout() {
             />
           </div>
         </div>
+
+        {/* Admin broadcasts: floating notification card */}
+        <BroadcastBannerSlot />
 
         {/* Phone: bottom tab bar */}
         <MobileBottomNav

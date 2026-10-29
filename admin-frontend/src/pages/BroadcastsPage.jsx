@@ -578,6 +578,7 @@ function Preview({ draft }) {
   const [mode, setMode] = useState("banner");
   const [dark, setDark] = useState(false);
   const [mobile, setMobile] = useState(false);
+  const [replay, setReplay] = useState(0); // remount the card to replay its entrance
   const b = { ...draft, title: draft.title || "Your headline", summary: draft.summary || "A one-line overview users see on the banner." };
   const tab = (id, label, Icon) => (
     <button type="button" onClick={() => setMode(id)} className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold ${mode === id ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`}>
@@ -598,6 +599,9 @@ function Preview({ draft }) {
           <button type="button" onClick={() => setMobile(true)} className={`rounded-lg p-1.5 ${mobile ? "bg-slate-200 text-slate-800" : "text-slate-400"}`} title="Phone">
             <Smartphone className="h-4 w-4" />
           </button>
+          <button type="button" onClick={() => setReplay((n) => n + 1)} className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100" title="Replay the entrance">
+            <RefreshCw className="h-4 w-4" />
+          </button>
           <button type="button" onClick={() => setDark(!dark)} className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100" title="Light / dark">
             {dark ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
           </button>
@@ -606,9 +610,21 @@ function Preview({ draft }) {
       <div className={`flex-1 overflow-y-auto rounded-2xl p-4 ${dark ? "bg-slate-950" : "bg-slate-100"}`}>
         <div className={`mx-auto transition-all ${mobile ? "max-w-[380px]" : "max-w-full"}`}>
           {mode === "banner" ? (
-            <div className="space-y-3">
-              <BroadcastBanner b={b} assetUrl={broadcastAssetUrl} onExplore={() => setMode("detail")} onClose={() => {}} pager={{ index: 0, count: 1 }} />
-              <div className={`rounded-2xl p-4 text-xs ${dark ? "bg-slate-900 text-slate-500" : "bg-white text-slate-400"}`}>Page content continues below the banner…</div>
+            // Mock app screen with the card floating at the top right, as users see it
+            <div className={`relative min-h-[460px] overflow-hidden rounded-2xl border ${dark ? "border-slate-800 bg-slate-900" : "border-slate-200 bg-white"}`}>
+              <div className={`flex h-11 items-center gap-2 border-b px-4 ${dark ? "border-slate-800" : "border-slate-100"}`}>
+                <span className="h-5 w-5 rounded-md bg-brand-500" />
+                {[56, 44, 52, 40].map((w, i) => <span key={i} className={`h-2.5 rounded-full ${dark ? "bg-slate-800" : "bg-slate-100"}`} style={{ width: w }} />)}
+              </div>
+              <div className="space-y-3 p-4">
+                <span className={`block h-4 w-40 rounded-full ${dark ? "bg-slate-800" : "bg-slate-100"}`} />
+                <div className="grid grid-cols-2 gap-3">
+                  {[0, 1, 2, 3].map((i) => <div key={i} className={`h-24 rounded-xl ${dark ? "bg-slate-800/60" : "bg-slate-50"}`} />)}
+                </div>
+              </div>
+              <div key={replay} className={`absolute top-14 ${mobile ? "inset-x-3" : "right-3 w-[360px] max-w-[calc(100%-24px)]"}`}>
+                <BroadcastBanner b={b} dark={dark} assetUrl={broadcastAssetUrl} onExplore={() => setMode("detail")} onClose={() => setTimeout(() => setReplay((n) => n + 1), 600)} />
+              </div>
             </div>
           ) : (
             <div className="overflow-hidden rounded-2xl shadow-2xl">
@@ -946,7 +962,9 @@ function DetailDrawer({ id, onClose, onEdit, onChanged }) {
         </div>
       ) : (
         <div className="space-y-5">
-          <BroadcastBanner b={b} assetUrl={broadcastAssetUrl} onExplore={() => setPreview(true)} />
+          <div className="mx-auto max-w-sm">
+            <BroadcastBanner b={b} assetUrl={broadcastAssetUrl} onExplore={() => setPreview(true)} />
+          </div>
           <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
             {tiles.map(([label, v, Icon, color, p]) => (
               <div key={label} className="rounded-xl border border-slate-200 bg-white p-2.5">

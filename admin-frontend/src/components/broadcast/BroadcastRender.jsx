@@ -7,6 +7,7 @@
 // Colours come from CSS variables set on the root (light or dark), not from
 // Tailwind dark: classes, because the two apps configure dark mode differently.
 import React, { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { ArrowRight, ChevronLeft, ChevronRight, CircleCheck, Clock, Gift, Info, Lightbulb, Megaphone, Quote, Rocket, Sparkles, TriangleAlert, X } from "lucide-react";
 
 export const THEMES = {
@@ -94,7 +95,28 @@ const STYLE = `
 .bc-float { animation: bc-float 5s ease-in-out infinite; }
 @keyframes bc-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 .bc-in { animation: bc-in .45s cubic-bezier(.2,.8,.2,1) both; }
-@media (prefers-reduced-motion: reduce) { .bc-shine, .bc-float, .bc-in { animation: none; } }
+@keyframes bc-notif-in {
+  0% { opacity: 0; transform: translate3d(36px, -14px, 0) scale(.92); filter: blur(8px); }
+  55% { opacity: 1; transform: translate3d(-5px, 2px, 0) scale(1.012); filter: blur(0); }
+  78% { transform: translate3d(2px, 0, 0) scale(.998); }
+  100% { opacity: 1; transform: none; filter: none; }
+}
+.bc-notif-in { animation: bc-notif-in .75s cubic-bezier(.16,1,.3,1) both; }
+@keyframes bc-notif-out { to { opacity: 0; transform: translate3d(40px, 0, 0) scale(.94); filter: blur(4px); } }
+.bc-notif-out { animation: bc-notif-out .28s cubic-bezier(.4,0,1,1) forwards; }
+@keyframes bc-border { 0% { background-position: 0% 50%; } 100% { background-position: 200% 50%; } }
+.bc-border { background-size: 200% 200%; animation: bc-border 6s linear infinite; }
+@keyframes bc-glow { 0%,100% { opacity: .45; } 50% { opacity: .8; } }
+.bc-glow { animation: bc-glow 3.2s ease-in-out infinite; }
+@keyframes bc-ping { 0% { transform: scale(1); opacity: .7; } 80%,100% { transform: scale(2.4); opacity: 0; } }
+.bc-ping { animation: bc-ping 1.8s cubic-bezier(0,0,.2,1) infinite; }
+@keyframes bc-pop { 0% { opacity: 0; transform: translateY(6px) scale(.96); } 100% { opacity: 1; transform: none; } }
+.bc-pop { animation: bc-pop .5s cubic-bezier(.16,1,.3,1) both; }
+@keyframes bc-progress { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+.bc-progress { transform-origin: left; animation-name: bc-progress; animation-timing-function: linear; animation-fill-mode: forwards; }
+@keyframes bc-zoom-in { from { opacity: 0; transform: scale(.94); } to { opacity: 1; transform: none; } }
+.bc-zoom-in { animation: bc-zoom-in .3s cubic-bezier(.16,1,.3,1) both; }
+@media (prefers-reduced-motion: reduce) { .bc-shine, .bc-float, .bc-in, .bc-notif-in, .bc-border, .bc-glow, .bc-ping, .bc-pop, .bc-zoom-in { animation: none; } }
 `;
 export const BroadcastStyles = () => <style>{STYLE}</style>;
 
@@ -394,72 +416,130 @@ function Chip({ b, light = true }) {
   );
 }
 
-/**
- * The banner: overview of one broadcast. `pager` = { index, count, prev, next }.
- */
-export function BroadcastBanner({ b, assetUrl, onExplore, onClose, pager, className = "" }) {
-  const p = palette(b.theme);
-  const img = imageSrc(b.banner?.image, assetUrl);
-  const ctaLabel = b.banner?.cta_label || (b.kind === "COMING_SOON" ? "See what's coming" : "Explore");
-  const btnText = p.onDark ? p.from : "#ffffff";
+// A picture shown whole: contained over a blurred, zoomed copy of itself
+function FullImage({ src, className = "", style, onClick, imgClass = "" }) {
   return (
-    <div className={`bc-in relative isolate overflow-hidden rounded-2xl shadow-lg ${className}`} style={{ ...heroStyle(b.theme), boxShadow: `0 14px 34px -16px ${rgba(p.via, 0.75)}` }} role="region" aria-label={b.title}>
+    <div className={`relative overflow-hidden ${className}`} style={style} onClick={onClick}>
+      <img src={src} alt="" aria-hidden className="absolute inset-0 h-full w-full scale-125 object-cover opacity-70" style={{ filter: "blur(18px) saturate(1.2)" }} />
+      <img src={src} alt="" className={`relative h-full w-full object-contain ${imgClass}`} />
+    </div>
+  );
+}
+
+/**
+ * The notification card: overview of one broadcast, floating over the app.
+ * `pager` = { index, count, prev, next }; `rotateMs` draws the auto-advance
+ * line (paused with `paused`). `dark` picks the card surface.
+ */
+export function BroadcastBanner({ b, assetUrl, onExplore, onClose, pager, rotateMs, paused = false, dark = false, className = "" }) {
+  const p = palette(b.theme);
+  const img = imageSrc(b.banner?.image, assetUrl) || imageSrc(b.cover, assetUrl);
+  const meta = KIND_META[b.kind] || KIND_META.ANNOUNCEMENT;
+  const ctaLabel = b.banner?.cta_label || (b.kind === "COMING_SOON" ? "See what's coming" : "View details");
+  const [leaving, setLeaving] = useState(false);
+  const gradient = `linear-gradient(120deg, ${p.from}, ${p.via}, ${p.to}, ${p.from})`;
+  const surface = dark ? "rgba(13,18,32,.94)" : "rgba(255,255,255,.96)";
+  const fg = dark ? "#f8fafc" : "#0f172a";
+  const muted = dark ? "#94a3b8" : "#64748b";
+  const close = () => {
+    setLeaving(true);
+    setTimeout(() => onClose?.(), 260);
+  };
+  const stacked = pager && pager.count > 1;
+  return (
+    <div className={`${leaving ? "bc-notif-out" : "bc-notif-in"} relative ${stacked ? "pb-2" : ""} ${className}`} role="status" aria-label={b.title}>
       <BroadcastStyles />
-      <Decor theme={b.theme} shine />
-      <div className="relative flex items-center gap-4 p-4 pr-11 sm:gap-6 sm:p-5 sm:pr-14">
-        {!img && b.emoji && <div className="bc-float hidden h-16 w-16 shrink-0 items-center justify-center rounded-2xl text-4xl sm:flex" style={{ background: "rgba(255,255,255,.18)" }}>{b.emoji}</div>}
-        <div className="min-w-0 flex-1">
-          <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
-            <Chip b={b} light={p.onDark} />
-            {b.eta_label && (
-              <span className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-[10px] font-bold" style={{ background: "rgba(0,0,0,.16)" }}>
-                <Clock className="h-3 w-3" /> {b.eta_label}
+      {/* More waiting: two cards peeking out underneath */}
+      {stacked && (
+        <>
+          <div aria-hidden className="absolute inset-x-6 bottom-0 h-6 rounded-b-2xl" style={{ background: surface, opacity: 0.45, boxShadow: "0 6px 16px -8px rgba(0,0,0,.35)" }} />
+          <div aria-hidden className="absolute inset-x-3 bottom-1 h-6 rounded-b-2xl" style={{ background: surface, opacity: 0.75 }} />
+        </>
+      )}
+      {/* Soft coloured glow behind the card */}
+      <div aria-hidden className="bc-glow pointer-events-none absolute -inset-1 rounded-[22px]" style={{ background: gradient, filter: "blur(18px)", opacity: 0.5 }} />
+      {/* Moving gradient border */}
+      <div className="bc-border relative rounded-[18px] p-[1.5px]" style={{ background: gradient, boxShadow: `0 18px 40px -18px ${rgba(p.via, 0.65)}` }}>
+        <div className="relative overflow-hidden rounded-[16.5px]" style={{ background: surface, color: fg, backdropFilter: "blur(16px)" }}>
+          {img ? (
+            <button type="button" onClick={onExplore} className="group relative block w-full" aria-label={`Open ${b.title}`}>
+              <FullImage src={img} className="h-36 w-full" imgClass="transition-transform duration-500 group-hover:scale-[1.03]" />
+              <div aria-hidden className="absolute inset-x-0 bottom-0 h-10" style={{ background: `linear-gradient(to top, ${surface}, transparent)` }} />
+            </button>
+          ) : (
+            <div className="relative isolate h-1.5 overflow-hidden" style={heroStyle(b.theme)} />
+          )}
+          <div className="relative px-4 pb-3.5 pt-3">
+            <div className="flex items-center gap-2 pr-7">
+              <span className="relative flex h-2 w-2 shrink-0">
+                {!b.state?.seen && <span className="bc-ping absolute inline-flex h-full w-full rounded-full" style={{ background: p.from }} />}
+                <span className="relative inline-flex h-2 w-2 rounded-full" style={{ background: p.from }} />
               </span>
-            )}
+              <span className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-[.12em]" style={{ color: p.accent }}>
+                <meta.Icon className="h-3 w-3" />
+                {meta.label}
+              </span>
+              {b.eta_label && (
+                <span className="inline-flex items-center gap-1 truncate text-[10px] font-bold" style={{ color: muted }}>
+                  · <Clock className="h-3 w-3" /> {b.eta_label}
+                </span>
+              )}
+            </div>
+            <div className="bc-pop mt-2 flex items-start gap-3" style={{ animationDelay: "180ms" }}>
+              {!img && (
+                <div className="bc-float flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-2xl text-white shadow-md" style={heroStyle(b.theme)}>
+                  {b.emoji || <meta.Icon className="h-5 w-5" />}
+                </div>
+              )}
+              <div className="min-w-0 flex-1">
+                <h3 className="line-clamp-2 text-[14.5px] font-extrabold leading-snug tracking-tight">
+                  {img && b.emoji ? `${b.emoji} ` : ""}
+                  {b.title}
+                </h3>
+                <p className="mt-0.5 line-clamp-2 text-[12.5px] leading-relaxed" style={{ color: muted }}>{b.summary}</p>
+              </div>
+            </div>
+            <div className="bc-pop mt-3 flex items-center justify-between gap-2" style={{ animationDelay: "280ms" }}>
+              <button
+                type="button"
+                onClick={onExplore}
+                className="group inline-flex items-center gap-1.5 rounded-xl px-3.5 py-1.5 text-[12.5px] font-extrabold text-white shadow-md transition-transform duration-150 hover:scale-[1.04] active:scale-[0.97]"
+                style={{ background: `linear-gradient(120deg, ${p.from}, ${p.to})`, boxShadow: `0 8px 18px -8px ${rgba(p.via, 0.8)}` }}
+              >
+                {ctaLabel}
+                <ArrowRight className="h-3.5 w-3.5 transition-transform duration-200 group-hover:translate-x-0.5" />
+              </button>
+              {stacked && (
+                <div className="flex items-center gap-0.5 text-[11px] font-bold tabular-nums" style={{ color: muted }}>
+                  <button type="button" onClick={pager.prev} aria-label="Previous" className="flex h-6 w-6 items-center justify-center rounded-lg transition-colors hover:bg-black/5">
+                    <ChevronLeft className="h-3.5 w-3.5" />
+                  </button>
+                  {pager.index + 1}/{pager.count}
+                  <button type="button" onClick={pager.next} aria-label="Next" className="flex h-6 w-6 items-center justify-center rounded-lg transition-colors hover:bg-black/5">
+                    <ChevronRight className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
-          <h3 className="line-clamp-2 text-base font-black leading-snug tracking-tight sm:text-xl">
-            {img && b.emoji ? `${b.emoji} ` : ""}
-            {b.title}
-          </h3>
-          <p className="mt-1 line-clamp-2 text-[13px] font-medium opacity-90 sm:text-sm">{b.summary}</p>
-          <div className="mt-3 flex items-center gap-3">
+          {stacked && rotateMs && (
+            <div className="absolute inset-x-0 bottom-0 h-[2px]" style={{ background: dark ? "rgba(255,255,255,.06)" : "rgba(15,23,42,.05)" }}>
+              <div key={`${b.id}-${pager.index}`} className="bc-progress h-full" style={{ background: gradient, animationDuration: `${rotateMs}ms`, animationPlayState: paused ? "paused" : "running" }} />
+            </div>
+          )}
+          {onClose && (
             <button
               type="button"
-              onClick={onExplore}
-              className="inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-[13px] font-extrabold shadow-md transition-transform duration-150 hover:scale-[1.04] active:scale-[0.98]"
-              style={{ background: p.onDark ? "#ffffff" : "#0f172a", color: btnText }}
+              onClick={close}
+              aria-label="Dismiss"
+              className="absolute right-2.5 top-2.5 z-10 flex h-7 w-7 items-center justify-center rounded-full backdrop-blur transition-transform duration-150 hover:scale-110"
+              style={img ? { background: "rgba(15,23,42,.45)", color: "#fff" } : { background: dark ? "rgba(255,255,255,.08)" : "rgba(15,23,42,.06)", color: muted, top: 14 }}
             >
-              {ctaLabel}
-              <ArrowRight className="h-4 w-4" />
+              <X className="h-3.5 w-3.5" />
             </button>
-            {pager && pager.count > 1 && (
-              <div className="flex items-center gap-1.5">
-                <button type="button" onClick={pager.prev} aria-label="Previous" className="flex h-7 w-7 items-center justify-center rounded-full" style={{ background: "rgba(255,255,255,.18)" }}>
-                  <ChevronLeft className="h-4 w-4" />
-                </button>
-                <div className="flex gap-1">
-                  {Array.from({ length: pager.count }, (_, i) => (
-                    <span key={i} className="h-1.5 rounded-full transition-all duration-300" style={{ width: i === pager.index ? 16 : 6, background: i === pager.index ? "#fff" : "rgba(255,255,255,.45)" }} />
-                  ))}
-                </div>
-                <button type="button" onClick={pager.next} aria-label="Next" className="flex h-7 w-7 items-center justify-center rounded-full" style={{ background: "rgba(255,255,255,.18)" }}>
-                  <ChevronRight className="h-4 w-4" />
-                </button>
-              </div>
-            )}
-          </div>
+          )}
         </div>
-        {img && (
-          <div className="relative hidden shrink-0 sm:block">
-            <img src={img} alt="" className="bc-float h-28 w-44 rounded-xl object-cover shadow-xl lg:h-32 lg:w-56" style={{ border: "3px solid rgba(255,255,255,.35)" }} />
-          </div>
-        )}
       </div>
-      {onClose && (
-        <button type="button" onClick={onClose} aria-label="Dismiss" className="absolute right-2.5 top-2.5 flex h-7 w-7 items-center justify-center rounded-full transition-colors hover:bg-white/30" style={{ background: "rgba(255,255,255,.16)" }}>
-          <X className="h-4 w-4" />
-        </button>
-      )}
     </div>
   );
 }
@@ -500,7 +580,9 @@ export function BroadcastDetail({ b, assetUrl, onLink, dark = false, footer = tr
       </div>
       <div className="relative px-5 pb-6 sm:px-7">
         {cover && (
-          <img src={cover} alt="" onClick={() => setZoom(cover)} className="relative z-10 -mt-6 mb-5 max-h-72 w-full cursor-zoom-in rounded-2xl object-cover shadow-xl" style={{ border: `4px solid ${C.bg}` }} />
+          <div className="relative z-10 -mt-6 mb-5 overflow-hidden rounded-2xl shadow-xl" style={{ border: `4px solid ${C.bg}`, background: C.card }}>
+            <img src={cover} alt="" onClick={() => setZoom(cover)} className="block max-h-[60vh] w-full cursor-zoom-in object-contain" />
+          </div>
         )}
         <div className={`space-y-5 ${cover ? "" : "pt-5"}`}>
           {(b.blocks || []).map((blk, i) => (
@@ -524,14 +606,17 @@ export function BroadcastDetail({ b, assetUrl, onLink, dark = false, footer = tr
           </Go>
         </div>
       )}
-      {zoom && (
-        <div className="fixed inset-0 z-[100000] flex items-center justify-center bg-black/85 p-4" onClick={() => setZoom(null)} role="dialog" aria-label="Image">
-          <img src={zoom} alt="" className="max-h-[90vh] max-w-full rounded-xl shadow-2xl" />
-          <button type="button" aria-label="Close image" className="absolute right-4 top-4 flex h-9 w-9 items-center justify-center rounded-full bg-white/15 text-white">
-            <X className="h-5 w-5" />
-          </button>
-        </div>
-      )}
+      {zoom &&
+        // Portal: the modal around this is transformed, which would trap a fixed overlay inside it
+        createPortal(
+          <div data-bc-zoom className="bc-zoom-in fixed inset-0 z-[100000] flex items-center justify-center bg-black/85 p-4 backdrop-blur-sm" style={{ pointerEvents: "auto" }} onClick={() => setZoom(null)} role="dialog" aria-label="Image">
+            <img src={zoom} alt="" className="max-h-[92vh] max-w-[94vw] rounded-xl object-contain shadow-2xl" />
+            <button type="button" aria-label="Close image" className="absolute right-4 top-4 flex h-9 w-9 items-center justify-center rounded-full bg-white/15 text-white">
+              <X className="h-5 w-5" />
+            </button>
+          </div>,
+          document.body
+        )}
     </div>
   );
 }
