@@ -6,7 +6,9 @@ const { userJourney, pendingJourney } = require("../services/journey");
 const { offerIndex, SOURCE: OFFER_SOURCE } = require("../services/offerLeads");
 const crypto = require("crypto");
 const { z } = require("zod");
-const { requireSuperAdmin, requireSessionAdmin } = require("../middleware/auth");
+const { requireSuperAdmin, requireSessionAdmin, requireRole } = require("../middleware/auth");
+const resetLinks = require("../services/resetLinks");
+const { sendTextEmail } = require("../services/email");
 const { audit, actorOf, parseBody } = require("../services/audit");
 const W = require("../services/credits/wallet");
 const otp = require("../services/actionOtp");
@@ -316,15 +318,109 @@ router.post("/:id/credits", requireSuperAdmin, async (req, res, next) => {
 });
 
 // ---------------------------------------------------------------------------
+// Password reset link: the admin picks how long it stays valid; it can be
+// emailed by the server and/or sent from the admin's own WhatsApp. The plain
+// link is only in this response; the database keeps its hash.
+
+const linkSchema = z
+  .object({
+    expires_in_minutes: z.number().int().min(resetLinks.MIN_MINUTES).max(resetLinks.MAX_MINUTES).optional(),
+    expires_at: z.string().datetime().optional(),
+    send_email: z.boolean().default(false),
+  })
+  .refine((d) => d.expires_in_minutes || d.expires_at, { message: "Pick how long the link stays valid", path: ["expires_in_minutes"] });
+
+let linkIndexes = null;
+const canIssueLinks = [requireRole("SUPERADMIN", "ADMIN"), requireSessionAdmin];
+
+// POST /api/users/:id/reset-link { expires_in_minutes | expires_at, send_email }
+router.post("/:id/reset-link", ...canIssueLinks, async (req, res, next) => {
+  try {
+    const data = parseBody(linkSchema, req, res);
+    if (!data) return;
+    const id = userIdOf(req);
+    if (!id) return res.status(400).json({ error: "This person hasn't finished signing up yet" });
+    const user = await req.db.collection("users").findOne({ id }, { projection: { _id: 0, id: 1, name: 1, email: 1, mobile: 1, pharmacy_id: 1, verified: 1 } });
+    if (!user) return res.status(404).json({ error: "User not found" });
+    if (user.verified === false || !user.email) return res.status(400).json({ error: "This account isn't verified, so it can't sign in yet" });
+
+    const now = Date.now();
+    const expiresAt = data.expires_at ? new Date(data.expires_at) : new Date(now + data.expires_in_minutes * 60000);
+    const minutes = (expiresAt.getTime() - now) / 60000;
+    if (minutes < resetLinks.MIN_MINUTES - 1 || minutes > resetLinks.MAX_MINUTES + 1)
+      return res.status(400).json({ error: `The link must stay valid between ${resetLinks.MIN_MINUTES} minutes and 7 days` });
+
+    linkIndexes = linkIndexes || resetLinks.ensureIndexes(req.db).catch((err) => ((linkIndexes = null), console.warn("[ResetLinks] indexes:", err.message)));
+    await linkIndexes;
+    const { doc, url } = await resetLinks.issue(req.db, { user, env: req.dbEnv, expiresAt, actor: actorOf(req) });
+    const text = resetLinks.messageText({ name: user.name, url, expiresAt });
+
+    let email = null;
+    if (data.send_email) {
+      try {
+        const out = await sendTextEmail({ toEmail: user.email, toName: user.name, subject: "Set a new DavaDesk password", text });
+        email = { sent: true, provider: out.provider };
+        await req.db.collection(resetLinks.COLLECTION).updateOne({ id: doc.id }, { $set: { "channels.email": { sent_at: new Date(), provider: out.provider, to: user.email } } });
+      } catch (err) {
+        email = { sent: false, error: err.message };
+      }
+    }
+    await audit(req, "PASSWORD_LINK_ISSUED", user.id, { link_id: doc.id, email: user.email, expires_at: expiresAt, emailed: !!email?.sent });
+    res.status(201).json({
+      link: { ...resetLinks.view(doc), url },
+      message: text,
+      whatsapp_url: resetLinks.whatsappUrl(user.mobile, text),
+      email,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/users/:id/reset-links/:linkId/whatsapp  marks it sent by WhatsApp (for the history)
+router.post("/:id/reset-links/:linkId/whatsapp", ...canIssueLinks, async (req, res, next) => {
+  try {
+    await req.db.collection(resetLinks.COLLECTION).updateOne({ id: String(req.params.linkId), user_id: String(req.params.id) }, { $set: { "channels.whatsapp": { opened_at: new Date(), by: actorOf(req).admin_email } } });
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/users/:id/reset-links  history, newest first (never the token)
+router.get("/:id/reset-links", async (req, res, next) => {
+  try {
+    const rows = await req.db.collection(resetLinks.COLLECTION).find({ user_id: String(req.params.id) }, { projection: { _id: 0, token_hash: 0 } }).sort({ created_at: -1 }).limit(20).toArray();
+    res.json({ links: rows.map(resetLinks.view) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/users/:id/reset-links/:linkId/revoke
+router.post("/:id/reset-links/:linkId/revoke", ...canIssueLinks, async (req, res, next) => {
+  try {
+    const r = await req.db
+      .collection(resetLinks.COLLECTION)
+      .updateOne({ id: String(req.params.linkId), user_id: String(req.params.id), used_at: null, revoked_at: null }, { $set: { revoked_at: new Date(), revoked_reason: "REVOKED_BY_ADMIN", revoked_by: actorOf(req) } });
+    if (!r.modifiedCount) return res.status(409).json({ error: "This link is already used, revoked or gone" });
+    await audit(req, "PASSWORD_LINK_REVOKED", String(req.params.id), { link_id: req.params.linkId });
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ---------------------------------------------------------------------------
 // Offboard: permanently delete a user (and, for an owner, the pharmacy).
 // preview -> emailed code to the admin -> delete with code + typed name.
 // The server rebuilds the plan at delete time; the client only names the user.
 
 const OFFBOARD = "OFFBOARD_USER";
-const userIdOf = (req) => {
+function userIdOf(req) {
   const id = String(req.params.id || "");
   return id && !id.startsWith("pending:") && id.length <= 100 ? id : null;
-};
+}
 const sendErr = (res, err) => res.status(err.status).json({ error: err.message, ...(err.code ? { code: err.code } : {}), ...(err.attempts_left !== undefined ? { attempts_left: err.attempts_left } : {}), ...(err.wait_seconds ? { wait_seconds: err.wait_seconds } : {}) });
 
 // GET /api/users/:id/offboard/preview

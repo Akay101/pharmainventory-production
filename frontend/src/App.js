@@ -15,6 +15,7 @@ import { toast } from "sonner";
 import LoginPage from "./pages/LoginPage";
 import RegisterPage from "./pages/RegisterPage";
 import ForgotPasswordPage from "./pages/ForgotPasswordPage";
+import ResetLinkPage from "./pages/ResetLinkPage";
 import DashboardPage from "./pages/DashboardPage";
 import InventoryPage from "./pages/InventoryPage";
 import PurchasesPage from "./pages/PurchasesPage";
@@ -431,6 +432,7 @@ function App() {
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
           <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+          <Route path="/reset-password/link" element={<ResetLinkPage />} />
           <Route path="/upgrade" element={<UpgradePage />} />
           <Route path="/early-access/terms" element={<EarlyAccessTermsPage />} />
           <Route path="/payment-success" element={<PaymentSuccessPage />} />

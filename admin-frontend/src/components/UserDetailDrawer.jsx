@@ -21,12 +21,14 @@ import {
   Coins,
   Plus,
   Trash2,
+  KeyRound,
 } from "lucide-react";
 import { toast } from "sonner";
 import { AdminAPI, apiError } from "../api";
 import BottomDrawer from "./BottomDrawer";
 import SubscriptionActionDrawer, { StatusPill, fmtDate, fmtDateTime } from "./SubscriptionActionDrawer";
 import OffboardUserModal from "./OffboardUserModal";
+import ResetLinkDrawer from "./ResetLinkDrawer";
 import { useAuth } from "../context/AuthContext";
 
 const TONE = {
@@ -126,6 +128,7 @@ function GrantCreditsDrawer({ user, pharmacy, balance, onClose, onDone }) {
 export default function UserDetailDrawer({ userId, onClose, onChanged, onDeleted }) {
   const { user: admin } = useAuth();
   const isSuper = admin?.role === "SUPERADMIN";
+  const canResetLink = isSuper || admin?.role === "ADMIN";
   const [data, setData] = useState(null);
   const [action, setAction] = useState(null);
   const [panel, setPanel] = useState(null);
@@ -323,6 +326,25 @@ export default function UserDetailDrawer({ userId, onClose, onChanged, onDeleted
               </section>
             )}
 
+            {/* Password reset link */}
+            {!isPending && canResetLink && (
+              <section className="p-4 rounded-2xl border border-slate-200 flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h4 className="font-black text-slate-900 text-sm flex items-center gap-1.5">
+                    <KeyRound className="w-4 h-4 text-brand-500" /> Password reset link
+                  </h4>
+                  <div className="text-slate-500 mt-0.5">One-time link to set a new password, by email or WhatsApp. You choose how long it works.</div>
+                </div>
+                <button
+                  onClick={() => setPanel("resetLink")}
+                  className="flex items-center gap-1 px-3 py-2 text-[11px] font-bold rounded-xl bg-white border border-slate-200 text-slate-700 hover:bg-slate-50"
+                  data-testid="reset-link-open"
+                >
+                  <KeyRound className="w-3.5 h-3.5" /> Send reset link
+                </button>
+              </section>
+            )}
+
             {/* Usage */}
             {usage && (
               <section className="space-y-2">
@@ -455,6 +477,8 @@ export default function UserDetailDrawer({ userId, onClose, onChanged, onDeleted
           }}
         />
       )}
+
+      {panel === "resetLink" && data?.user && <ResetLinkDrawer user={data.user} onClose={() => setPanel(null)} />}
 
       {panel === "offboard" && (
         <OffboardUserModal
