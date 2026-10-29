@@ -41,6 +41,7 @@ app.get("/api", (req, res) => {
       "/api/leads",
       "/api/promos",
       "/api/global-data",
+      "/api/broadcasts",
       "/api/analytics/funnel",
       "/api/analytics/activity-feed",
     ],
@@ -61,6 +62,9 @@ const { requireAdminAuth } = require("./middleware/auth");
 // Public Auth Endpoints
 app.use("/api/auth", authRoutes);
 
+// Broadcast images for the composer preview (public, see routes/broadcasts.js)
+app.use("/api/broadcast-assets", require("./routes/broadcasts").assetsRouter);
+
 // Public Tracking Endpoints
 app.use("/api/track", analyticsRoutes);
 
@@ -77,6 +81,7 @@ app.use("/api/credits", requireAdminAuth, require("./routes/credits"));
 app.use("/api/support", requireAdminAuth, require("./routes/support"));
 app.use("/api/offer-leads", requireAdminAuth, require("./routes/offerLeads"));
 app.use("/api/global-data", requireAdminAuth, require("./routes/globalData"));
+app.use("/api/broadcasts", requireAdminAuth, require("./routes/broadcasts"));
 app.use("/api/analytics", requireAdminAuth, analyticsRoutes);
 
 

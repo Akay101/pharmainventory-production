@@ -51,6 +51,7 @@ import { ShortcutProvider } from "./shortcuts/Shortcuts";
 import AssistantLauncher from "./assistant/AssistantLauncher";
 import PlanBadge from "./PlanBadge";
 import NotificationCenter from "./NotificationCenter";
+import { BroadcastProvider, BroadcastBannerSlot } from "./broadcast/BroadcastProvider";
 import { MobileBottomNav } from "./MobileNav";
 import TopNav from "./TopNav";
 import { AI_LOGO_SRC } from "./scan/ScanUI";
@@ -311,6 +312,7 @@ export default function DashboardLayout() {
     <ShortcutProvider globals={globalShortcuts}>
     <TourProvider user={user}>
     <TooltipProvider delayDuration={0}>
+    <BroadcastProvider>
       <div
         className="h-screen w-screen max-h-screen max-md:h-[100dvh] max-md:max-h-[100dvh] bg-background flex flex-col select-none overflow-hidden"
         data-testid="dashboard-layout"
@@ -584,6 +586,7 @@ export default function DashboardLayout() {
                   : "max-w-[1650px] mx-auto"
               }`}
             >
+              <BroadcastBannerSlot />
               <Outlet />
             </div>
           </main>
@@ -624,6 +627,7 @@ export default function DashboardLayout() {
           <AssistantLauncher />
         </div>
       </div>
+    </BroadcastProvider>
     </TooltipProvider>
     </TourProvider>
     </ShortcutProvider>

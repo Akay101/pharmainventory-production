@@ -28,6 +28,7 @@ import CreditsPage from "./pages/CreditsPage";
 import SupportPage from "./pages/SupportPage";
 import OfferLeadsPage from "./pages/OfferLeadsPage";
 import GlobalDataPage from "./pages/GlobalDataPage";
+import BroadcastsPage from "./pages/BroadcastsPage";
 
 function MainDashboard() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -384,6 +385,8 @@ function MainDashboard() {
           {activeTab === "credits" && <CreditsPage activeEnv={activeEnv} />}
 
           {activeTab === "globaldata" && <GlobalDataPage activeEnv={activeEnv} />}
+
+          {activeTab === "broadcasts" && <BroadcastsPage activeEnv={activeEnv} />}
         </main>
       </div>
 
