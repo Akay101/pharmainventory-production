@@ -17,6 +17,7 @@ import {
   LifeBuoy,
   Gift,
   Database,
+  Megaphone,
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 
@@ -96,6 +97,12 @@ export default function Sidebar({
       label: "Subscriptions",
       icon: CalendarClock,
       section: "SALES & CRM",
+    },
+    {
+      id: "broadcasts",
+      label: "Broadcasts",
+      icon: Megaphone,
+      section: "MARKETING & OFFERS",
     },
     {
       id: "pricing",

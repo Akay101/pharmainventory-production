@@ -21,11 +21,22 @@ import {
   AlertTriangle,
   Calendar,
   Phone,
+  Rocket,
+  Megaphone,
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import { toast } from "sonner";
 import { openWhatsApp } from "../utils/whatsapp";
+import { useBroadcasts, assetUrl } from "./broadcast/BroadcastProvider";
+import { BroadcastThumb, KIND_META, heroStyle } from "./broadcast/BroadcastRender";
+
+// "Ends in 3 days" for an update's expiry
+const endsIn = (d) => {
+  if (!d) return null;
+  const days = Math.ceil((new Date(d) - Date.now()) / 864e5);
+  return days <= 1 ? "Ends today" : `Ends in ${days} days`;
+};
 
 export default function NotificationCenter() {
   const navigate = useNavigate();
@@ -33,7 +44,11 @@ export default function NotificationCenter() {
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [loading, setLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState("ALL"); // ALL, REFILL_REMINDER, ALERTS
+  const [activeTab, setActiveTab] = useState("ALL"); // ALL, REFILL_REMINDER, ALERTS, UPDATES, COMING_SOON
+  const broadcasts = useBroadcasts();
+  const updates = broadcasts?.updates || [];
+  const comingSoon = broadcasts?.comingSoon || [];
+  const totalUnread = unreadCount + (broadcasts?.unread || 0);
   const containerRef = useRef(null);
 
   // Fetch notifications
@@ -175,7 +190,10 @@ export default function NotificationCenter() {
         size="icon"
         onClick={() => {
           setIsOpen(!isOpen);
-          if (!isOpen) fetchNotifications();
+          if (!isOpen) {
+            fetchNotifications();
+            broadcasts?.refresh();
+          }
         }}
         className={`group relative rounded-xl border border-border/60 dark:border-border/40 h-9 w-9 transition-all duration-200 hover:scale-105 active:scale-95 cursor-pointer ${
           isOpen
@@ -185,10 +203,10 @@ export default function NotificationCenter() {
         data-testid="notifications-btn"
         title="Notifications & Refill Reminders"
       >
-        <Bell className={`w-4.5 h-4.5 text-foreground transition-transform duration-200 ${unreadCount > 0 ? "animate-bell-wiggle" : "group-hover:rotate-12"}`} />
-        {unreadCount > 0 && (
+        <Bell className={`w-4.5 h-4.5 text-foreground transition-transform duration-200 ${totalUnread > 0 ? "animate-bell-wiggle" : "group-hover:rotate-12"}`} />
+        {totalUnread > 0 && (
           <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] bg-orange-500 text-white text-[10px] font-black rounded-full flex items-center justify-center px-1 shadow-md shadow-orange-500/30 animate-in zoom-in-50 duration-200">
-            {unreadCount > 99 ? "99+" : unreadCount}
+            {totalUnread > 99 ? "99+" : totalUnread}
           </span>
         )}
       </Button>
@@ -202,9 +220,9 @@ export default function NotificationCenter() {
               <h3 className="font-extrabold text-sm text-foreground">
                 Notifications
               </h3>
-              {unreadCount > 0 && (
+              {totalUnread > 0 && (
                 <Badge className="bg-orange-500/15 text-orange-600 dark:text-orange-400 border border-orange-500/30 text-[10px] font-extrabold px-1.5 py-0.5">
-                  {unreadCount} new
+                  {totalUnread} new
                 </Badge>
               )}
             </div>
@@ -232,7 +250,7 @@ export default function NotificationCenter() {
           </div>
 
           {/* Filter Tabs */}
-          <div className="flex items-center gap-1 p-2 bg-muted/20 border-b border-border/50 text-xs">
+          <div className="flex flex-wrap items-center gap-1 p-2 bg-muted/20 border-b border-border/50 text-xs">
             <button
               type="button"
               onClick={() => setActiveTab("ALL")}
@@ -275,11 +293,63 @@ export default function NotificationCenter() {
               }
               )
             </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("UPDATES")}
+              data-testid="notif-tab-updates"
+              className={`px-3 py-1 rounded-lg font-bold transition-all flex items-center gap-1.5 ${
+                activeTab === "UPDATES"
+                  ? "bg-orange-500/15 text-orange-600 dark:text-orange-400 border border-orange-500/30 shadow-xs"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <Megaphone className="w-3 h-3" />
+              Updates ({updates.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("COMING_SOON")}
+              data-testid="notif-tab-coming-soon"
+              className={`px-3 py-1 rounded-lg font-bold transition-all flex items-center gap-1.5 ${
+                activeTab === "COMING_SOON"
+                  ? "bg-violet-500/15 text-violet-600 dark:text-violet-400 border border-violet-500/30 shadow-xs"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <Rocket className="w-3 h-3" />
+              Upcoming ({comingSoon.length})
+            </button>
           </div>
 
           {/* Notifications List */}
           <div className="flex-1 overflow-y-auto divide-y divide-border/40 max-h-[380px] p-1">
+            {activeTab === "UPDATES" || activeTab === "COMING_SOON" ? (
+              <BroadcastList
+                kind={activeTab}
+                rows={activeTab === "UPDATES" ? updates : comingSoon}
+                ctx={broadcasts}
+                onOpen={(b) => {
+                  setIsOpen(false);
+                  broadcasts.open(b.id);
+                }}
+              />
+            ) : (
+            <>
+            {activeTab === "ALL" && updates.length > 0 && (
+              <BroadcastList
+                kind="UPDATES"
+                compact
+                rows={updates.slice(0, 3)}
+                ctx={broadcasts}
+                onMore={updates.length > 3 ? () => setActiveTab("UPDATES") : null}
+                onOpen={(b) => {
+                  setIsOpen(false);
+                  broadcasts.open(b.id);
+                }}
+              />
+            )}
             {filteredNotifications.length === 0 ? (
+              activeTab === "ALL" && updates.length > 0 ? null : (
               <div className="py-12 px-4 text-center space-y-2">
                 <div className="w-10 h-10 rounded-full bg-muted/50 flex items-center justify-center mx-auto text-muted-foreground">
                   <Bell className="w-5 h-5 opacity-40" />
@@ -293,6 +363,7 @@ export default function NotificationCenter() {
                     : "You are completely caught up!"}
                 </p>
               </div>
+              )
             ) : (
               filteredNotifications.map((n) => {
                 const isRefill = n.type === "REFILL_REMINDER";
@@ -409,8 +480,112 @@ export default function NotificationCenter() {
                 );
               })
             )}
+            </>
+            )}
           </div>
         </div>
+      )}
+    </div>
+  );
+}
+
+// Admin broadcasts inside the panel. Updates can be cleared (and go by
+// themselves when they expire); coming-soon items stay until the feature ships.
+function BroadcastList({ kind, rows, ctx, onOpen, onMore, compact = false }) {
+  const isSoon = kind === "COMING_SOON";
+  const markSeen = ctx?.markSeen;
+  useEffect(() => {
+    rows.forEach((b) => !b.state.seen && markSeen?.(b.id));
+  }, [rows, markSeen]);
+
+  if (!rows.length) {
+    return (
+      <div className="py-12 px-4 text-center space-y-2">
+        <div className="w-10 h-10 rounded-full bg-muted/50 flex items-center justify-center mx-auto text-muted-foreground">
+          {isSoon ? <Rocket className="w-5 h-5 opacity-40" /> : <Megaphone className="w-5 h-5 opacity-40" />}
+        </div>
+        <p className="text-xs font-bold text-foreground">{isSoon ? "Nothing announced yet" : "No updates"}</p>
+        <p className="text-[11px] text-muted-foreground">{isSoon ? "Features we're building for you will show up here." : "News and offers from DavaDesk show up here."}</p>
+      </div>
+    );
+  }
+
+  if (isSoon) {
+    return (
+      <div className="space-y-2 p-1.5">
+        {rows.map((b) => (
+          <button
+            key={b.id}
+            type="button"
+            onClick={() => onOpen(b)}
+            className="relative w-full overflow-hidden rounded-xl p-3.5 text-left text-white shadow-sm transition-transform duration-200 hover:scale-[1.01]"
+            style={heroStyle(b.theme)}
+          >
+            <div className="flex items-start gap-3">
+              <span className="text-2xl leading-none">{b.emoji || "🚀"}</span>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5">
+                  <span className="rounded-full bg-white/20 px-2 py-0.5 text-[9px] font-black uppercase tracking-wider">Coming soon</span>
+                  {b.eta_label && <span className="text-[10px] font-bold opacity-90">{b.eta_label}</span>}
+                  {!b.state.opened && <span className="ml-auto h-2 w-2 rounded-full bg-white" />}
+                </div>
+                <p className="mt-1 text-[13px] font-extrabold leading-snug">{b.title}</p>
+                <p className="mt-0.5 line-clamp-2 text-[11px] font-medium opacity-90">{b.summary}</p>
+              </div>
+            </div>
+          </button>
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div className={compact ? "pb-1" : ""}>
+      {compact && <p className="px-3 pt-2 pb-1 text-[10px] font-black uppercase tracking-wider text-muted-foreground">From DavaDesk</p>}
+      {rows.map((b) => (
+        <div
+          key={b.id}
+          onClick={() => onOpen(b)}
+          className={`p-3 rounded-xl transition-all cursor-pointer group flex gap-3 ${!b.state.opened ? "bg-orange-500/[0.04] hover:bg-orange-500/[0.08]" : "hover:bg-muted/50"}`}
+          data-testid="broadcast-item"
+        >
+          <BroadcastThumb b={b} assetUrl={assetUrl} size={40} />
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center justify-between gap-2">
+              <h4 className="truncate text-xs font-extrabold text-foreground">{b.title}</h4>
+              {!b.state.opened && <span className="h-2 w-2 shrink-0 rounded-full bg-orange-500" />}
+            </div>
+            <p className="line-clamp-2 text-[11px] font-medium leading-relaxed text-muted-foreground">{b.summary}</p>
+            <div className="flex items-center justify-between gap-2 pt-1.5">
+              <span className="flex items-center gap-1.5 text-[10px] font-semibold text-muted-foreground">
+                <span className="rounded bg-muted px-1.5 py-0.5 font-bold text-foreground/80">{KIND_META[b.kind]?.short}</span>
+                {endsIn(b.expires_at)}
+              </span>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  ctx.clear(b.id);
+                }}
+                className="rounded p-1 text-muted-foreground transition-colors hover:text-destructive"
+                title="Clear"
+                data-testid="broadcast-clear"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </div>
+          </div>
+        </div>
+      ))}
+      {onMore && (
+        <button type="button" onClick={onMore} className="w-full px-3 py-1.5 text-left text-[11px] font-bold text-orange-600 hover:underline dark:text-orange-400">
+          See all updates
+        </button>
+      )}
+      {!compact && rows.length > 1 && (
+        <button type="button" onClick={ctx.clearAll} className="w-full px-3 py-2 text-center text-[11px] font-bold text-muted-foreground hover:text-destructive" data-testid="broadcast-clear-all">
+          Clear all updates
+        </button>
       )}
     </div>
   );

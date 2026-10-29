@@ -194,6 +194,9 @@ api.interceptors.response.use(
   }
 );
 
+// Broadcast images are public; the env picks the database they live in
+export const broadcastAssetUrl = (id) => `${getBaseUrl()}/broadcast-assets/${id}?env=${currentEnv}`;
+
 // Admin API Methods
 export const AdminAPI = {
   // Authentication & Session
@@ -237,6 +240,20 @@ export const AdminAPI = {
   getReviewQueue: (params) => api.get("/global-data/queue", { params }),
   dismissReview: (id, data) => api.post(`/global-data/queue/${id}/dismiss`, data),
   addReview: (id, data) => api.post(`/global-data/queue/${id}/add`, data),
+
+  // Broadcasts (notifications, offers, coming soon)
+  getBroadcasts: (params) => api.get("/broadcasts", { params }),
+  getBroadcast: (id) => api.get(`/broadcasts/${id}`),
+  createBroadcast: (data) => api.post("/broadcasts", data),
+  updateBroadcast: (id, data) => api.put(`/broadcasts/${id}`, data),
+  publishBroadcast: (id) => api.post(`/broadcasts/${id}/publish`),
+  archiveBroadcast: (id) => api.post(`/broadcasts/${id}/archive`),
+  duplicateBroadcast: (id) => api.post(`/broadcasts/${id}/duplicate`),
+  deleteBroadcast: (id) => api.delete(`/broadcasts/${id}`),
+  uploadBroadcastAsset: (data) => api.post("/broadcasts/assets", data, { timeout: 60000 }),
+  searchBroadcastAudience: (q) => api.get("/broadcasts/audience/search", { params: { q } }),
+  resolveBroadcastAudience: (data) => api.post("/broadcasts/audience/resolve", data),
+  countBroadcastAudience: (audience) => api.post("/broadcasts/audience/count", { audience }),
 
   // Leads CRM
   getLeads: (params) => api.get("/leads", { params }),

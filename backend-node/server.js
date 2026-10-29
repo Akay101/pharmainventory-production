@@ -112,6 +112,9 @@ connectMongo()
     require("./routes/support").ensureIndexes(mongoose.connection.db).catch((err) =>
       console.warn("[Indexes] support indexes failed:", err.message)
     );
+    require("./routes/broadcasts").ensureIndexes(mongoose.connection.db).catch((err) =>
+      console.warn("[Indexes] broadcast indexes failed:", err.message)
+    );
     require("./services/billShare").ensureIndexes(mongoose.connection.db).catch((err) =>
       console.warn("[Indexes] bill share indexes failed:", err.message)
     );
@@ -158,6 +161,7 @@ app.use("/api/expiry", require("./routes/expiry"));
 app.use("/api/returns", require("./routes/returns"));
 app.use("/api/reminders", require("./routes/reminders"));
 app.use("/api/notifications", require("./routes/notifications"));
+app.use("/api/broadcasts", require("./routes/broadcasts"));
 
 app.get("/api/plans", async (req, res, next) => {
   try {
