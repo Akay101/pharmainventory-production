@@ -47,7 +47,7 @@ function queueGlobalCheck(kind, pharmacyId, record) {
   try {
     const name = clean(record?.name);
     if (!KINDS.includes(kind) || !pharmacyId || !meaningful(name)) return;
-    const data = { kind, pharmacy_id: String(pharmacyId), record_id: record.id ? String(record.id) : null, name, details: detailsOf(kind, record) };
+    const data = { kind, pharmacy_id: String(pharmacyId), record_id: record.id ?? null, name, details: detailsOf(kind, record) };
     // Same record queued twice (retries, double submit) runs once
     const jobId = ["gr", kind, pharmacyId, record.id || normalizeText(name).replace(/\s+/g, "_")].join("-").slice(0, 200);
     // Short delay: records created inside a transaction are committed by then
