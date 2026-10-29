@@ -4,6 +4,13 @@ const { resolveDbEnv } = require("../db/connections");
 const { describe } = require("../services/billing/subscriptions");
 const { userJourney, pendingJourney } = require("../services/journey");
 const { offerIndex, SOURCE: OFFER_SOURCE } = require("../services/offerLeads");
+const crypto = require("crypto");
+const { z } = require("zod");
+const { requireSuperAdmin, requireSessionAdmin } = require("../middleware/auth");
+const { audit, actorOf, parseBody } = require("../services/audit");
+const W = require("../services/credits/wallet");
+const otp = require("../services/actionOtp");
+const offboard = require("../services/offboard");
 
 router.use(resolveDbEnv);
 
@@ -258,10 +265,137 @@ router.get("/:id", async (req, res, next) => {
       },
       pharmacy,
       owner,
+      credits: pharmacy
+        ? await db
+            .collection(W.WALLETS)
+            .findOne({ pharmacy_id: pharmacy.id }, { projection: { _id: 0, balance_milli: 1 } })
+            .then((w) => ({ balance: W.toCredits(w?.balance_milli || 0) }))
+        : null,
       ...(await userJourney(db, user)),
     });
   } catch (error) {
     next(error);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// AI credits for the user's pharmacy (the wallet is shared by its staff)
+
+const grantSchema = z.object({
+  credits: z.number().positive().max(1_000_000),
+  reason: z.string().trim().min(3, "Add a short reason").max(300),
+  // Client-made id: a double click or retry grants once
+  request_id: z.string().uuid().optional(),
+});
+
+// POST /api/users/:id/credits { credits, reason, request_id }
+router.post("/:id/credits", requireSuperAdmin, async (req, res, next) => {
+  try {
+    const data = parseBody(grantSchema, req, res);
+    if (!data) return;
+    const user = await req.db.collection("users").findOne({ id: String(req.params.id) }, { projection: { _id: 0, id: 1, name: 1, email: 1, pharmacy_id: 1 } });
+    if (!user) return res.status(404).json({ error: "User not found" });
+    if (!user.pharmacy_id) return res.status(400).json({ error: "This user has no pharmacy, so there is no credit wallet to add to." });
+    const pharmacy = await req.db.collection("pharmacies").findOne({ id: user.pharmacy_id }, { projection: { _id: 0, id: 1, name: 1 } });
+    if (!pharmacy) return res.status(404).json({ error: "Pharmacy not found" });
+    const r = await W.credit(req.db, pharmacy.id, {
+      milli: W.toMilli(data.credits),
+      type: "ADMIN_GRANT",
+      ref: `admin_grant:${data.request_id || crypto.randomUUID()}`,
+      userId: user.id,
+      actor: actorOf(req),
+      note: data.reason,
+    });
+    if (!r.duplicate) {
+      await audit(req, "CREDITS_GRANT", pharmacy.id, { credits: data.credits, reason: data.reason, user_id: user.id, user_email: user.email, via: "users" });
+    }
+    res.json({ ok: true, duplicate: !!r.duplicate, balance: W.toCredits(r.wallet?.balance_milli || 0), wallet: r.wallet ? W.view(r.wallet) : null });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Offboard: permanently delete a user (and, for an owner, the pharmacy).
+// preview -> emailed code to the admin -> delete with code + typed name.
+// The server rebuilds the plan at delete time; the client only names the user.
+
+const OFFBOARD = "OFFBOARD_USER";
+const userIdOf = (req) => {
+  const id = String(req.params.id || "");
+  return id && !id.startsWith("pending:") && id.length <= 100 ? id : null;
+};
+const sendErr = (res, err) => res.status(err.status).json({ error: err.message, ...(err.code ? { code: err.code } : {}), ...(err.attempts_left !== undefined ? { attempts_left: err.attempts_left } : {}), ...(err.wait_seconds ? { wait_seconds: err.wait_seconds } : {}) });
+
+// GET /api/users/:id/offboard/preview
+router.get("/:id/offboard/preview", requireSuperAdmin, requireSessionAdmin, async (req, res, next) => {
+  try {
+    const id = userIdOf(req);
+    if (!id) return res.status(400).json({ error: "Only registered users can be offboarded" });
+    const plan = await offboard.buildPlan(req.db, id);
+    if (!plan) return res.status(404).json({ error: "User not found" });
+    res.json({ env: req.dbEnv, ...offboard.publicPlan(plan), otp_ttl_minutes: otp.TTL_MS / 60000 });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/users/:id/offboard/otp: email a code to the signed-in admin
+router.post("/:id/offboard/otp", requireSuperAdmin, requireSessionAdmin, async (req, res, next) => {
+  try {
+    const id = userIdOf(req);
+    if (!id) return res.status(400).json({ error: "Only registered users can be offboarded" });
+    const user = await req.db.collection("users").findOne({ id }, { projection: { _id: 0, id: 1, email: 1 } });
+    if (!user) return res.status(404).json({ error: "User not found" });
+    const r = await otp.issue({ admin: req.adminUser, purpose: OFFBOARD, env: req.dbEnv, target: id, scenario: OFFBOARD });
+    await audit(req, "OFFBOARD_CODE_SENT", id, { user_email: user.email });
+    res.json({ ok: true, ...r });
+  } catch (err) {
+    if (err.expose) return sendErr(res, err);
+    next(err);
+  }
+});
+
+const offboardSchema = z.object({
+  challenge_id: z.string().min(10).max(100),
+  otp: z.string().trim().regex(/^\d{6}$/, "Enter the 6-digit code"),
+  confirm_name: z.string().trim().min(1, "Type the name to confirm").max(200),
+});
+
+// POST /api/users/:id/offboard { challenge_id, otp, confirm_name }
+router.post("/:id/offboard", requireSuperAdmin, requireSessionAdmin, async (req, res, next) => {
+  try {
+    const id = userIdOf(req);
+    if (!id) return res.status(400).json({ error: "Only registered users can be offboarded" });
+    const data = parseBody(offboardSchema, req, res);
+    if (!data) return;
+    const plan = await offboard.buildPlan(req.db, id);
+    if (!plan) return res.status(404).json({ error: "User not found" });
+    if (!offboard.sameName(data.confirm_name, plan.scope.confirmName)) {
+      return res.status(400).json({ error: `Type "${plan.scope.confirmName}" exactly to confirm.`, code: "CONFIRM_NAME_MISMATCH" });
+    }
+    try {
+      await otp.consume({ admin: req.adminUser, challengeId: data.challenge_id, code: data.otp, purpose: OFFBOARD, env: req.dbEnv, target: id });
+    } catch (err) {
+      if (!err.expose) throw err;
+      await audit(req, "OFFBOARD_CODE_REJECTED", id, { reason: err.code || err.message });
+      return sendErr(res, err);
+    }
+    const summary = offboard.publicPlan(plan);
+    const result = await offboard.execute(req.db, plan, actorOf(req));
+    await audit(req, "USER_OFFBOARDED", id, {
+      kind: summary.kind,
+      user: summary.user,
+      pharmacy: summary.pharmacy,
+      users: summary.users,
+      planned: summary.collections,
+      deleted: result.deleted,
+      total_deleted: result.total,
+      file_prefixes: summary.files,
+    });
+    res.json({ ok: true, kind: summary.kind, deleted: result.deleted, total: result.total });
+  } catch (err) {
+    next(err);
   }
 });
 

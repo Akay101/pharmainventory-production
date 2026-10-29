@@ -225,6 +225,18 @@ export const AdminAPI = {
   // Users
   getUsers: (params) => api.get("/users", { params }),
   getUser: (id) => api.get(`/users/${id}`),
+  grantUserCredits: (id, data) => api.post(`/users/${encodeURIComponent(id)}/credits`, data),
+  offboardPreview: (id) => api.get(`/users/${encodeURIComponent(id)}/offboard/preview`, { timeout: 60000 }),
+  offboardSendCode: (id) => api.post(`/users/${encodeURIComponent(id)}/offboard/otp`),
+  offboardUser: (id, data) => api.post(`/users/${encodeURIComponent(id)}/offboard`, data, { timeout: 120000 }),
+
+  // Global Data Manager (shared catalogues + review queue)
+  searchGlobal: (kind, params) => api.get(`/global-data/${kind}/search`, { params }),
+  createGlobal: (kind, data) => api.post(`/global-data/${kind}`, data),
+  updateGlobal: (kind, id, data) => api.put(`/global-data/${kind}/${id}`, data),
+  getReviewQueue: (params) => api.get("/global-data/queue", { params }),
+  dismissReview: (id, data) => api.post(`/global-data/queue/${id}/dismiss`, data),
+  addReview: (id, data) => api.post(`/global-data/queue/${id}/add`, data),
 
   // Leads CRM
   getLeads: (params) => api.get("/leads", { params }),

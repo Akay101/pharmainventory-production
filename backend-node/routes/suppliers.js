@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const mongoose = require("mongoose");
+const { queueGlobalCheck } = require("../services/globalReview");
 const { v4: uuidv4 } = require("uuid");
 const { auth } = require("../middleware/auth");
 const { logActivity } = require("../utils/activityLogger");
@@ -354,6 +355,7 @@ router.post("/ensure-global", auth, requireSubscription(), catalogLimiter, async
     };
 
     await db.collection("suppliers").insertOne(newSupplier);
+    if (!global_id) queueGlobalCheck("distributor", pharmacyId, newSupplier);
     await logActivity(
       db,
       pharmacyId,
@@ -394,6 +396,7 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
     };
 
     await db.collection("suppliers").insertOne(supplierData);
+    queueGlobalCheck("distributor", req.user.pharmacy_id, supplierData);
     const { _id, ...supplier } = supplierData;
     await logActivity(db, req.user.pharmacy_id, req.user.id, req.user.name, "CREATE", "SUPPLIERS", supplierId, `Added Supplier ${name}`, `/suppliers`);
 
