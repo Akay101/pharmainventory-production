@@ -10,9 +10,14 @@ const fs = require("fs");
 const path = require("path");
 const { auth } = require("../middleware/auth");
 const { normalizeName, normalizeExpiryDate } = require("../utils/helpers");
+const { parseMargin } = require("../utils/margin");
+const { h1Lines } = require("../utils/scheduleH1");
+const { lineNet, schemeFields } = require("../utils/purchaseLine");
 const { generatePurchasePDF } = require("../services/pdf");
 const { uploadToR2 } = require("../services/r2");
 const { logActivity } = require("../utils/activityLogger");
+const { identityGaps } = require("../utils/catalogDetails");
+const { looseNameRegex } = require("../services/search/normalize");
 const { requireSubscription } = require("../middleware/subscription");
 const {
   purchaseStockImpact,
@@ -100,7 +105,7 @@ router.post(
           matchForPurchase(db, req.user.pharmacy_id, {
             product_name: String(i?.product_name || ""),
             batch_no: String(i?.batch_no || ""),
-          })
+          }, { includeGlobal: true })
         )
       );
       res.json({ success: true, matches });
@@ -435,6 +440,14 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
 
     const total = await db.collection("purchases").countDocuments(query);
 
+    // Schedule H1 lines, worked out from today's catalog (marks can change)
+    await Promise.all(
+      purchases.map(async (p) => {
+        p.schedule_h1_items = await h1Lines(db, req.user.pharmacy_id, p.items || []);
+        p.has_schedule_h1 = p.schedule_h1_items.length > 0;
+      })
+    );
+
     res.json({
       purchases,
       pagination: {
@@ -447,6 +460,38 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
   } catch (error) {
     next(error);
   }
+});
+
+// Lines naming a product the catalog doesn't have, without the details to
+// create a proper entry. `known`: names already on the purchase being edited.
+async function uncatalogedLines(db, pharmacyId, items, known = new Set()) {
+  const names = [];
+  for (const item of items) {
+    if (!identityGaps(item).length) continue;
+    const name = String(item.product_name || "").trim();
+    if (known.has(name.toLowerCase())) continue;
+    const pId = item.selected_product_id || item.product_id;
+    const ids = pId !== undefined && pId !== null && pId !== "" ? [pId, String(pId)] : [];
+    const found = await db.collection("products").findOne(
+      {
+        pharmacy_id: pharmacyId,
+        $or: [
+          { id: { $in: ids } },
+          { product_id: { $in: ids } },
+          { name: looseNameRegex(name) },
+        ],
+      },
+      { projection: { _id: 1 } }
+    );
+    if (!found) names.push(name);
+  }
+  return names;
+}
+
+const catalogRequired = (names) => ({
+  code: "CATALOG_REQUIRED",
+  detail: `${names.join(", ")} ${names.length > 1 ? "are" : "is"} not in your Product Catalog. Add the manufacturer and salt first, or save as a draft and finish it on the Purchases page.`,
+  items: names,
 });
 
 // POST /api/purchases
@@ -645,6 +690,11 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
     const purchaseId = uuidv4();
     let totalAmount = 0;
     const processedItems = [];
+    // Lines that don't carry a margin field start from the supplier's default;
+    // a blank one ("") means no margin
+    const supplierMargin = parseMargin(
+      (localSup || createdSupplier)?.default_margin_percent
+    );
 
     if (items.some((it) => !String(it?.product_name || "").trim())) {
       await session.abortTransaction();
@@ -652,6 +702,13 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
       return res
         .status(400)
         .json({ detail: "Every item needs a product name" });
+    }
+
+    const notInCatalog = await uncatalogedLines(db, req.user.pharmacy_id, items);
+    if (notInCatalog.length) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(400).json(catalogRequired(notInCatalog));
     }
 
     for (const item of items) {
@@ -683,14 +740,7 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
         matchedProduct = await db.collection("products").findOne(
           {
             pharmacy_id: req.user.pharmacy_id,
-            name: {
-              $regex: new RegExp(
-                "^" +
-                  normalizedName.replace(/[-\/\\^$*+?.()|[\]{}]/g, "\\$&") +
-                  "$",
-                "i"
-              ),
-            },
+            name: looseNameRegex(normalizedName),
           },
           { session }
         );
@@ -765,7 +815,9 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
       const totalPacks = packQty + scheme;
       const totalUnits = totalPacks * unitsPerPack;
 
-      const netBasePrice = packQty * packPrice * (1 - discount / 100);
+      // Scheme discount (% or ₹) after the trade discount, before GST
+      const lineValue = lineNet(packQty, packPrice, discount, item);
+      const netBasePrice = lineValue.net;
       const cgst = parseFloat(item.cgst) || 0;
       const sgst = parseFloat(item.sgst) || 0;
       const itemTotal = netBasePrice * (1 + (cgst + sgst) / 100);
@@ -781,6 +833,10 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
             : 0;
 
       const normalizedExpiry = normalizeExpiryDate(item.expiry_date);
+      const marginPercent =
+        item.margin_percent === undefined
+          ? supplierMargin
+          : parseMargin(item.margin_percent);
 
       const processedItem = {
         product_id: resolvedProductId,
@@ -809,6 +865,9 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
         cgst: cgst,
         sgst: sgst,
         discount: discount,
+        ...schemeFields(item),
+        scheme_discount_amount: lineValue.schemeOff,
+        margin_percent: marginPercent,
         shortage_threshold:
           item.shortage_threshold !== undefined &&
           item.shortage_threshold !== null &&
@@ -847,6 +906,8 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
               sgst: sgst,
               discount: discount,
               scheme: scheme,
+              ...schemeFields(item),
+              margin_percent: marginPercent,
               shortage_threshold:
                 item.shortage_threshold !== undefined &&
                 item.shortage_threshold !== null &&
@@ -885,6 +946,9 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
             cgst: cgst,
             sgst: sgst,
             discount: discount,
+            scheme: scheme,
+            ...schemeFields(item),
+            margin_percent: marginPercent,
             purchase_id: purchaseId,
             supplier_id: resolvedSupplierId || null,
             shortage_threshold:
@@ -985,7 +1049,7 @@ const draftTotal = (items = []) =>
       const rate = parseFloat(i.pack_price) || 0;
       const disc = parseFloat(i.discount) || 0;
       const gst = (parseFloat(i.cgst) || 0) + (parseFloat(i.sgst) || 0);
-      return s + packs * rate * (1 - disc / 100) * (1 + gst / 100);
+      return s + lineNet(packs, rate, disc, i).net * (1 + gst / 100);
     }, 0) * 100
   ) / 100;
 const draftFields = (b) => ({
@@ -1160,6 +1224,18 @@ router.put(
       const pharmacyId = req.user.pharmacy_id;
       const updateInventory = req.query.update_inventory !== "false";
 
+      const notInCatalog = await uncatalogedLines(
+        db,
+        pharmacyId,
+        items,
+        new Set((purchase.items || []).map((i) => String(i.product_name || "").trim().toLowerCase()))
+      );
+      if (notInCatalog.length) {
+        await session.abortTransaction();
+        session.endSession();
+        return res.status(400).json(catalogRequired(notInCatalog));
+      }
+
       // Process new items
       let totalAmount = 0;
       const processedItems = [];
@@ -1193,12 +1269,7 @@ router.put(
           matchedProduct = await db.collection("products").findOne(
             {
               pharmacy_id: pharmacyId,
-              name: {
-                $regex: new RegExp(
-                  "^" + escapeRegex(normalizedName) + "$",
-                  "i"
-                ),
-              },
+              name: looseNameRegex(normalizedName),
             },
             { session }
           );
@@ -1266,7 +1337,16 @@ router.put(
         const totalPacks = packQty + scheme;
         const totalUnits = totalPacks * unitsPerPack;
 
-        const netBasePrice = packQty * packPrice * (1 - discount / 100);
+        // No margin / scheme discount field on the line: keep what the stored line had
+        const oldLine = (purchase.items || []).find(
+          (o) =>
+            o.batch_no === item.batch_no &&
+            String(o.product_name || "").toLowerCase() === normalizedName.toLowerCase()
+        );
+        const schemeSrc = item.scheme_discount === undefined && oldLine ? oldLine : item;
+
+        const lineValue = lineNet(packQty, packPrice, discount, schemeSrc);
+        const netBasePrice = lineValue.net;
         const cgst = parseFloat(item.cgst) || 0;
         const sgst = parseFloat(item.sgst) || 0;
         const itemTotal = netBasePrice * (1 + (cgst + sgst) / 100);
@@ -1280,9 +1360,16 @@ router.put(
               ? (packPrice * (1 - discount / 100) * (1 + (cgst + sgst) / 100)) /
                 unitsPerPack
               : 0;
+        const marginPercent =
+          item.margin_percent === undefined
+            ? parseMargin(oldLine?.margin_percent)
+            : parseMargin(item.margin_percent);
 
         processedItems.push({
           ...item,
+          ...schemeFields(schemeSrc),
+          scheme_discount_amount: lineValue.schemeOff,
+          margin_percent: marginPercent,
           product_id: resolvedProductId,
           product_name: normalizedName,
           expiry_date:
@@ -1397,6 +1484,9 @@ router.put(
             sgst: line.sgst,
             discount: line.discount,
             scheme: line.scheme,
+            scheme_discount: line.scheme_discount,
+            scheme_discount_type: line.scheme_discount_type,
+            margin_percent: line.margin_percent ?? null,
             updated_at: new Date().toISOString(),
           };
           if (line.expiry_date) set.expiry_date = line.expiry_date;
@@ -1638,7 +1728,19 @@ router.put(
           checkItemField("cgst", "cgst", "CGST", (v) => `${v}%`);
           checkItemField("sgst", "sgst", "SGST", (v) => `${v}%`);
           checkItemField("discount", "discount", "Discount", (v) => `${v}%`);
-          checkItemField("scheme", "scheme", "Scheme");
+          checkItemField("scheme", "scheme", "Free");
+          const schemeLabel = (it) =>
+            Number(it.scheme_discount) > 0
+              ? it.scheme_discount_type === "amount"
+                ? `₹${Number(it.scheme_discount).toFixed(2)}`
+                : `${Number(it.scheme_discount)}%`
+              : "";
+          if (schemeLabel(oldItem) !== schemeLabel(item)) {
+            changesList.push(`Scheme discount: ${schemeLabel(oldItem) || "none"} -> ${schemeLabel(item) || "none"}`);
+          }
+          checkItemField("margin_percent", "margin_percent", "Margin", (v) =>
+            v === null || v === undefined || v === "" ? "" : `${v}%`
+          );
           checkItemField(
             "shortage_threshold",
             "shortage_threshold",
@@ -2151,15 +2253,30 @@ router.post(
         return res.status(400).json({ detail: "No items provided" });
       }
 
+      const notInCatalog = await uncatalogedLines(db, req.user.pharmacy_id, items);
+      if (notInCatalog.length) {
+        await session.abortTransaction();
+        session.endSession();
+        return res.status(400).json(catalogRequired(notInCatalog));
+      }
+
       const purchaseId = uuidv4();
       let totalAmount = 0;
       const processedItems = [];
+      // Rows without a margin take the supplier's default; "" means none
+      const sup = supplier_id
+        ? await db.collection("suppliers").findOne({ pharmacy_id: req.user.pharmacy_id, id: supplier_id }, { session })
+        : null;
+      const supplierMargin = parseMargin(sup?.default_margin_percent);
 
       for (const item of items) {
         const packQty =
           parseInt(item.pack_quantity) || parseInt(item.quantity) || 1;
         const scheme = parseFloat(item.scheme) || 0;
-        const unitsPerPack = parseInt(item.units_per_pack) || 1;
+        // The CSV preview rows call it `units`
+        const unitsPerPack = parseInt(item.units_per_pack) || parseInt(item.units) || 1;
+        const marginPercent =
+          item.margin_percent === undefined ? supplierMargin : parseMargin(item.margin_percent);
         const packPrice =
           parseFloat(item.pack_price) ||
           parseFloat(item.rate_pack) ||
@@ -2172,7 +2289,8 @@ router.post(
         const totalUnits = totalPacks * unitsPerPack;
         const cgst = parseFloat(item.cgst) || 0;
         const sgst = parseFloat(item.sgst) || 0;
-        const netBasePrice = packQty * packPrice * (1 - discount / 100);
+        const lineValue = lineNet(packQty, packPrice, discount, item);
+        const netBasePrice = lineValue.net;
         const itemTotal = netBasePrice * (1 + (cgst + sgst) / 100);
         totalAmount += itemTotal;
         const pricePerUnit =
@@ -2208,6 +2326,12 @@ router.post(
           mrp_pack: mrpPack,
           mrp_per_unit: mrpPerUnit,
           item_total: itemTotal,
+          discount,
+          cgst,
+          sgst,
+          ...schemeFields(item),
+          scheme_discount_amount: lineValue.schemeOff,
+          margin_percent: marginPercent,
         };
 
         processedItems.push(processedItem);
@@ -2233,6 +2357,7 @@ router.post(
                 pack_type: item.pack_type || "Strip",
                 pack_price: packPrice,
                 mrp_pack: mrpPack,
+                margin_percent: marginPercent,
               },
             },
             { session }
@@ -2253,6 +2378,7 @@ router.post(
               mrp: mrpPerUnit,
               pack_price: packPrice,
               mrp_pack: mrpPack,
+              margin_percent: marginPercent,
               purchase_id: purchaseId,
               supplier_id: supplier_id,
               created_at: new Date().toISOString(),

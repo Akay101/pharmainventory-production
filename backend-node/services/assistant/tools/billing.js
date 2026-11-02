@@ -1,6 +1,8 @@
 // Billing agent tools
 const { v4: uuidv4 } = require("uuid");
 const { matchForBilling } = require("../../ai/inventoryMatch");
+const { marginPrice } = require("../../../utils/margin");
+const { h1Lines } = require("../../../utils/scheduleH1");
 const S = require("./shared");
 const L = require("./lookup");
 const { latinNames } = require("./names");
@@ -222,11 +224,14 @@ const tools = [
         let item = m.matched_item;
         if (it.inventory_id && item.available_batches?.length) {
           const b = item.available_batches.find((x) => x.id === it.inventory_id);
-          if (b) item = { ...item, inventory_id: b.id, batch_no: b.batch_no, expiry_date: b.expiry_date, available_quantity: b.available_quantity, mrp: b.mrp || item.mrp, purchase_price: b.purchase_price, cgst: b.cgst, sgst: b.sgst };
+          if (b) item = { ...item, inventory_id: b.id, batch_no: b.batch_no, expiry_date: b.expiry_date, available_quantity: b.available_quantity, mrp: b.mrp || item.mrp, purchase_price: b.purchase_price, margin_percent: b.margin_percent, cgst: b.cgst, sgst: b.sgst };
         }
         const upp = item.units_per_pack || 1;
         const qty = Math.max(1, Math.round((Number(it.quantity) || 1) * (it.unit === "packs" ? upp : 1)));
         const disc = Number(it.discount_percent) || 0;
+        const mrp = Number(item.mrp) || Number(it.mrp_per_unit) || 0;
+        // A batch bought with a margin sells at landed cost + margin (never above MRP)
+        const mp = item.inventory_id ? marginPrice({ mrp, purchase_price: item.purchase_price, margin_percent: item.margin_percent }) : { price: mrp, margin: null };
         return {
           input: it,
           inventory_id: item.inventory_id || null,
@@ -238,14 +243,17 @@ const tools = [
           batches: (item.available_batches || []).slice(0, 8).map((b) => ({ id: b.id, batch_no: b.batch_no, expiry_date: b.expiry_date, available: b.available_quantity })),
           units_per_pack: upp,
           quantity: qty,
-          mrp: Number(item.mrp) || Number(it.mrp_per_unit) || 0,
+          mrp,
+          price: mp.price,
+          margin_percent: mp.margin,
+          margin_capped: !!mp.capped,
           purchase_price: Number(item.purchase_price) || 0,
           cgst: item.cgst || 0,
           sgst: item.sgst || 0,
           discount_percent: disc,
           match_type: m.match_type,
           alternatives: m.alternatives,
-          total: round2(qty * (Number(item.mrp) || Number(it.mrp_per_unit) || 0) * (1 - disc / 100)),
+          total: round2(qty * mp.price * (1 - disc / 100)),
         };
       };
       draft.items = await S.mapLimit(lines, 6, matchLine);
@@ -253,6 +261,11 @@ const tools = [
       const subtotal = draft.items.reduce((s, i) => s + i.total, 0);
       draft.total = round2(subtotal * (1 - (draft.bill_discount_percent || 0) / 100));
       draft.warnings = [];
+      // Schedule H1 needs a prescription attached, which is done on the Billing page
+      draft.schedule_h1_items = await h1Lines(ctx.db, ctx.pharmacyId, draft.items);
+      if (draft.schedule_h1_items.length) {
+        draft.warnings.push(`Schedule H1 (${draft.schedule_h1_items.join(", ")}): attach the prescription, so this bill is finished on the Billing page`);
+      }
       draft.items.forEach((i, idx) => {
         const n = `${idx + 1}. ${i.product_name}`;
         if (!i.inventory_id) draft.warnings.push(`${n}: not in stock, will be billed as negative stock`);
@@ -265,10 +278,11 @@ const tools = [
         draft_id: draft.id,
         customer: draft.customer,
         customer_options: draft.customer_options.slice(0, 5),
-        items: draft.items.map((i) => ({ product: i.product_name, batch: i.batch_no, expiry: i.expiry_date, quantity_units: i.quantity, units_per_pack: i.units_per_pack, in_stock: i.available, mrp_per_unit: i.mrp, total: i.total, match: i.match_type, other_batches: i.batches, alternatives: i.alternatives })),
+        items: draft.items.map((i) => ({ product: i.product_name, batch: i.batch_no, expiry: i.expiry_date, quantity_units: i.quantity, units_per_pack: i.units_per_pack, in_stock: i.available, mrp_per_unit: i.mrp, ...(i.margin_percent != null ? { price_per_unit: i.price, margin_percent: i.margin_percent, capped_at_mrp: i.margin_capped } : {}), total: i.total, match: i.match_type, other_batches: i.batches, alternatives: i.alternatives })),
         total: draft.total,
         warnings: draft.warnings,
-        note: "Bill card with Save button is shown. Mention warnings briefly; for items not in stock you may suggest alternatives (inventory agent's find_alternatives is not available here, so just ask). Don't claim it's saved.",
+        ...(draft.schedule_h1_items.length ? { schedule_h1_items: draft.schedule_h1_items } : {}),
+        note: (draft.schedule_h1_items.length ? "This bill has Schedule H1 medicines: it can't be saved from chat. The card's button opens it on the Billing page, where the prescription must be attached before saving; tell the user that. " : "") + "Bill card with Save button is shown. Lines with margin_percent sell at the purchase margin price (price_per_unit), not MRP; capped_at_mrp means the margin price was above MRP so MRP is used. Mention warnings briefly; for items not in stock you may suggest alternatives (inventory agent's find_alternatives is not available here, so just ask). Don't claim it's saved.",
       };
     },
   },
@@ -333,6 +347,13 @@ const tools = [
   },
 ];
 
+// "₹11.00 (10% margin)", "₹12.00 (MRP, 50% margin capped)" or the MRP
+function rateLabel(i) {
+  const price = i.price ?? i.mrp;
+  if (i.margin_percent == null) return inr(price);
+  return `${inr(price)} (${i.margin_capped ? `MRP, ${i.margin_percent}% margin capped` : `${i.margin_percent}% margin`})`;
+}
+
 function billDraftBlock(d) {
   return {
     type: "draft",
@@ -345,25 +366,60 @@ function billDraftBlock(d) {
       { label: "Payment", value: d.payment_mode },
       ...(d.bill_discount_percent ? [{ label: "Bill discount", value: `${d.bill_discount_percent}%` }] : []),
     ],
-    columns: cols(["product", "Medicine"], ["batch", "Batch"], ["qty", "Qty", null, "right"], ["stock", "In stock", null, "right"], ["mrp", "MRP", "inr", "right"], ["total", "Amount", "inr", "right"]),
+    columns: cols(["product", "Medicine"], ["batch", "Batch"], ["qty", "Qty", null, "right"], ["stock", "In stock", null, "right"], ["mrp", "MRP", "inr", "right"], ["price", "Rate", null, "right"], ["total", "Amount", "inr", "right"]),
     rows: d.items.map((i) => ({
       product: i.product_name,
       batch: i.batch_no || "—",
       qty: i.units_per_pack > 1 && i.quantity % i.units_per_pack === 0 ? `${i.quantity / i.units_per_pack} pack (${i.quantity})` : i.quantity,
       stock: i.inventory_id ? i.available : "—",
       mrp: i.mrp,
+      price: rateLabel(i),
       total: i.total,
     })),
     totals: [{ label: "Total", value: d.total }],
     missing: d.warnings,
     actions: [
-      { label: "Save bill", style: "primary", action: { type: "commit", draft_id: d.id }, disabled: !d.items.length },
+      d.schedule_h1_items?.length
+        ? { label: "Open in Billing (attach prescription)", style: "primary", action: { type: "navigate", to: "/billing", state: billingHandOver(d) } }
+        : { label: "Save bill", style: "primary", action: { type: "commit", draft_id: d.id }, disabled: !d.items.length },
       { label: "Discard", style: "ghost", action: { type: "discard", draft_id: d.id } },
     ],
   };
 }
 
+// What the Billing page takes over (same shape as scanned bill lines)
+function billingHandOver(d) {
+  return {
+    scannedItems: d.items.map((i) => ({
+      inventory_id: i.inventory_id || "",
+      product_name: i.product_name,
+      salt_composition: i.salt_composition,
+      batch_no: i.batch_no,
+      expiry_date: i.expiry_date,
+      quantity: i.quantity,
+      available_quantity: i.available,
+      mrp: i.mrp,
+      purchase_price: i.purchase_price,
+      margin_percent: i.margin_percent ?? null,
+      cgst: i.cgst,
+      sgst: i.sgst,
+      units_per_pack: i.units_per_pack,
+    })),
+    customerDetails: {
+      customer_id: d.customer.id || null,
+      customer_name: d.customer.name,
+      customer_mobile: d.customer.mobile || "",
+      doctor: d.doctor || "",
+      payment_mode: d.payment_mode === "Credit" ? undefined : d.payment_mode,
+      is_paid: d.payment_mode !== "Credit",
+    },
+  };
+}
+
 async function commitBill(draft, ctx) {
+  if (draft.schedule_h1_items?.length) {
+    throw new Error(`${draft.schedule_h1_items.join(", ")}: Schedule H1, attach the prescription on the Billing page to save this bill.`);
+  }
   const credit = draft.payment_mode === "Credit";
   const res = await S.api(ctx, "POST", "/bills", {
     customer_id: draft.customer.id || null,
@@ -380,8 +436,10 @@ async function commitBill(draft, ctx) {
       batch_no: i.batch_no,
       expiry_date: i.expiry_date || null,
       quantity: i.quantity,
-      unit_price: i.mrp,
+      unit_price: i.price ?? i.mrp,
       purchase_price: i.purchase_price,
+      margin_percent: i.margin_percent ?? null,
+      margin_capped: !!i.margin_capped,
       discount_percent: i.discount_percent,
       cgst: i.cgst,
       sgst: i.sgst,

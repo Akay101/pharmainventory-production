@@ -6,6 +6,7 @@ const subscriptions = require("./billing/subscriptions");
 const orders = require("./billing/orders");
 const { sendSubscriptionEmail } = require("./email");
 const { deletePrefixFromR2 } = require("./r2");
+const prescriptions = require("./prescriptions");
 
 // Every job takes a Mongo lease so it runs on one container only, including
 // while old and new containers overlap during a deploy.
@@ -68,6 +69,14 @@ async function purgeOffboardedFiles(db) {
         errors.push(`${prefix}: ${err.message}`);
       }
     }
+    // A whole pharmacy going: its prescriptions are on S3, not R2
+    if (r.pharmacy_id && (r.prefixes || []).includes(`bills/${r.pharmacy_id}/`)) {
+      try {
+        files += await prescriptions.removePharmacyFiles(r.pharmacy_id);
+      } catch (err) {
+        errors.push(`prescriptions: ${err.message}`);
+      }
+    }
     const attempts = (r.attempts || 0) + 1;
     await db.collection("file_purge_requests").updateOne(
       { _id: r._id },
@@ -106,6 +115,14 @@ const startCronJobs = () => {
   );
 
   // Trial-ending reminders (hourly so the 24h window is never missed)
+  // Prescriptions uploaded but never saved with a bill
+  cron.schedule(
+    "25 * * * *",
+    job("purge-unlinked-prescriptions", 30 * 60 * 1000, async (db) => {
+      await prescriptions.purgeUnlinked(db);
+    })
+  );
+
   cron.schedule("5 * * * *", job("trial-reminders", 30 * 60 * 1000, remindEndingTrials));
 
   // Restock / refill due reminders (every 3 hours)

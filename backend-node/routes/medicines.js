@@ -6,6 +6,7 @@ const { auth } = require("../middleware/auth");
 const { requireSubscription } = require("../middleware/subscription");
 const { catalogLimiter, GLOBAL_MAX_PAGES } = require("../middleware/security");
 const { medicineKey } = require("../services/search/normalize");
+const { flagScheduleH1 } = require("../utils/scheduleH1");
 
 const {
   searchGlobalMedicines,
@@ -594,6 +595,7 @@ router.get("/search", auth, requireSubscription(), catalogLimiter, async (req, r
           short_composition2: "",
           active_ingredients: medSalt,
           prescription_required: med.prescription_required || false,
+          drug_schedule: med.drug_schedule || "",
           image_url: med.image_url || med.image || "",
           thumbnail_url: med.thumbnail_url || med.thumb_image || "",
           rank_score: med.rank_score || med.popularity_score || 0,
@@ -659,6 +661,7 @@ router.get("/search", auth, requireSubscription(), catalogLimiter, async (req, r
     const paginatedResults = rankedResults.slice(skip, skip + parsedLimit);
     const has_more = rankedResults.length > skip + parsedLimit;
 
+    await flagScheduleH1(db, pharmacyId, paginatedResults);
     const responsePayload = {
       medicines: paginatedResults,
       meta: {

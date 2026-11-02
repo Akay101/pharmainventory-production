@@ -4,15 +4,16 @@ import { toast } from "sonner";
 import { Crown, Repeat, Sparkles, Clock, UserPlus, Moon, Loader2, Settings2, Percent } from "lucide-react";
 import { API } from "../../App";
 import { Button } from "../ui/button";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../ui/tooltip";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../ui/dialog";
 
 // Customer tiers (worked out on the server from bills: services/customerTiers.js)
 export const TIER_META = {
-  PERMANENT: { label: "Permanent", icon: Crown, cls: "bg-violet-500/12 text-violet-600 dark:text-violet-300 border-violet-500/30", dot: "bg-violet-500", hint: "Comes in regularly" },
-  RUNNING: { label: "Running", icon: Repeat, cls: "bg-sky-500/12 text-sky-600 dark:text-sky-300 border-sky-500/30", dot: "bg-sky-500", hint: "Visits now and then" },
-  OCCASIONAL: { label: "Occasional", icon: Clock, cls: "bg-amber-500/12 text-amber-600 dark:text-amber-300 border-amber-500/30", dot: "bg-amber-500", hint: "Rare visits" },
-  NEW: { label: "New", icon: UserPlus, cls: "bg-emerald-500/12 text-emerald-600 dark:text-emerald-300 border-emerald-500/30", dot: "bg-emerald-500", hint: "First purchase recently" },
-  INACTIVE: { label: "Inactive", icon: Moon, cls: "bg-zinc-500/12 text-zinc-600 dark:text-zinc-300 border-zinc-500/30", dot: "bg-zinc-400", hint: "Hasn't come back in a while" },
+  PERMANENT: { label: "Permanent", icon: Crown, cls: "bg-violet-500/12 text-violet-600 dark:text-violet-300 border-violet-500/30", dot: "bg-violet-500", hint: "Comes in regularly", meaning: "A regular: has visited often in recent months." },
+  RUNNING: { label: "Running", icon: Repeat, cls: "bg-sky-500/12 text-sky-600 dark:text-sky-300 border-sky-500/30", dot: "bg-sky-500", hint: "Visits now and then", meaning: "Visits now and then: a few times in recent months." },
+  OCCASIONAL: { label: "Occasional", icon: Clock, cls: "bg-amber-500/12 text-amber-600 dark:text-amber-300 border-amber-500/30", dot: "bg-amber-500", hint: "Rare visits", meaning: "Rarely comes in: has bought before, but not often lately." },
+  NEW: { label: "New", icon: UserPlus, cls: "bg-emerald-500/12 text-emerald-600 dark:text-emerald-300 border-emerald-500/30", dot: "bg-emerald-500", hint: "First purchase recently", meaning: "New here: first purchase was recent, or none yet." },
+  INACTIVE: { label: "Inactive", icon: Moon, cls: "bg-zinc-500/12 text-zinc-600 dark:text-zinc-300 border-zinc-500/30", dot: "bg-zinc-400", hint: "Hasn't come back in a while", meaning: "Hasn't come back in a long while." },
 };
 export const TIER_ORDER = ["PERMANENT", "RUNNING", "OCCASIONAL", "NEW", "INACTIVE"];
 
@@ -26,22 +27,43 @@ export const visitLine = (c) => {
   return parts.join(" · ");
 };
 
-export function TierBadge({ customer, tier, compact = false }) {
+export function TierBadge({ customer, tier, compact = false, noPinned = false }) {
+  const [open, setOpen] = useState(false);
   const t = tier || customer?.tier;
   const meta = TIER_META[t];
   if (!meta) return null;
   const Icon = meta.icon;
+  const manual = customer?.tier_source === "manual";
+  const discount = Number(customer?.discount_percent) || 0;
   return (
-    <span
-      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide ${meta.cls}`}
-      title={`${meta.label} customer${customer?.tier_source === "manual" ? " (set by hand)" : ""}`}
-      data-testid="tier-badge"
-    >
-      <Icon className="h-3 w-3" />
-      {!compact && meta.label}
-      {customer?.tier_source === "manual" && !compact && <span className="opacity-60">·</span>}
-      {customer?.tier_source === "manual" && !compact && <span className="normal-case">pinned</span>}
-    </span>
+    <TooltipProvider delayDuration={150}>
+      <Tooltip open={open} onOpenChange={setOpen}>
+        <TooltipTrigger asChild>
+          <span
+            role="button"
+            tabIndex={-1}
+            aria-label={`${meta.label} customer. ${meta.meaning}`}
+            onClick={() => setOpen((v) => !v)}
+            className={`inline-flex shrink-0 cursor-help items-center gap-1 whitespace-nowrap rounded-full border px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide ${meta.cls}`}
+            data-testid="tier-badge"
+          >
+            <Icon className="h-3 w-3" />
+            {!compact && meta.label}
+            {manual && !compact && !noPinned && <span className="opacity-60">·</span>}
+            {manual && !compact && !noPinned && <span className="normal-case">pinned</span>}
+          </span>
+        </TooltipTrigger>
+        <TooltipContent side="bottom" className="z-[200] max-w-[260px] rounded-xl border border-border bg-popover p-3 text-left text-popover-foreground shadow-xl" data-testid="tier-tooltip">
+          <p className="text-xs font-bold">{meta.label} customer</p>
+          <p className="mt-1 text-xs font-medium leading-snug text-muted-foreground">{meta.meaning}</p>
+          {customer?.stats && <p className="mt-1.5 text-[11px] font-semibold text-foreground">{customer.stats.visits_total ? `${customer.stats.visits_total} visit${customer.stats.visits_total === 1 ? "" : "s"} · ` : ""}{visitLine(customer)}</p>}
+          {discount > 0 && <p className="mt-1 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">{discount}% discount on their bills</p>}
+          <p className="mt-1.5 border-t border-border pt-1.5 text-[10px] font-medium text-muted-foreground">
+            {manual ? "Pinned by hand, so it won't change on its own." : "Worked out from their bills. Rules are in Customers → Tier rules."}
+          </p>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   );
 }
 

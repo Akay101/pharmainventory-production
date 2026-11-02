@@ -1,3 +1,4 @@
+const { lineNet } = require("../utils/purchaseLine");
 const PDFDocument = require("pdfkit");
 
 const IST = "Asia/Kolkata";
@@ -1007,7 +1008,7 @@ const generatePurchasePDF = async (purchase, pharmacy) => {
           const discount = item.discount || 0;
           const cgst = item.cgst || 0;
           const sgst = item.sgst || 0;
-          const base = qty * price * (1 - discount / 100);
+          const base = lineNet(qty, price, discount, item).net;
           const tax = (base * (cgst + sgst)) / 100;
           totalBase += base;
           totalTax += tax;
@@ -1106,10 +1107,7 @@ const generatePurchasePDF = async (purchase, pharmacy) => {
           const totalCost =
             item.item_total !== undefined
               ? item.item_total
-              : packs *
-                price *
-                (1 - discount / 100) *
-                (1 + (cgst + sgst) / 100);
+              : lineNet(packs, price, discount, item).net * (1 + (cgst + sgst) / 100);
 
           const vals = [
             indexInPurchase + 1,

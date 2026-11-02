@@ -5,6 +5,7 @@ const { queueGlobalCheck } = require("../services/globalReview");
 const { v4: uuidv4 } = require("uuid");
 const { auth } = require("../middleware/auth");
 const { logActivity } = require("../utils/activityLogger");
+const { parseMargin } = require("../utils/margin");
 
 const { requireSubscription } = require("../middleware/subscription");
 const { catalogLimiter, GLOBAL_PAGE_SIZE, GLOBAL_MAX_PAGES, MIN_GLOBAL_QUERY } = require("../middleware/security");
@@ -124,7 +125,7 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
           // Pre-fetch all local suppliers for this pharmacy to accurately cross-reference and badge
           const allLocalSups = await db
             .collection("suppliers")
-            .find({ pharmacy_id: pharmacyId }, { projection: { id: 1, name: 1, gst_no: 1, gstin: 1, global_code: 1 } })
+            .find({ pharmacy_id: pharmacyId }, { projection: { id: 1, name: 1, gst_no: 1, gstin: 1, global_code: 1, default_margin_percent: 1 } })
             .toArray();
 
           const localCodeMap = new Map();
@@ -229,6 +230,7 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
                 city: gd.city || "",
                 state: gd.state || "",
                 address: loc,
+                default_margin_percent: matchedLocal.default_margin_percent ?? null,
                 source: "local",
                 is_local: true,
                 badge: "Your Supplier",
@@ -381,6 +383,10 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
   try {
     const { name, contact, email, address, gst_no, notes } = req.body;
     const db = mongoose.connection.db;
+    const defaultMargin = req.body.default_margin_percent;
+    if (defaultMargin !== undefined && defaultMargin !== null && defaultMargin !== "" && parseMargin(defaultMargin) === null) {
+      return res.status(400).json({ detail: "Default margin must be a number from 0 to 1000" });
+    }
 
     const supplierId = uuidv4();
     const supplierData = {
@@ -392,6 +398,7 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
       address: address || null,
       gst_no: gst_no || null,
       notes: notes || null,
+      default_margin_percent: parseMargin(defaultMargin),
       created_at: new Date().toISOString(),
     };
 
@@ -461,12 +468,21 @@ router.put(
     try {
       const { name, contact, email, address, gst_no, notes } = req.body;
       const db = mongoose.connection.db;
+      const set = { name, contact, email, address, gst_no, notes };
+      // Only touched when sent, so older clients don't wipe it
+      if (req.body.default_margin_percent !== undefined) {
+        const m = req.body.default_margin_percent;
+        if (m !== null && m !== "" && parseMargin(m) === null) {
+          return res.status(400).json({ detail: "Default margin must be a number from 0 to 1000" });
+        }
+        set.default_margin_percent = parseMargin(m);
+      }
 
       const result = await db
         .collection("suppliers")
         .updateOne(
           { id: req.params.supplier_id, pharmacy_id: req.user.pharmacy_id },
-          { $set: { name, contact, email, address, gst_no, notes } }
+          { $set: set }
         );
 
       if (result.matchedCount === 0) {
