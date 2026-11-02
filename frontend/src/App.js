@@ -1,3 +1,4 @@
+import { IS_DESKTOP } from "./lib/desktop";
 import { useState, useEffect, createContext, useContext } from "react";
 import {
   BrowserRouter,
@@ -113,6 +114,13 @@ export const refreshAccessToken = () => refreshSession();
 ["pharmalogy_token", "pharmalogy_refresh_token"].forEach((k) => localStorage.removeItem(k));
 
 let navigateGlobal = null;
+
+// Pages that need the cloud aren't part of the desktop app, including through shortcuts
+const DESKTOP_HIDDEN_PATHS = ["/assistant", "/scan", "/scan-bill", "/support", "/upgrade", "/login", "/register"];
+const DesktopRouteGuard = () => {
+  const { pathname } = useLocation();
+  return IS_DESKTOP && DESKTOP_HIDDEN_PATHS.includes(pathname) ? <Navigate to="/dashboard" replace /> : null;
+};
 
 const NavigationHandler = () => {
   const navigate = useNavigate();
@@ -426,6 +434,7 @@ function App() {
       </div> */}
       <BrowserRouter>
         <NavigationHandler />
+        <DesktopRouteGuard />
         <PageTitleHandler />
         <Routes>
           {/* Public Routes */}

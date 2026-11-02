@@ -1,0 +1,92 @@
+{
+  "name": "davadesk-desktop",
+  "productName": "DavaDesk",
+  "version": "0.1.0",
+  "description": "DavaDesk pharmacy software for your computer. Works without internet.",
+  "author": "DavaDesk",
+  "private": true,
+  "main": "main/main.js",
+  "dependencies": {
+    "axios": "^1.21.0",
+    "bcryptjs": "^2.4.3",
+    "better-sqlite3-multiple-ciphers": "13.0.3",
+    "express": "^4.22.3",
+    "express-rate-limit": "^8.7.2",
+    "jsonwebtoken": "^9.0.3",
+    "mingo": "7.2.7",
+    "multer": "^1.4.5-lts.1",
+    "pdfkit": "^0.14.0",
+    "qrcode": "^1.5.4",
+    "selfsigned": "5.5.0",
+    "uuid": "^9.0.1",
+    "zod": "^3.25.76"
+  },
+  "scripts": {
+    "prepare:backend": "node scripts/prepare-backend.js",
+    "prepare:web": "node scripts/prepare-web.js",
+    "prepare:all": "npm run prepare:backend && npm run prepare:web",
+    "start": "npm run prepare:backend && electron .",
+    "test:db": "ELECTRON_RUN_AS_NODE=1 electron --test test/docdb.test.js",
+    "test:api": "npm run prepare:backend && ELECTRON_RUN_AS_NODE=1 electron --test test/api.test.js",
+    "test": "npm run test:db && npm run test:api",
+    "dist:mac": "npm run prepare:all && electron-builder --mac --x64 --arm64",
+    "dist:win": "npm run prepare:all && electron-builder --win --x64",
+    "dist": "npm run prepare:all && electron-builder --mac --x64 --arm64 && electron-builder --win --x64"
+  },
+  "devDependencies": {
+    "@fontsource-variable/inter": "^5.3.0",
+    "@fontsource-variable/jetbrains-mono": "^5.3.0",
+    "@fontsource-variable/manrope": "^5.3.0",
+    "electron": "45.2.1",
+    "electron-builder": "26.18.0"
+  },
+  "build": {
+    "appId": "in.davadesk.desktop",
+    "productName": "DavaDesk",
+    "npmRebuild": false,
+    "asar": true,
+    "asarUnpack": [
+      "node_modules/better-sqlite3-multiple-ciphers/prebuilds/**"
+    ],
+    "directories": {
+      "output": "dist",
+      "buildResources": "resources"
+    },
+    "files": [
+      "main/**",
+      "server/**",
+      "backend/**",
+      "web/**",
+      "package.json",
+      "!**/.DS_Store",
+      "!node_modules/better-sqlite3-multiple-ciphers/deps/**",
+      "!node_modules/better-sqlite3-multiple-ciphers/src/**",
+      "!node_modules/better-sqlite3-multiple-ciphers/prebuilds/linux*"
+    ],
+    "artifactName": "DavaDesk-${version}-${os}-${arch}.${ext}",
+    "mac": {
+      "category": "public.app-category.business",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "identity": "-",
+      "hardenedRuntime": false
+    },
+    "dmg": {
+      "title": "DavaDesk"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "deleteAppDataOnUninstall": false,
+      "artifactName": "DavaDesk-${version}-Windows-Setup.${ext}"
+    }
+  }
+}

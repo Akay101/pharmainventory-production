@@ -1,3 +1,4 @@
+import { IS_DESKTOP } from "../lib/desktop";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
@@ -507,7 +508,7 @@ export default function DashboardPage() {
           <Button variant="outline" onClick={() => navigate("/purchases")} className="h-10 rounded-xl font-bold">
             <ShoppingCart className="w-4 h-4 mr-1.5 text-orange-500" /> Add purchase
           </Button>
-          <Button variant="outline" onClick={() => window.open("/scan", "_blank")} className="h-10 rounded-xl font-bold hidden sm:inline-flex">
+          <Button variant="outline" onClick={() => window.open("/scan", "_blank")} style={IS_DESKTOP ? { display: "none" } : undefined} className="h-10 rounded-xl font-bold hidden sm:inline-flex">
             <ScanLine className="w-4 h-4 mr-1.5 text-orange-500" /> Scan bill
           </Button>
           <Button

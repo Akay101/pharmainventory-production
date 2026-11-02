@@ -1,3 +1,4 @@
+import { IS_DESKTOP } from "../lib/desktop";
 import { useState, useEffect, useCallback, useRef, Fragment } from "react";
 import { useSearchParams, useLocation } from "react-router-dom";
 import { v4 as uuidv4 } from "uuid";
@@ -7063,6 +7064,7 @@ export default function PurchasesPage() {
                   className="h-8 text-xs font-bold rounded-xl bg-gradient-to-r from-orange-500/10 to-amber-500/10 border-orange-500/30 text-orange-600 dark:text-orange-400 hover:border-orange-500/50"
                   onClick={() => openScanner("/scan")}
                   data-testid="scan-products-btn"
+                  style={IS_DESKTOP ? { display: "none" } : undefined}
                 >
                   <Upload className="w-3.5 h-3.5 mr-1.5" />
                   Scan

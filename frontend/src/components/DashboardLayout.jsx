@@ -48,6 +48,7 @@ import {
 import RecentActivitySidebar from "./RecentActivitySidebar";
 import { formatCombo, isVisible } from "../lib/shortcuts";
 import { ShortcutProvider } from "./shortcuts/Shortcuts";
+import { IS_DESKTOP } from "../lib/desktop";
 import AssistantLauncher from "./assistant/AssistantLauncher";
 import PlanBadge from "./PlanBadge";
 import NotificationCenter from "./NotificationCenter";
@@ -141,6 +142,7 @@ function TakeTourItem() {
 
 // "AGENTIC Plan", or "AGENTIC Trial · 3d left" while on the free trial
 const planLabel = (user) => {
+  if (IS_DESKTOP) return "Desktop";
   const sub = user?.subscription;
   if (sub?.status === "TRIAL") return `${sub.plan} Trial · ${sub.days_left}d left`;
   if (user?.subscription_plan) return `${user.subscription_plan} Plan`;
@@ -161,12 +163,13 @@ export default function DashboardLayout() {
     return !document.documentElement.classList.contains("light");
   });
 
-  const filteredItems = navItems.filter((item) => !item.adminOnly || isAdmin);
+  const filteredItems = navItems.filter((item) => (!item.adminOnly || isAdmin) && !(IS_DESKTOP && item.path === "/support"));
   const topNavItems = useMemo(() => filteredItems.filter((item) => !item.menuOnly), [isAdmin]); // eslint-disable-line
 
   // Support replies not seen yet (badge in the user menu)
   const [supportUnread, setSupportUnread] = useState(0);
   useEffect(() => {
+    if (IS_DESKTOP) return undefined;
     let live = true;
     const check = () =>
       axios
@@ -390,7 +393,7 @@ export default function DashboardLayout() {
                   </div>
 
                   {/* Sheet Footer Logout */}
-                  <div className="border-t border-border/50 pt-4">
+                  <div className={`border-t border-border/50 pt-4 ${IS_DESKTOP ? "hidden" : ""}`}>
                     <Button
                       variant="outline"
                       onClick={() => {
@@ -443,7 +446,7 @@ export default function DashboardLayout() {
             {/* Right Controls Panel */}
             <div className="flex items-center gap-2.5 max-md:gap-1.5 shrink-0">
               {/* Phone: DavaDesk AI lives in the header instead of a floating bubble */}
-              <button
+              {!IS_DESKTOP && <button
                 type="button"
                 onClick={() => navigate("/assistant")}
                 aria-label="Open DavaDesk AI"
@@ -451,9 +454,9 @@ export default function DashboardLayout() {
                 className="md:hidden flex h-9 w-9 items-center justify-center rounded-xl border border-border/60 active:scale-95"
               >
                 <img src={AI_LOGO_SRC} alt="" className="h-7 w-7 rounded-full" />
-              </button>
+              </button>}
 
-              <HeaderCredits />
+              {!IS_DESKTOP && <HeaderCredits />}
 
               {/* Theme Toggle Button */}
               <Button
@@ -531,7 +534,7 @@ export default function DashboardLayout() {
                     <Settings className="w-4 h-4 mr-2.5 text-orange-500 group-hover:rotate-45 transition-transform duration-200" />
                     Settings
                   </DropdownMenuItem>
-                  <DropdownMenuItem
+                  {!IS_DESKTOP && <DropdownMenuItem
                     onClick={() => navigate("/support", { state: { from: location.pathname } })}
                     data-testid="support-dropdown"
                     className="cursor-pointer font-bold py-2 px-3 rounded-xl group hover:bg-orange-500/10 focus:bg-orange-500/10 text-foreground hover:text-orange-600 focus:text-orange-600 dark:hover:text-orange-400 dark:focus:text-orange-400 transition-colors"
@@ -543,8 +546,8 @@ export default function DashboardLayout() {
                         {supportUnread}
                       </span>
                     )}
-                  </DropdownMenuItem>
-                  <TakeTourItem />
+                  </DropdownMenuItem>}
+                  {!IS_DESKTOP && <TakeTourItem />}
                   {user?.subscription?.kind === "PROMO" && (
                     <DropdownMenuItem
                       onClick={() => navigate("/early-access/terms")}
@@ -554,15 +557,15 @@ export default function DashboardLayout() {
                       Early access terms
                     </DropdownMenuItem>
                   )}
-                  <DropdownMenuSeparator className="bg-border/50 my-1" />
-                  <DropdownMenuItem
+                  {!IS_DESKTOP && <DropdownMenuSeparator className="bg-border/50 my-1" />}
+                  {!IS_DESKTOP && <DropdownMenuItem
                     onClick={handleLogout}
                     data-testid="logout-btn"
                     className="text-destructive hover:bg-destructive/10 focus:bg-destructive/10 focus:text-destructive hover:text-destructive cursor-pointer font-bold py-2 px-3 rounded-xl group transition-colors"
                   >
                     <LogOut className="w-4 h-4 mr-2.5 text-destructive transition-transform group-hover:translate-x-0.5" />
                     Logout
-                  </DropdownMenuItem>
+                  </DropdownMenuItem>}
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>
@@ -625,9 +628,9 @@ export default function DashboardLayout() {
         />
 
         {/* DavaDesk AI launcher (phones use the header button) */}
-        <div className="max-md:hidden">
+        {!IS_DESKTOP && <div className="max-md:hidden">
           <AssistantLauncher />
-        </div>
+        </div>}
       </div>
     </BroadcastProvider>
     </TooltipProvider>

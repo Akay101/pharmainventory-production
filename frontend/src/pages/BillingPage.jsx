@@ -1,3 +1,4 @@
+import { IS_DESKTOP } from "../lib/desktop";
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useSearchParams, useLocation, useNavigate } from "react-router-dom";
 import { v4 as uuidv4 } from "uuid";
@@ -4257,6 +4258,7 @@ export default function BillingPage() {
                     size="sm"
                     onClick={() => setScannerModalOpen(true)}
                     data-testid="scan-for-bill-btn"
+                    style={IS_DESKTOP ? { display: "none" } : undefined}
                     className="h-9 px-4 border-amber-500/40 text-amber-600 dark:text-amber-400 bg-amber-500/10 hover:bg-amber-500/20 rounded-xl transition-all duration-200 shadow-2xs font-extrabold cursor-pointer"
                   >
                     <Camera className="h-4 w-4 mr-1.5" /> Scan for Bill
@@ -5731,6 +5733,7 @@ export default function BillingPage() {
                 className="h-9 text-xs font-bold rounded-xl bg-gradient-to-r from-amber-500/10 to-orange-500/10 border-amber-500/30 text-amber-600 dark:text-amber-400 hover:border-amber-500/50 cursor-pointer shadow-2xs"
                 onClick={() => openScanner("/scan-bill")}
                 data-testid="scan-bill-list-btn"
+                style={IS_DESKTOP ? { display: "none" } : undefined}
               >
                 <Camera className="w-4 h-4 mr-1.5 text-amber-500" />
                 <span>Scan for Bill</span>

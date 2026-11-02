@@ -1,3 +1,4 @@
+import { IS_DESKTOP, openCounters } from "../lib/desktop";
 import { useState, useRef, useEffect } from "react";
 import axios from "axios";
 import { API, useAuth } from "../App";
@@ -478,7 +479,7 @@ export default function SettingsPage() {
             <Sliders className="w-4 h-4 mr-2" />
             Preferences
           </TabsTrigger>
-          {isAdmin && (
+          {isAdmin && !IS_DESKTOP && (
             <TabsTrigger value="data">
               <Database className="w-4 h-4 mr-2" />
               Data Migration
@@ -941,6 +942,17 @@ export default function SettingsPage() {
         </TabsContent>
         {/* Preferences Tab */}
         <TabsContent value="preferences">
+          {IS_DESKTOP && (
+            <Card className="bg-card/50 backdrop-blur-sm border-white/5 mb-6" data-testid="desktop-counters-card">
+              <CardHeader>
+                <CardTitle>Counters and network</CardTitle>
+                <CardDescription>Optional. Connect other computers in the shop so all counters share the same stock and bills.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Button variant="outline" onClick={openCounters}>Set up counters</Button>
+              </CardContent>
+            </Card>
+          )}
           <Card className="bg-card/50 backdrop-blur-sm border-white/5">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
