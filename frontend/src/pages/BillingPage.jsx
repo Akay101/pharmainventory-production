@@ -98,6 +98,7 @@ import CustomerFilter from "../components/CustomerFilter";
 import BatchPicker from "../components/BatchPicker";
 import PlanBadge from "../components/PlanBadge";
 import { TierBadge } from "../components/customers/CustomerTiers";
+import ScheduleH1Badge, { H1_ROW_CLASS } from "../components/ScheduleH1Badge";
 import Loader from "../components/Loader";
 import BillingScannerModal from "../components/BillingScannerModal";
 import { formatDate, formatExpiry, formatExpiryInput, expiryToIso, openScanner } from "./utils";
@@ -107,6 +108,9 @@ import { useShortcuts, useShortcutLayer } from "../components/shortcuts/Shortcut
 import UpiQrDialog from "../components/UpiQr";
 import { useWhatsAppShare, WhatsAppIcon } from "../components/ShareBillWhatsApp";
 import { ItemQrScanDialog, findItemLabel, resolveItemLabel } from "../components/ItemQr";
+import { marginLine, marginApplied, marginLabel } from "../lib/margin";
+import { isScheduleH1, h1Names } from "../lib/scheduleH1";
+import PrescriptionAttach, { openPrescription } from "../components/billing/PrescriptionAttach";
 import { SuggestionList, ProductDetailsSheet, SUGGESTION_FILTERS, filterSuggestions } from "../components/billing/ProductSuggestions";
 
 const LOCAL_STORAGE_KEY_BILL = "pharmalogy_bill_draft";
@@ -190,6 +194,36 @@ const discountForTotal = (subtotal, target) => {
   return Number(exact.toFixed(6));
 };
 const fmtPct = (v) => Number((parseFloat(v) || 0).toFixed(2));
+
+
+// Under a line's price: the purchase margin that set it ("10% margin", amber
+// when cost + margin was above MRP). After a hand-typed price it offers the
+// margin price back.
+function MarginTag({ item, onRestore }) {
+  if (item.margin_percent === null || item.margin_percent === undefined || item.margin_price === null || item.margin_price === undefined) return null;
+  if (marginApplied(item)) {
+    return (
+      <div
+        data-testid="margin-tag"
+        title={item.margin_capped ? "Landed cost + margin is above MRP, so the price is capped at MRP" : "Price set from the margin entered on the purchase"}
+        className={`mt-0.5 text-[9px] font-bold leading-tight whitespace-nowrap ${item.margin_capped ? "text-amber-600 dark:text-amber-400" : "text-sky-600 dark:text-sky-400"}`}
+      >
+        {marginLabel(item)}
+      </div>
+    );
+  }
+  return (
+    <button
+      type="button"
+      tabIndex={-1}
+      onClick={onRestore}
+      className="mt-0.5 text-[9px] font-semibold leading-tight whitespace-nowrap text-muted-foreground hover:text-sky-600 underline-offset-2 hover:underline"
+      title={`Use the ${item.margin_percent}% margin price again`}
+    >
+      {item.margin_percent}% margin: ₹{Number(item.margin_price).toFixed(2)}
+    </button>
+  );
+}
 
 export default function BillingPage() {
   const location = useLocation();
@@ -308,6 +342,7 @@ export default function BillingPage() {
   // Customer search
   const [customerSearch, setCustomerSearch] = useState("");
   const [showCustomerSuggestions, setShowCustomerSuggestions] = useState(false);
+  const customerPickerByKeyboard = useRef(false);
 
   //grand total editing state
   const [grandTotalInput, setGrandTotalInput] = useState("");
@@ -362,6 +397,12 @@ export default function BillingPage() {
   const [drafts, setDrafts] = useState([]);
   const [draftsLoading, setDraftsLoading] = useState(false);
   const [pendingDraftId, setPendingDraftId] = useState(null);
+  // Prescription for Schedule H1 lines (new bill / bill being edited), and H1
+  // names the server reported that this page didn't know about
+  const [prescription, setPrescription] = useState(null);
+  const [rxServerNames, setRxServerNames] = useState([]);
+  const [editPrescription, setEditPrescription] = useState(null);
+  const [editRxServerNames, setEditRxServerNames] = useState([]);
   // Helper to extract batch count and nearest expiry among all batches
   const getNearestExpiryInfo = (invItem) => {
     const batches = invItem?.batches || [];
@@ -492,8 +533,10 @@ export default function BillingPage() {
 
       const newRows = scannedItems.map((item, idx) => {
         const qty = parseInt(item.quantity) || 1;
-        const mrp = parseFloat(item.mrp) || parseFloat(item.unit_price) || 0;
         const purchasePrice = parseFloat(item.purchase_price) || 0;
+        const mrpPrice = parseFloat(item.mrp) || parseFloat(item.unit_price) || 0;
+        const ml = marginLine({ mrp: mrpPrice, purchase_price: purchasePrice, margin_percent: item.inventory_id ? item.margin_percent : null });
+        const mrp = ml.unit_price;
         const cgstVal = parseFloat(item.cgst) || 0;
         const sgstVal = parseFloat(item.sgst) || 0;
         const exclPrice = mrp / (1 + (cgstVal + sgstVal) / 100);
@@ -511,9 +554,12 @@ export default function BillingPage() {
           available: avail,
           available_quantity: avail,
           unit_price: mrp,
+          margin_percent: ml.margin_percent,
+          margin_capped: ml.margin_capped,
+          margin_price: ml.margin_price,
           exclusive_price: exclPrice,
           net_total: qty * mrp,
-          mrp: mrp,
+          mrp: mrpPrice,
           purchase_price: purchasePrice,
           discount_percent: 0,
           cgst: item.cgst || 0,
@@ -708,7 +754,9 @@ export default function BillingPage() {
   }, [activeCustomerSuggestionIndex, showCustomerSuggestions]);
 
   useEffect(() => {
-    setActiveCustomerSuggestionIndex(-1);
+    // Opened by saving without a customer: first one ready for Enter
+    setActiveCustomerSuggestionIndex(customerPickerByKeyboard.current && customerSuggestions.length ? 0 : -1);
+    if (customerSuggestions.length) customerPickerByKeyboard.current = false;
   }, [customerSuggestions, showCustomerSuggestions]);
 
   // Default payment mode settings synchronization
@@ -1341,16 +1389,9 @@ export default function BillingPage() {
 
   // Server-side customer search with instant cache & infinite scroll
   useEffect(() => {
+    if (!showCustomerSuggestions) return;
+    // Nothing typed: the customers list itself, like the supplier dropdown
     const trimmed = (customerSearch || "").trim();
-    if (trimmed.length < 1) {
-      if (custAbortRef.current) {
-        custAbortRef.current.abort();
-      }
-      setCustomerSuggestions([]);
-      setHasMoreCustomerSuggestions(false);
-      setCustomerSuggestionPage(1);
-      return;
-    }
 
     const cacheKey = trimmed.toLowerCase();
     // ⚡ Instant Cache Hit (0ms)
@@ -1396,7 +1437,7 @@ export default function BillingPage() {
 
     const debounce = setTimeout(searchCustomers, 120);
     return () => clearTimeout(debounce);
-  }, [customerSearch]);
+  }, [customerSearch, showCustomerSuggestions]);
 
   // Fetch real-time stats for the selected customer
   useEffect(() => {
@@ -1607,6 +1648,8 @@ export default function BillingPage() {
     setPaymentMode("");
     setNewItemRow(null);
     setRefillReminder((prev) => ({ ...prev, enabled: false, refill_target_date: "", reminder_date: "", notes: "", selected_items: [], mode: "auto", doses: {}, lead: null }));
+    setPrescription(null);
+    setRxServerNames([]);
     clearDraft();
   };
 
@@ -1657,7 +1700,7 @@ export default function BillingPage() {
         if (item.id !== itemId) return item;
 
         const qty = parseInt(item.quantity) || 1;
-        const unitPrice =
+        const mrpPrice =
           defaultBatch.mrp_per_unit ||
           defaultBatch.mrp ||
           inventoryItem.mrp_per_unit ||
@@ -1668,6 +1711,13 @@ export default function BillingPage() {
           defaultBatch.purchase_price ||
           inventoryItem.purchase_price ||
           0;
+        // A batch bought with a margin sells at cost + margin (capped at MRP)
+        const ml = marginLine({
+          mrp: mrpPrice,
+          purchase_price: purchasePrice,
+          margin_percent: isGlobalOrEmpty ? null : defaultBatch.margin_percent,
+        });
+        const unitPrice = ml.unit_price;
         const cgstVal =
           defaultBatch.cgst !== undefined
             ? Math.max(0, parseFloat(defaultBatch.cgst) || 0)
@@ -1687,9 +1737,13 @@ export default function BillingPage() {
           inventory_id: isGlobalOrEmpty ? null : defaultBatch.id,
           product_name: inventoryItem.product_name || inventoryItem.name,
           salt_composition: inventoryItem.salt_composition || "",
+          schedule_h1: inventoryItem.schedule_h1,
           batch_no: isGlobalOrEmpty ? "" : defaultBatch.batch_no || "",
           expiry_date: isGlobalOrEmpty ? "" : defaultBatch.expiry_date || "",
           unit_price: unitPrice,
+          margin_percent: ml.margin_percent,
+          margin_capped: ml.margin_capped,
+          margin_price: ml.margin_price,
           exclusive_price: exclPrice,
           net_total: netTotal,
           purchase_price: purchasePrice,
@@ -1732,6 +1786,8 @@ export default function BillingPage() {
           expiry_date: "",
           unit_price: 0,
           purchase_price: 0,
+          margin_percent: null,
+          margin_price: null,
         };
       })
     );
@@ -1875,7 +1931,8 @@ export default function BillingPage() {
   const handleSelectInventoryItem = (item) => {
     const cgstVal = item.cgst !== undefined ? Math.max(0, parseFloat(item.cgst) || 0) : 0;
     const sgstVal = item.sgst !== undefined ? Math.max(0, parseFloat(item.sgst) || 0) : 0;
-    const unitPrice = item.mrp_per_unit || item.mrp || 0;
+    const ml = marginLine(item);
+    const unitPrice = ml.unit_price;
     const exclPrice = unitPrice / (1 + (cgstVal + sgstVal) / 100);
 
     setNewItemRow({
@@ -1886,6 +1943,9 @@ export default function BillingPage() {
       batch_no: item.batch_no,
       expiry_date: item.expiry_date || "",
       unit_price: unitPrice,
+      margin_percent: ml.margin_percent,
+      margin_capped: ml.margin_capped,
+      margin_price: ml.margin_price,
       exclusive_price: exclPrice,
       purchase_price: item.cost_per_unit || item.purchase_price || 0,
       available: item.available_quantity || item.available_units || 0,
@@ -2120,9 +2180,35 @@ export default function BillingPage() {
     }
   };
 
+  // Saving without a customer: same as the supplier on a purchase, the list opens
+  const openCustomerPicker = () => {
+    const input = document.querySelector('[data-testid="customer-search"]');
+    setShowInventorySuggestions(false);
+    input?.scrollIntoView({ block: "nearest" });
+    input?.focus({ preventScroll: true });
+    setShowCustomerSuggestions(true);
+    customerPickerByKeyboard.current = true;
+  };
+
+  // Bottom row of the customer list: the name typed, or walk-in when nothing is
+  const pickTypedCustomer = () => {
+    const name = customerSearch.trim() ? customerSearch : "Walk-in";
+    setCustomerSearch(name);
+    setCustomerInfo((prev) => ({ ...prev, customer_id: "", customer_name: name }));
+    setShowCustomerSuggestions(false);
+    setSelectedCustomerStats(null);
+    setTimeout(() => document.querySelector('[data-testid="customer-mobile"]')?.focus(), 50);
+  };
+
   const handleSubmitBill = async (force = false) => {
-    if (!customerInfo.customer_name || !customerInfo.customer_mobile) {
-      toast.error("Please enter customer name and mobile");
+    if (!customerInfo.customer_name) {
+      toast.error("Please select a customer", { description: "Pick one with ↑/↓ and Enter, or type a new name" });
+      openCustomerPicker();
+      return;
+    }
+    if (!customerInfo.customer_mobile) {
+      toast.error("Please enter the customer's mobile");
+      document.querySelector('[data-testid="customer-mobile"]')?.focus();
       return;
     }
 
@@ -2152,6 +2238,12 @@ export default function BillingPage() {
       (item) => !item.unit_price || parseFloat(item.unit_price) === 0
     );
 
+    if (newBillH1.length && !prescription) {
+      toast.error(`Attach the prescription: ${newBillH1.join(", ")} ${newBillH1.length > 1 ? "are" : "is"} Schedule H1`);
+      document.getElementById("rx-attach-new")?.focus();
+      return;
+    }
+
     if (hasEmptyMrp && force !== true) {
       setIsEditModeWarning(false);
       setShowMrpWarning(true);
@@ -2161,6 +2253,7 @@ export default function BillingPage() {
     setSubmitting(true);
     try {
       const response = await axios.post(`${API}/bills`, {
+        prescription_id: prescription?.id || null,
         customer_id: customerInfo.customer_id || null,
         customer_name: customerInfo.customer_name,
         customer_mobile: customerInfo.customer_mobile,
@@ -2186,6 +2279,8 @@ export default function BillingPage() {
             quantity: parseInt(item.quantity) || 1,
             unit_price: parseFloat(item.unit_price) || 0,
             purchase_price: parseFloat(item.purchase_price) || 0,
+            // The margin that priced the line, unless the price was changed by hand
+            ...(marginApplied(item) ? { margin_percent: item.margin_percent, margin_capped: !!item.margin_capped } : {}),
             discount_percent: parseFloat(item.discount_percent) || 0,
             cgst: parseFloat(item.cgst) || 0,
             sgst: parseFloat(item.sgst) || 0,
@@ -2226,11 +2321,17 @@ export default function BillingPage() {
 
       toast.success(`Bill ${response.data.bill?.bill_no || response.data.bill_no} created successfully`);
       setPendingDraftId(null);
+      setPrescription(null);
+      setRxServerNames([]);
       fetchDrafts();
 
       setPdfConfirmDialog({ open: true, billId: response.data.bill?.id || response.data.id });
     } catch (error) {
       toast.error(error.response?.data?.detail || "Failed to create bill");
+      if (error.response?.data?.code === "PRESCRIPTION_REQUIRED") {
+        setRxServerNames(error.response.data.schedule_h1_items || []);
+        setTimeout(() => document.getElementById("rx-attach-new")?.focus(), 50);
+      }
     } finally {
       setSubmitting(false);
     }
@@ -2254,6 +2355,8 @@ export default function BillingPage() {
       billing_date: bill.billing_date || bill.created_at?.slice(0, 10),
       doctor: bill.doctor || "",
     });
+    setEditPrescription(bill.prescription || null);
+    setEditRxServerNames(bill.schedule_h1_items || []);
 
     // The bill's own lines show at once; each line's batches (for the batch
     // picker and stock) load in the background and fill in when they arrive
@@ -2276,6 +2379,10 @@ export default function BillingPage() {
         expiry_date: item.expiry_date || "",
         quantity: qty,
         unit_price: unitPrice,
+        // Saved margin lines keep their price; the badge stays while it's unchanged
+        margin_percent: item.margin_percent ?? null,
+        margin_capped: !!item.margin_capped,
+        margin_price: item.margin_percent !== undefined && item.margin_percent !== null ? unitPrice : null,
         exclusive_price: exclPrice,
         net_total: netTotal,
         purchase_price: item.purchase_price || 0,
@@ -2430,7 +2537,7 @@ export default function BillingPage() {
         if (item.id !== itemId) return item;
 
         const qty = parseInt(item.quantity) || 1;
-        const unitPrice =
+        const mrpPrice =
           defaultBatch.mrp_per_unit ||
           defaultBatch.mrp ||
           inventoryItem.mrp_per_unit ||
@@ -2441,6 +2548,13 @@ export default function BillingPage() {
           defaultBatch.purchase_price ||
           inventoryItem.purchase_price ||
           0;
+        // A batch bought with a margin sells at cost + margin (capped at MRP)
+        const ml = marginLine({
+          mrp: mrpPrice,
+          purchase_price: purchasePrice,
+          margin_percent: isGlobalOrEmpty ? null : defaultBatch.margin_percent,
+        });
+        const unitPrice = ml.unit_price;
         const cgstVal =
           defaultBatch.cgst !== undefined
             ? Math.max(0, parseFloat(defaultBatch.cgst) || 0)
@@ -2460,9 +2574,13 @@ export default function BillingPage() {
           inventory_id: isGlobalOrEmpty ? null : defaultBatch.id,
           product_name: inventoryItem.product_name || inventoryItem.name,
           salt_composition: inventoryItem.salt_composition || "",
+          schedule_h1: inventoryItem.schedule_h1,
           batch_no: isGlobalOrEmpty ? "" : defaultBatch.batch_no || "",
           expiry_date: isGlobalOrEmpty ? "" : defaultBatch.expiry_date || "",
           unit_price: unitPrice,
+          margin_percent: ml.margin_percent,
+          margin_capped: ml.margin_capped,
+          margin_price: ml.margin_price,
           exclusive_price: exclPrice,
           net_total: netTotal,
           purchase_price: purchasePrice,
@@ -2503,6 +2621,8 @@ export default function BillingPage() {
           available: 0,
           batch_no: "",
           expiry_date: "",
+          margin_percent: null,
+          margin_price: null,
         };
       })
     );
@@ -2579,10 +2699,16 @@ export default function BillingPage() {
       toast.error(`Paid now can't be more than the bill total ₹${editGrandTotal.toFixed(2)}. Mark it Paid instead.`);
       return;
     }
+    if (editBillH1.length && !editPrescription) {
+      toast.error(`Attach the prescription: ${editBillH1.join(", ")} ${editBillH1.length > 1 ? "are" : "is"} Schedule H1`);
+      document.getElementById("rx-attach-edit")?.focus();
+      return;
+    }
 
     setSubmitting(true);
     try {
       const response = await axios.put(`${API}/bills/${editingBillId}`, {
+        prescription_id: editPrescription?.id || null,
         customer_id: editingBillData.customer_id || null,
         customer_name: editingBillData.customer_name,
         customer_mobile: editingBillData.customer_mobile,
@@ -2609,6 +2735,8 @@ export default function BillingPage() {
             quantity: parseInt(item.quantity) || 1,
             unit_price: parseFloat(item.unit_price) || 0,
             purchase_price: parseFloat(item.purchase_price) || 0,
+            // The margin that priced the line, unless the price was changed by hand
+            ...(marginApplied(item) ? { margin_percent: item.margin_percent, margin_capped: !!item.margin_capped } : {}),
             discount_percent: parseFloat(item.discount_percent) || 0,
             cgst: parseFloat(item.cgst) || 0,
             sgst: parseFloat(item.sgst) || 0,
@@ -2629,6 +2757,10 @@ export default function BillingPage() {
       fetchData();
     } catch (error) {
       toast.error(error.response?.data?.detail || "Failed to update bill");
+      if (error.response?.data?.code === "PRESCRIPTION_REQUIRED") {
+        setEditRxServerNames(error.response.data.schedule_h1_items || []);
+        setTimeout(() => document.getElementById("rx-attach-edit")?.focus(), 50);
+      }
     } finally {
       setSubmitting(false);
     }
@@ -2867,6 +2999,9 @@ export default function BillingPage() {
   }, 0);
   const discountAmount = subtotal * ((parseFloat(billDiscount) || 0) / 100);
   const grandTotal = subtotal - discountAmount;
+  // Schedule H1 lines of the new bill / the bill being edited
+  const newBillH1 = [...new Set([...h1Names(billItems), ...rxServerNames.filter((n) => billItems.some((r) => r.product_name === n))])];
+  const editBillH1 = [...new Set([...h1Names(editingBillItems), ...editRxServerNames.filter((n) => editingBillItems.some((r) => r.product_name === n))])];
 
   useEffect(() => {
     if (!isEditingGrandTotal) {
@@ -3208,6 +3343,9 @@ export default function BillingPage() {
                                                   </TableCell>
                                                   <TableCell className="text-right text-xs py-1.5 font-mono text-amber-600 dark:text-amber-400 bg-amber-500/5 dark:bg-amber-500/10 font-bold">
                                                     ₹{unitPrice.toFixed(2)}
+                                                    {item.margin_percent !== undefined && item.margin_percent !== null && (
+                                                      <div className={`text-[9px] font-bold font-sans ${item.margin_capped ? "text-amber-600 dark:text-amber-400" : "text-sky-600 dark:text-sky-400"}`}>{marginLabel(item)}</div>
+                                                    )}
                                                   </TableCell>
                                                   <TableCell className="text-center text-xs py-1.5 font-mono">
                                                     {discPercent}%
@@ -3301,7 +3439,7 @@ export default function BillingPage() {
                 <Label className="flex items-center justify-between text-[11px] font-extrabold text-foreground/80">
                   <span className="flex items-center gap-1">
                     Customer Name *
-                    {pickedCustomerTier && pickedCustomerTier.id === customerInfo.customer_id && <TierBadge customer={pickedCustomerTier} />}
+                    {pickedCustomerTier && pickedCustomerTier.id === customerInfo.customer_id && <TierBadge customer={pickedCustomerTier} noPinned />}
                   </span>
                   {customerInfo.customer_id && (
                     <Button
@@ -3315,8 +3453,9 @@ export default function BillingPage() {
                     </Button>
                   )}
                 </Label>
-                <Input
-                  placeholder="Search existing customer..."
+<div className="relative">
+                                <Input
+                  placeholder="Select customer"
                   value={customerSearch}
                   onChange={(e) => {
                     const val = e.target.value;
@@ -3329,6 +3468,7 @@ export default function BillingPage() {
                     setShowCustomerSuggestions(true);
                   }}
                   onFocus={() => setShowCustomerSuggestions(true)}
+                  onClick={() => setShowCustomerSuggestions(true)}
                   onBlur={() =>
                     setTimeout(() => setShowCustomerSuggestions(false), 200)
                   }
@@ -3363,25 +3503,22 @@ export default function BillingPage() {
                         handleSelectCustomer(customerSuggestions[activeCustomerSuggestionIndex]);
                       } else if (activeCustomerSuggestionIndex === customerSuggestions.length) {
                         e.preventDefault();
-                        setCustomerInfo((prev) => ({
-                          ...prev,
-                          customer_id: "",
-                          customer_name: customerSearch,
-                        }));
-                        setShowCustomerSuggestions(false);
-                        setSelectedCustomerStats(null);
+                        pickTypedCustomer();
                       }
                     } else if (e.key === "Escape") {
                       setShowCustomerSuggestions(false);
                     }
                   }}
-                  className="h-9 text-xs font-semibold rounded-xl border-border bg-background text-foreground shadow-2xs focus-visible:ring-2 focus-visible:ring-primary/30 focus-visible:border-primary"
+                  className="h-9 pr-8 text-xs font-semibold rounded-xl border-border bg-background text-foreground shadow-2xs focus-visible:ring-2 focus-visible:ring-primary/30 focus-visible:border-primary"
                   data-testid="customer-search"
                 />
-                {showCustomerSuggestions && customerSearch && (
+                <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+                </div>
+                {showCustomerSuggestions && (
                   <div
                     onScroll={handleScrollCustomerSuggestions}
-                    className="absolute z-[100] w-full mt-1 bg-card/95 backdrop-blur-md border border-border shadow-xl rounded-xl max-h-48 overflow-y-auto top-full overflow-x-hidden transition-all duration-150 animate-in fade-in slide-in-from-top-2"
+                    data-testid="customer-dropdown"
+                    className="absolute z-[100] w-full min-w-[280px] mt-1 bg-card/95 backdrop-blur-md border border-border shadow-xl rounded-xl max-h-64 overflow-y-auto top-full overflow-x-hidden transition-all duration-150 animate-in fade-in slide-in-from-top-2"
                   >
                     {customerSuggestions.map((customer, idx) => (
                       <div
@@ -3394,7 +3531,10 @@ export default function BillingPage() {
                         }`}
                         onMouseDown={() => handleSelectCustomer(customer)}
                       >
-                        <p className="font-semibold text-sm">{customer.name}</p>
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="font-semibold text-sm truncate">{customer.name}</p>
+                          <TierBadge customer={customer} noPinned />
+                        </div>
                         <p className="text-xs text-muted-foreground mt-0.5">
                           {customer.mobile}
                         </p>
@@ -3412,18 +3552,10 @@ export default function BillingPage() {
                           ? "bg-primary/20"
                           : "bg-card/95 hover:bg-primary/10"
                       }`}
-                      onMouseDown={() => {
-                        setCustomerInfo((prev) => ({
-                          ...prev,
-                          customer_id: "",
-                          customer_name: customerSearch,
-                        }));
-                        setShowCustomerSuggestions(false);
-                        setSelectedCustomerStats(null);
-                      }}
+                      onMouseDown={pickTypedCustomer}
                     >
-                      <span className="flex items-center gap-1">
-                        <Plus className="w-3.5 h-3.5" /> New Customer "{customerSearch}"
+                      <span className="flex items-center gap-1 min-w-0 truncate">
+                        <Plus className="w-3.5 h-3.5 shrink-0" /> {customerSearch ? `New Customer "${customerSearch}"` : "Walk-in customer"}
                       </span>
                     </div>
                   </div>
@@ -3455,7 +3587,7 @@ export default function BillingPage() {
                 </Label>
                 <Input
                   type="email"
-                  placeholder="customer@email.com"
+                  placeholder="Optional"
                   value={customerInfo.customer_email}
                   onChange={(e) =>
                     setCustomerInfo({
@@ -3725,6 +3857,7 @@ export default function BillingPage() {
                             data-testid={`item-product-${index}`}
                             autoComplete="off"
                           />
+                          {item.product_name && isScheduleH1(item) && <ScheduleH1Badge label="H1 · Rx" className="mt-1" />}
                           {/* Search Suggestions Dropdown */}
                           {showInventorySuggestions &&
                             activeBillItemId === item.id &&
@@ -3778,8 +3911,8 @@ export default function BillingPage() {
                               className="h-8 text-xs border-border/80 focus-visible:ring-1 focus-visible:ring-primary focus-visible:border-primary rounded-lg transition-all duration-200 w-28"
                             />
                           ) : (
-                            <span className="text-xs text-muted-foreground font-medium">
-                              {item.salt_composition?.slice(0, 15) || "-"}
+                            <span className="text-xs text-muted-foreground font-medium line-clamp-2 break-words" title={item.salt_composition || ""}>
+                              {item.salt_composition || "-"}
                             </span>
                           )}
                         </TableCell>
@@ -3812,7 +3945,8 @@ export default function BillingPage() {
                                 const selectedBatch = item.available_batches.find(b => b.id === selectedInvId);
                                 if (selectedBatch) {
                                   const qty = parseInt(item.quantity) || 1;
-                                  const unitPrice = selectedBatch.mrp_per_unit || selectedBatch.mrp || 0;
+                                  const ml = marginLine(selectedBatch);
+                                  const unitPrice = ml.unit_price;
                                   const purchasePrice = selectedBatch.cost_per_unit || selectedBatch.purchase_price || 0;
                                   const cgstVal = selectedBatch.cgst !== undefined ? Math.max(0, parseFloat(selectedBatch.cgst) || 0) : 0;
                                   const sgstVal = selectedBatch.sgst !== undefined ? Math.max(0, parseFloat(selectedBatch.sgst) || 0) : 0;
@@ -3831,6 +3965,9 @@ export default function BillingPage() {
                                             batch_no: selectedBatch.batch_no,
                                             expiry_date: selectedBatch.expiry_date || "",
                                             unit_price: unitPrice,
+                                            margin_percent: ml.margin_percent,
+                                            margin_capped: ml.margin_capped,
+                                            margin_price: ml.margin_price,
                                             exclusive_price: exclPrice,
                                             net_total: netTotal,
                                             purchase_price: purchasePrice,
@@ -3976,6 +4113,7 @@ export default function BillingPage() {
                             placeholder="MRP"
                             className="h-8 text-xs text-center border-amber-500/30 bg-amber-500/5 dark:bg-amber-500/10 text-amber-600 dark:text-amber-400 font-bold focus-visible:ring-1 focus-visible:ring-amber-500 focus-visible:border-amber-500 rounded-lg transition-all duration-200 w-20"
                           />
+                          <MarginTag item={item} onRestore={() => handleItemFieldChange(item.id, "unit_price", String(item.margin_price))} />
                         </TableCell>
                         <TableCell>
                           <Input
@@ -4295,6 +4433,8 @@ export default function BillingPage() {
                     </p>
                   </div>
                 )}
+
+                <PrescriptionAttach h1Items={newBillH1} value={prescription} onChange={setPrescription} inputId="rx-attach-new" />
 
                 {/* Patient Restock / Refill Reminder Card */}
                 <div className={`p-3.5 rounded-2xl border transition-all duration-200 ${
@@ -4669,10 +4809,10 @@ export default function BillingPage() {
                   }}
                   className="h-9 text-xs font-semibold rounded-xl border-border bg-background text-foreground shadow-2xs focus-visible:ring-2 focus-visible:ring-amber-500/30 focus-visible:border-amber-500"
                 />
-                {showCustomerSuggestions && customerSearch && (
+                {showCustomerSuggestions && (customerSearch || !editingBillData.customer_name) && (
                   <div
                     onScroll={handleScrollCustomerSuggestions}
-                    className="absolute z-[100] w-full mt-1 bg-card/95 backdrop-blur-md border border-border shadow-xl rounded-xl max-h-48 overflow-y-auto top-full overflow-x-hidden transition-all duration-150 animate-in fade-in slide-in-from-top-2"
+                    className="absolute z-[100] w-full min-w-[280px] mt-1 bg-card/95 backdrop-blur-md border border-border shadow-xl rounded-xl max-h-64 overflow-y-auto top-full overflow-x-hidden transition-all duration-150 animate-in fade-in slide-in-from-top-2"
                   >
                     {customerSuggestions.map((customer, idx) => (
                       <div
@@ -4685,7 +4825,10 @@ export default function BillingPage() {
                         }`}
                         onMouseDown={() => handleSelectCustomer(customer)}
                       >
-                        <p className="font-semibold text-sm">{customer.name}</p>
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="font-semibold text-sm truncate">{customer.name}</p>
+                          <TierBadge customer={customer} noPinned />
+                        </div>
                         <p className="text-xs text-muted-foreground mt-0.5">
                           {customer.mobile}
                         </p>
@@ -4713,8 +4856,8 @@ export default function BillingPage() {
                         setSelectedCustomerStats(null);
                       }}
                     >
-                      <span className="flex items-center gap-1">
-                        <Plus className="w-3.5 h-3.5" /> New Customer "{customerSearch}"
+                      <span className="flex items-center gap-1 min-w-0 truncate">
+                        <Plus className="w-3.5 h-3.5 shrink-0" /> {customerSearch ? `New Customer "${customerSearch}"` : "Walk-in customer"}
                       </span>
                     </div>
                   </div>
@@ -5032,6 +5175,7 @@ export default function BillingPage() {
                             className="h-8 text-xs border-border/80 focus-visible:ring-1 focus-visible:ring-amber-500 focus-visible:border-amber-500 rounded-lg transition-all duration-200"
                             autoComplete="off"
                           />
+                          {item.product_name && (isScheduleH1(item) || editRxServerNames.includes(item.product_name)) && <ScheduleH1Badge label="H1 · Rx" className="mt-1" />}
                           {/* Search Suggestions Dropdown for Editing */}
                           {showEditingInventorySuggestions &&
                             activeEditingItemId === item.id &&
@@ -5104,7 +5248,8 @@ export default function BillingPage() {
                                 const selectedBatch = item.available_batches.find(b => b.id === selectedInvId);
                                 if (selectedBatch) {
                                   const qty = parseInt(item.quantity) || 1;
-                                  const unitPrice = selectedBatch.mrp_per_unit || selectedBatch.mrp || 0;
+                                  const ml = marginLine(selectedBatch);
+                                  const unitPrice = ml.unit_price;
                                   const purchasePrice = selectedBatch.cost_per_unit || selectedBatch.purchase_price || 0;
                                   const cgstVal = selectedBatch.cgst !== undefined ? Math.max(0, parseFloat(selectedBatch.cgst) || 0) : 0;
                                   const sgstVal = selectedBatch.sgst !== undefined ? Math.max(0, parseFloat(selectedBatch.sgst) || 0) : 0;
@@ -5123,6 +5268,9 @@ export default function BillingPage() {
                                             batch_no: selectedBatch.batch_no,
                                             expiry_date: selectedBatch.expiry_date || "",
                                             unit_price: unitPrice,
+                                            margin_percent: ml.margin_percent,
+                                            margin_capped: ml.margin_capped,
+                                            margin_price: ml.margin_price,
                                             exclusive_price: exclPrice,
                                             net_total: netTotal,
                                             purchase_price: purchasePrice,
@@ -5235,6 +5383,7 @@ export default function BillingPage() {
                             placeholder="MRP"
                             className="h-8 text-xs text-center border-amber-500/30 bg-amber-500/5 dark:bg-amber-500/10 text-amber-600 dark:text-amber-400 font-bold focus-visible:ring-1 focus-visible:ring-amber-500 focus-visible:border-amber-500 rounded-lg transition-all duration-200 w-24"
                           />
+                          <MarginTag item={item} onRestore={() => handleEditItemFieldChange(item.id, "unit_price", String(item.margin_price))} />
                         </TableCell>
                         <TableCell>
                           <Input
@@ -5323,6 +5472,8 @@ export default function BillingPage() {
                 </TableBody>
               </Table>
             </div>
+
+            <PrescriptionAttach h1Items={editBillH1} value={editPrescription} onChange={setEditPrescription} inputId="rx-attach-edit" />
 
             {/* Notes */}
             <div className="space-y-2">
@@ -6076,7 +6227,8 @@ export default function BillingPage() {
                           data-row
                           tabIndex={0}
                           aria-expanded={!!isExpanded}
-                          className={`cursor-pointer hover:bg-muted/30 transition-all border-b border-border/40 ${isExpanded ? "bg-muted/10" : ""}`}
+                          data-h1={bill.has_schedule_h1 ? "true" : undefined}
+                          className={`cursor-pointer hover:bg-muted/30 transition-all border-b border-border/40 ${isExpanded ? "bg-muted/10" : ""} ${bill.has_schedule_h1 ? H1_ROW_CLASS : ""}`}
                           onClick={() => toggleBillExpand(bill.id)}
                         >
                           <TableCell className="w-12 text-center">
@@ -6095,6 +6247,25 @@ export default function BillingPage() {
                           <TableCell className="font-mono text-sm text-foreground py-2.5">
                             <div className="font-bold">#{serialNum} - {bill.bill_no}</div>
                             <RecordDates date={bill.billing_date} createdAt={bill.created_at} dateLabel="Billed" />
+                            {bill.has_schedule_h1 && (
+                              <div className="mt-1 flex items-center gap-1.5 flex-wrap font-sans" title={`Schedule H1: ${(bill.schedule_h1_items || []).join(", ")}`}>
+                                <ScheduleH1Badge />
+                                {bill.prescription ? (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      openPrescription(bill.prescription.id);
+                                    }}
+                                    className="text-[10px] font-bold text-primary hover:underline"
+                                  >
+                                    View prescription
+                                  </button>
+                                ) : (
+                                  <span className="text-[10px] font-bold text-rose-600 dark:text-rose-400">No prescription</span>
+                                )}
+                              </div>
+                            )}
                           </TableCell>
 
                           <TableCell className="py-3">
@@ -6110,7 +6281,7 @@ export default function BillingPage() {
                           </TableCell>
                           <TableCell>
                             <Badge variant="outline" className="bg-primary/5 text-primary border-primary/20 rounded-md font-bold text-xs">
-                              {bill.items?.length || 0} items
+                              {bill.items?.length || 0} {bill.items?.length === 1 ? "item" : "items"}
                             </Badge>
                           </TableCell>
                           <TableCell className="text-right font-mono text-foreground font-extrabold">
@@ -6300,6 +6471,7 @@ export default function BillingPage() {
                                           >
                                             <TableCell className="text-sm font-semibold">
                                               {item.product_name}
+                                              {(bill.schedule_h1_items || []).includes(item.product_name) && <ScheduleH1Badge label="H1" className="ml-2 align-middle" />}
                                               {item.is_manual && (
                                                 <Badge
                                                   variant="outline"
@@ -6317,6 +6489,9 @@ export default function BillingPage() {
                                             </TableCell>
                                             <TableCell className="text-sm font-mono text-right font-bold text-amber-600 dark:text-amber-400 bg-amber-500/5 dark:bg-amber-500/10">
                                               ₹{unitPrice.toFixed(2)}
+                                              {item.margin_percent !== undefined && item.margin_percent !== null && (
+                                                <div className={`text-[9px] font-bold font-sans ${item.margin_capped ? "text-amber-600 dark:text-amber-400" : "text-sky-600 dark:text-sky-400"}`}>{marginLabel(item)}</div>
+                                              )}
                                             </TableCell>
                                             <TableCell className="text-sm text-center font-bold text-muted-foreground">
                                               {discPercent}%
@@ -6337,7 +6512,7 @@ export default function BillingPage() {
                                                   : "text-destructive"
                                               }`}
                                             >
-                                              ₹{item.profit.toFixed(2)}
+                                              ₹{(Number(item.profit) || 0).toFixed(2)}
                                             </TableCell>
                                             <TableCell className="text-center">
                                               {item.short_book ? (

@@ -111,7 +111,14 @@ const medicineKey = (name) => {
   return s.replace(/[^a-z0-9]/g, "");
 };
 
+// Same name whatever the spacing, punctuation or case ("Dolo-650" = "dolo 650")
+const looseNameRegex = (name) => {
+  const parts = normalizeText(name).split(" ").filter(Boolean);
+  return new RegExp(`^[^a-z0-9]*${parts.map(escapeRegex).join("[^a-z0-9]*")}[^a-z0-9]*$`, "i");
+};
+
 module.exports = {
+  looseNameRegex,
   cleanProductName,
   medicineKey,
   MIN_GRAM,

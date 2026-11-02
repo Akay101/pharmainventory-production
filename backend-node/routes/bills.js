@@ -12,6 +12,11 @@ const { uploadToR2 } = require("../services/r2");
 const billShare = require("../services/billShare");
 const { sendBillEmail } = require("../services/email");
 const { logActivity } = require("../utils/activityLogger");
+const { parseMargin } = require("../utils/margin");
+const multer = require("multer");
+const prescriptions = require("../services/prescriptions");
+const { h1Lines } = require("../utils/scheduleH1");
+const prescriptionUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: prescriptions.MAX_BYTES } });
 const { requireSubscription } = require("../middleware/subscription");
 const { catalogLimiter, GLOBAL_PAGE_SIZE, GLOBAL_MAX_PAGES, MIN_GLOBAL_QUERY } = require("../middleware/security");
 const {
@@ -54,6 +59,13 @@ const lineAmounts = (item) => {
   const itemDiscount = gross * (discountPercent / 100);
   const itemTotal = Math.round((gross - itemDiscount) * 100) / 100;
   return { quantity, unitPrice, discountPercent, purchasePrice, itemTotal, itemProfit: itemTotal - purchasePrice * quantity };
+};
+
+// Purchase margin that priced the line (the client drops it when the price is
+// typed by hand), shown on the bill
+const lineMargin = (item) => {
+  const margin = parseMargin(item.margin_percent);
+  return margin === null ? {} : { margin_percent: margin, margin_capped: item.margin_capped === true };
 };
 
 // GET /api/bills
@@ -145,6 +157,16 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
       .toArray();
 
     const total = await db.collection("bills").countDocuments(query);
+
+    // Bills saved before Schedule H1 tracking: work out their H1 lines now
+    await Promise.all(
+      bills
+        .filter((b) => b.schedule_h1_items === undefined)
+        .map(async (b) => {
+          b.schedule_h1_items = await h1Lines(db, req.user.pharmacy_id, b.items || []);
+          b.has_schedule_h1 = b.schedule_h1_items.length > 0;
+        })
+    );
 
     // Ensure totals always exist
     const processedBills = bills.map((bill) => ({
@@ -515,6 +537,34 @@ router.delete("/drafts/:draft_id", auth, requireSubscription(), async (req, res,
   }
 });
 
+// POST /api/bills/prescriptions (multipart "file"): upload a prescription
+// for a bill with Schedule H1 medicines; pass its id as prescription_id
+router.post("/prescriptions", auth, requireSubscription(), (req, res, next) => {
+  prescriptionUpload.single("file")(req, res, async (err) => {
+    if (err) return res.status(400).json({ detail: err.code === "LIMIT_FILE_SIZE" ? "Prescription file is over 5 MB" : "Couldn't read the file" });
+    try {
+      const r = await prescriptions.savePrescription(mongoose.connection.db, req.user, req.file);
+      if (r.error) return res.status(400).json({ detail: r.error });
+      res.status(201).json(r);
+    } catch (error) {
+      next(error);
+    }
+  });
+});
+
+// GET /api/bills/prescriptions/:id: a short-lived link to the file on S3, for
+// this pharmacy's users only
+router.get("/prescriptions/:id", auth, requireSubscription(), async (req, res, next) => {
+  try {
+    const link = await prescriptions.accessLink(mongoose.connection.db, req.user.pharmacy_id, req.params.id);
+    if (!link) return res.status(404).json({ detail: "Prescription not found" });
+    res.set("Cache-Control", "private, no-store");
+    res.json(link);
+  } catch (error) {
+    next(error);
+  }
+});
+
 // POST /api/bills
 router.post("/", auth, requireSubscription(), async (req, res, next) => {
   try {
@@ -555,6 +605,10 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
       return res.status(400).json({ detail: "At least one item is required" });
     }
 
+    // Schedule H1 medicines are sold only against a prescription kept with the bill
+    const rx = await prescriptions.checkBillPrescription(db, req.user.pharmacy_id, items, req.body.prescription_id);
+    if (rx.error) return res.status(rx.error.status).json(rx.error.body);
+
     const billId = uuidv4();
     const billNo = await uniqueBillNo(db, req.user.pharmacy_id);
     let subtotal = 0;
@@ -588,6 +642,7 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
         stock_deducted: stockDeducted,
         cgst: parseFloat(item.cgst) || 0,
         sgst: parseFloat(item.sgst) || 0,
+        ...lineMargin(item),
         delivery_status: !isCredit && is_advance_paid ? "Pending" : "Delivered",
       });
     }
@@ -711,12 +766,16 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
       payment_mode: payment_mode || null,
       notes: notes || null,
       doctor: doctor || null,
+      has_schedule_h1: rx.h1.length > 0,
+      schedule_h1_items: rx.h1,
+      prescription: rx.prescription,
       pdf_url: null,
       created_by: req.user.id,
       created_at: new Date().toISOString(),
     };
 
     await db.collection("bills").insertOne(billData);
+    if (rx.prescription) await prescriptions.linkToBill(db, req.user.pharmacy_id, rx.prescription.id, billId);
 
     // Upsert doctor to pharmacy list
     if (doctor && doctor.trim()) {
@@ -925,6 +984,16 @@ router.put("/:bill_id", auth, requireSubscription(), async (req, res, next) => {
       }
     }
 
+    // Schedule H1: the bill's prescription (or a new one sent with the edit)
+    const rx = await prescriptions.checkBillPrescription(
+      db,
+      req.user.pharmacy_id,
+      items || [],
+      req.body.prescription_id || bill.prescription?.id,
+      bill.id
+    );
+    if (rx.error) return res.status(rx.error.status).json(rx.error.body);
+
     /* ---------------- Reverse old inventory ---------------- */
 
     for (const oldItem of bill.items || []) {
@@ -970,6 +1039,7 @@ router.put("/:bill_id", auth, requireSubscription(), async (req, res, next) => {
         stock_deducted: stockDeducted,
         cgst: parseFloat(item.cgst) || 0,
         sgst: parseFloat(item.sgst) || 0,
+        ...lineMargin(item),
         delivery_status: finalDeliveryStatus,
       });
     }
@@ -1289,9 +1359,21 @@ router.put("/:bill_id", auth, requireSubscription(), async (req, res, next) => {
       updates.history = [...(bill.history || []), historyEntry];
     }
 
+    updates.has_schedule_h1 = rx.h1.length > 0;
+    updates.schedule_h1_items = rx.h1;
+    // A bill that no longer has H1 lines keeps the prescription it had
+    if (rx.prescription) updates.prescription = rx.prescription;
+
     await db
       .collection("bills")
       .updateOne({ id: req.params.bill_id }, { $set: updates });
+    if (rx.prescription && rx.prescription.id !== bill.prescription?.id) {
+      await prescriptions.linkToBill(db, req.user.pharmacy_id, rx.prescription.id, bill.id);
+      // Replaced: the old file goes
+      if (bill.prescription?.id) {
+        await prescriptions.removeById(db, req.user.pharmacy_id, bill.prescription.id).catch((err) => console.error("Prescription cleanup failed:", err.message));
+      }
+    }
 
     // Upsert doctor to pharmacy list
     if (doctor && doctor.trim()) {
@@ -1371,6 +1453,7 @@ router.delete(
       }
 
       await db.collection("bills").deleteOne({ id: req.params.bill_id });
+      await prescriptions.removeForBill(db, req.user.pharmacy_id, req.params.bill_id).catch((err) => console.error("Prescription cleanup failed:", err.message));
       await logActivity(db, req.user.pharmacy_id, req.user.id, req.user.name, "DELETE", "BILLING", req.params.bill_id, `Deleted Bill ${bill.bill_no}`, `/billing`);
       res.json({
         message: "Bill deleted",

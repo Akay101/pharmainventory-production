@@ -95,6 +95,13 @@ import Loader, { AiLoader } from "../components/Loader";
 import { formatDate, formatExpiry, formatExpiryInput, expiryToIso, openScanner } from "./utils";
 import CustomTooltip from "@/components/ui/CustomTooltip";
 import { formatCombo } from "../lib/shortcuts";
+import { parseMargin, marginPrice } from "../lib/margin";
+import { isScheduleH1 } from "../lib/scheduleH1";
+import { rowCatalogGaps } from "../lib/catalogDetails";
+import ScheduleH1Badge, { H1_ROW_CLASS } from "../components/ScheduleH1Badge";
+import SchemeDiscountField from "../components/purchases/SchemeDiscountField";
+import MatchChooser from "../components/purchases/MatchChooser";
+import { lineNet, rateFromTotal, schemeDiscountOf } from "../lib/purchaseLine";
 import { useShortcuts, useShortcutLayer } from "../components/shortcuts/Shortcuts";
 import { ItemLabelsDialog } from "../components/ItemQr";
 import ProductCatalogModal from "../components/ProductCatalogModal";
@@ -197,7 +204,10 @@ const isCatalogLinked = (it) => {
     typeof it.product_id === "string" &&
     !it.product_id.startsWith("med-") &&
     !it.product_id.startsWith("ai-") &&
-    !it.product_id.startsWith("scanned_")
+    !it.product_id.startsWith("scanned_") &&
+    !it.product_id.startsWith("temp-") &&
+    !it.product_id.startsWith("prod-") &&
+    !it.product_id.startsWith("csv-")
   ) {
     return true;
   }
@@ -1047,11 +1057,137 @@ export default function PurchasesPage() {
   const [catalogModalInitialName, setCatalogModalInitialName] = useState("");
   const [catalogModalTargetRowId, setCatalogModalTargetRowId] = useState(null);
 
+  const [catalogModalInitialValues, setCatalogModalInitialValues] = useState(null);
+
+  // The catalog form starts from what's already typed on the row
   const handleOpenCreateCatalog = (rowId, name = "") => {
+    const row = purchaseItems.find((i) => i.id === rowId) || {};
+    const units = parseInt(row.units || row.units_per_pack) || 0;
+    const gst = (parseFloat(row.cgst) || 0) + (parseFloat(row.sgst) || 0) || parseFloat(row.gst) || 0;
+    setCatalogModalInitialValues({
+      ...(row.manufacturer ? { manufacturer: row.manufacturer } : {}),
+      ...(row.salt_composition ? { salt_composition: row.salt_composition } : {}),
+      ...(row.pack_type ? { pack_type: row.pack_type } : {}),
+      ...(units > 1 ? { units_per_pack: String(units) } : {}),
+      ...(parseFloat(row.mrp_pack) > 0 ? { mrp: String(row.mrp_pack) } : {}),
+      ...(parseFloat(row.rate_pack) > 0 ? { trade_price: String(row.rate_pack) } : {}),
+      ...(row.hsn_no ? { hsn_no: row.hsn_no } : {}),
+      ...(gst > 0 ? { tax_rate: String(gst) } : {}),
+    });
     setCatalogModalTargetRowId(rowId);
     setCatalogModalInitialName(name);
     setCatalogModalOpen(true);
     setShowSuggestions(false);
+  };
+
+  // Map a row to a catalog or database product. What the invoice says (MRP,
+  // units, rate, batch) stays; the name and details become the product's.
+  const mapRowToProduct = async (row, s, { quiet = false } = {}) => {
+    const rowUnits = parseInt(row.units || row.units_per_pack) || 0;
+    const rowMrp = parseFloat(row.mrp_pack) || 0;
+    const halfTax = s.tax_rate !== null && s.tax_rate !== undefined ? parseFloat(s.tax_rate) / 2 : undefined;
+    await handleSelectMedicineForItem(
+      row.id,
+      {
+        ...s,
+        id: s.product_id,
+        name: s.product_name,
+        source: s.source === "catalog" ? "catalog" : "global",
+        cgst: s.cgst ?? halfTax,
+        sgst: s.sgst ?? halfTax,
+      },
+      { quiet }
+    );
+    setPurchaseItems((prev) =>
+      prev.map((i) => {
+        if (i.id !== row.id) return i;
+        const units = rowUnits > 1 ? rowUnits : parseInt(i.units) || 1;
+        const mrpPack = rowMrp > 0 ? rowMrp : parseFloat(i.mrp_pack) || 0;
+        return {
+          ...i,
+          units: String(units),
+          units_per_pack: String(units),
+          mrp_pack: mrpPack > 0 ? mrpPack.toFixed(2) : "",
+          mrp_unit: mrpPack > 0 ? (mrpPack / units).toFixed(2) : "",
+          ...(row.batch_no ? { batch_no: row.batch_no } : {}),
+          _mappedFrom: row.product_name !== s.product_name ? row.product_name : "",
+          _match: row._match || null,
+          _matchChecked: true,
+        };
+      })
+    );
+  };
+
+  // Undo a mapping: back to what was read, with its choices
+  const unmapRow = (rowId) => {
+    setPurchaseItems((prev) =>
+      prev.map((i) =>
+        i.id === rowId
+          ? {
+              ...i,
+              product_name: i._mappedFrom || i.product_name,
+              product_id: "",
+              selected_product_id: "",
+              inventory_id: "",
+              _selectedFromCatalog: false,
+              _inventoryMeta: null,
+              schedule_h1: undefined,
+              manufacturer: "",
+              salt_composition: "",
+              _mappedFrom: "",
+            }
+          : i
+      )
+    );
+  };
+
+  // Look up the closest products for rows not in the catalog. Same name written
+  // differently maps at once; anything else waits for the user to choose.
+  const matchRows = async (rows) => {
+    const todo = rows.filter((r) => r.product_name?.trim());
+    const outcome = { mapped: [], choose: [], none: [] };
+    if (!todo.length) return outcome;
+    const matches = [];
+    try {
+      for (let i = 0; i < todo.length; i += 50) {
+        const res = await axios.post(`${API}/purchases/match-suggestions`, {
+          items: todo.slice(i, i + 50).map((r) => ({ product_name: r.product_name, batch_no: r.batch_no })),
+        });
+        matches.push(...(res.data.matches || []));
+      }
+    } catch {
+      // Lookup down: the row can still be mapped by searching or added to the catalog
+    }
+    for (let i = 0; i < todo.length; i++) {
+      const row = todo[i];
+      const m = matches[i];
+      const suggestions = m?.suggestions || [];
+      const sure = m?.batch_match
+        ? suggestions.find((s) => s.product_id === m.batch_match.product_id)
+        : suggestions.find((s) => s.is_exact);
+      if (sure) {
+        await mapRowToProduct({ ...row, _match: { suggestions } }, sure, { quiet: true });
+        outcome.mapped.push(row);
+      } else {
+        (suggestions.length ? outcome.choose : outcome.none).push(row);
+        setPurchaseItems((prev) =>
+          prev.map((x) => (x.id === row.id ? { ...x, _match: { suggestions }, _matchChecked: true } : x))
+        );
+      }
+    }
+    return outcome;
+  };
+
+  const revealRow = (rowId) =>
+    setTimeout(() => document.getElementById(`item-row-${rowId}`)?.scrollIntoView({ block: "center" }), 120);
+
+  // The "+ Catalog" pill and Save: closest matches first, the catalog form only
+  // when nothing we hold is close
+  const resolveUncatalogedRow = async (row) => {
+    if (row._matchChecked) return handleOpenCreateCatalog(row.id, row.product_name);
+    const { choose, none } = await matchRows([row]);
+    if (choose.length) revealRow(row.id);
+    if (none.length) handleOpenCreateCatalog(row.id, row.product_name);
   };
 
   // Payment Tracking State
@@ -1755,6 +1891,8 @@ export default function PurchasesPage() {
     gst_percent: "",
     discount: "",
     scheme: "",
+    scheme_discount: "",
+    margin: "",
     hsn_no: "",
     manufacturer: "",
     salt_composition: "",
@@ -1809,7 +1947,10 @@ export default function PurchasesPage() {
     sgst: "", // SGST (%)
     discount: "", // Discount (%)
     scheme: "", // Scheme Qty (free packs)
+    scheme_discount: "", // Scheme discount: % of the line, or ₹ off it
+    scheme_discount_type: "percent",
     shortage_threshold: "", // Shortage Threshold Qty
+    margin: "", // Margin % wanted over landed cost (blank = sell at MRP)
     _is_auto_filled_rate: true, // Prevent price history ping until manually edited
   };
 
@@ -1866,15 +2007,18 @@ export default function PurchasesPage() {
       rate_pack: item.pack_price ? String(item.pack_price) : "",
       mrp_pack: item.mrp_per_unit ? String(+((item.mrp_per_unit || 0) * (item.units_per_pack || 1)).toFixed(2)) : "",
       total_amount: (
-        (item.pack_quantity || 1) *
-        (item.pack_price || 0) *
-        (1 - (parseFloat(item.discount) || 0) / 100) *
+        lineNet(item.pack_quantity || 1, item.pack_price || 0, parseFloat(item.discount) || 0, item).net *
         (1 + ((parseFloat(item.cgst) || 0) + (parseFloat(item.sgst) || 0)) / 100)
       ).toFixed(2),
       cgst: item.cgst !== undefined ? item.cgst : "",
       sgst: item.sgst !== undefined ? item.sgst : "",
       discount: item.discount !== undefined ? item.discount : "",
       scheme: item.scheme ? String(item.scheme) : "",
+      scheme_discount: item.scheme_discount ? String(item.scheme_discount) : "",
+      scheme_discount_type: item.scheme_discount_type === "amount" ? "amount" : "percent",
+      // A draft line without a margin field takes the supplier's default
+      margin: item.margin_percent !== undefined && item.margin_percent !== null ? String(item.margin_percent) : "",
+      margin_edited: item.margin_percent !== undefined,
     }));
     const data = {
       selectedSupplier: d.supplier_id || "",
@@ -1896,6 +2040,7 @@ export default function PurchasesPage() {
     setAmountPaid(data.amountPaid);
     setPaymentMode(data.paymentMode);
     setShowNewPurchase(true);
+    matchRows(data.purchaseItems.filter((r) => !isCatalogLinked(r)));
     toast.success(`Opened draft ${d.draft_no}. Review, edit and save it.`);
     if (!d.supplier_id && d.supplier_name) toast.info(`Pick or add the supplier "${d.supplier_name}"`);
   };
@@ -2046,6 +2191,27 @@ export default function PurchasesPage() {
       setTimeout(() => productInputRef.current?.focus(), 150);
     }
   }, [showNewPurchase, purchaseItems.length]);
+
+  // The supplier's default margin fills every line the user hasn't set a
+  // margin on (new rows, scanned / CSV / restock lines, supplier changes)
+  const supplierMargin = parseMargin(
+    suppliers.find((s) => s.id === selectedSupplier)?.default_margin_percent
+  );
+  useEffect(() => {
+    const m = supplierMargin === null ? "" : String(supplierMargin);
+    setPurchaseItems((prev) =>
+      prev.some((r) => !r.margin_edited && (r.margin ?? "") !== m)
+        ? prev.map((r) => (r.margin_edited ? r : { ...r, margin: m }))
+        : prev
+    );
+  }, [supplierMargin, purchaseItems]);
+
+  const handleMarginChange = (itemId, value) =>
+    setPurchaseItems((prev) =>
+      prev.map((r) =>
+        r.id === itemId ? { ...r, margin: value, margin_edited: true } : r
+      )
+    );
 
   // Handle Restock Reminder items transferred from notification or reminder center
   useEffect(() => {
@@ -2775,6 +2941,25 @@ export default function PurchasesPage() {
         } else if (field === "units_per_pack") {
           updated.units = value;
         }
+        if (field === "product_name" && value !== i.product_name) {
+          updated._match = null;
+          updated._matchChecked = false;
+          updated._mappedFrom = "";
+        }
+        // A changed name is no longer the product it was picked as
+        if (field === "product_name" && value !== i.product_name && isCatalogLinked(i)) {
+          Object.assign(updated, {
+            product_id: "",
+            selected_product_id: "",
+            inventory_id: "",
+            _selectedFromCatalog: false,
+            _inventoryMeta: null,
+            schedule_h1: undefined,
+            manufacturer: "",
+            salt_composition: "",
+            hsn_no: "",
+          });
+        }
         return updated;
       })
     );
@@ -2873,7 +3058,8 @@ export default function PurchasesPage() {
           (field === "sgst" && (isTarget || shouldPropagateSgst)) ||
           (field === "quantity" && isTarget) ||
           (field === "rate_pack" && isTarget) ||
-          (field === "discount" && isTarget)
+          (field === "discount" && isTarget) ||
+          ((field === "scheme_discount" || field === "scheme_discount_type") && isTarget)
         ) {
           const ratePack =
             parseFloat(
@@ -2882,7 +3068,7 @@ export default function PurchasesPage() {
                 : updated.rate_pack || updated.pack_price
             ) || 0;
           const discountVal = parseFloat(updated.discount) || 0;
-          const base = qty * ratePack * (1 - discountVal / 100);
+          const base = lineNet(qty, ratePack, discountVal, updated).net;
           // Recalculate total_amount to include GST
           updated.total_amount = (
             base *
@@ -2891,14 +3077,7 @@ export default function PurchasesPage() {
         } else if (field === "total_amount" && isTarget) {
           const newTotal = parseFloat(value) || 0;
           const discountVal = parseFloat(updated.discount) || 0;
-          const gstMultiplier = 1 + (cgstVal + sgstVal) / 100;
-          const discountMultiplier = 1 - discountVal / 100;
-          const divisor = qty * discountMultiplier * gstMultiplier;
-          if (divisor > 0) {
-            updated.rate_pack = (newTotal / divisor).toFixed(2);
-          } else {
-            updated.rate_pack = "0";
-          }
+          updated.rate_pack = rateFromTotal(newTotal, qty, discountVal, cgstVal + sgstVal, updated).toFixed(2);
         }
 
         return updated;
@@ -3001,7 +3180,7 @@ export default function PurchasesPage() {
   };
 
   // Handle selecting medicine from suggestions for an item row
-  const handleSelectMedicineForItem = async (itemId, medicine) => {
+  const handleSelectMedicineForItem = async (itemId, medicine, { quiet = false } = {}) => {
     const isInventory = medicine.source === "inventory";
 
     // Extract pack units & pack type
@@ -3183,10 +3362,12 @@ export default function PurchasesPage() {
 
           return {
             ...item,
+            schedule_h1: medicine.schedule_h1,
             product_id:
               medicine.id || medicine.product_id || (medicine._id ? String(medicine._id) : `med-${Date.now()}`),
             product_name: medicine.product_name || medicine.name,
             _selectedFromCatalog: true,
+            category: medicine.category || item.category,
             manufacturer: finalManufacturer,
             salt_composition: finalSaltComposition,
             pack_type: derivedPackType,
@@ -3234,6 +3415,8 @@ export default function PurchasesPage() {
         }
       });
     });
+
+    if (quiet) return;
 
     // Call silent ping immediately so if the loaded price is high, it highlights!
     checkPriceHistorySilent(
@@ -3398,6 +3581,11 @@ export default function PurchasesPage() {
     }
   };
 
+  const schemeBody = (item) => {
+    const sd = schemeDiscountOf(item);
+    return { scheme_discount: sd.value, scheme_discount_type: sd.type };
+  };
+
   // The purchase API body; also what a purchase draft stores
   const purchaseBody = (itemsToProcess, supplier) => ({
     supplier_id: selectedSupplier,
@@ -3440,12 +3628,20 @@ export default function PurchasesPage() {
       sgst: parseFloat(item.sgst) || 0,
       discount: parseFloat(item.discount) || 0,
       scheme: parseInt(item.scheme) || 0,
+      ...schemeBody(item),
       shortage_threshold:
         item.shortage_threshold !== "" &&
         item.shortage_threshold !== undefined &&
         item.shortage_threshold !== null
           ? Number(item.shortage_threshold)
           : null,
+      // "" = no margin; left out (never filled or touched) = supplier default
+      margin_percent:
+        parseMargin(item.margin) !== null
+          ? parseMargin(item.margin)
+          : item.margin_edited
+            ? ""
+            : undefined,
     })),
     payment_status: paymentStatus,
     amount_paid:
@@ -3459,6 +3655,7 @@ export default function PurchasesPage() {
   });
 
   const handleSubmitPurchase = async () => {
+    setShowSuggestions(false);
     if (!selectedSupplier) {
       toast.error("Please select a supplier", { description: "Pick one with ↑/↓ and Enter, then save again" });
       setSupplierPickerSignal((n) => n + 1);
@@ -3497,9 +3694,30 @@ export default function PurchasesPage() {
 
     const uncatalogedItems = validItems.filter((item) => !isCatalogLinked(item));
     if (uncatalogedItems.length > 0) {
+      // Not looked up yet (typed by hand): find the closest products first
+      const unchecked = uncatalogedItems.filter((i) => !i._matchChecked);
+      if (unchecked.length) {
+        const { mapped, choose, none } = await matchRows(unchecked);
+        if (choose.length) {
+          toast.error(`Choose the matching product for "${choose[0].product_name}", or create it as new`);
+          revealRow(choose[0].id);
+        } else if (none.length) {
+          toast.error(`"${none[0].product_name}" isn't in our data. Add its details, then save again.`);
+          handleOpenCreateCatalog(none[0].id, none[0].product_name);
+        } else if (mapped.length) {
+          toast.info("Matched to your catalog. Check the rows and save again.");
+        }
+        return;
+      }
+      const pending = uncatalogedItems.find((i) => i._match?.suggestions?.length);
+      if (pending) {
+        toast.error(`Choose the matching product for "${pending.product_name}", or create it as new`);
+        revealRow(pending.id);
+        return;
+      }
       const firstUncataloged = uncatalogedItems[0];
       toast.error(
-        `"${firstUncataloged.product_name}" is not in the Product Catalog. Please select it from suggestions or create its catalog entry.`
+        `"${firstUncataloged.product_name}" is not in the Product Catalog. Add its details, then save again.`
       );
       handleOpenCreateCatalog(firstUncataloged.id, firstUncataloged.product_name);
       return;
@@ -3542,6 +3760,15 @@ export default function PurchasesPage() {
             console.warn("Permanent autofill error fallback:", e);
           }
         }
+      }
+
+      // A new purchase needs proper details on every product (old catalog
+      // entries may have none, and autofill may not have found them)
+      const incomplete = editingPurchaseId ? null : itemsToProcess.find((i) => rowCatalogGaps(i).length);
+      if (incomplete) {
+        toast.error(`"${incomplete.product_name}" needs its ${rowCatalogGaps(incomplete).join(" and ")}. Complete it, then save again.`);
+        handleOpenCreateCatalog(incomplete.id, incomplete.product_name);
+        return;
       }
 
       const payload = {
@@ -3654,11 +3881,19 @@ export default function PurchasesPage() {
       sgst: item.sgst !== undefined ? item.sgst : "",
       discount: item.discount !== undefined ? item.discount : "",
       scheme: item.scheme !== undefined ? item.scheme : "",
+      scheme_discount: item.scheme_discount ? String(item.scheme_discount) : "",
+      scheme_discount_type: item.scheme_discount_type === "amount" ? "amount" : "percent",
       shortage_threshold:
         item.shortage_threshold !== undefined &&
         item.shortage_threshold !== null
           ? String(item.shortage_threshold)
           : "",
+      // Saved lines keep their own margin (none on older purchases)
+      margin:
+        item.margin_percent !== undefined && item.margin_percent !== null
+          ? String(item.margin_percent)
+          : "",
+      margin_edited: true,
     }));
 
     setPurchaseItems(mappedItems);
@@ -3822,6 +4057,10 @@ export default function PurchasesPage() {
       const rawGstTotal = mapping.gst_percent ? row[mapping.gst_percent] : "";
       const rawDiscount = mapping.discount ? row[mapping.discount] : "";
       const rawScheme = mapping.scheme ? row[mapping.scheme] : "";
+      const rawSchemeDisc = mapping.scheme_discount ? row[mapping.scheme_discount] : "";
+      // A blank margin cell leaves the line on the supplier's default
+      const rawMargin = mapping.margin ? String(row[mapping.margin] ?? "").replace(/[^0-9.]/g, "") : "";
+      const csvMargin = parseMargin(rawMargin);
       const rawHsn = mapping.hsn_no ? row[mapping.hsn_no] : "";
       const rawMfr = mapping.manufacturer ? row[mapping.manufacturer] : "";
       const rawComposition = mapping.salt_composition
@@ -3849,7 +4088,10 @@ export default function PurchasesPage() {
 
       const discountVal = parseNum(rawDiscount) || 0;
       const schemeVal = parseNum(rawScheme) || 0;
-      const totalAmount = packQty * ratePack;
+      // GST-inclusive line value, net of discount and scheme discount
+      const totalAmount =
+        lineNet(packQty, ratePack, discountVal, { scheme_discount: Math.min(100, parseNum(rawSchemeDisc)) }).net *
+        (1 + (cgstVal + sgstVal) / 100);
 
       return {
         id: `csv-${Date.now()}-${idx}`,
@@ -3862,11 +4104,16 @@ export default function PurchasesPage() {
         pack_type: rawPackType || "Strip",
         rate_pack: ratePack > 0 ? String(ratePack) : "",
         mrp_pack: mrpPack > 0 ? String(mrpPack) : "",
-        total_amount: totalAmount > 0 ? String(totalAmount) : "",
+        total_amount: totalAmount > 0 ? totalAmount.toFixed(2) : "",
         cgst: cgstVal > 0 ? String(cgstVal) : "",
         sgst: sgstVal > 0 ? String(sgstVal) : "",
         discount: discountVal > 0 ? String(discountVal) : "",
         scheme: schemeVal > 0 ? String(schemeVal) : "",
+        scheme_discount: parseNum(rawSchemeDisc) > 0 ? String(Math.min(100, parseNum(rawSchemeDisc))) : "",
+        scheme_discount_type: "percent",
+        ...(csvMargin !== null
+          ? { margin: String(csvMargin), margin_edited: true, margin_percent: csvMargin }
+          : {}),
         hsn_no: rawHsn ? rawHsn.trim() : "",
         manufacturer: rawMfr ? rawMfr.trim() : "",
         salt_composition: rawComposition ? rawComposition.trim() : "",
@@ -3921,6 +4168,8 @@ export default function PurchasesPage() {
         gst_percent: "",
         discount: "",
         scheme: "",
+        scheme_discount: "",
+        margin: "",
         hsn_no: "",
         manufacturer: "",
         salt_composition: "",
@@ -4029,6 +4278,10 @@ export default function PurchasesPage() {
         newMapping.discount = findBestCol(["discount", "disc", "disc%"]);
       if (!newMapping.scheme)
         newMapping.scheme = findBestCol(["scheme", "free", "scm"]);
+      if (!newMapping.scheme_discount)
+        newMapping.scheme_discount = findBestCol(["scheme disc", "sch disc", "scheme %", "scheme discount", "spl disc"]);
+      if (!newMapping.margin)
+        newMapping.margin = findBestCol(["margin", "margin%", "markup"]);
       if (!newMapping.hsn_no)
         newMapping.hsn_no = findBestCol([
           "hsn code",
@@ -4094,54 +4347,12 @@ export default function PurchasesPage() {
     setPurchaseItems(items);
     setCsvDialog(false);
     setShowNewPurchase(true);
-    toast.success(
-      `Loaded ${items.length} CSV items into Purchase Draft for preview`
-    );
-  };
-
-  const handleDirectCreatePurchaseFromCsv = async () => {
-    if (!selectedSupplier) {
-      toast.error("Please select a supplier first");
-      return;
-    }
-    if (!csvMapping.product_name || !csvMapping.pack_quantity) {
-      toast.error("Product Name and Quantity columns are required");
-      return;
-    }
-
-    const items = convertCsvRowsToPurchaseItems(csvParsedRows, csvMapping);
-    if (items.length === 0) {
-      toast.error("No valid items found in CSV file");
-      return;
-    }
-
-    const supplier = suppliers.find((s) => s.id === selectedSupplier);
-    setSubmitting(true);
-    try {
-      await saveSupplierCsvTemplateIfNeeded();
-
-      await axios.post(`${API}/purchases/bulk-import`, {
-        supplier_id: selectedSupplier,
-        supplier_name: supplier?.name || "Unknown Supplier",
-        invoice_no: invoiceNo || `INV-CSV-${Date.now().toString().slice(-6)}`,
-        items,
-      });
-
-      toast.success(
-        `Purchase Invoice created with ${items.length} items from CSV`
-      );
-      setCsvDialog(false);
-      setCsvFile(null);
-      setCsvColumns([]);
-      setCsvParsedRows([]);
-      fetchPurchases(pagination.page);
-    } catch (error) {
-      toast.error(
-        error.response?.data?.detail || "Failed to create purchase from CSV"
-      );
-    } finally {
-      setSubmitting(false);
-    }
+    const { mapped, choose, none } = await matchRows(items);
+    toast.success(`Loaded ${items.length} CSV items`, {
+      description: `${mapped.length} matched · ${choose.length} to review · ${none.length} new`,
+    });
+    const firstToReview = choose[0];
+    if (firstToReview) revealRow(firstToReview.id);
   };
 
   // Calculate total - based on row totals (which include CGST/SGST and manual overrides)
@@ -4659,35 +4870,35 @@ export default function PurchasesPage() {
 
           {/* Items Table - Inline Editable with enhanced fields */}
           <div className="border-2 border-border rounded-2xl relative overflow-hidden bg-card shadow-sm">
-            <Table mobileCards className="table-fixed min-w-[1100px] w-full" wrapperClassName="h-[420px]">
+            <Table mobileCards className="table-fixed min-w-[1300px] w-full" wrapperClassName="h-[420px]">
               <TableHeader className="sticky top-0 bg-muted/95 backdrop-blur z-[50] border-b-2 border-border shadow-xs">
                 <TableRow className="hover:bg-transparent">
-                  <TableHead data-card="title" className="min-w-[260px] py-2.5 font-extrabold text-foreground text-left">
+                  <TableHead data-card="title" className="py-2.5 font-extrabold text-foreground text-left">
                     Item Name
                   </TableHead>
-                  <TableHead className="w-[130px] py-2.5 font-extrabold text-foreground text-left">
+                  <TableHead className="w-[112px] px-2 py-2.5 font-extrabold text-foreground text-left">
                     Batch
                   </TableHead>
-                  <TableHead className="w-[105px] py-2.5 text-center font-extrabold text-foreground">
+                  <TableHead className="w-[84px] px-1.5 py-2.5 text-center font-extrabold text-foreground">
                     Expiry
                   </TableHead>
-                  <TableHead className="w-[105px] py-2.5 text-center font-extrabold text-foreground">
+                  <TableHead className="w-[92px] px-1.5 py-2.5 text-center font-extrabold text-foreground">
                     MRP
                   </TableHead>
-                  <TableHead className="w-[115px] py-2.5 text-center font-extrabold text-foreground">
+                  <TableHead className="w-[104px] px-1.5 py-2.5 text-center font-extrabold text-foreground whitespace-nowrap">
                     PTR (Rate)
                   </TableHead>
-                  <TableHead className="w-[85px] py-2.5 text-center font-extrabold text-foreground">
+                  <TableHead className="w-[72px] px-1.5 py-2.5 text-center font-extrabold text-foreground">
                     Qty.
                   </TableHead>
-                  <TableHead className="w-[75px] py-2.5 text-center font-extrabold text-foreground">
-                    Free
+                  <TableHead data-card="full" data-card-label="Scheme (free + discount)" className="w-[176px] px-1.5 py-2.5 text-center font-extrabold text-foreground" title="Supplier scheme: free packs and/or a scheme discount (% of the line or ₹ off it)">
+                    Scheme
                   </TableHead>
-                  <TableHead className="w-[80px] py-2.5 text-center font-extrabold text-foreground">
+                  <TableHead className="w-[66px] px-1.5 py-2.5 text-center font-extrabold text-foreground whitespace-nowrap">
                     Disc %
                   </TableHead>
-                  <TableHead data-card-label="GST %" className="w-[90px] py-2.5 text-center font-extrabold text-foreground">
-                    <div className="flex items-center justify-center gap-1.5">
+                  <TableHead data-card-label="GST %" className="w-[92px] px-1 py-2.5 text-center font-extrabold text-foreground whitespace-nowrap">
+                    <div className="flex items-center justify-center gap-1">
                       <span>GST %</span>
                       <label className="flex items-center gap-1 text-[10px] font-semibold text-muted-foreground cursor-pointer select-none hover:text-foreground">
                         <input
@@ -4702,11 +4913,14 @@ export default function PurchasesPage() {
                       </label>
                     </div>
                   </TableHead>
-                  <TableHead className="w-[115px] py-2.5 text-center font-extrabold text-foreground">
+                  <TableHead className="w-[98px] px-1.5 py-2.5 text-center font-extrabold text-foreground">
                     Amount
                   </TableHead>
-                  <TableHead data-card="corner" className="w-[48px] py-2.5 text-center font-extrabold text-foreground">
-                    Action
+                  <TableHead data-card-label="Margin %" className="w-[92px] px-1.5 py-2.5 text-center font-extrabold text-foreground whitespace-nowrap" title="Margin you want over landed cost. Billing sells at cost + margin, never above MRP. Blank = sell at MRP.">
+                    Margin %
+                  </TableHead>
+                  <TableHead data-card="corner" className="w-[40px] px-1 py-2.5">
+                    <span className="sr-only">Action</span>
                   </TableHead>
                 </TableRow>
               </TableHeader>
@@ -4740,10 +4954,13 @@ export default function PurchasesPage() {
                     parseFloat(item.total_amount) || qty * ratePack;
 
                   const hasScheme = scheme > 0;
+                  const schemeType = schemeDiscountOf(item).type;
+                  const schemeOff = lineNet(qty, ratePack, parseFloat(item.discount) || 0, item).schemeOff;
 
                   return (
                     <TableRow
                       key={item.id || index}
+                      id={`item-row-${item.id}`}
                       className={`relative transition-all duration-200 border-b border-border ${
                         processingRowId === item.id ? "ai-loading-row" : ""
                       } ${sparkleRowId === item.id ? "ai-sparkle-row" : ""} ${
@@ -4753,7 +4970,7 @@ export default function PurchasesPage() {
                           : ""
                       } ${
                         hasScheme
-                          ? "bg-emerald-500/10 hover:bg-emerald-500/15 border-l-4 border-l-emerald-500"
+                          ? "bg-emerald-500/[0.04] hover:bg-emerald-500/[0.08]"
                           : "bg-card hover:bg-muted/40"
                       }`}
                     >
@@ -4896,17 +5113,12 @@ export default function PurchasesPage() {
                             />
 
                             {/* Uncataloged Warning / Quick Create Pill */}
-                            {item.product_name && !isCatalogLinked(item) && (
+                            {item.product_name && !isCatalogLinked(item) && !item._match?.suggestions?.length && (
                               <button
                                 type="button"
-                                onClick={() =>
-                                  handleOpenCreateCatalog(
-                                    item.id,
-                                    item.product_name
-                                  )
-                                }
+                                onClick={() => resolveUncatalogedRow(item)}
                                 className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/15 text-amber-600 dark:text-amber-400 hover:bg-amber-500/25 border border-amber-500/30 shrink-0 whitespace-nowrap transition-colors flex items-center gap-1 cursor-pointer"
-                                title="Product not linked to catalog. Click to create master catalog entry."
+                                title="Not in your Product Catalog. Add its details to save this purchase."
                               >
                                 <PackagePlus className="w-3 h-3 text-amber-500" />
                                 <span>+ Catalog</span>
@@ -4957,6 +5169,22 @@ export default function PurchasesPage() {
                               )}
                           </div>
 
+                          {item.product_name && !isCatalogLinked(item) && (
+                            <MatchChooser
+                              item={item}
+                              onPick={(m) => mapRowToProduct(item, m)}
+                              onNew={() => handleOpenCreateCatalog(item.id, item.product_name)}
+                            />
+                          )}
+                          {item._mappedFrom && isCatalogLinked(item) && (
+                            <div data-testid="mapped-from" className="mt-1 flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                              <span className="min-w-0 truncate">Read as "{item._mappedFrom}"</span>
+                              <button type="button" onClick={() => unmapRow(item.id)} className="shrink-0 font-bold text-primary hover:underline cursor-pointer">
+                                Change
+                              </button>
+                            </div>
+                          )}
+
                           {/* Metadata Subtitle (Manufacturer, Pack size, HSN, Salt) */}
                           {(item.product_name ||
                             item.manufacturer ||
@@ -4964,6 +5192,9 @@ export default function PurchasesPage() {
                             item.hsn_no ||
                             item.salt_composition) && (
                             <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground flex-wrap leading-tight mt-0.5">
+                              {item.product_name && isScheduleH1(item) && (
+                                <ScheduleH1Badge testId="purchase-row-h1" title="Schedule H1 medicine" />
+                              )}
                               {item.manufacturer ? (
                                 <span className="font-medium text-foreground/85">
                                   <span className="text-muted-foreground/80">
@@ -5418,6 +5649,9 @@ export default function PurchasesPage() {
                                         <span>
                                           {medicine.product_name || medicine.name}
                                         </span>
+                                        {isScheduleH1(medicine) && (
+                                          <ScheduleH1Badge testId="purchase-suggestion-h1" title="Schedule H1: sold only on prescription" />
+                                        )}
                                         {medicine.dosage_form && (
                                           <span className="text-[10px] px-2 py-0.5 bg-purple-500/10 text-purple-400 border border-purple-500/30 rounded-full font-semibold capitalize">
                                             {medicine.dosage_form}
@@ -5643,7 +5877,7 @@ export default function PurchasesPage() {
                       </TableCell>
 
                       {/* 2. BATCH */}
-                      <TableCell className="w-[130px] p-2 align-top relative">
+                      <TableCell className="w-[112px] p-1.5 align-top relative">
                         <Input
                           id={`batch-${item.id}`}
                           value={item.batch_no || ""}
@@ -5968,7 +6202,7 @@ export default function PurchasesPage() {
                       </TableCell>
 
                       {/* 3. EXPIRY */}
-                      <TableCell className="w-[105px] p-2 align-top">
+                      <TableCell className="w-[92px] p-1.5 align-top">
                         <Input
                           id={`expiry-${item.id}`}
                           type="text"
@@ -5996,7 +6230,7 @@ export default function PurchasesPage() {
                       </TableCell>
 
                       {/* 4. MRP */}
-                      <TableCell className="w-[105px] p-2 align-top">
+                      <TableCell className="w-[92px] p-1.5 align-top">
                         <div className="flex flex-col gap-1 items-center">
                           <Input
                             id={`mrp-${item.id}`}
@@ -6039,7 +6273,7 @@ export default function PurchasesPage() {
                       </TableCell>
 
                       {/* 5. PTR (RATE) */}
-                      <TableCell className="w-[115px] p-2 align-top">
+                      <TableCell className="w-[100px] p-1.5 align-top">
                         <div className="flex flex-col gap-1 items-center">
                           <div className="relative w-full">
                             <Input
@@ -6133,7 +6367,7 @@ export default function PurchasesPage() {
                       </TableCell>
 
                       {/* 6. QTY */}
-                      <TableCell className="w-[85px] p-2 align-top">
+                      <TableCell className="w-[72px] p-1.5 align-top">
                         <div className="flex flex-col gap-1 items-center">
                           <Input
                             id={`qty-${item.id}`}
@@ -6212,48 +6446,62 @@ export default function PurchasesPage() {
                         </div>
                       </TableCell>
 
-                      {/* 7. FREE (SCHEME) */}
-                      <TableCell className="w-[75px] p-2 align-top">
+                      {/* 7. SCHEME: free packs + scheme discount (% or ₹) */}
+                      <TableCell className="w-[176px] p-1.5 align-top">
                         <div className="flex flex-col gap-1 items-center">
-                          <Input
-                            id={`scheme-${item.id}`}
-                            type="number"
-                            value={item.scheme !== undefined ? item.scheme : ""}
-                            onChange={(e) =>
-                              handleItemFieldChangeWithCalc(
-                                item.id,
-                                "scheme",
-                                e.target.value
-                              )
-                            }
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") {
-                                e.preventDefault();
-                                document
-                                  .getElementById(`discount-${item.id}`)
-                                  ?.focus({ preventScroll: true });
+                          <div className="flex items-center gap-1 w-full">
+                            <Input
+                              id={`scheme-${item.id}`}
+                              type="number"
+                              value={item.scheme !== undefined ? item.scheme : ""}
+                              onChange={(e) =>
+                                handleItemFieldChangeWithCalc(
+                                  item.id,
+                                  "scheme",
+                                  e.target.value
+                                )
                               }
-                            }}
-                            placeholder="0"
-                            className={`h-8 text-xs text-center w-full font-semibold rounded-lg border-border bg-background text-foreground ${
-                              hasScheme
-                                ? "border-emerald-500 bg-emerald-500/10 font-bold text-emerald-500 dark:text-emerald-400"
-                                : ""
-                            }`}
-                            min="0"
-                          />
-                          {hasScheme ? (
-                            <div className="text-[10px] font-bold text-emerald-500 dark:text-emerald-400 leading-none">
-                              +{scheme} Free
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  e.preventDefault();
+                                  document
+                                    .getElementById(`scheme-disc-${item.id}`)
+                                    ?.focus({ preventScroll: true });
+                                }
+                              }}
+                              placeholder="Free"
+                              title="Free packs"
+                              className={`h-8 text-xs text-center w-[46px] shrink-0 px-1 font-semibold rounded-lg border-border bg-background text-foreground placeholder:font-normal ${
+                                hasScheme
+                                  ? "border-emerald-500 bg-emerald-500/10 font-bold text-emerald-500 dark:text-emerald-400"
+                                  : ""
+                              }`}
+                              min="0"
+                            />
+                            <SchemeDiscountField
+                              id={`scheme-disc-${item.id}`}
+                              testId={`scheme-disc-${index}`}
+                              className="flex-1"
+                              value={item.scheme_discount}
+                              type={schemeType}
+                              active={schemeOff > 0}
+                              onValue={(v) => handleItemFieldChangeWithCalc(item.id, "scheme_discount", v)}
+                              onType={(t) => handleItemFieldChangeWithCalc(item.id, "scheme_discount_type", t)}
+                              onEnter={() => document.getElementById(`discount-${item.id}`)?.focus({ preventScroll: true })}
+                            />
+                          </div>
+                          {hasScheme || schemeOff > 0 ? (
+                            <div className="text-[10px] font-bold text-emerald-500 dark:text-emerald-400 leading-none text-center">
+                              {hasScheme ? `+${scheme} Free` : ""}
+                              {hasScheme && schemeOff > 0 ? " · " : ""}
+                              {schemeOff > 0 ? `-₹${schemeOff.toFixed(2)}` : ""}
                             </div>
-                          ) : (
-                            <div className="text-[10px] text-muted-foreground/60 leading-none">—</div>
-                          )}
+                          ) : null}
                         </div>
                       </TableCell>
 
                       {/* 8. DISCOUNT % */}
-                      <TableCell className="w-[80px] p-2 align-top">
+                      <TableCell className="w-[66px] p-1.5 align-top">
                         <div className="flex flex-col gap-1 items-center">
                           <Input
                             id={`discount-${item.id}`}
@@ -6276,21 +6524,19 @@ export default function PurchasesPage() {
                               }
                             }}
                             placeholder="0%"
-                            className="h-8 text-xs text-center w-full font-semibold rounded-lg border-border bg-background text-foreground"
+                            className="h-8 text-xs text-center w-full px-1 font-semibold rounded-lg border-border bg-background text-foreground"
                             min="0"
                           />
                           {parseFloat(item.discount) > 0 ? (
                             <div className="text-[10px] font-semibold text-emerald-500 leading-none">
                               -₹{((qty * ratePack * (parseFloat(item.discount) || 0)) / 100).toFixed(1)}
                             </div>
-                          ) : (
-                            <div className="text-[10px] text-muted-foreground/60 leading-none">—</div>
-                          )}
+                          ) : null}
                         </div>
                       </TableCell>
 
                       {/* 9. GST % */}
-                      <TableCell className="w-[90px] p-2 align-top">
+                      <TableCell className="w-[92px] p-1.5 align-top">
                         <div className="flex flex-col gap-1 items-center">
                           <Input
                             id={`gst-${item.id}`}
@@ -6334,7 +6580,7 @@ export default function PurchasesPage() {
                       </TableCell>
 
                       {/* 10. TOTAL AMOUNT */}
-                      <TableCell className="w-[115px] p-2 align-top">
+                      <TableCell className="w-[100px] p-1.5 align-top">
                         <div className="flex flex-col gap-1 items-center">
                           <Input
                             id={`total-${item.id}`}
@@ -6351,15 +6597,9 @@ export default function PurchasesPage() {
                             onKeyDown={(e) => {
                               if (e.key === "Enter") {
                                 e.preventDefault();
-                                if (index === purchaseItems.length - 1) {
-                                  handleAddNewRow();
-                                } else {
-                                  document
-                                    .querySelector(
-                                      `[data-testid="item-name-${index + 1}"]`
-                                    )
-                                    ?.focus({ preventScroll: true });
-                                }
+                                document
+                                  .getElementById(`margin-${item.id}`)
+                                  ?.focus({ preventScroll: true });
                               }
                             }}
                             placeholder="Total ₹"
@@ -6374,8 +6614,70 @@ export default function PurchasesPage() {
                         </div>
                       </TableCell>
 
-                      {/* 11. ACTION */}
-                      <TableCell className="w-[48px] p-2 align-top text-center">
+                      {/* 11. MARGIN % */}
+                      <TableCell className="w-[92px] p-1.5 align-top">
+                        <div className="flex flex-col gap-1 items-center">
+                          <Input
+                            id={`margin-${item.id}`}
+                            data-testid={`margin-${index}`}
+                            type="number"
+                            inputMode="decimal"
+                            step="0.01"
+                            min="0"
+                            value={item.margin ?? ""}
+                            onChange={(e) => handleMarginChange(item.id, e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                if (index === purchaseItems.length - 1) {
+                                  handleAddNewRow();
+                                } else {
+                                  document
+                                    .querySelector(
+                                      `[data-testid="item-name-${index + 1}"]`
+                                    )
+                                    ?.focus({ preventScroll: true });
+                                }
+                              }
+                            }}
+                            placeholder="Margin"
+                            title="Margin over landed cost. Leave blank to bill at MRP"
+                            className={`h-8 text-xs text-center w-full px-1 font-semibold rounded-lg border-border bg-background text-foreground placeholder:font-normal ${
+                              parseMargin(item.margin) !== null ? "border-sky-500 bg-sky-500/10" : ""
+                            }`}
+                          />
+                          {(() => {
+                            if (parseMargin(item.margin) === null) {
+                              return (
+                                <div className="text-[10px] text-muted-foreground leading-none whitespace-nowrap" title="No margin set: billing sells at MRP">
+                                  Bills at MRP
+                                </div>
+                              );
+                            }
+                            // Same landed cost the server stores: GST in, free units spread
+                            const lineTotal =
+                              lineNet(qty, ratePack, parseFloat(item.discount) || 0, item).net *
+                              (1 + ((parseFloat(item.cgst) || 0) + (parseFloat(item.sgst) || 0)) / 100);
+                            const mp = marginPrice({
+                              purchase_price: totalUnits > 0 ? lineTotal / totalUnits : 0,
+                              mrp: mrpUnit,
+                              margin_percent: item.margin,
+                            });
+                            if (!mp.price) return null;
+                            return (
+                              <div
+                                className={`text-[10px] font-semibold leading-none font-mono ${mp.capped ? "text-amber-600 dark:text-amber-400" : "text-sky-600 dark:text-sky-400"}`}
+                                title={mp.capped ? "Cost + margin is above MRP, so billing uses MRP" : "Billing sells a unit at this price"}
+                              >
+                                {mp.capped ? "MRP " : "Sell "}₹{mp.price.toFixed(2)}
+                              </div>
+                            );
+                          })()}
+                        </div>
+                      </TableCell>
+
+                      {/* 12. ACTION */}
+                      <TableCell className="w-[40px] p-1 align-top text-center">
                         <div className="h-8 flex items-center justify-center">
                           <Button
                             size="icon"
@@ -6395,7 +6697,7 @@ export default function PurchasesPage() {
                 {purchaseItems.length === 0 && (
                   <TableRow>
                     <TableCell
-                      colSpan={11}
+                      colSpan={12}
                       className="text-center py-8 text-muted-foreground"
                     >
                       <Package className="w-8 h-8 mx-auto mb-2 opacity-50" />
@@ -6989,7 +7291,8 @@ export default function PurchasesPage() {
                       data-row
                       tabIndex={0}
                       aria-expanded={expandedPurchase === purchase.id}
-                      className="cursor-pointer"
+                      data-h1={purchase.has_schedule_h1 ? "true" : undefined}
+                      className={`cursor-pointer ${purchase.has_schedule_h1 ? H1_ROW_CLASS : ""}`}
                       onClick={() =>
                         setExpandedPurchase(
                           expandedPurchase === purchase.id ? null : purchase.id
@@ -7017,15 +7320,25 @@ export default function PurchasesPage() {
                         {purchase.supplier_name}
                       </TableCell>
                       <TableCell className="text-sm">
-                        {purchase.items?.length || 0} items
-                        {purchase.has_returns && (
-                          <div
-                            className="mt-0.5 inline-flex items-center px-1.5 py-0 rounded text-[9px] font-black bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/30"
-                            title={`${purchase.returned_units || 0} unit(s) returned to supplier`}
-                          >
-                            Returns ₹{Number(purchase.returned_value || 0).toFixed(2)}
-                          </div>
-                        )}
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="whitespace-nowrap">
+                            {purchase.items?.length || 0} {purchase.items?.length === 1 ? "item" : "items"}
+                          </span>
+                          {purchase.has_schedule_h1 && (
+                            <ScheduleH1Badge
+                              testId="purchase-h1"
+                              title={`Schedule H1: ${(purchase.schedule_h1_items || []).join(", ")}`}
+                            />
+                          )}
+                          {purchase.has_returns && (
+                            <span
+                              className="inline-flex items-center whitespace-nowrap rounded-md border border-blue-500/30 bg-blue-500/10 px-1.5 py-[3px] text-[10px] font-bold leading-none text-blue-600 dark:text-blue-400"
+                              title={`${purchase.returned_units || 0} unit(s) returned to supplier`}
+                            >
+                              Returns ₹{Number(purchase.returned_value || 0).toFixed(2)}
+                            </span>
+                          )}
+                        </div>
                       </TableCell>
                       <TableCell className="text-center">
                         <div>
@@ -7163,7 +7476,9 @@ export default function PurchasesPage() {
                                     item.pack_price ||
                                     (item.purchase_price ? item.purchase_price * unitsPerPack : 0);
                                   const discount = parseFloat(item.discount) || 0;
+                                  // A line its scheme made free costs 0, not the pack rate
                                   const costPerUnit =
+                                    item.item_total === 0 ? 0 :
                                     item.price_per_unit ||
                                     (unitsPerPack > 0 && packPrice > 0
                                       ? (packPrice * (1 - discount / 100)) / unitsPerPack
@@ -7172,16 +7487,17 @@ export default function PurchasesPage() {
                                     item.mrp_per_unit || item.mrp || 0;
                                   const total =
                                     item.item_total ||
-                                    packQty *
-                                      packPrice *
-                                      (1 - discount / 100) *
+                                    lineNet(packQty, packPrice, discount, item).net *
                                       (1 + ((parseFloat(item.cgst) || 0) + (parseFloat(item.sgst) || 0)) / 100);
+                                  const schemeOff = lineNet(packQty, packPrice, discount, item).schemeOff;
+                                  const schemeDisc = schemeDiscountOf(item);
 
                                   return (
                                     <TableRow key={idx}>
                                       <TableCell className="font-medium">
                                         <div className="flex items-center gap-1.5 flex-wrap">
                                           <span>{item.product_name}</span>
+                                          {(purchase.schedule_h1_items || []).includes(item.product_name) && <ScheduleH1Badge title="Schedule H1 medicine" />}
                                           {item.status && /Return/.test(item.status) && (
                                             <Badge
                                               className={`px-1.5 py-0 text-[9px] font-black ${
@@ -7207,14 +7523,23 @@ export default function PurchasesPage() {
                                         {packQty}
                                       </TableCell>
                                       <TableCell className="text-center">
-                                        {hasScheme ? (
-                                          <div className="flex flex-col items-center">
-                                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
-                                              +{scheme} Free
-                                            </span>
-                                            <span className="text-[10px] text-muted-foreground font-mono">
-                                              (+{scheme * unitsPerPack} u)
-                                            </span>
+                                        {hasScheme || schemeOff > 0 ? (
+                                          <div className="flex flex-col items-center gap-0.5">
+                                            {hasScheme && (
+                                              <>
+                                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                                                  +{scheme} Free
+                                                </span>
+                                                <span className="text-[10px] text-muted-foreground font-mono">
+                                                  (+{scheme * unitsPerPack} u)
+                                                </span>
+                                              </>
+                                            )}
+                                            {schemeOff > 0 && (
+                                              <span data-testid="scheme-discount-view" className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                                                {schemeDisc.type === "amount" ? `₹${schemeOff.toFixed(2)} off` : `${schemeDisc.value}% off · -₹${schemeOff.toFixed(2)}`}
+                                              </span>
+                                            )}
                                           </div>
                                         ) : (
                                           <span className="text-muted-foreground text-xs font-mono">-</span>
@@ -8073,7 +8398,8 @@ export default function PurchasesPage() {
                   data-testid="save-purchase-draft-btn"
                 >
                   {savingDraft ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <FileText className="w-4 h-4 mr-1.5" />}
-                  {activeServerDraftId ? "Update draft" : "Save as draft"}
+                  <span className="max-md:hidden">{activeServerDraftId ? "Update draft" : "Save as draft"}</span>
+                  <span className="md:hidden">Draft</span>
                 </Button>
               )}
 
@@ -8096,9 +8422,10 @@ export default function PurchasesPage() {
                 ) : (
                   <div className="flex items-center gap-2">
                     <Save className="w-4 h-4" />
-                    <span>
+                    <span className="max-md:hidden">
                       {editingPurchaseId ? "Update Purchase" : "Save Purchase"}
                     </span>
+                    <span className="md:hidden">{editingPurchaseId ? "Update" : "Save"}</span>
                     <kbd className="hidden md:inline-block ml-1 opacity-70 text-[9px] font-mono border border-white/20 px-1 rounded">
                       {formatCombo("mod+enter")}
                     </kbd>
@@ -8762,7 +9089,9 @@ export default function PurchasesPage() {
                       req: false,
                     },
                     { key: "discount", label: "Discount %", req: false },
-                    { key: "scheme", label: "Scheme Qty", req: false },
+                    { key: "scheme", label: "Scheme Qty (free)", req: false },
+                    { key: "scheme_discount", label: "Scheme Discount %", req: false },
+                    { key: "margin", label: "Margin % (blank: supplier default)", req: false },
                     { key: "hsn_no", label: "HSN Code", req: false },
                     { key: "manufacturer", label: "Manufacturer", req: false },
                     {
@@ -8850,6 +9179,11 @@ export default function PurchasesPage() {
         isOpen={catalogModalOpen}
         onClose={() => setCatalogModalOpen(false)}
         initialName={catalogModalInitialName}
+        initialValues={catalogModalInitialValues}
+        onUseExisting={(m) => {
+          const row = purchaseItems.find((i) => i.id === catalogModalTargetRowId);
+          if (row) mapRowToProduct(row, m);
+        }}
         onSuccess={(created) => {
           if (catalogModalTargetRowId) {
             handleSelectMedicineForItem(catalogModalTargetRowId, created);

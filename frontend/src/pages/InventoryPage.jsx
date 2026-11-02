@@ -39,13 +39,14 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "../components/ui/alert-dialog";
-import { Search, Plus, Package, AlertTriangle, ChevronLeft, ChevronRight, ArrowUpDown, Trash2, Loader2, BellOff, Info, X, CalendarX, RotateCcw, CheckCircle2, Clock } from "lucide-react";
+import { Search, Plus, Package, AlertTriangle, ChevronLeft, ChevronRight, ArrowUpDown, Trash2, Loader2, BellOff, Info, X, CalendarX, RotateCcw, CheckCircle2, Clock, FileText } from "lucide-react";
 import { toast } from "sonner";
 import Loader from "../components/Loader";
 import RightSidebarDrawer from "../components/RightSidebarDrawer";
 import ProductSearchDropdown from "../components/ProductSearchDropdown";
 import ProductCatalogModal from "../components/ProductCatalogModal";
 import { formatExpiry } from "./utils";
+import ScheduleH1Badge, { H1_ROW_CLASS } from "../components/ScheduleH1Badge";
 
 export default function InventoryPage() {
   const navigate = useNavigate();
@@ -60,6 +61,7 @@ export default function InventoryPage() {
   const [showShortage, setShowShortage] = useState(false);
   const [showExpiringSoon, setShowExpiringSoon] = useState(false);
   const [showExpired, setShowExpired] = useState(false);
+  const [showH1, setShowH1] = useState(false);
   const [sidebarTab, setSidebarTab] = useState("batches");
   const [shortageCount, setShortageCount] = useState(0);
   // Badge counts per filter and the global thresholds (from the server's stock levels)
@@ -180,6 +182,7 @@ export default function InventoryPage() {
       manufacturer: productGroup.manufacturer,
       salt_composition: productGroup.salt_composition,
       hsn_no: productGroup.hsn_no,
+      schedule_h1: !!productGroup.schedule_h1,
       category: productGroup.category || "medicine",
       low_stock_threshold: productGroup.threshold ?? productGroup.low_stock_threshold ?? 10,
       shortage_threshold: productGroup.threshold ?? productGroup.shortage_threshold,
@@ -319,6 +322,7 @@ export default function InventoryPage() {
       if (showShortage) params.append("shortage", "true");
       if (showExpiringSoon) params.append("expiring_soon", "true");
       if (showExpired) params.append("expired", "true");
+      if (showH1) params.append("schedule_h1", "true");
       if (highlightId) params.append("highlight_id", highlightId);
 
       const response = await axios.get(`${API}/inventory?${params.toString()}`);
@@ -327,7 +331,7 @@ export default function InventoryPage() {
       const todayStr = new Date().toISOString().split("T")[0];
 
       // Default View Filter: If no filter pills are active, show only in-stock & non-expired items
-      const isNoFilterActive = !showLowStock && !showShortage && !showExpiringSoon && !showExpired && !search;
+      const isNoFilterActive = !showLowStock && !showShortage && !showExpiringSoon && !showExpired && !showH1 && !search;
       if (isNoFilterActive) {
         fetched = fetched.filter((item) => {
           const totalStock = item.total_available_stock !== undefined ? item.total_available_stock : (item.available_quantity || 0);
@@ -363,7 +367,7 @@ export default function InventoryPage() {
     } finally {
       if (seq === fetchSeq.current) setFiltering(false);
     }
-  }, [search, showLowStock, showShortage, showExpiringSoon, showExpired, sortBy, sortOrder, pagination.limit]);
+  }, [search, showLowStock, showShortage, showExpiringSoon, showExpired, showH1, sortBy, sortOrder, pagination.limit]);
 
   // A medicine's own threshold (null = back to the global one)
   const saveThreshold = async (value) => {
@@ -402,7 +406,7 @@ export default function InventoryPage() {
       fetchInventory(1);
     }, 300);
     return () => clearTimeout(debounce);
-  }, [search, showLowStock, showShortage, showExpiringSoon, showExpired, sortBy, sortOrder]);
+  }, [search, showLowStock, showShortage, showExpiringSoon, showExpired, showH1, sortBy, sortOrder]);
 
   const fetchData = async () => {
     try {
@@ -685,7 +689,23 @@ export default function InventoryPage() {
             Expired {counts?.expired > 0 && <Badge className={`ml-1.5 border-0 text-[10px] px-1.5 py-0.5 font-black rounded-full ${showExpired ? "bg-white text-rose-600" : "bg-rose-500 text-white"}`}>{counts.expired}</Badge>}
           </Button>
           
-          {(search || showLowStock || showShortage || showExpiringSoon || showExpired) && (
+          {/* Narrows whichever stock filter is on, so it doesn't clear them */}
+          <Button
+            onClick={() => setShowH1(!showH1)}
+            aria-pressed={showH1}
+            title="Medicines sold only on prescription"
+            className={`h-9 text-xs font-extrabold px-3.5 rounded-xl border transition-all duration-200 cursor-pointer ${
+              showH1
+                ? "bg-violet-600 text-white border-violet-600 hover:bg-violet-700 shadow-xs"
+                : "bg-card/60 border-border/70 text-foreground hover:bg-muted"
+            }`}
+            data-testid="h1-filter-btn"
+          >
+            {showH1 && filtering ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <FileText className={`w-3.5 h-3.5 mr-1.5 ${showH1 ? "text-white" : "text-violet-600 dark:text-violet-400"}`} />}
+            Schedule H1 {counts?.schedule_h1 > 0 && <Badge className={`ml-1.5 border-0 text-[10px] px-1.5 py-0.5 font-black rounded-full ${showH1 ? "bg-white text-violet-700" : "bg-violet-600 text-white"}`}>{counts.schedule_h1}</Badge>}
+          </Button>
+
+          {(search || showLowStock || showShortage || showExpiringSoon || showExpired || showH1) && (
             <Button
               variant="outline"
               onClick={() => {
@@ -694,6 +714,7 @@ export default function InventoryPage() {
                 setShowShortage(false);
                 setShowExpiringSoon(false);
                 setShowExpired(false);
+                setShowH1(false);
               }}
               className="h-9 text-xs font-extrabold px-3 rounded-xl border border-border/70 hover:bg-muted cursor-pointer"
             >
@@ -828,7 +849,7 @@ export default function InventoryPage() {
                       id={`record-${itemId}`} 
                       data-testid={`inventory-row-${itemId}`} 
                       onClick={() => handleOpenProductDetails(item)}
-                      className="hover:bg-muted/20 border-b border-border/40 transition-colors cursor-pointer group"
+                      className={`hover:bg-muted/20 border-b border-border/40 transition-colors cursor-pointer group ${item.schedule_h1 ? H1_ROW_CLASS : ""}`}
                     >
                       <TableCell className="text-center py-2" onClick={(e) => e.stopPropagation()}>
                         <input
@@ -845,8 +866,9 @@ export default function InventoryPage() {
                         />
                       </TableCell>
                       <TableCell className="py-2 font-bold text-xs text-foreground">
-                        <div className="font-extrabold text-xs text-foreground group-hover:text-primary transition-colors flex items-center gap-1.5">
+                        <div className="font-extrabold text-xs text-foreground group-hover:text-primary transition-colors flex items-center flex-wrap gap-1.5">
                           {item.product_name || item.name}
+                          {item.schedule_h1 && <ScheduleH1Badge testId="inventory-h1" title="Schedule H1: sold only on prescription" />}
                         </div>
                         <div className="text-[10px] text-muted-foreground font-semibold mt-0.5">
                           {item.manufacturer || "General"} {item.salt_composition ? `• ${item.salt_composition}` : ""}
@@ -1243,7 +1265,16 @@ export default function InventoryPage() {
           setProductsToMerge([]);
         }}
         title={detailProduct?.name || "Product Details"}
-        subtitle="Inventory Batches & Product Details"
+        subtitle={
+          detailProduct?.schedule_h1 ? (
+            <span className="inline-flex items-center gap-2 flex-wrap">
+              <ScheduleH1Badge />
+              Inventory Batches & Product Details
+            </span>
+          ) : (
+            "Inventory Batches & Product Details"
+          )
+        }
         icon={Package}
         headerAction={
           detailProduct ? (
@@ -1467,6 +1498,12 @@ export default function InventoryPage() {
                   <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Category</p>
                   <p className="text-sm font-semibold text-foreground mt-0.5 capitalize">{detailProduct?.category || "Medicine"}</p>
                 </div>
+                {detailProduct?.schedule_h1 && (
+                  <div className="col-span-2 flex items-center gap-2 rounded-xl border border-violet-500/30 bg-violet-500/5 p-3" data-testid="inventory-detail-h1">
+                    <ScheduleH1Badge />
+                    <p className="text-xs font-semibold text-muted-foreground">Sold only on prescription. Billing asks for it to be attached.</p>
+                  </div>
+                )}
                 <div className="col-span-2 rounded-xl border border-border/60 bg-muted/20 p-3" data-testid="threshold-editor">
                   <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Low stock / shortage threshold</p>
                   <p className="mt-0.5 text-xs font-semibold text-muted-foreground">

@@ -74,12 +74,12 @@ async function processJob(job) {
   if (type === "bill") {
     const bill = await extractBill(images);
     await job.updateProgress(80);
-    const matches = pharmacyId && db ? await Promise.all(bill.items.map((i) => matchForPurchase(db, pharmacyId, i).catch(() => null))) : [];
+    const matches = pharmacyId && db ? await Promise.all(bill.items.map((i) => matchForPurchase(db, pharmacyId, i, { includeGlobal: true }).catch(() => null))) : [];
     result = { success: true, purchase_data: bill, matches };
   } else {
     const { raw, product } = await extractProduct(images);
     await job.updateProgress(80);
-    const match = pharmacyId && db ? await matchForPurchase(db, pharmacyId, product).catch(() => null) : null;
+    const match = pharmacyId && db ? await matchForPurchase(db, pharmacyId, product, { includeGlobal: true }).catch(() => null) : null;
     result = { success: true, scanned_product: product, scanned_data: raw, match };
   }
   result.duration_ms = Date.now() - started;

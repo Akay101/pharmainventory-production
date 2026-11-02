@@ -1,9 +1,13 @@
 import { useEffect, useState } from "react";
 import axios from "axios";
+import { toast } from "sonner";
 import { CalendarClock, Globe, Info, Layers, Loader2, PackageCheck, Plus, Replace } from "lucide-react";
 import { API } from "../../App";
 import Loader from "../Loader";
 import { formatCombo } from "../../lib/shortcuts";
+import { marginPrice } from "../../lib/margin";
+import { isScheduleH1 } from "../../lib/scheduleH1";
+import ScheduleH1Badge from "../ScheduleH1Badge";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "../ui/sheet";
 
 // Product search suggestions for billing: filter chips (All / In stock / Near
@@ -179,6 +183,9 @@ export function SuggestionList({
                   <div className="font-bold text-sm text-foreground flex items-center gap-2 flex-wrap min-w-0">
                     <span>{invItem.product_name}</span>
                     <StockBadge item={invItem} />
+                    {isScheduleH1(invItem) && (
+                      <ScheduleH1Badge testId="suggestion-h1" title="Schedule H1: sell only on prescription; attach it to the bill" />
+                    )}
                     {near && (
                       <span className="text-[10px] px-2 py-0.5 bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30 rounded-full font-bold">
                         Expires {monthLabel(near.date)}
@@ -186,7 +193,19 @@ export function SuggestionList({
                     )}
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
-                    <span className="font-mono text-xs font-black text-orange-500">₹{Number(invItem.mrp_per_unit || invItem.mrp || 0).toFixed(2)}/unit</span>
+                    {(() => {
+                      // The batch billing picks first (in stock); a purchase margin prices it below MRP
+                      const b = (invItem.batches || []).find((x) => (x.available_quantity || 0) > 0) || invItem.batches?.[0];
+                      const mp = b && invItem.source !== "global" ? marginPrice({ ...b, mrp: b.mrp || invItem.mrp_per_unit || invItem.mrp }) : null;
+                      if (mp?.margin !== null && mp?.margin !== undefined) {
+                        return (
+                          <span className="font-mono text-xs font-black text-sky-600 dark:text-sky-400" title={mp.capped ? `${mp.margin}% margin, capped at MRP` : `${mp.margin}% purchase margin`}>
+                            ₹{mp.price.toFixed(2)}/unit <span className="font-sans text-[10px] font-bold">{mp.capped ? "MRP cap" : `${mp.margin}% margin`}</span>
+                          </span>
+                        );
+                      }
+                      return <span className="font-mono text-xs font-black text-orange-500">₹{Number(invItem.mrp_per_unit || invItem.mrp || 0).toFixed(2)}/unit</span>;
+                    })()}
                     <button
                       type="button"
                       title={`Details & alternates (${formatCombo("alt+d")})`}
@@ -298,10 +317,29 @@ export function ProductDetailsSheet({ item, open, onOpenChange, onUse, warningDa
   const [altsLoading, setAltsLoading] = useState(false);
   const [altsError, setAltsError] = useState("");
 
+  // The pharmacy's own Schedule H1 mark for this product (null: auto from salt)
+  const [h1Saving, setH1Saving] = useState(false);
+  const [h1Mark, setH1Mark] = useState(undefined);
+
   useEffect(() => {
     setAlts(null);
     setAltsError("");
+    setH1Mark(undefined);
   }, [item?.product_name]);
+
+  const saveH1 = async (value) => {
+    if (!item?.product_id) return toast.error("This medicine isn't in your catalog yet");
+    setH1Saving(true);
+    try {
+      await axios.put(`${API}/products/${item.product_id}`, { schedule_h1: value });
+      setH1Mark(value);
+      toast.success(value === null ? "Schedule H1: detected from the salt" : value ? "Marked Schedule H1" : "Marked not Schedule H1");
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Couldn't save");
+    } finally {
+      setH1Saving(false);
+    }
+  };
 
   const loadAlternates = async () => {
     if (!item?.salt_composition) return;
@@ -351,6 +389,35 @@ export function ProductDetailsSheet({ item, open, onOpenChange, onUse, warningDa
           {fact("HSN", item.hsn_no)}
           {fact("In stock", item.source === "global" ? null : `${stockOf(item)} units`)}
         </div>
+
+        {item.source !== "global" && item.product_id && (() => {
+          const autoH1 = isScheduleH1({ salt_composition: item.salt_composition, product_name: item.product_name });
+          const shown = h1Mark === undefined ? isScheduleH1(item) : h1Mark === null ? autoH1 : h1Mark;
+          const current = h1Mark === undefined ? (item.schedule_h1 === autoH1 ? "auto" : item.schedule_h1 ? "yes" : "no") : h1Mark === null ? "auto" : h1Mark ? "yes" : "no";
+          return (
+            <div className={`mt-3 rounded-xl border px-3 py-2.5 ${shown ? "border-violet-500/40 bg-violet-500/5" : "border-border/60 bg-muted/20"}`} data-testid="details-h1">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <p className="text-xs font-bold text-foreground">
+                  Schedule H1: <span className={shown ? "text-violet-700 dark:text-violet-300" : "text-muted-foreground"}>{shown ? "Yes, prescription needed" : "No"}</span>
+                </p>
+                <div className="flex gap-1">
+                  {[["auto", null, `Auto${autoH1 ? " (H1)" : ""}`], ["yes", true, "Yes"], ["no", false, "No"]].map(([k, v, label]) => (
+                    <button
+                      key={k}
+                      type="button"
+                      disabled={h1Saving}
+                      onClick={() => saveH1(v)}
+                      aria-pressed={current === k}
+                      className={`h-7 px-2.5 rounded-lg text-[11px] font-bold border ${current === k ? "bg-foreground text-background border-foreground" : "border-border text-muted-foreground hover:text-foreground"}`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          );
+        })()}
 
         {item.source !== "global" && (
           <div className="mt-5">

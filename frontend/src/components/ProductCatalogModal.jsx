@@ -10,6 +10,8 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { isScheduleH1 } from "../lib/scheduleH1";
+import { catalogFormErrors, needsSalt } from "../lib/catalogDetails";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import {
@@ -75,6 +77,8 @@ export default function ProductCatalogModal({
   isOpen,
   onClose,
   initialName = "",
+  initialValues = null, // details already on the purchase row
+  onUseExisting = null, // pick a similar product instead of creating one
   onSuccess,
   title = "Create Product Catalog",
 }) {
@@ -95,13 +99,21 @@ export default function ProductCatalogModal({
     shortage_threshold: "10",
     rack_location: "",
     description: "",
+    schedule_h1: "auto",
   });
 
   const [loading, setLoading] = useState(false);
   const [aiLoading, setAiLoading] = useState(false);
+  const [triedSave, setTriedSave] = useState(false);
+  const errors = triedSave ? catalogFormErrors(formData) : {};
+  const req = <span className="text-rose-500">*</span>;
+  const fieldError = (field) =>
+    errors[field] && <p className="text-[10px] font-semibold text-rose-600 dark:text-rose-400">{errors[field]}</p>;
+  const invalidCls = (field) => (errors[field] ? "!border-rose-500 ring-1 ring-rose-500/30" : "");
 
   useEffect(() => {
     if (isOpen) {
+      setTriedSave(false);
       const name = initialName ? initialName.trim() : "";
       setFormData({
         name,
@@ -120,9 +132,11 @@ export default function ProductCatalogModal({
         shortage_threshold: "10",
         rack_location: "",
         description: "",
+        schedule_h1: "auto",
+        ...(initialValues || {}),
       });
     }
-  }, [isOpen, initialName]);
+  }, [isOpen, initialName]); // eslint-disable-line
 
   // Auto-generate suggested package details when pack_type or units change
   const handlePackChange = (field, val) => {
@@ -155,6 +169,23 @@ export default function ProductCatalogModal({
       return updated;
     });
   };
+
+  // Before a new entry is made: products that may already be this one
+  const [similar, setSimilar] = useState([]);
+  useEffect(() => {
+    const name = formData.name.trim();
+    setSimilar([]);
+    if (!isOpen || name.length < 3) return undefined;
+    const timer = setTimeout(async () => {
+      try {
+        const res = await axios.post(`${API}/purchases/match-suggestions`, { items: [{ product_name: name }] }, { withCredentials: true });
+        setSimilar((res.data.matches?.[0]?.suggestions || []).slice(0, 3));
+      } catch {
+        setSimilar([]);
+      }
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [formData.name, isOpen]);
 
   const handleAiEnrich = async () => {
     if (!formData.name.trim()) {
@@ -199,8 +230,14 @@ export default function ProductCatalogModal({
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!formData.name.trim()) {
-      toast.error("Product name is required");
+    setTriedSave(true);
+    const problems = catalogFormErrors(formData);
+    const first = Object.keys(problems)[0];
+    if (first) {
+      toast.error("Fill in the required product details");
+      const el = document.querySelector(`[data-catalog-field="${first}"]`);
+      el?.scrollIntoView({ block: "center" });
+      el?.focus({ preventScroll: true });
       return;
     }
 
@@ -213,6 +250,8 @@ export default function ProductCatalogModal({
         dosage_form: formData.dosage_form,
         manufacturer: formData.manufacturer.trim(),
         salt_composition: formData.salt_composition.trim(),
+        // "auto": detected from the salt; yes / no: the pharmacy's own mark
+        schedule_h1: formData.schedule_h1 === "auto" ? null : formData.schedule_h1,
         pack_type: formData.pack_type,
         units_per_pack: parseInt(formData.units_per_pack) || 1,
         package_details:
@@ -254,6 +293,13 @@ export default function ProductCatalogModal({
       }
       onClose();
     } catch (err) {
+      // Already in the catalog with full details: use that entry
+      if (err.response?.status === 409 && err.response.data?.product) {
+        toast.info(err.response.data.detail);
+        if (onSuccess) onSuccess(err.response.data.product);
+        onClose();
+        return;
+      }
       console.error("Create product catalog error:", err);
       toast.error(
         err.response?.data?.detail || "Failed to create product catalog"
@@ -296,6 +342,7 @@ export default function ProductCatalogModal({
         <form
           id="product-catalog-form"
           onSubmit={handleSubmit}
+          noValidate
           className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 space-y-5"
         >
           {/* SECTION 1: Basic & Medical Identity */}
@@ -324,25 +371,55 @@ export default function ProductCatalogModal({
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
               <div className="md:col-span-2 space-y-1.5">
-                <Label className="text-xs font-bold text-foreground">
+                <Label className="block text-xs font-bold text-foreground">
                   Product Name <span className="text-rose-500">*</span>
                 </Label>
                 <Input
-                  required
+                  data-catalog-field="name"
+                  aria-invalid={!!errors.name}
                   placeholder="e.g. Dolo 650 Tablet"
                   value={formData.name}
                   onChange={(e) =>
                     setFormData({ ...formData, name: e.target.value })
                   }
-                  className="h-9 text-xs font-bold rounded-xl border border-border bg-background focus:border-orange-500 px-3"
+                  className={`h-9 text-xs font-bold rounded-xl border border-border bg-background focus:border-orange-500 px-3 ${invalidCls("name")}`}
                 />
-                <p className="text-[10px] text-muted-foreground">
-                  Official brand & medicine strength name
-                </p>
+                {fieldError("name") || (
+                  <p className="text-[10px] text-muted-foreground">
+                    Official brand & medicine strength name
+                  </p>
+                )}
+                {similar.length > 0 && (
+                  <div data-testid="catalog-similar" className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-2">
+                    <p className="text-[11px] font-semibold text-foreground">Already have it? Use it to avoid a duplicate.</p>
+                    <div className="mt-1 space-y-1">
+                      {similar.map((m) => (
+                        <div key={`${m.source}-${m.product_id}`} className="flex items-center gap-2 text-[11px]">
+                          <span className="min-w-0 flex-1 truncate">
+                            <span className="font-bold text-foreground">{m.product_name}</span>
+                            <span className="text-muted-foreground"> · {m.source === "global" ? "Medicine database" : "Your catalog"}</span>
+                          </span>
+                          {onUseExisting && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                onUseExisting(m);
+                                onClose();
+                              }}
+                              className="shrink-0 font-bold text-primary hover:underline cursor-pointer"
+                            >
+                              Use
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="space-y-1.5">
-                <Label className="text-xs font-bold text-foreground">
+                <Label className="block text-xs font-bold text-foreground">
                   Category
                 </Label>
                 <Select
@@ -372,7 +449,7 @@ export default function ProductCatalogModal({
               </div>
 
               <div className="space-y-1.5">
-                <Label className="text-xs font-bold text-foreground">
+                <Label className="block text-xs font-bold text-foreground">
                   Dosage Form
                 </Label>
                 <Select
@@ -404,26 +481,32 @@ export default function ProductCatalogModal({
               <div className="space-y-1.5">
                 <Label className="text-xs font-bold text-foreground flex items-center gap-1">
                   <Building2 className="w-3 h-3 text-muted-foreground" />
-                  Manufacturer / Brand
+                  Manufacturer / Brand {req}
                 </Label>
                 <Input
+                  data-catalog-field="manufacturer"
+                  aria-invalid={!!errors.manufacturer}
                   placeholder="e.g. Micro Labs Ltd"
                   value={formData.manufacturer}
                   onChange={(e) =>
                     setFormData({ ...formData, manufacturer: e.target.value })
                   }
-                  className="h-9 text-xs font-semibold rounded-xl border border-border bg-background px-3"
+                  className={`h-9 text-xs font-semibold rounded-xl border border-border bg-background px-3 ${invalidCls("manufacturer")}`}
                 />
-                <p className="text-[10px] text-muted-foreground">
-                  Pharma manufacturing company
-                </p>
+                {fieldError("manufacturer") || (
+                  <p className="text-[10px] text-muted-foreground">
+                    Pharma manufacturing company
+                  </p>
+                )}
               </div>
 
               <div className="space-y-1.5">
-                <Label className="text-xs font-bold text-foreground">
-                  Salt / Active Ingredients
+                <Label className="block text-xs font-bold text-foreground">
+                  Salt / Active Ingredients {needsSalt(formData) && req}
                 </Label>
                 <Input
+                  data-catalog-field="salt_composition"
+                  aria-invalid={!!errors.salt_composition}
                   placeholder="e.g. Paracetamol (650mg)"
                   value={formData.salt_composition}
                   onChange={(e) =>
@@ -432,10 +515,43 @@ export default function ProductCatalogModal({
                       salt_composition: e.target.value,
                     })
                   }
-                  className="h-9 text-xs font-semibold rounded-xl border border-border bg-background px-3"
+                  className={`h-9 text-xs font-semibold rounded-xl border border-border bg-background px-3 ${invalidCls("salt_composition")}`}
                 />
+                {fieldError("salt_composition") || (
+                  <p className="text-[10px] text-muted-foreground">
+                    Active therapeutic composition
+                  </p>
+                )}
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="block text-xs font-bold text-foreground">Schedule H1</Label>
+                <div className="flex gap-1" role="radiogroup" aria-label="Schedule H1">
+                  {[
+                    ["auto", `Auto${isScheduleH1({ salt_composition: formData.salt_composition, product_name: formData.name }) ? " (H1)" : ""}`],
+                    ["yes", "Yes"],
+                    ["no", "No"],
+                  ].map(([v, label]) => (
+                    <button
+                      key={v}
+                      type="button"
+                      role="radio"
+                      aria-checked={formData.schedule_h1 === v}
+                      onClick={() => setFormData({ ...formData, schedule_h1: v })}
+                      className={`h-8 px-3 rounded-lg text-xs font-bold border transition-colors ${
+                        formData.schedule_h1 === v
+                          ? v === "no"
+                            ? "bg-muted text-foreground border-border"
+                            : "bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/40"
+                          : "border-border text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
                 <p className="text-[10px] text-muted-foreground">
-                  Active therapeutic composition
+                  Auto detects H1 salts (e.g. cefixime, tramadol, alprazolam). H1 bills need a prescription attached.
                 </p>
               </div>
             </div>
@@ -452,7 +568,7 @@ export default function ProductCatalogModal({
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
               <div className="space-y-1.5">
-                <Label className="text-xs font-bold text-foreground">
+                <Label className="block text-xs font-bold text-foreground">
                   Pack Type
                 </Label>
                 <Select
@@ -480,10 +596,12 @@ export default function ProductCatalogModal({
               </div>
 
               <div className="space-y-1.5">
-                <Label className="text-xs font-bold text-foreground">
-                  Units Per Pack <span className="text-muted-foreground font-normal">(e.g. 10 tabs/strip)</span>
+                <Label className="block text-xs font-bold text-foreground">
+                  Units Per Pack {req} <span className="text-muted-foreground font-normal">(e.g. 10 tabs/strip)</span>
                 </Label>
                 <Input
+                  data-catalog-field="units_per_pack"
+                  aria-invalid={!!errors.units_per_pack}
                   type="number"
                   min="1"
                   placeholder="10"
@@ -491,15 +609,17 @@ export default function ProductCatalogModal({
                   onChange={(e) =>
                     handlePackChange("units_per_pack", e.target.value)
                   }
-                  className="h-9 text-xs font-bold text-center rounded-xl border border-border bg-background px-3"
+                  className={`h-9 text-xs font-bold text-center rounded-xl border border-border bg-background px-3 ${invalidCls("units_per_pack")}`}
                 />
-                <p className="text-[10px] text-muted-foreground text-center">
-                  Items contained in 1 pack
-                </p>
+                {fieldError("units_per_pack") || (
+                  <p className="text-[10px] text-muted-foreground text-center">
+                    Items contained in 1 pack
+                  </p>
+                )}
               </div>
 
               <div className="space-y-1.5">
-                <Label className="text-xs font-bold text-foreground">
+                <Label className="block text-xs font-bold text-foreground">
                   Packaging Label / Details
                 </Label>
                 <Input
@@ -546,7 +666,7 @@ export default function ProductCatalogModal({
               </div>
 
               <div className="space-y-1.5">
-                <Label className="text-xs font-bold text-foreground">
+                <Label className="block text-xs font-bold text-foreground">
                   GST Rate %
                 </Label>
                 <Select
@@ -576,10 +696,12 @@ export default function ProductCatalogModal({
               </div>
 
               <div className="space-y-1.5">
-                <Label className="text-xs font-bold text-foreground">
-                  MRP per Pack (₹)
+                <Label className="block text-xs font-bold text-foreground">
+                  MRP per Pack (₹) {req}
                 </Label>
                 <Input
+                  data-catalog-field="mrp"
+                  aria-invalid={!!errors.mrp}
                   type="number"
                   step="0.01"
                   min="0"
@@ -588,15 +710,17 @@ export default function ProductCatalogModal({
                   onChange={(e) =>
                     setFormData({ ...formData, mrp: e.target.value })
                   }
-                  className="h-9 text-xs font-bold rounded-xl border border-border bg-background text-amber-500 font-mono px-3"
+                  className={`h-9 text-xs font-bold rounded-xl border border-border bg-background text-amber-500 font-mono px-3 ${invalidCls("mrp")}`}
                 />
-                <p className="text-[10px] text-muted-foreground font-mono">
-                  Unit MRP: ₹{unitMrpPreview}
-                </p>
+                {fieldError("mrp") || (
+                  <p className="text-[10px] text-muted-foreground font-mono">
+                    Unit MRP: ₹{unitMrpPreview}
+                  </p>
+                )}
               </div>
 
               <div className="space-y-1.5">
-                <Label className="text-xs font-bold text-foreground">
+                <Label className="block text-xs font-bold text-foreground">
                   Est. PTR / Trade Price (₹)
                 </Label>
                 <Input
@@ -628,7 +752,7 @@ export default function ProductCatalogModal({
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
               <div className="space-y-1.5">
-                <Label className="text-xs font-bold text-foreground">
+                <Label className="block text-xs font-bold text-foreground">
                   Low Stock Threshold
                 </Label>
                 <Input
@@ -650,7 +774,7 @@ export default function ProductCatalogModal({
               </div>
 
               <div className="space-y-1.5">
-                <Label className="text-xs font-bold text-foreground">
+                <Label className="block text-xs font-bold text-foreground">
                   Shortage List Threshold
                 </Label>
                 <Input

@@ -8,6 +8,11 @@ const { queueGlobalCheck } = require("../services/globalReview");
 
 const { requireSubscription } = require("../middleware/subscription");
 
+// Schedule H1 mark sent as true / false / "yes" / "no"; anything else is auto (null)
+const { catalogGaps } = require("../utils/catalogDetails");
+const { looseNameRegex } = require("../services/search/normalize");
+const h1Mark = (v) => (v === true || v === "true" || v === "yes" ? true : v === false || v === "false" || v === "no" ? false : null);
+
 const escapeRegex = (str) => {
   if (!str) return "";
   return String(str).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -131,6 +136,10 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
     if (!finalName) {
       return res.status(400).json({ detail: "Product name is required" });
     }
+    const gaps = catalogGaps({ category, manufacturer, salt_composition, units_per_pack, mrp });
+    if (gaps.length) {
+      return res.status(400).json({ code: "CATALOG_DETAILS_REQUIRED", detail: `Add the product's ${gaps.join(", ")}`, missing: gaps });
+    }
 
     const parsedUnits = parseInt(units_per_pack) || 1;
     const parsedMrp = parseFloat(mrp) || 0;
@@ -185,6 +194,8 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
       low_stock_threshold: low_stock_threshold !== undefined ? Number(low_stock_threshold) : 10,
       shortage_threshold: shortage_threshold !== undefined && shortage_threshold !== "" && shortage_threshold !== null ? Number(shortage_threshold) : 10,
       rack_location: (rack_location || "").trim(),
+      // true / false: the pharmacy's own Schedule H1 mark; null: detect from the salt
+      schedule_h1: h1Mark(req.body.schedule_h1),
       description: description || null,
       image_url: image_url || null,
       source: "catalog",
@@ -192,6 +203,22 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
+
+    // Same name already in the catalog: complete it if it has gaps, never a duplicate
+    const existing = await db.collection("products").findOne({
+      pharmacy_id: req.user.pharmacy_id,
+      $or: [{ name: looseNameRegex(finalName) }, { product_name: looseNameRegex(finalName) }],
+    });
+    if (existing) {
+      const { _id: _ignored, ...current } = existing;
+      if (!catalogGaps(existing).length) {
+        return res.status(409).json({ detail: `${finalName} is already in your catalog`, product: current });
+      }
+      const { id: _id2, product_id: _p, created_at: _c, ...details } = productData;
+      await db.collection("products").updateOne({ _id: existing._id }, { $set: details });
+      await logActivity(db, req.user.pharmacy_id, req.user.id, req.user.name, "UPDATE", "PRODUCTS", existing.id, `Completed catalog details: ${finalName}`, "/inventory");
+      return res.json({ message: "Product catalog updated", product: { ...current, ...details } });
+    }
 
     await db.collection("products").insertOne(productData);
     queueGlobalCheck("medicine", req.user.pharmacy_id, productData);
@@ -271,6 +298,7 @@ router.put(
       if (rack_location !== undefined) updateDoc.rack_location = (rack_location || "").trim();
       if (description !== undefined) updateDoc.description = description;
       if (image_url !== undefined) updateDoc.image_url = image_url;
+      if (req.body.schedule_h1 !== undefined) updateDoc.schedule_h1 = h1Mark(req.body.schedule_h1);
 
       const result = await db
         .collection("products")

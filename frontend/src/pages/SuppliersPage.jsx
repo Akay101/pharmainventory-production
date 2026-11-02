@@ -70,6 +70,7 @@ export default function SuppliersPage() {
     email: "",
     address: "",
     gst_no: "",
+    default_margin_percent: "",
   });
 
   // Global Distributors Catalog State
@@ -409,6 +410,11 @@ export default function SuppliersPage() {
       toast.error("Supplier name is required");
       return;
     }
+    const m = String(formData.default_margin_percent ?? "").trim();
+    if (m !== "" && !(Number(m) >= 0 && Number(m) <= 1000)) {
+      toast.error("Default margin must be a number from 0 to 1000");
+      return;
+    }
 
     setSubmitting(true);
     try {
@@ -438,6 +444,10 @@ export default function SuppliersPage() {
       email: supplier.email || "",
       address: supplier.address || "",
       gst_no: supplier.gst_no || "",
+      default_margin_percent:
+        supplier.default_margin_percent !== undefined && supplier.default_margin_percent !== null
+          ? String(supplier.default_margin_percent)
+          : "",
     });
     setDialogOpen(true);
   };
@@ -467,6 +477,7 @@ export default function SuppliersPage() {
       email: "",
       address: "",
       gst_no: "",
+      default_margin_percent: "",
     });
     setEditingSupplier(null);
   };
@@ -914,6 +925,30 @@ export default function SuppliersPage() {
                   />
                 </div>
 
+                <div className="space-y-2">
+                  <Label className="text-xs font-bold text-muted-foreground uppercase">Default margin %</Label>
+                  <Input
+                    type="number"
+                    inputMode="decimal"
+                    min="0"
+                    step="0.01"
+                    placeholder="Blank: sell at MRP"
+                    value={formData.default_margin_percent}
+                    onChange={(e) => setFormData({ ...formData, default_margin_percent: e.target.value })}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        handleSubmit();
+                      }
+                    }}
+                    className="h-10 border-border/80 focus-visible:ring-primary focus-visible:ring-offset-0 rounded-xl"
+                    data-testid="supplier-margin-input"
+                  />
+                  <p className="text-[11px] text-muted-foreground">
+                    New purchase lines from this supplier start with this margin over landed cost; billing sells at cost + margin, never above MRP. You can change it per line.
+                  </p>
+                </div>
+
                 <Button
                   onClick={handleSubmit}
                   disabled={submitting}
@@ -1027,6 +1062,11 @@ export default function SuppliersPage() {
                       <span className="flex items-center gap-1 font-mono text-primary">
                         <FileText className="w-3.5 h-3.5 text-primary/70 shrink-0" />
                         GST: {detailsDialog.data.supplier.gst_no}
+                      </span>
+                    )}
+                    {detailsDialog.data.supplier.default_margin_percent !== undefined && detailsDialog.data.supplier.default_margin_percent !== null && (
+                      <span className="flex items-center gap-1 font-semibold text-sky-700 dark:text-sky-300">
+                        Default margin {detailsDialog.data.supplier.default_margin_percent}%
                       </span>
                     )}
                   </div>
@@ -1390,6 +1430,11 @@ export default function SuppliersPage() {
                             ) : (
                               <p className="inline-block mt-1 font-mono text-[10px] font-medium text-muted-foreground/60 bg-muted/20 px-2 py-0.5 rounded border border-border/50">
                                 NO GST
+                              </p>
+                            )}
+                            {supplier.default_margin_percent !== undefined && supplier.default_margin_percent !== null && (
+                              <p className="inline-block mt-1 ml-1 text-[10px] font-bold text-sky-700 dark:text-sky-300 bg-sky-500/10 px-2 py-0.5 rounded border border-sky-500/20" title="Default margin on new purchase lines">
+                                {supplier.default_margin_percent}% margin
                               </p>
                             )}
                           </div>

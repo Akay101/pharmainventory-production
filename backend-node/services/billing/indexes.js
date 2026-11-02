@@ -43,6 +43,12 @@ const CORE_INDEXES = {
     { key: { expires_at: 1 }, options: { name: "ttl", expireAfterSeconds: 0 } },
   ],
   otp_challenges: [{ key: { purge_at: 1 }, options: { name: "ttl", expireAfterSeconds: 0 } }],
+  // Files are on S3; uploads with no bill by unlinked_until are swept by cron
+  bill_prescriptions: [
+    { key: { pharmacy_id: 1, id: 1 }, options: { name: "pharmacy_id_id" } },
+    { key: { pharmacy_id: 1, bill_id: 1 }, options: { name: "pharmacy_bill" } },
+    { key: { unlinked_until: 1 }, options: { name: "unlinked_until", sparse: true } },
+  ],
   auth_attempts: [
     { key: { key: 1 }, options: { name: "key_unique", unique: true } },
     { key: { expires_at: 1 }, options: { name: "ttl", expireAfterSeconds: 0 } },

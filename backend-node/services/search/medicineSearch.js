@@ -30,7 +30,7 @@ const GLOBAL_PROJECTION = {
   mrp: 1, "price(₹)": 1, unit_mrp: 1, selling_price: 1, trade_price: 1,
   purchase_price: 1, tax_rate: 1, gst_percentage: 1, hsn_code: 1, hsn_no: 1,
   salt_composition: 1, short_composition1: 1, short_composition2: 1,
-  active_ingredients: 1, prescription_required: 1, image_url: 1,
+  active_ingredients: 1, prescription_required: 1, drug_schedule: 1, image_url: 1,
   thumbnail_url: 1, rank_score: 1, search_keyword: 1, s_name: 1,
 };
 

@@ -24,6 +24,7 @@ function itemFromResult(data) {
     available_quantity: m.available_quantity || 0,
     mrp: Number(m.mrp) || 0,
     purchase_price: Number(m.purchase_price) || 0,
+    margin_percent: m.margin_percent ?? null,
     cgst: Number(m.cgst) || 0,
     sgst: Number(m.sgst) || 0,
     units_per_pack: m.units_per_pack || 1,
@@ -48,6 +49,8 @@ export function toBillLines(cards) {
       mrp: Number(item.mrp) || 0,
       unit_price: Number(item.mrp) || 0,
       purchase_price: item.purchase_price,
+      // Billing prices a batch bought with a margin from it
+      margin_percent: item.margin_percent ?? null,
       cgst: item.cgst,
       sgst: item.sgst,
       expiry_date: item.expiry_date ? formatExpiry(item.expiry_date) : "",
@@ -74,6 +77,7 @@ function ScanCard({ card, index, onUpdate, onRemove, onScan, canRemove }) {
       available_quantity: b.available_quantity,
       mrp: b.mrp || item.mrp,
       purchase_price: b.purchase_price,
+      margin_percent: b.margin_percent ?? null,
       cgst: b.cgst,
       sgst: b.sgst,
     });

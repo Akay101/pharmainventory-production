@@ -18,6 +18,9 @@ import {
   Zap,
 } from "lucide-react";
 import { toast } from "sonner";
+import { parseMargin, marginPrice } from "../lib/margin";
+import { lineNet, schemeDiscountOf } from "../lib/purchaseLine";
+import SchemeDiscountField from "../components/purchases/SchemeDiscountField";
 import { API, useAuth } from "../App";
 import { compressForScan, runQueuedScan, scanErrorMessage } from "../components/scan/scanClient";
 import { AiAmbient, AiMark, ConfidencePill, PhotoTray, Pill, ScanningView, useScanSteps } from "../components/scan/ScanUI";
@@ -49,13 +52,22 @@ function linkFromMatch(match) {
     selected_product_id = match.exact_name_match.product_id;
     selected_product_name = match.exact_name_match.product_name;
     match_badge = { type: "name_exact", label: "In your catalog" };
+  } else if (match.suggestions?.some((s) => s.is_exact)) {
+    const top = match.suggestions.find((s) => s.is_exact);
+    selected_product_id = top.product_id;
+    selected_product_name = top.product_name;
+    match_badge = { type: "name_exact", label: "In medicine database" };
+    return {
+      selected_product_id,
+      selected_product_name,
+      match_badge,
+      inventory_suggestions: match.suggestions,
+      ...(top.manufacturer ? { manufacturer: top.manufacturer } : {}),
+      ...(top.salt_composition ? { salt_composition: top.salt_composition } : {}),
+    };
   } else if (match.suggestions?.length) {
-    const top = match.suggestions[0];
-    if (top.is_high_confidence) {
-      selected_product_id = top.product_id;
-      selected_product_name = top.product_name;
-    }
-    match_badge = { type: "suggestion", label: top.is_high_confidence ? "Likely in catalog" : `${match.suggestions.length} similar` };
+    // Close but not certain: the user decides, nothing is assumed
+    return { selected_product_id, selected_product_name, match_badge: { type: "suggestion" }, needs_choice: true, inventory_suggestions: match.suggestions };
   }
   return { selected_product_id, selected_product_name, match_badge, inventory_suggestions: match.suggestions || [] };
 }
@@ -109,7 +121,7 @@ function itemsFromResult(mode, result) {
   }));
 }
 
-const lineTotal = (it) => num(it.pack_quantity) * num(it.rate_pack) * (1 - num(it.discount) / 100) * (1 + num(it.gst_percent) / 100);
+const lineTotal = (it) => lineNet(it.pack_quantity, it.rate_pack, it.discount, it).net * (1 + num(it.gst_percent) / 100);
 
 // Which existing catalog product this line goes into (or a new one)
 function CatalogLink({ item, onChange }) {
@@ -121,6 +133,7 @@ function CatalogLink({ item, onChange }) {
     return () => document.removeEventListener("mousedown", close);
   }, []);
   const isNew = !item.selected_product_id || item.selected_product_id === "NEW";
+  const toChoose = isNew && item.needs_choice;
   const selected = item.inventory_suggestions.find((s) => s.product_id === item.selected_product_id);
 
   return (
@@ -129,11 +142,11 @@ function CatalogLink({ item, onChange }) {
         type="button"
         onClick={() => setOpen((o) => !o)}
         className={`w-full flex items-center gap-2 rounded-xl border px-3 py-2 text-left text-xs font-semibold transition ${
-          isNew ? "border-border bg-background" : "border-emerald-500/40 bg-emerald-500/10 text-emerald-500"
+          toChoose ? "border-amber-500/50 bg-amber-500/10 text-foreground" : isNew ? "border-border bg-background" : "border-emerald-500/40 bg-emerald-500/10 text-emerald-500"
         }`}
       >
         {isNew ? <PlusCircle className="h-4 w-4 text-orange-500 shrink-0" /> : item.match_badge?.type === "batch_exact" ? <Zap className="h-4 w-4 shrink-0" /> : <Link2 className="h-4 w-4 shrink-0" />}
-        <span className="truncate flex-1">{isNew ? "New catalog item" : `Adds to: ${selected?.product_name || item.selected_product_name || item.product_name}`}</span>
+        <span className="truncate flex-1">{toChoose ? `Closest: ${item.inventory_suggestions[0]?.product_name}. Tap to choose` : isNew ? "New catalog item" : `Adds to: ${selected?.product_name || item.selected_product_name || item.product_name}`}</span>
         <ChevronDown className={`h-4 w-4 shrink-0 transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
       {open && (
@@ -141,7 +154,7 @@ function CatalogLink({ item, onChange }) {
           <button
             type="button"
             onClick={() => {
-              onChange({ selected_product_id: "NEW", selected_product_name: "" });
+              onChange({ selected_product_id: "NEW", selected_product_name: "", needs_choice: false });
               setOpen(false);
             }}
             className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs ${isNew ? "bg-orange-500/10 text-orange-500" : "hover:bg-muted"}`}
@@ -159,13 +172,20 @@ function CatalogLink({ item, onChange }) {
                   key={s.product_id}
                   type="button"
                   onClick={() => {
-                    onChange({ selected_product_id: s.product_id, selected_product_name: s.product_name });
+                    onChange({
+                      selected_product_id: s.product_id,
+                      selected_product_name: s.product_name,
+                      needs_choice: false,
+                      manufacturer: s.manufacturer || item.manufacturer,
+                      salt_composition: s.salt_composition || item.salt_composition,
+                    });
                     setOpen(false);
                   }}
                   className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs ${active ? "bg-emerald-500/10 text-emerald-500" : "hover:bg-muted"}`}
                 >
                   {s.is_batch_match ? <Zap className="h-4 w-4 text-amber-500" /> : <Link2 className="h-4 w-4 text-emerald-500" />}
                   <span className="flex-1 truncate">{s.product_name}</span>
+                  {s.source === "global" && <span className="shrink-0 text-[10px] text-muted-foreground">database</span>}
                   {s.is_batch_match && <Pill tone="amber">batch</Pill>}
                   {active && <Check className="h-4 w-4" />}
                 </button>
@@ -194,6 +214,10 @@ function ItemCard({ item, index, onChange, onRemove }) {
   const units = (num(item.pack_quantity) + num(item.free_quantity)) * (num(item.units_per_pack) || 1);
   const mrpUnit = num(item.units_per_pack) > 1 ? num(item.mrp_pack) / num(item.units_per_pack) : num(item.mrp_pack);
   const missing = !item.product_name || !num(item.pack_quantity) || !num(item.rate_pack) || !num(item.mrp_pack);
+  // What billing will sell a unit at with this margin (landed cost, MRP cap)
+  const sell = parseMargin(item.margin) !== null && units > 0
+    ? marginPrice({ purchase_price: lineTotal(item) / units, mrp: mrpUnit, margin_percent: item.margin })
+    : null;
 
   return (
     <div className={`rounded-2xl border bg-card shadow-sm ai-pop-in ${missing ? "border-amber-500/40" : "border-border"}`}>
@@ -236,7 +260,7 @@ function ItemCard({ item, index, onChange, onRemove }) {
           <Field label="Batch"><input value={item.batch_no} onChange={(e) => onChange({ batch_no: e.target.value.toUpperCase() })} className={`${inputCls} font-mono`} /></Field>
           <Field label="Expiry"><input type="date" value={item.expiry_date} onChange={set("expiry_date")} className={inputCls} /></Field>
           <Field label="Qty (packs)"><input type="number" inputMode="numeric" value={item.pack_quantity} onChange={set("pack_quantity")} className={inputCls} /></Field>
-          <Field label="Free (packs)"><input type="number" inputMode="numeric" value={item.free_quantity} onChange={set("free_quantity")} className={inputCls} /></Field>
+          <Field label="Scheme: free packs"><input type="number" inputMode="numeric" value={item.free_quantity} onChange={set("free_quantity")} className={inputCls} /></Field>
           <Field label="Units / pack"><input type="number" inputMode="numeric" value={item.units_per_pack} onChange={set("units_per_pack")} className={inputCls} /></Field>
           <Field label="Pack type">
             <select value={item.pack_type} onChange={set("pack_type")} className={inputCls}>
@@ -248,12 +272,38 @@ function ItemCard({ item, index, onChange, onRemove }) {
           <Field label="Rate / pack ₹"><input type="number" inputMode="decimal" value={item.rate_pack} onChange={set("rate_pack")} className={inputCls} /></Field>
           <Field label="MRP / pack ₹"><input type="number" inputMode="decimal" value={item.mrp_pack} onChange={set("mrp_pack")} className={inputCls} /></Field>
           <Field label="Discount %"><input type="number" inputMode="decimal" value={item.discount} onChange={set("discount")} className={inputCls} /></Field>
+          <Field label="Scheme discount">
+            <SchemeDiscountField
+              className="mt-0.5"
+              height="h-9"
+              value={item.scheme_discount}
+              type={schemeDiscountOf(item).type}
+              onValue={(v) => onChange({ scheme_discount: v })}
+              onType={(t) => onChange({ scheme_discount_type: t })}
+            />
+          </Field>
           <Field label="GST %">
             <select value={item.gst_percent} onChange={set("gst_percent")} className={inputCls}>
               {[0, 5, 12, 18, 28].map((g) => (
                 <option key={g} value={g}>{g}%</option>
               ))}
             </select>
+          </Field>
+          <Field label="Margin %">
+            <input
+              type="number"
+              inputMode="decimal"
+              min="0"
+              value={item.margin ?? ""}
+              onChange={(e) => onChange({ margin: e.target.value, margin_edited: true })}
+              placeholder="Sell at MRP"
+              className={inputCls}
+            />
+            {sell?.price > 0 && (
+              <p className={`mt-0.5 text-[10px] font-semibold ${sell.capped ? "text-amber-600 dark:text-amber-400" : "text-sky-600 dark:text-sky-400"}`}>
+                {sell.capped ? `Capped at MRP ₹${sell.price.toFixed(2)}/u` : `Sells at ₹${sell.price.toFixed(2)}/u`}
+              </p>
+            )}
           </Field>
           <Field label="HSN"><input value={item.hsn_no} onChange={set("hsn_no")} className={inputCls} /></Field>
           <Field label="MRP / unit"><p className="mt-0.5 h-9 flex items-center text-sm font-semibold">₹{mrpUnit.toFixed(2)}</p></Field>
@@ -457,6 +507,13 @@ export default function ScannerPage() {
 
   const total = useMemo(() => items.reduce((s, it) => s + lineTotal(it), 0), [items]);
 
+  // The supplier's default margin on every line the user hasn't set one on
+  const supplierMargin = parseMargin(supplier?.default_margin_percent);
+  useEffect(() => {
+    const m = supplierMargin === null ? "" : String(supplierMargin);
+    setItems((prev) => (prev.some((r) => !r.margin_edited && (r.margin ?? "") !== m) ? prev.map((r) => (r.margin_edited ? r : { ...r, margin: m })) : prev));
+  }, [supplierMargin, items]);
+
   const addPhotos = async (files) => {
     const compressed = await Promise.all(files.map((f) => compressForScan(f, { maxSide: mode === "bill" ? 2200 : 1600, quality: mode === "bill" ? 0.85 : 0.82 })));
     setPhotos((p) => [...p, ...compressed.map((file) => ({ file, preview: URL.createObjectURL(file) }))]);
@@ -521,8 +578,12 @@ export default function ScannerPage() {
         pack_price: num(it.rate_pack),
         mrp_per_unit: unitsPerPack > 0 ? num(it.mrp_pack) / unitsPerPack : num(it.mrp_pack),
         discount: num(it.discount),
+        scheme_discount: schemeDiscountOf(it).value,
+        scheme_discount_type: schemeDiscountOf(it).type,
         cgst: gst / 2,
         sgst: gst / 2,
+        // "" = no margin; left out = the supplier's default
+        margin_percent: parseMargin(it.margin) !== null ? parseMargin(it.margin) : it.margin_edited ? "" : undefined,
       };
     }),
   });
@@ -531,6 +592,8 @@ export default function ScannerPage() {
     if (!supplier) return toast.error("Choose a supplier");
     const bad = items.findIndex((it) => !it.product_name || num(it.pack_quantity) <= 0);
     if (bad >= 0) return toast.error(`Line ${bad + 1} needs a name and quantity`);
+    const unsure = items.findIndex((it) => it.needs_choice);
+    if (unsure >= 0) return toast.error(`Line ${unsure + 1}: choose the matching product, or create it as new`);
     setSubmitting(true);
     try {
       await axios.post(`${API}/purchases`, { ...purchaseBody(), invoice_no: invoiceNo || `SCAN-${Date.now()}` });

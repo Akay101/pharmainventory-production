@@ -11,7 +11,8 @@
 //
 // All lookups run in Mongo against indexed, pharmacy-scoped queries; nothing
 // loads the whole inventory.
-const { tokenize, escapeRegex, cleanProductName } = require("../search/normalize");
+const { tokenize, escapeRegex, cleanProductName, normalizeText } = require("../search/normalize");
+const { searchGlobalMedicines } = require("../search/medicineSearch");
 
 const FORM_WORDS = new Set([
   "tab", "tabs", "tablet", "tablets", "cap", "caps", "capsule", "capsules", "syp", "syrup", "susp", "suspension",
@@ -78,6 +79,88 @@ function nameSimilarity(scanned, stored) {
   return Math.min(1, score);
 }
 
+const levenshtein = (a, b) => {
+  const prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    let diag = prev[0];
+    prev[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const tmp = prev[j];
+      prev[j] = Math.min(prev[j] + 1, prev[j - 1] + 1, diag + (a[i - 1] === b[j - 1] ? 0 : 1));
+      diag = tmp;
+    }
+  }
+  return prev[b.length];
+};
+const wordCloseness = (a, b) => 1 - levenshtein(a, b) / Math.max(a.length, b.length);
+
+// 0..1 for mapping an invoice or scan line to a product: forgiving of misreads
+// and extra words, because the user confirms it. 1 means the same name written
+// differently. Different strengths are different products, never a match.
+function closeness(read, stored) {
+  const a = coreTokens(read);
+  const b = coreTokens(stored);
+  if (!a.length || !b.length) return 0;
+  if (a.join("") === b.join("")) return 1;
+  const aw = wordsOf(a), bw = wordsOf(b);
+  if (!aw.length || !bw.length) return 0;
+  const an = strengthsOf(read), bn = strengthsOf(stored);
+  if (an.length && bn.length && !an.some((n) => bn.includes(n))) return 0;
+  // The brand may not be the first word read ("T. Dolo", "Micro Dolo")
+  const brand = Math.max(...aw.map((w) => wordCloseness(w, bw[0])));
+  if (brand < 0.6) return 0;
+  const matched = a.filter((t) => b.some((u) => t === u || (t.length >= 4 && u.length >= 4 && wordCloseness(t, u) >= 0.75))).length;
+  const overlap = matched / (a.length + b.length - matched);
+  return Math.min(0.99, 0.55 * brand + 0.45 * overlap);
+}
+
+const MIN_CLOSENESS = 0.55;
+const MAX_SUGGESTIONS = 6;
+
+// Products in the pharmacy's catalog sharing the start of any word read
+async function catalogCandidates(db, pharmacyId, name) {
+  const words = [...new Set(wordsOf(coreTokens(name)))].filter((w) => w.length >= 2).slice(0, 4);
+  if (!words.length) return [];
+  const starts = [...new Set(words.flatMap((w) => [w.slice(0, 3), w.slice(1, 4)]))].filter((w) => w.length >= 2);
+  return db
+    .collection("products")
+    .find(
+      { pharmacy_id: pharmacyId, name: { $regex: starts.map(escapeRegex).join("|"), $options: "i" } },
+      { projection: { _id: 0, id: 1, name: 1, manufacturer: 1, salt_composition: 1, units_per_pack: 1, mrp: 1, pack_type: 1, hsn_no: 1, cgst: 1, sgst: 1, category: 1, dosage_form: 1 } }
+    )
+    .limit(400)
+    .toArray();
+}
+
+// Closest medicines in the global database; a missing or slow one never blocks
+async function globalSuggestions(name) {
+  const lookup = searchGlobalMedicines(cleanProductName(name) || name, { limit: 15 });
+  const docs = await Promise.race([lookup, new Promise((r) => setTimeout(() => r([]), 2500))]).catch(() => []);
+  return docs.map((d) => {
+    const productName = d.product_name || d.name || "";
+    const sim = closeness(name, productName);
+    return {
+      source: "global",
+      product_id: d.id || d.product_id || String(d._id),
+      product_name: productName,
+      manufacturer: d.manufacturer || d.manufacturer_name || "",
+      salt_composition: d.salt_composition || d.active_ingredients || d.short_composition1 || "",
+      units_per_pack: d.units_per_pack || null,
+      mrp: d.mrp || d["price(₹)"] || 0,
+      pack_type: d.pack_type || "",
+      hsn_no: d.hsn_no || d.hsn_code || "",
+      tax_rate: d.tax_rate ?? d.gst_percentage ?? null,
+      category: d.product_category || "",
+      dosage_form: d.dosage_form || "",
+      drug_schedule: d.drug_schedule || "",
+      score: Math.round(sim * 100),
+      is_exact: sim === 1,
+      is_high_confidence: sim === 1,
+      sim,
+    };
+  }).filter((s) => s.sim >= MIN_CLOSENESS);
+}
+
 const batchKey = (s) => String(s || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
 
 const OCR_CLASS = {
@@ -100,7 +183,7 @@ const isExpired = (inv) => !!inv.expiry_date && /^20\d{2}-/.test(inv.expiry_date
 
 const BATCH_FIELDS = {
   _id: 0, id: 1, product_id: 1, product_name: 1, batch_no: 1, expiry_date: 1, available_quantity: 1, quantity: 1,
-  mrp: 1, mrp_per_unit: 1, purchase_price: 1, cost_per_unit: 1, cgst: 1, sgst: 1, units_per_pack: 1, pack_type: 1,
+  mrp: 1, mrp_per_unit: 1, purchase_price: 1, cost_per_unit: 1, margin_percent: 1, cgst: 1, sgst: 1, units_per_pack: 1, pack_type: 1,
   salt_composition: 1, manufacturer: 1, hsn_no: 1, status: 1, supplier_id: 1,
 };
 
@@ -111,6 +194,7 @@ const toBatch = (inv) => ({
   available_quantity: inv.available_quantity || 0,
   mrp: inv.mrp_per_unit || inv.mrp || 0,
   purchase_price: inv.cost_per_unit || inv.purchase_price || 0,
+  margin_percent: inv.margin_percent ?? null,
   cgst: inv.cgst || 0,
   sgst: inv.sgst || 0,
   units_per_pack: inv.units_per_pack || 1,
@@ -259,6 +343,7 @@ function buildItem(inv, productRows, scanned, viaBatch) {
     available_quantity: inv.available_quantity || 0,
     mrp: inv.mrp_per_unit || inv.mrp || scanned.mrp_per_unit || 0,
     purchase_price: inv.cost_per_unit || inv.purchase_price || 0,
+    margin_percent: inv.margin_percent ?? null,
     cgst: inv.cgst || 0,
     sgst: inv.sgst || 0,
     units_per_pack: inv.units_per_pack || 1,
@@ -274,7 +359,7 @@ function buildItem(inv, productRows, scanned, viaBatch) {
  * Catalog link for a scanned purchase line (which existing product it is).
  * Shape matches /purchases/match-suggestions for the scanner screen.
  */
-async function matchForPurchase(db, pharmacyId, item) {
+async function matchForPurchase(db, pharmacyId, item, { includeGlobal = false } = {}) {
   const name = item.product_name || "";
   const key = batchKey(item.batch_no);
   let batchMatch = null;
@@ -305,39 +390,45 @@ async function matchForPurchase(db, pharmacyId, item) {
   const suggestions = [];
   let exactNameMatch = null;
   if (name) {
-    const core = coreTokens(name);
-    const brand = wordsOf(core)[0];
-    if (brand) {
-      const products = await db
-        .collection("products")
-        .find(
-          { pharmacy_id: pharmacyId, name: { $regex: `(^|[^a-z])${escapeRegex(brand.slice(0, Math.max(3, Math.min(brand.length, 6))))}`, $options: "i" } },
-          { projection: { _id: 0, id: 1, name: 1, manufacturer: 1, units_per_pack: 1 } }
-        )
-        .limit(200)
-        .toArray();
-      const target = tokenize(name).join(" ");
-      for (const p of products) {
-        const sim = nameSimilarity(name, p.name);
-        if (sim < 0.5) continue;
-        const exact = tokenize(p.name).join(" ") === target;
-        const s = {
-          product_id: p.id,
-          product_name: p.name,
-          manufacturer: p.manufacturer || "",
-          units_per_pack: p.units_per_pack || 1,
-          score: Math.round((exact ? 1 : sim) * 100),
-          is_high_confidence: exact || sim >= 0.8,
-        };
-        if (exact && !exactNameMatch) exactNameMatch = { product_id: p.id, product_name: p.name, type: "name_exact" };
-        suggestions.push(s);
+    for (const p of await catalogCandidates(db, pharmacyId, name)) {
+      const sim = Math.max(closeness(name, p.name), nameSimilarity(name, p.name));
+      if (sim < MIN_CLOSENESS) continue;
+      const exact = sim === 1 || closeness(name, p.name) === 1;
+      suggestions.push({
+        source: "catalog",
+        product_id: p.id,
+        product_name: p.name,
+        manufacturer: p.manufacturer || "",
+        salt_composition: p.salt_composition || "",
+        units_per_pack: p.units_per_pack || 1,
+        mrp: p.mrp || 0,
+        pack_type: p.pack_type || "",
+        hsn_no: p.hsn_no || "",
+        cgst: p.cgst,
+        sgst: p.sgst,
+        category: p.category || "",
+        dosage_form: p.dosage_form || "",
+        score: Math.round((exact ? 1 : sim) * 100),
+        is_exact: exact,
+        is_high_confidence: exact || sim >= 0.8,
+      });
+      if (exact && !exactNameMatch) exactNameMatch = { product_id: p.id, product_name: p.name, type: "name_exact" };
+    }
+    if (includeGlobal) {
+      // A medicine already in the catalog appears once, as the catalog's
+      const own = new Set(suggestions.map((s) => normalizeText(s.product_name)));
+      for (const g of await globalSuggestions(name)) {
+        const { sim, ...rest } = g;
+        if (!own.has(normalizeText(g.product_name))) suggestions.push(rest);
       }
     }
   }
   if (batchMatch && !suggestions.some((s) => s.product_id === batchMatch.product_id)) {
-    suggestions.push({ product_id: batchMatch.product_id, product_name: batchMatch.product_name, score: 100, is_high_confidence: true });
+    suggestions.push({ source: "catalog", product_id: batchMatch.product_id, product_name: batchMatch.product_name, score: 100, is_high_confidence: true });
   }
-  suggestions.sort((a, b) => b.score - a.score);
+  // The pharmacy's own product wins a tie with the database
+  const rank = (x) => x.score + (x.source === "catalog" ? 3 : 0);
+  suggestions.sort((a, b) => rank(b) - rank(a));
   if (batchMatch) {
     const i = suggestions.findIndex((s) => s.product_id === batchMatch.product_id);
     if (i >= 0) suggestions[i] = { ...suggestions[i], is_batch_match: true, score: 10000 };
@@ -349,8 +440,8 @@ async function matchForPurchase(db, pharmacyId, item) {
     scanned_batch: item.batch_no || "",
     batch_match: batchMatch,
     exact_name_match: exactNameMatch,
-    suggestions: suggestions.slice(0, 10),
+    suggestions: suggestions.slice(0, MAX_SUGGESTIONS),
   };
 }
 
-module.exports = { matchForBilling, matchForPurchase, nameSimilarity, batchKey, batchRegex, coreTokens, strengthsOf };
+module.exports = { matchForBilling, matchForPurchase, closeness, nameSimilarity, batchKey, batchRegex, coreTokens, strengthsOf };

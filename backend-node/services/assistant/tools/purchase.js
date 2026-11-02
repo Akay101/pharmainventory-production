@@ -1,6 +1,8 @@
 // Purchase agent tools
 const { v4: uuidv4 } = require("uuid");
 const { parseExpiry } = require("../../ai/extract");
+const { parseMargin, marginPrice } = require("../../../utils/margin");
+const { lineNet, schemeDiscountOf } = require("../../../utils/purchaseLine");
 const S = require("./shared");
 const L = require("./lookup");
 const { latinNames, hasDevanagari } = require("./names");
@@ -208,12 +210,15 @@ const tools = [
               batch_no: { type: "string" },
               expiry: { type: "string", description: "As said: '08/27', 'Aug 2027' or YYYY-MM-DD" },
               packs: { type: "number", description: "Packs/strips bought (excluding free)" },
-              free_packs: { type: "number" },
+              free_packs: { type: "number", description: "Free packs in the supplier's scheme (e.g. 10+2 -> packs 10, free_packs 2)" },
+              scheme_discount: { type: "number", description: "Scheme discount from the supplier: a % of the line, or a ₹ amount off it (set scheme_discount_type)" },
+              scheme_discount_type: { type: "string", enum: ["percent", "amount"], description: "percent (default) or amount (₹ off the line)" },
               units_per_pack: { type: "number" },
               rate_per_pack: { type: "number", description: "Purchase rate per pack (before GST)" },
               mrp_per_pack: { type: "number" },
               discount_percent: { type: "number" },
               gst_percent: { type: "number" },
+              margin_percent: { type: "number", description: "Margin % the user wants on this item over its landed cost (billing then sells at cost + margin, capped at MRP). Omit to use the supplier's default margin; 0 = sell at cost." },
             },
             required: ["product_name"],
           },
@@ -285,6 +290,12 @@ const tools = [
         }
       }
 
+      // The supplier's default margin starts lines that don't give one
+      const sup = draft.supplier?.id
+        ? await ctx.db.collection("suppliers").findOne({ pharmacy_id: ctx.pharmacyId, id: draft.supplier.id }, { projection: { _id: 0, default_margin_percent: 1 } })
+        : null;
+      draft.supplier_margin = parseMargin(sup?.default_margin_percent);
+
       // Lines
       // Updates may carry only the changed fields: merge them into the
       // previous line with the same medicine (or the same position)
@@ -350,10 +361,21 @@ const tools = [
           rate_per_pack: Number(it.rate_per_pack) || 0,
           mrp_per_pack: Number(it.mrp_per_pack) || 0,
           discount_percent: it.discount_percent ?? last?.discount_percent ?? 0,
+          scheme_discount: schemeDiscountOf(it).value,
+          scheme_discount_type: schemeDiscountOf(it).type,
           gst_percent: it.gst_percent ?? (last?.gst_percent || 5),
+          margin_percent: it.margin_percent !== undefined && it.margin_percent !== null && it.margin_percent !== "" ? parseMargin(it.margin_percent) : draft.supplier_margin,
           last_purchase: last ? { date: last.date, supplier: last.supplier, rate_per_pack: last.rate_per_pack, mrp_per_pack: last.mrp_per_pack } : null,
         };
-        line.total = round2(line.packs * line.rate_per_pack * (1 - line.discount_percent / 100) * (1 + line.gst_percent / 100));
+        line.total = round2(lineNet(line.packs, line.rate_per_pack, line.discount_percent, line).net * (1 + line.gst_percent / 100));
+        // What billing will sell a unit at: landed cost (GST in, free packs
+        // spread) plus the margin, never above MRP
+        if (line.margin_percent !== null) {
+          const units = (line.packs + line.free_packs) * line.units_per_pack;
+          const mp = marginPrice({ purchase_price: units > 0 ? line.total / units : 0, mrp: line.mrp_per_pack / (line.units_per_pack || 1), margin_percent: line.margin_percent });
+          line.sell_per_unit = mp.price || null;
+          line.sell_capped = !!mp.capped;
+        }
         return line;
       };
       draft.items = await S.mapLimit(lines, 6, resolveLine);
@@ -412,6 +434,8 @@ const tools = [
           mrp_per_pack: i.mrp_per_pack,
           gst_percent: i.gst_percent,
           discount_percent: i.discount_percent,
+          ...(i.scheme_discount ? { scheme_discount: i.scheme_discount, scheme_discount_type: i.scheme_discount_type } : {}),
+          ...(i.margin_percent !== null ? { margin_percent: i.margin_percent, sells_at_per_unit: i.sell_per_unit, capped_at_mrp: i.sell_capped } : {}),
           last_purchase: i.last_purchase,
           total: i.total,
         })),
@@ -513,15 +537,16 @@ function purchaseDraftBlock(d) {
       { label: "Date", value: fmtDate(d.purchase_date) },
       { label: "Payment", value: d.payment_status },
     ],
-    columns: cols(["product", "Medicine"], ["batch", "Batch"], ["expiry", "Exp"], ["qty", "Qty"], ["rate", "Rate", "inr", "right"], ["mrp", "MRP", "inr", "right"], ["gst", "GST", null, "right"], ["total", "Total", "inr", "right"]),
+    columns: cols(["product", "Medicine"], ["batch", "Batch"], ["expiry", "Exp"], ["qty", "Qty"], ["rate", "Rate", "inr", "right"], ["mrp", "MRP", "inr", "right"], ["gst", "GST", null, "right"], ...(d.items.some((i) => i.margin_percent != null) ? [["margin", "Margin", null, "right"]] : []), ["total", "Total", "inr", "right"]),
     rows: d.items.map((i) => ({
       product: `${i.product_name}${{ global: " · from medicine DB", new: " · new item", not_found: " · not found" }[i.source] || (i.is_new_product && !i.source ? " · new" : "")}`,
       batch: i.batch_no || "?",
       expiry: S.fmtExpiry(i.expiry_date) || "?",
-      qty: `${i.packs || "?"}${i.free_packs ? `+${i.free_packs}` : ""} × ${i.units_per_pack}`,
+      qty: `${i.packs || "?"}${i.free_packs ? `+${i.free_packs}` : ""} × ${i.units_per_pack}${i.scheme_discount ? ` · scheme ${i.scheme_discount_type === "amount" ? inr(i.scheme_discount) : `${i.scheme_discount}%`} off` : ""}`,
       rate: i.rate_per_pack,
       mrp: i.mrp_per_pack,
       gst: `${i.gst_percent}%`,
+      margin: i.margin_percent == null ? "—" : `${i.margin_percent}%${i.sell_per_unit ? ` → ${inr(i.sell_per_unit)}/u${i.sell_capped ? " (MRP)" : ""}` : ""}`,
       total: i.total,
     })),
     totals: [{ label: "Total (incl. GST)", value: d.total }],
@@ -620,8 +645,11 @@ function purchasePayload(draft) {
       pack_price: i.rate_per_pack,
       mrp_per_unit: (i.mrp_per_pack || 0) / (i.units_per_pack || 1),
       discount: i.discount_percent || 0,
+      scheme_discount: i.scheme_discount || 0,
+      scheme_discount_type: i.scheme_discount_type || "percent",
       cgst: (i.gst_percent || 0) / 2,
       sgst: (i.gst_percent || 0) / 2,
+      margin_percent: i.margin_percent ?? null,
     })),
   };
 }

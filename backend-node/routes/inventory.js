@@ -9,6 +9,7 @@ const { stockLevels, namesIn, productNameMatch, setCustomThreshold, keyOf } = re
 const { logActivity } = require("../utils/activityLogger");
 const { findAlternates } = require("../services/alternates");
 const { cleanProductName } = require("../services/search/normalize");
+const { flagScheduleH1, h1InventoryMatch } = require("../utils/scheduleH1");
 const {
   searchGlobalMedicines,
   tenantTokenMatch,
@@ -46,6 +47,7 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
       shortage,
       expiring_soon,
       expired,
+      schedule_h1,
       grouped,
       page = 1,
       limit = 50,
@@ -83,6 +85,8 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
     if (shortage === "true") and.push(productNameMatch(namesIn(levels, ["low", "out"])));
     if (expiring_soon === "true") and.push({ available_quantity: { $gt: 0 }, expiry_date: { $gte: today, $lte: expiryCutoff } });
     if (expired === "true") and.push({ available_quantity: { $gt: 0 }, expiry_date: { $lt: today, $regex: /^20\d{2}-/ } });
+    const h1Match = grouped === "true" || schedule_h1 === "true" ? await h1InventoryMatch(db, req.user.pharmacy_id) : null;
+    if (schedule_h1 === "true") and.push(h1Match);
     if (and.length) query.$and = and;
     const stockFilterActive = low_stock === "true" || shortage === "true";
 
@@ -174,7 +178,7 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
 
       // Merge products from products catalog that don't have inventory batches yet
       // (not when a stock or expiry filter is on: they have no stock to filter)
-      const anyFilter = stockFilterActive || expiring_soon === "true" || expired === "true";
+      const anyFilter = stockFilterActive || expiring_soon === "true" || expired === "true" || schedule_h1 === "true";
       const existingProductNames = new Set(
         allGrouped.map((g) => (g.product_name || g._id || "").toLowerCase())
       );
@@ -260,10 +264,13 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
         };
       });
 
+      await flagScheduleH1(db, req.user.pharmacy_id, sanitizedGrouped);
+      const h1Names = await db.collection("inventory").distinct("product_name", { pharmacy_id: req.user.pharmacy_id, ...h1Match });
+
       return res.json({
         inventory: sanitizedGrouped,
         shortage_count: shortageCount,
-        counts,
+        counts: { ...counts, schedule_h1: h1Names.length },
         thresholds: levelsInfo.settings,
         pagination: {
           page: pageNum,
@@ -339,6 +346,7 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
           : b.mrp,
     }));
 
+    await flagScheduleH1(db, req.user.pharmacy_id, sanitizedInventory);
     res.json({
       inventory: sanitizedInventory,
       shortage_count: shortageCount,
@@ -533,6 +541,7 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
                 quantity: "$quantity",
                 purchase_price: "$purchase_price",
                 mrp: "$mrp",
+                margin_percent: "$margin_percent",
                 units_per_pack: "$units_per_pack",
                 pack_type: "$pack_type",
                 cgst: "$cgst",
@@ -770,6 +779,7 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
           mrp_per_unit: medUnitMrp,
           cgst: medTax / 2,
           sgst: medTax / 2,
+          drug_schedule: med.drug_schedule || "",
           source: "global",
           stock_status: "Global Catalog",
           is_manual: true,
@@ -816,6 +826,7 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
       parsedPage * parsedLimit
     );
 
+    await flagScheduleH1(db, req.user.pharmacy_id, paginatedInventory);
     const responsePayload = {
       inventory: paginatedInventory,
       count: total,
@@ -869,6 +880,7 @@ router.get("/by-code", auth, requireSubscription(), async (req, res, next) => {
       expiry_date: b.expiry_date || "",
       mrp: Number(b.mrp) || 0,
       purchase_price: Number(b.purchase_price) || 0,
+      margin_percent: b.margin_percent ?? null,
       cgst: Number(b.cgst) || 0,
       sgst: Number(b.sgst) || 0,
       hsn_no: b.hsn_no || "",
