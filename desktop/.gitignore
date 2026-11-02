@@ -2,3 +2,4 @@ node_modules/
 backend/
 web/
 dist/
+app-config.json

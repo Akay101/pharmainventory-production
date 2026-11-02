@@ -8,13 +8,21 @@ const https = require("https");
 const os = require("os");
 const path = require("path");
 const { discover, pair } = require("./pairing");
+const config = require("./config");
+
+// A shipped build refuses the switches that attach a debugger to it
+if (config.hardened && process.argv.some((arg) => /^--(remote-debugging|inspect|debug)/.test(arg))) {
+  app.exit(1);
+}
 
 const isMac = process.platform === "darwin";
 const ROOT = app.getAppPath();
 const SETUP_PAGE = path.join(__dirname, "setup.html");
+const GATE_PAGE = path.join(__dirname, "gate.html");
+const PROTOCOL = "davadesk";
 const DEVICE_HEADER = "x-davadesk-device";
 // Lets the automated smoke test keep its data apart from a real install
-if (process.env.DAVADESK_DATA_DIR) app.setPath("userData", process.env.DAVADESK_DATA_DIR);
+if (!config.hardened && process.env.DAVADESK_DATA_DIR) app.setPath("userData", process.env.DAVADESK_DATA_DIR);
 const userData = () => app.getPath("userData");
 const dataDir = () => path.join(userData(), "shop");
 const configFile = () => path.join(userData(), "config.json");
@@ -51,6 +59,7 @@ async function secretFile(name, make) {
   return value;
 }
 const databaseKey = () => secretFile("db.key", () => crypto.randomBytes(32).toString("hex"));
+const catalogKey = () => secretFile("catalog.key", () => crypto.randomBytes(32).toString("hex"));
 const counterToken = async (fresh) => {
   const file = path.join(userData(), "counter.key");
   if (fresh !== undefined) {
@@ -68,6 +77,7 @@ const windowSecret = crypto.randomBytes(32).toString("hex");
 
 async function startServerProcess() {
   const dbKey = await databaseKey();
+  const catKey = await catalogKey();
   return new Promise((resolve, reject) => {
     const child = utilityProcess.fork(path.join(__dirname, "serverProcess.js"), [], { serviceName: "DavaDesk Shop Server", stdio: "pipe" });
     const record = { child, port: null, stopping: false, onStopped: null };
@@ -110,6 +120,8 @@ async function startServerProcess() {
         backendDir: path.join(ROOT, "backend"),
         webDir: path.join(ROOT, "web"),
         dbKey,
+        catalogKey: catKey,
+        config: { cloudUrl: config.cloudUrl, licencePublicKey: config.licencePublicKey },
         windowSecret,
         version: app.getVersion(),
       },
@@ -154,6 +166,7 @@ const webPreferences = () => ({
   contextIsolation: true,
   nodeIntegration: false,
   sandbox: true,
+  devTools: !config.hardened,
   plugins: true, // the built-in PDF viewer, for bills
 });
 
@@ -183,13 +196,13 @@ function setupOpenHandlers(contents) {
   contents.setWindowOpenHandler(({ url }) => {
     const local = url === "about:blank" || (currentOrigin && url.startsWith(`${currentOrigin}/`));
     if (local) {
-      return { action: "allow", overrideBrowserWindowOptions: { width: 980, height: 800, autoHideMenuBar: true, webPreferences: { contextIsolation: true, sandbox: true, plugins: true } } };
+      return { action: "allow", overrideBrowserWindowOptions: { width: 980, height: 800, autoHideMenuBar: true, webPreferences: { contextIsolation: true, sandbox: true, plugins: true, devTools: !config.hardened } } };
     }
     if (/^https?:|^mailto:|^tel:|^whatsapp:/.test(url)) shell.openExternal(url);
     return { action: "deny" };
   });
   contents.on("will-navigate", (event, url) => {
-    if (url.startsWith("file:") && contents === setupWindow?.webContents) return;
+    if (url.startsWith("file:") && (contents === setupWindow?.webContents || contents === mainWindow?.webContents)) return;
     if (currentOrigin && url.startsWith(`${currentOrigin}/`)) return;
     event.preventDefault();
     if (/^https?:/.test(url)) shell.openExternal(url);
@@ -199,6 +212,70 @@ function setupOpenHandlers(contents) {
 function loadApp() {
   if (!mainWindow || !currentOrigin) return;
   mainWindow.loadURL(`${currentOrigin}/dashboard`);
+}
+
+// ---- Sign-in gate ----------------------------------------------------------------
+// The app itself only opens with a valid licence from the cloud. The local server
+// enforces the same check on every request; this just shows the right screen.
+let showingGate = false;
+let gateWatch = null;
+let pendingSignIn = null; // { verifier, state }
+
+function showGate() {
+  if (!mainWindow || showingGate) return;
+  showingGate = true;
+  mainWindow.loadFile(GATE_PAGE);
+}
+
+async function checkAccess() {
+  if (!server || readConfig().mode === "counter") return;
+  try {
+    const { access_problem: problem } = await callServer("status");
+    if (problem && !showingGate) showGate();
+    else if (!problem && showingGate) {
+      showingGate = false;
+      loadApp();
+    }
+  } catch {}
+}
+
+function watchAccess() {
+  clearInterval(gateWatch);
+  gateWatch = setInterval(checkAccess, 1500);
+  return checkAccess();
+}
+
+function startSignIn() {
+  const verifier = crypto.randomBytes(32).toString("base64url");
+  const state = crypto.randomBytes(16).toString("base64url");
+  pendingSignIn = { verifier, state };
+  const challenge = crypto.createHash("sha256").update(verifier).digest("base64url");
+  const url = new URL("/desktop/authorize", config.webUrl);
+  url.searchParams.set("challenge", challenge);
+  url.searchParams.set("state", state);
+  url.searchParams.set("name", os.hostname());
+  if (config.hardened || !process.env.DAVADESK_NO_BROWSER) shell.openExternal(url.toString());
+  return { url: config.hardened ? null : url.toString(), challenge, state };
+}
+
+async function finishSignIn(code) {
+  if (!pendingSignIn) throw new Error("Please click Sign in first.");
+  const { verifier } = pendingSignIn;
+  await callServer("activate", { code, verifier });
+  pendingSignIn = null;
+  await checkAccess();
+}
+
+function handleDeepLink(link) {
+  try {
+    const url = new URL(link);
+    if (url.protocol !== `${PROTOCOL}:` || url.searchParams.get("state") !== pendingSignIn?.state) return;
+    finishSignIn(url.searchParams.get("code")).catch((err) => {
+      mainWindow?.webContents.send("dd:signInError", err.message);
+    });
+    mainWindow?.show();
+    mainWindow?.focus();
+  } catch {}
 }
 
 function createMainWindow() {
@@ -317,13 +394,29 @@ const describeState = async () => {
   };
 };
 
+const APP_ACTIONS = new Set(["openCounters", "signOut"]);
+const GATE_ACTIONS = new Set(["signIn", "submitCode", "gateState", "openCounters"]);
+
 function registerIpc() {
   const handle = (name, fn) =>
     ipcMain.handle(`dd:${name}`, async (event, args) => {
-      if (name !== "openCounters" && event.sender !== setupWindow?.webContents) throw new Error("Not allowed");
+      const senderUrl = event.senderFrame?.url || "";
+      const fromApp = event.sender === mainWindow?.webContents;
+      const allowed =
+        (APP_ACTIONS.has(name) && fromApp) ||
+        (GATE_ACTIONS.has(name) && fromApp && senderUrl.startsWith("file:")) ||
+        event.sender === setupWindow?.webContents;
+      if (!allowed) throw new Error("Not allowed");
       return fn(args || {});
     });
   handle("openCounters", () => openSetup());
+  handle("signIn", () => startSignIn());
+  handle("submitCode", ({ code }) => finishSignIn(String(code).trim()));
+  handle("gateState", () => callServer("status"));
+  handle("signOut", async ({ force }) => {
+    await callServer("signOut", { force: !!force });
+    await checkAccess();
+  });
   handle("state", describeState);
   handle("discover", () => discover());
   handle("enableMain", async () => {
@@ -346,6 +439,7 @@ function registerIpc() {
   });
   handle("connect", async ({ host, code }) => {
     const result = await pair({ host: String(host).trim(), code: String(code).trim(), name: os.hostname() });
+    clearInterval(gateWatch);
     await counterToken(result.token);
     writeConfig({ mode: "counter", main: { host: result.host, port: result.port, fingerprint: result.fingerprint, shop: result.shop } });
     await useMainComputer(readConfig().main);
@@ -356,7 +450,9 @@ function registerIpc() {
     await counterToken(null);
     writeConfig({ mode: "solo" });
     await useLocalData();
+    showingGate = false;
     loadApp();
+    await watchAccess();
     return describeState();
   });
   handle("retry", async () => {
@@ -375,7 +471,14 @@ function reportStartupFailure(err) {
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  app.on("second-instance", () => {
+  if (app.isPackaged) app.setAsDefaultProtocolClient(PROTOCOL);
+  app.on("open-url", (event, link) => {
+    event.preventDefault();
+    handleDeepLink(link);
+  });
+  app.on("second-instance", (event, argv) => {
+    const link = argv.find((arg) => arg.startsWith(`${PROTOCOL}://`));
+    if (link) handleDeepLink(link);
     if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.focus();
@@ -387,15 +490,16 @@ if (!app.requestSingleInstanceLock()) {
     buildMenu();
     registerIpc();
     createMainWindow();
-    const config = readConfig();
+    const savedConfig = readConfig();
     try {
-      if (config.mode === "counter" && config.main) {
-        await useMainComputer(config.main);
+      if (savedConfig.mode === "counter" && savedConfig.main) {
+        await useMainComputer(savedConfig.main);
       } else {
         await useLocalData();
-        if (config.mode === "main") await callServer("lanEnable");
+        if (savedConfig.mode === "main") await callServer("lanEnable");
       }
       loadApp();
+      await watchAccess();
     } catch (err) {
       reportStartupFailure(err);
     }

@@ -14,6 +14,9 @@ const actions = {
   },
   lanNewCode: () => server.network.newCode(),
   lanRevoke: ({ id }) => server.network.revoke(id),
+  status: () => server.sync.status(),
+  activate: (args) => server.sync.activate(args),
+  signOut: (args) => server.sync.signOut(args),
 };
 
 process.parentPort.on("message", async ({ data }) => {

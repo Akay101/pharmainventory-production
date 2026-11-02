@@ -1,4 +1,7 @@
-import { IS_DESKTOP } from "./lib/desktop";
+import { IS_DESKTOP, useOnlineFeatures } from "./lib/desktop";
+import DesktopAuthorizePage from "./pages/DesktopAuthorizePage";
+import DownloadPage from "./pages/DownloadPage";
+import SyncCenterPage from "./pages/SyncCenterPage";
 import { useState, useEffect, createContext, useContext } from "react";
 import {
   BrowserRouter,
@@ -115,11 +118,16 @@ export const refreshAccessToken = () => refreshSession();
 
 let navigateGlobal = null;
 
-// Pages that need the cloud aren't part of the desktop app, including through shortcuts
-const DESKTOP_HIDDEN_PATHS = ["/assistant", "/scan", "/scan-bill", "/support", "/upgrade", "/login", "/register"];
+// On the desktop app: sign-in lives in the browser, and pages that need the cloud
+// wait for internet, including when reached through shortcuts
+const DESKTOP_ONLINE_PATHS = ["/assistant", "/scan", "/scan-bill", "/support"];
+const DESKTOP_NEVER_PATHS = ["/login", "/register", "/forgot-password", "/upgrade", "/download", "/desktop/authorize"];
 const DesktopRouteGuard = () => {
   const { pathname } = useLocation();
-  return IS_DESKTOP && DESKTOP_HIDDEN_PATHS.includes(pathname) ? <Navigate to="/dashboard" replace /> : null;
+  const online = useOnlineFeatures();
+  if (!IS_DESKTOP) return null;
+  if (DESKTOP_NEVER_PATHS.includes(pathname) || (!online && DESKTOP_ONLINE_PATHS.includes(pathname))) return <Navigate to="/dashboard" replace />;
+  return null;
 };
 
 const NavigationHandler = () => {
@@ -443,6 +451,15 @@ function App() {
           <Route path="/forgot-password" element={<ForgotPasswordPage />} />
           <Route path="/reset-password/link" element={<ResetLinkPage />} />
           <Route path="/upgrade" element={<UpgradePage />} />
+          <Route path="/download" element={<DownloadPage />} />
+          <Route
+            path="/desktop/authorize"
+            element={
+              <ProtectedRoute>
+                <DesktopAuthorizePage />
+              </ProtectedRoute>
+            }
+          />
           <Route path="/early-access/terms" element={<EarlyAccessTermsPage />} />
           <Route path="/payment-success" element={<PaymentSuccessPage />} />
 
@@ -503,6 +520,7 @@ function App() {
             <Route path="support" element={<SupportPage />} />
             <Route path="short-book" element={<ShortBookPage />} />
             <Route path="restock" element={<RestockPage />} />
+            {IS_DESKTOP && <Route path="sync" element={<SyncCenterPage />} />}
           </Route>
 
           {/* Catch all */}

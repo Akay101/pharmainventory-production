@@ -19,6 +19,8 @@ import {
   TooltipTrigger,
 } from "./ui/tooltip";
 import {
+  Cloud,
+  CloudOff,
   LayoutDashboard,
   Package,
   ShoppingCart,
@@ -48,7 +50,8 @@ import {
 import RecentActivitySidebar from "./RecentActivitySidebar";
 import { formatCombo, isVisible } from "../lib/shortcuts";
 import { ShortcutProvider } from "./shortcuts/Shortcuts";
-import { IS_DESKTOP } from "../lib/desktop";
+import { IS_DESKTOP, useDesktopStatus, useOnlineFeatures } from "../lib/desktop";
+import DesktopChoiceDialog from "./DesktopChoiceDialog";
 import AssistantLauncher from "./assistant/AssistantLauncher";
 import PlanBadge from "./PlanBadge";
 import NotificationCenter from "./NotificationCenter";
@@ -107,6 +110,25 @@ const navItems = [
   { path: "/support", label: "Help & Support", icon: LifeBuoy, menuOnly: true },
 ];
 
+// Desktop only: always shows whether work is saved to the cloud; opens the Sync Center
+function DesktopSyncChip() {
+  const s = useDesktopStatus();
+  const navigate = useNavigate();
+  if (!s) return null;
+  const text = !s.online ? `Offline${s.pending ? ` · ${s.pending} waiting` : ""}` : s.pending ? `Syncing ${s.pending}` : "Synced";
+  return (
+    <button
+      type="button"
+      onClick={() => navigate("/sync")}
+      data-testid="sync-chip"
+      className={`flex items-center gap-1.5 h-9 px-3 rounded-xl border border-border/60 text-xs font-bold whitespace-nowrap ${!s.online ? "text-amber-600 dark:text-amber-400" : s.pending ? "text-orange-600 dark:text-orange-400" : "text-emerald-600 dark:text-emerald-400"}`}
+    >
+      {s.online ? <Cloud className="w-3.5 h-3.5" aria-hidden="true" /> : <CloudOff className="w-3.5 h-3.5" aria-hidden="true" />}
+      {text}
+    </button>
+  );
+}
+
 // AI credits left (shared by the pharmacy); opens balance, top-ups and history.
 // Refreshes on page change and whenever a scan or chat reply uses credits.
 function HeaderCredits() {
@@ -150,6 +172,7 @@ const planLabel = (user) => {
 };
 
 export default function DashboardLayout() {
+  const onlineFeatures = useOnlineFeatures();
   const { user, pharmacy, logout, updateSetting, isAdmin } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
@@ -163,14 +186,13 @@ export default function DashboardLayout() {
     return !document.documentElement.classList.contains("light");
   });
 
-  const filteredItems = navItems.filter((item) => (!item.adminOnly || isAdmin) && !(IS_DESKTOP && item.path === "/support"));
-  const topNavItems = useMemo(() => filteredItems.filter((item) => !item.menuOnly), [isAdmin]); // eslint-disable-line
+  const filteredItems = navItems.filter((item) => (!item.adminOnly || isAdmin) && (onlineFeatures || item.path !== "/support"));
+  const topNavItems = useMemo(() => filteredItems.filter((item) => !item.menuOnly), [isAdmin, onlineFeatures]); // eslint-disable-line
 
   // Support replies not seen yet (badge in the user menu)
   const [supportUnread, setSupportUnread] = useState(0);
   useEffect(() => {
-    if (IS_DESKTOP) return undefined;
-    let live = true;
+      let live = true;
     const check = () =>
       axios
         .get(`${API}/support/unread`)
@@ -446,7 +468,7 @@ export default function DashboardLayout() {
             {/* Right Controls Panel */}
             <div className="flex items-center gap-2.5 max-md:gap-1.5 shrink-0">
               {/* Phone: DavaDesk AI lives in the header instead of a floating bubble */}
-              {!IS_DESKTOP && <button
+              {onlineFeatures && <button
                 type="button"
                 onClick={() => navigate("/assistant")}
                 aria-label="Open DavaDesk AI"
@@ -456,7 +478,8 @@ export default function DashboardLayout() {
                 <img src={AI_LOGO_SRC} alt="" className="h-7 w-7 rounded-full" />
               </button>}
 
-              {!IS_DESKTOP && <HeaderCredits />}
+              {onlineFeatures && <HeaderCredits />}
+              {IS_DESKTOP && <DesktopSyncChip />}
 
               {/* Theme Toggle Button */}
               <Button
@@ -534,7 +557,7 @@ export default function DashboardLayout() {
                     <Settings className="w-4 h-4 mr-2.5 text-orange-500 group-hover:rotate-45 transition-transform duration-200" />
                     Settings
                   </DropdownMenuItem>
-                  {!IS_DESKTOP && <DropdownMenuItem
+                  {onlineFeatures && <DropdownMenuItem
                     onClick={() => navigate("/support", { state: { from: location.pathname } })}
                     data-testid="support-dropdown"
                     className="cursor-pointer font-bold py-2 px-3 rounded-xl group hover:bg-orange-500/10 focus:bg-orange-500/10 text-foreground hover:text-orange-600 focus:text-orange-600 dark:hover:text-orange-400 dark:focus:text-orange-400 transition-colors"
@@ -628,9 +651,10 @@ export default function DashboardLayout() {
         />
 
         {/* DavaDesk AI launcher (phones use the header button) */}
-        {!IS_DESKTOP && <div className="max-md:hidden">
+        {onlineFeatures && <div className="max-md:hidden">
           <AssistantLauncher />
         </div>}
+        <DesktopChoiceDialog />
       </div>
     </BroadcastProvider>
     </TooltipProvider>

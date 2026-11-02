@@ -42,7 +42,16 @@ const ok = async (method, url, body, opts) => {
 };
 
 test.before(async () => {
-  s = await startServer({ dataDir, backendDir, webDir: null, dbKey: "ab".repeat(32), windowSecret: "win", port: 0, log: quiet });
+  // A computer already signed in, with the cloud out of reach
+  const { publicKey, privateKey } = crypto.generateKeyPairSync("ed25519");
+  const config = { cloudUrl: "http://127.0.0.1:9", licencePublicKey: publicKey.export({ type: "spki", format: "pem" }) };
+  s = await startServer({ dataDir, backendDir, webDir: null, dbKey: "ab".repeat(32), catalogKey: "cd".repeat(32), windowSecret: "win", config, port: 0, log: quiet });
+  const body = Buffer.from(JSON.stringify({ device_id: "d1", pharmacy_id: "ph1", user_id: "u1", plan: "ADVANCED", valid_until: Date.now() + 86400000 })).toString("base64url");
+  const licence = `${body}.${crypto.sign(null, Buffer.from(body), privateKey).toString("base64url")}`;
+  for (const [k, v] of Object.entries({ device_token: "t", device_id: "d1", pharmacy_id: "ph1", user_id: "u1", licence, snapshot_done: "1" })) s.db.setMeta(k, v);
+  const sub = { plan: "ADVANCED", kind: "PAID", status: "ACTIVE", starts_at: new Date().toISOString(), ends_at: new Date(Date.now() + 864e5).toISOString() };
+  await s.db.collection("pharmacies")._putRaw({ _id: "a".repeat(24), id: "ph1", name: "Test Shop", subscription: sub });
+  await s.db.collection("users")._putRaw({ _id: "b".repeat(24), id: "u1", name: "Owner", email: "o@example.test", role: "ADMIN", pharmacy_id: "ph1", is_primary_admin: true, verified: true, token_version: 0 });
   base = `http://127.0.0.1:${s.port}`;
 });
 

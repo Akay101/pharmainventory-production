@@ -355,7 +355,7 @@ class Collection {
     if (this.s.idGet.get(coll, idKey(doc._id))) throw new DuplicateKeyError(coll, "_id_", { _id: doc._id });
     const { lastInsertRowid } = this.s.insert.run(coll, idKey(doc._id), encode(doc));
     this._indexRow(Number(lastInsertRowid), doc);
-    this.db._emit();
+    this.db._recordChange(coll, doc._id, null, doc);
     return doc._id;
   }
 
@@ -379,11 +379,11 @@ class Collection {
     return { acknowledged: true, insertedCount: docs.length, insertedIds };
   }
 
-  _store(row, next) {
+  _store(row, next, before) {
     this._checkUnique(next, row.rid);
     this.s.update.run(encode(next), row.rid);
     this._indexRow(row.rid, next);
-    this.db._emit();
+    this.db._recordChange(this.collectionName, next._id, before, next);
   }
 
   // Applies one update to a stored row; returns the new document if it changed
@@ -393,7 +393,7 @@ class Collection {
       ? applyUpdate(row.doc, update, { filter, arrayFilters: options.arrayFilters })
       : { ...update, _id: row.doc._id };
     const changed = encode(next) !== before;
-    if (changed) this._store(row, next);
+    if (changed) this._store(row, next, decode(before));
     return { doc: next, changed };
   }
 
@@ -458,7 +458,29 @@ class Collection {
   _remove(row) {
     this.s.idxClear.run(row.rid);
     this.s.remove.run(row.rid);
-    this.db._emit();
+    this.db._recordChange(this.collectionName, row.doc._id, row.doc, null);
+  }
+
+  // Writes that came from the cloud: they aren't sent back, and the cloud has
+  // already decided about uniqueness
+  _putRaw(doc) {
+    const key = idKey(doc._id);
+    const existing = this.s.idGet.get(this.collectionName, key);
+    let rid;
+    if (existing) {
+      rid = existing.rid;
+      this.s.update.run(encode(doc), rid);
+    } else {
+      rid = Number(this.s.insert.run(this.collectionName, key, encode(doc)).lastInsertRowid);
+    }
+    this._indexRow(rid, doc);
+  }
+
+  _deleteRaw(id) {
+    const existing = this.s.idGet.get(this.collectionName, idKey(id));
+    if (!existing) return;
+    this.s.idxClear.run(existing.rid);
+    this.s.remove.run(existing.rid);
   }
 
   async findOneAndDelete(filter, options = {}) {
@@ -542,9 +564,30 @@ class Collection {
   async drop() {
     this.db._db.prepare("DELETE FROM idx WHERE coll = ?").run(this.collectionName);
     this.db._db.prepare("DELETE FROM docs WHERE coll = ?").run(this.collectionName);
-    this.db._emit();
     return true;
   }
+}
+
+// What one write changed, by top-level field. Counters travel as differences so
+// that a sale here and a sale elsewhere both count.
+function diffChange(coll, id, before, after, counters) {
+  const key = typeof id === "string" ? id : String(id);
+  if (!after) return { coll, key, op: "delete" };
+  const { _id, ...fields } = after;
+  if (!before) return { coll, key, op: "upsert", set: JSON.parse(encode(fields)) };
+  const set = {};
+  const inc = {};
+  const unset = [];
+  for (const [field, value] of Object.entries(fields)) {
+    if (encode({ v: value }) === encode({ v: before[field] })) continue;
+    if (counters.includes(field) && typeof value === "number" && typeof before[field] === "number") inc[field] = value - before[field];
+    else set[field] = value;
+  }
+  for (const field of Object.keys(before)) {
+    if (field !== "_id" && !(field in after)) unset.push(field);
+  }
+  if (!Object.keys(set).length && !Object.keys(inc).length && !unset.length) return null;
+  return { coll, key, op: "upsert", set: JSON.parse(encode(set)), inc, unset };
 }
 
 // ---- Sessions -----------------------------------------------------------------
@@ -559,6 +602,7 @@ class Session {
     return this.name !== null;
   }
   startTransaction() {
+    this.mark = this.db._capture ? this.db._capture.length : 0;
     this.name = `s_${++this.db._savepoints}`;
     this.db._db.exec(`SAVEPOINT ${this.name}`);
   }
@@ -579,6 +623,8 @@ class Session {
     this._finish("RELEASE {}");
   }
   async abortTransaction() {
+    // What the transaction changed is undone, so it mustn't be sent to the cloud either
+    if (this.name !== null && this.db._capture) this.db._capture.length = this.mark;
     this._finish("ROLLBACK TO {}; RELEASE {}");
   }
   async endSession() {
@@ -617,6 +663,8 @@ class DocDb {
       CREATE INDEX IF NOT EXISTS idx_rid ON idx (rid);
       CREATE TABLE IF NOT EXISTS indexes (coll TEXT NOT NULL, name TEXT NOT NULL, spec TEXT NOT NULL, PRIMARY KEY (coll, name));
       CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
+      CREATE TABLE IF NOT EXISTS outbox (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL, changes TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', detail TEXT, created_at INTEGER NOT NULL);
+      CREATE INDEX IF NOT EXISTS outbox_status ON outbox (status, seq);
     `);
     this._statements = {
       scan: this._db.prepare("SELECT rid, doc FROM docs WHERE coll = ? ORDER BY rid"),
@@ -632,6 +680,8 @@ class DocDb {
     this._collections = new Map();
     this._savepoints = 0;
     this._listeners = new Set();
+    this._capture = null;
+    this._syncTracking = null;
     this._loadIndexes();
   }
 
@@ -726,7 +776,38 @@ class DocDb {
     return new Session(this);
   }
 
-  // Marks that data changed, for whoever watches this (backups, later sync)
+  // ---- Changes for the cloud ---------------------------------------------------
+  // tracking: { collections: Set, counters: { coll: [field] } }
+  trackChanges(tracking) {
+    this._syncTracking = tracking;
+  }
+
+  beginCapture() {
+    this._capture = [];
+  }
+
+  endCapture(commit) {
+    const changes = this._capture;
+    this._capture = null;
+    if (commit && changes?.length) this._outboxAdd(changes);
+  }
+
+  _outboxAdd(changes) {
+    this._db.prepare("INSERT INTO outbox (id, changes, created_at) VALUES (?, ?, ?)").run(crypto.randomUUID(), encode(changes), Date.now());
+    this._emit();
+  }
+
+  _recordChange(coll, id, before, after) {
+    this._emit();
+    const tracking = this._syncTracking;
+    if (!tracking || !tracking.collections.has(coll)) return;
+    const change = diffChange(coll, id, before, after, tracking.counters[coll] || []);
+    if (!change) return;
+    if (this._capture) this._capture.push(change);
+    else this._outboxAdd([change]);
+  }
+
+  // Marks that data changed, for whoever watches this (backups, sync)
   onChange(fn) {
     this._listeners.add(fn);
     return () => this._listeners.delete(fn);

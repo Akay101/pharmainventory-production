@@ -15,7 +15,8 @@ export default function LoginPage() {
   const location = useLocation();
   const { login, user } = useAuth();
   // Only same-app paths are allowed as a post-login destination
-  const fromPath = location.state?.from?.pathname;
+  const fromLocation = location.state?.from;
+  const fromPath = fromLocation?.pathname ? `${fromLocation.pathname}${fromLocation.search || ""}` : undefined;
   const redirectTo = fromPath && fromPath.startsWith("/") && !fromPath.startsWith("//") ? fromPath : "/dashboard";
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);

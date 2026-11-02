@@ -30,6 +30,7 @@ const FILES = {
   "services/r2.js": stub("r2.js"),
   "services/s3.js": stub("s3.js"),
   "services/email.js": stub("email.js"),
+  "utils/globalDb.js": stub("globalDb.js"),
 };
 
 function install(backendDir) {

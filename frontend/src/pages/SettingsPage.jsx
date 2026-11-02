@@ -1,4 +1,5 @@
 import { IS_DESKTOP, openCounters } from "../lib/desktop";
+import DesktopDevicesCard from "../components/DesktopDevicesCard";
 import { useState, useRef, useEffect } from "react";
 import axios from "axios";
 import { API, useAuth } from "../App";
@@ -942,6 +943,7 @@ export default function SettingsPage() {
         </TabsContent>
         {/* Preferences Tab */}
         <TabsContent value="preferences">
+          {!IS_DESKTOP && <DesktopDevicesCard />}
           {IS_DESKTOP && (
             <Card className="bg-card/50 backdrop-blur-sm border-white/5 mb-6" data-testid="desktop-counters-card">
               <CardHeader>

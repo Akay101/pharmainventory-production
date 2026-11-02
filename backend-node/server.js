@@ -124,6 +124,7 @@ connectMongo()
     ensureCoreIndexes(mongoose.connection.db).catch((err) =>
       console.warn("[Indexes] ensureCoreIndexes failed:", err.message)
     );
+    require("./services/desktop/changeLog").start(mongoose.connection.db);
   })
   .catch((err) => {
     console.error("MongoDB connection error:", err);
@@ -178,6 +179,7 @@ app.use("/api/assistant", require("./routes/assistant"));
 app.use("/api/public", require("./routes/public"));
 app.use("/api/support", require("./routes/support"));
 app.use("/api/shortbook", require("./routes/shortbook"));
+app.use("/api/desktop", require("./routes/desktop"));
 
 // Bull Board Setup (Protected with Basic Auth)
 if (!process.env.ADMIN_PASSWORD) {
@@ -289,6 +291,7 @@ const shutdown = (signal) => {
   shuttingDown = true;
   console.log(`${signal} received, shutting down`);
   server.close(async () => {
+    require("./services/desktop/changeLog").stop();
     await mongoose.connection.close().catch(() => {});
     process.exit(0);
   });

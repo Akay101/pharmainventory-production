@@ -2,6 +2,8 @@
 // the desktop-only parts (automatic sign-in, device check, backups, shop network).
 const crypto = require("crypto");
 const fs = require("fs");
+const http = require("http");
+const https = require("https");
 const path = require("path");
 
 const WINDOW_HEADER = "x-davadesk-device";
@@ -12,23 +14,30 @@ const WRITE_WATCHDOG_MS = 30 * 1000;
 
 const sha256 = (s) => crypto.createHash("sha256").update(s).digest("hex");
 
-// One write request at a time, each in one transaction: a saved bill is the
-// whole bill or nothing, and a failure part-way leaves no stock or debt change.
-function writeTransactions(db) {
+// One writer at a time. A write request runs in one transaction: a saved bill is the
+// whole bill or nothing, and what it changed becomes one unit to send to the cloud.
+function createWriteLock() {
   let tail = Promise.resolve();
-  return (req, res, next) => {
-    if (req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS") return next();
+  return () => {
     let release;
     const turn = new Promise((resolve) => (release = resolve));
     const previous = tail;
     tail = tail.then(() => turn);
-    previous.then(() => {
+    return previous.then(() => release);
+  };
+}
+
+function writeTransactions(db, acquire) {
+  return (req, res, next) => {
+    if (req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS") return next();
+    acquire().then((release) => {
       let finished = false;
       const end = (commit) => {
         if (finished) return;
         finished = true;
         clearTimeout(watchdog);
         try {
+          db.endCapture(commit && db._db.inTransaction);
           if (db._db.inTransaction) db._db.exec(commit ? "COMMIT" : "ROLLBACK");
         } catch (err) {
           console.error("[LocalDB] ending transaction:", err.message);
@@ -42,6 +51,7 @@ function writeTransactions(db) {
       res.on("finish", () => end(res.statusCode < 500));
       res.on("close", () => end(res.writableFinished && res.statusCode < 500));
       db._db.exec("BEGIN IMMEDIATE");
+      db.beginCapture();
       next();
     });
   };
@@ -70,54 +80,7 @@ function startBackups(db, dataDir, dbFile) {
   return run;
 }
 
-// A shop that opens the app for the first time gets a working pharmacy at once.
-// Name and address can be changed in Settings whenever the owner likes.
-async function ensureShop(db) {
-  const users = db.collection("users");
-  const existing = await users.findOne({ is_primary_admin: true });
-  if (existing) return existing;
-  const bcrypt = require("bcryptjs");
-  const { v4: uuidv4 } = require("uuid");
-  const now = new Date().toISOString();
-  const pharmacyId = uuidv4();
-  await db.collection("pharmacies").insertOne({
-    id: pharmacyId,
-    name: "My Pharmacy",
-    location: "",
-    license_no: null,
-    years_old: null,
-    logo_url: null,
-    subscription: {
-      plan: "ADVANCED",
-      kind: "PAID",
-      status: "ACTIVE",
-      starts_at: now,
-      ends_at: "2099-12-31T23:59:59.000Z",
-      trial_used: true,
-    },
-    created_at: now,
-  });
-  const user = {
-    id: uuidv4(),
-    name: "Owner",
-    email: "owner@davadesk.local",
-    mobile: "",
-    // Nobody signs in with this; the app signs in for the owner
-    password_hash: await bcrypt.hash(crypto.randomBytes(32).toString("hex"), 10),
-    role: "ADMIN",
-    pharmacy_id: pharmacyId,
-    is_primary_admin: true,
-    verified: true,
-    token_version: 0,
-    image_url: null,
-    onboarding_tour: { status: "skipped", version: 1, at: now },
-    created_at: now,
-  };
-  await users.insertOne(user);
-  return user;
-}
-
-async function startServer({ dataDir, backendDir, webDir, dbKey, windowSecret, port = PREFERRED_PORT, version = "dev", log = console }) {
+async function startServer({ dataDir, backendDir, webDir, dbKey, catalogKey, windowSecret, config, port = PREFERRED_PORT, version = "dev", log = console }) {
   fs.mkdirSync(dataDir, { recursive: true });
   // Upload code writes under the working directory, which must be writable
   process.chdir(dataDir);
@@ -125,6 +88,8 @@ async function startServer({ dataDir, backendDir, webDir, dbKey, windowSecret, p
   require("./hooks").install(backendDir);
 
   const { DocDb } = require("./docdb");
+  const { Catalog } = require("./catalog");
+  const { SyncEngine } = require("./sync");
   const dbFile = path.join(dataDir, "davadesk.db");
   const db = new DocDb(dbFile, dbKey);
   require("mongoose").connection.db = db;
@@ -140,7 +105,6 @@ async function startServer({ dataDir, backendDir, webDir, dbKey, windowSecret, p
   process.env.JWT_SECRET = jwtSecret;
   process.env.NODE_ENV = "production";
   process.env.DAVADESK_DESKTOP = "true";
-  process.env.RATE_LIMIT_SCALE = "10";
   for (const k of ["GLOBAL_MONGO_URI", "MONGO_URL", "GEMINI_API_KEY", "EMERGENT_LLM_KEY", "REDIS_URL", "BREVO_API_KEY", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "CASHFREE_APP_ID", "CASHFREE_SECRET_KEY"]) delete process.env[k];
 
   const backend = (rel) => require(path.join(backendDir, rel));
@@ -149,7 +113,22 @@ async function startServer({ dataDir, backendDir, webDir, dbKey, windowSecret, p
   app.set("trust proxy", false);
   app.disable("x-powered-by");
 
-  const owner = await ensureShop(db);
+  // ---- Sync, licence and the offline catalogue --------------------------------
+  const collections = backend("services/desktop/collections");
+  db.trackChanges({ collections: new Set(collections.TWO_WAY), counters: collections.COUNTERS });
+  const catalog = new Catalog(path.join(dataDir, "catalog.db"), catalogKey);
+  require(path.join(__dirname, "stubs", "globalDb.js")).setCatalog(catalog);
+  const acquireWriteLock = createWriteLock();
+  const withWriteLock = async (fn) => {
+    const release = await acquireWriteLock();
+    try {
+      return await fn();
+    } finally {
+      release();
+    }
+  };
+  const sync = new SyncEngine({ db, config, withWriteLock, collections, catalog, filesRoot: require("./stubs/files").getRoot(), log });
+
   for (const ensure of [
     () => backend("services/search/indexes").ensureTenantIndexes(db),
     () => backend("services/billing/indexes").ensureCoreIndexes(db),
@@ -180,39 +159,101 @@ async function startServer({ dataDir, backendDir, webDir, dbKey, windowSecret, p
 
   app.get(["/health", "/api/health"], (req, res) => res.json({ status: "healthy", app: "davadesk", version }));
 
-  app.use(express.json({ limit: "10mb" }));
-  app.use(express.urlencoded({ extended: true, limit: "10mb" }));
   const { sanitizeInput, apiLimiter } = backend("middleware/security");
 
   // Pairing proves itself with the code, so it comes before the device check
-  const network = lan.create({ db, app, dataDir, sha256, log, getShopName: async () => (await db.collection("pharmacies").findOne({ id: owner.pharmacy_id }))?.name || "DavaDesk" });
-  app.post("/api/desktop/pair", apiLimiter, network.pairRoute);
+  const network = lan.create({ db, app, dataDir, sha256, log, getShopName: async () => (await db.collection("pharmacies").findOne({ id: db.getMeta("pharmacy_id") }))?.name || "DavaDesk" });
+  app.post("/api/desktop/pair", apiLimiter, express.json(), network.pairRoute);
 
   app.use("/api", requireDevice);
-  app.use("/files", requireDevice, express.static(require("./stubs/files").getRoot(), { fallthrough: false, index: false }));
-  app.use(sanitizeInput);
   app.use("/api", apiLimiter);
-  app.use("/api", writeTransactions(db));
 
-  // ---- Desktop-only endpoints ----------------------------------------------
+  // ---- Status for the Sync Center ---------------------------------------------
+  app.get("/api/desktop/status", (req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ version, ...sync.status() });
+  });
+  app.post("/api/desktop/sync-now", (req, res) => {
+    sync.wake();
+    res.json({ ok: true });
+  });
+  app.post("/api/desktop/conflicts/:seq/retry", (req, res) => {
+    sync.retryConflict(Number(req.params.seq));
+    res.json({ ok: true });
+  });
+
+  // Nothing else works without a valid licence. The licence is signed by the cloud,
+  // and this check runs on every request, on this computer and for its counters.
+  const requireLicence = (req, res, next) => {
+    const problem = sync.accessProblem();
+    if (!problem) return next();
+    res.status(403).json({ code: "LICENCE_REQUIRED", problem, detail: "Please sign in with an active DavaDesk subscription." });
+  };
+  app.use("/api", requireLicence);
+  app.use("/files", requireDevice, requireLicence, express.static(require("./stubs/files").getRoot(), { fallthrough: false, index: false }));
+
+  // ---- Features that live in the cloud ---------------------------------------
+  // Forwarded with a normal API token, so the cloud applies the same checks as for
+  // a browser. Keys for AI, payments and email stay on the server.
+  const needsInternet = (req, res) => res.status(503).json({ code: "NEEDS_INTERNET", detail: "This needs internet. It will work again once you're back online." });
+  const forward = (flushFirst) => async (req, res, next) => {
+    if (!sync.online) return needsInternet(req, res);
+    try {
+      if (flushFirst) await sync.flush();
+      const token = await sync.cloudToken();
+      const target = new URL(req.originalUrl, config.cloudUrl);
+      const lib = target.protocol === "https:" ? https : http;
+      const headers = { ...req.headers, host: target.host, authorization: `Bearer ${token}` };
+      for (const h of ["x-davadesk-device", "cookie", "origin", "referer"]) delete headers[h];
+      const upstream = lib.request(target, { method: req.method, headers }, (reply) => {
+        const out = { ...reply.headers };
+        delete out["set-cookie"];
+        res.writeHead(reply.statusCode, out);
+        reply.pipe(res);
+      });
+      upstream.on("error", () => {
+        if (!res.headersSent) needsInternet(req, res);
+        else res.destroy();
+      });
+      req.pipe(upstream);
+    } catch (err) {
+      if (err.network) return needsInternet(req, res);
+      next(err);
+    }
+  };
+  const online = forward(false);
+  const onlineAfterFlush = forward(true);
+  // Reads that also work from the local copy when offline
+  const onlineWrites = (req, res, next) => (req.method === "GET" && !sync.online ? next() : online(req, res, next));
+  for (const route of ["/api/assistant", "/api/credits", "/api/support", "/api/billing", "/api/plans", "/api/migrate"]) app.use(route, online);
+  for (const route of ["/api/users", "/api/pharmacy", "/api/broadcasts"]) app.use(route, onlineWrites);
+  for (const route of ["/api/purchases/scan-image", "/api/purchases/scan-bill", "/api/bills/scan-product", "/api/settings/request-lock-otp", "/api/settings/verify-and-update-lock"]) app.post(route, online);
+  app.get("/api/purchases/scan-status/:id", online);
+  app.use("/api/medicines/ai-enrich", online);
+  app.use("/api/bills/:bill_id/share", onlineAfterFlush);
+  app.use("/api/bills/:bill_id/email", onlineAfterFlush);
+  app.use("/api/bills/:bill_id/send-email", onlineAfterFlush);
+  app.get("/api/dashboard/ai-tips", (req, res, next) => (sync.online ? online(req, res, next) : res.json({ tips: [] })));
+  const authLocal = new Set(["/refresh", "/logout", "/me"]);
+  app.use("/api/auth", (req, res, next) => (authLocal.has(req.path) ? next() : online(req, res, next)));
+
+  // ---- From here on, requests are answered by this computer ---------------------
+  app.use(express.json({ limit: "10mb" }));
+  app.use(express.urlencoded({ extended: true, limit: "10mb" }));
+  app.use(sanitizeInput);
+  app.use("/api", writeTransactions(db, acquireWriteLock));
+
   const tokens = backend("services/auth/tokens");
   app.post("/api/auth/refresh", async (req, res, next) => {
     try {
-      const user = await db.collection("users").findOne({ id: owner.id });
+      const user = await db.collection("users").findOne({ id: db.getMeta("user_id") });
+      if (!user) return res.status(401).json({ code: "NO_SESSION", detail: "Not signed in" });
       res.json({ token: tokens.signAccess(user) });
     } catch (err) {
       next(err);
     }
   });
   app.post("/api/auth/logout", (req, res) => res.json({ message: "Logged out successfully" }));
-  app.get("/api/desktop/info", (req, res) => res.json({ version, desktop: true }));
-
-  // ---- Features that only work online --------------------------------------
-  const needsInternet = (req, res) => res.status(503).json({ code: "NEEDS_INTERNET", detail: "This feature needs internet and isn't available in this version of the desktop app." });
-  for (const route of ["/api/assistant", "/api/credits", "/api/support", "/api/migrate", "/api/public"]) app.use(route, needsInternet);
-  for (const route of ["/api/purchases/scan-image", "/api/purchases/scan-bill", "/api/bills/scan-product", "/api/medicines/ai-enrich"]) app.post(route, needsInternet);
-  app.get("/api/purchases/scan-status/:id", needsInternet);
-  app.get("/api/dashboard/ai-tips", (req, res) => res.json({ tips: [] }));
 
   // ---- The backend's own routes --------------------------------------------
   const routes = {
@@ -234,11 +275,9 @@ async function startServer({ dataDir, backendDir, webDir, dbKey, windowSecret, p
     "/api/reminders": "routes/reminders",
     "/api/notifications": "routes/notifications",
     "/api/broadcasts": "routes/broadcasts",
-    "/api/billing": "routes/billing",
     "/api/shortbook": "routes/shortbook",
   };
   for (const [mount, file] of Object.entries(routes)) app.use(mount, backend(file));
-  app.get("/api/plans", (req, res) => res.json({ plans: [] }));
   app.use("/api", (req, res) => res.status(404).json({ detail: "Not found" }));
 
   // ---- The React app --------------------------------------------------------
@@ -277,17 +316,21 @@ async function startServer({ dataDir, backendDir, webDir, dbKey, windowSecret, p
   }
   server.requestTimeout = 120 * 1000;
 
+  sync.start();
+
   const stop = async () => {
+    sync.stop();
     await network.disable().catch(() => {});
     await new Promise((resolve) => {
       server.close(resolve);
       if (server.closeAllConnections) server.closeAllConnections();
     });
     backupNow();
+    catalog.close();
     db.close();
   };
 
-  return { port: server.address().port, app, db, network, owner, stop, windowHeader: WINDOW_HEADER };
+  return { port: server.address().port, app, db, network, sync, catalog, stop, windowHeader: WINDOW_HEADER };
 }
 
 module.exports = { startServer, WINDOW_HEADER };
