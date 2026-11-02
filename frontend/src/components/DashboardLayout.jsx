@@ -50,7 +50,8 @@ import {
 import RecentActivitySidebar from "./RecentActivitySidebar";
 import { formatCombo, isVisible } from "../lib/shortcuts";
 import { ShortcutProvider } from "./shortcuts/Shortcuts";
-import { IS_DESKTOP, useDesktopStatus, useOnlineFeatures } from "../lib/desktop";
+import { toast } from "sonner";
+import { IS_DESKTOP, signOutDesktop, useDesktopStatus, useOnlineFeatures } from "../lib/desktop";
 import DesktopChoiceDialog from "./DesktopChoiceDialog";
 import AssistantLauncher from "./assistant/AssistantLauncher";
 import PlanBadge from "./PlanBadge";
@@ -328,7 +329,16 @@ export default function DashboardLayout() {
     localStorage.setItem("activityOpen", "false");
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    if (IS_DESKTOP) {
+      if (!window.confirm("Sign in with a different account? This account's copy on this computer will be removed. Everything already synced stays safe in the account.")) return;
+      try {
+        await signOutDesktop(false);
+      } catch (err) {
+        toast.error(String(err.message || err).replace(/^Error invoking remote method '[^']*': (Error: )?/, ""));
+      }
+      return;
+    }
     logout();
     navigate("/login");
   };
@@ -580,15 +590,15 @@ export default function DashboardLayout() {
                       Early access terms
                     </DropdownMenuItem>
                   )}
-                  {!IS_DESKTOP && <DropdownMenuSeparator className="bg-border/50 my-1" />}
-                  {!IS_DESKTOP && <DropdownMenuItem
+                  <DropdownMenuSeparator className="bg-border/50 my-1" />
+                  <DropdownMenuItem
                     onClick={handleLogout}
                     data-testid="logout-btn"
                     className="text-destructive hover:bg-destructive/10 focus:bg-destructive/10 focus:text-destructive hover:text-destructive cursor-pointer font-bold py-2 px-3 rounded-xl group transition-colors"
                   >
                     <LogOut className="w-4 h-4 mr-2.5 text-destructive transition-transform group-hover:translate-x-0.5" />
-                    Logout
-                  </DropdownMenuItem>}
+                    {IS_DESKTOP ? "Switch account" : "Logout"}
+                  </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>

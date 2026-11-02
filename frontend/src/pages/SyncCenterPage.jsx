@@ -133,7 +133,7 @@ export default function SyncCenterPage() {
 
       <Card title="This computer">
         <p className="text-sm text-muted-foreground">Works offline until {when(s.licence_valid_until)}. Connect to the internet before then to renew automatically. Version {s.version}.</p>
-        <Button variant="outline" className="text-destructive" onClick={signOut} disabled={busy}><LogOut className="h-4 w-4 mr-2" aria-hidden="true" />Sign out of this computer</Button>
+        <Button variant="outline" className="text-destructive" onClick={signOut} disabled={busy}><LogOut className="h-4 w-4 mr-2" aria-hidden="true" />Sign out / switch account</Button>
       </Card>
     </div>
   );

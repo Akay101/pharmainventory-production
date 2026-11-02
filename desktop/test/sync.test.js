@@ -334,9 +334,21 @@ test("signing in again, then signing out, removes the shop's data from this comp
   await s.sync.activate({ code, verifier });
   await until(() => s.sync.accessProblem() === null, "signed in again");
   await until(async () => s.sync.pendingCount() === 0, "nothing waiting");
+  const before = ok(await web("GET", "/api/desktop/devices"), "devices").devices.length;
   await s.sync.signOut();
+  assert.strictEqual(ok(await web("GET", "/api/desktop/devices"), "devices").devices.length, before - 1, "the computer leaves the account's list");
   assert.strictEqual(s.sync.accessProblem(), "not_signed_in");
   assert.strictEqual(await s.db.collection("customers").countDocuments({}), 0);
   assert.strictEqual(await s.db.collection("bills").countDocuments({}), 0);
   assert.strictEqual((await local("GET", "/api/customers")).status, 403);
+
+  // A different account, from another pharmacy, on the same computer
+  const otherVerifier = crypto.randomBytes(32).toString("base64url");
+  const challenge = crypto.createHash("sha256").update(otherVerifier).digest("base64url");
+  const asOther = await send(CLOUD, "POST", "/api/desktop/authorize", { code_challenge: challenge, device_name: "Test PC" }, { authorization: `Bearer ${webToken("user-other")}` });
+  await s.sync.activate({ code: ok(asOther, "other account").code, verifier: otherVerifier });
+  await until(() => s.sync.accessProblem() === null, "other account ready");
+  assert.ok(await s.db.collection("customers").findOne({ id: "c-theirs" }), "sees its own data");
+  assert.strictEqual(await s.db.collection("customers").findOne({ id: "c-mine" }), null, "nothing from the first account");
+  assert.strictEqual(await s.db.collection("bills").countDocuments({}), 0);
 });

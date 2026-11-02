@@ -9,7 +9,7 @@ import { Button } from "../components/ui/button";
 // whether this computer may use the account; only an active subscription passes.
 export default function DesktopAuthorizePage() {
   const [params] = useSearchParams();
-  const { user, pharmacy } = useAuth();
+  const { user, pharmacy, logout } = useAuth();
   const challenge = params.get("challenge") || "";
   const state = params.get("state") || "";
   const name = (params.get("name") || "this computer").slice(0, 80);
@@ -50,6 +50,8 @@ export default function DesktopAuthorizePage() {
             {!/^[A-Za-z0-9_-]{43}$/.test(challenge) && <p className="text-sm font-semibold text-destructive">This link is incomplete. Please start again from the desktop app.</p>}
             {error && <p className="text-sm font-semibold text-destructive" role="alert">{error}</p>}
             <Button className="w-full" onClick={allow} disabled={busy || !/^[A-Za-z0-9_-]{43}$/.test(challenge)} data-testid="desktop-allow">Allow this computer</Button>
+            {/* Logging out here returns to the sign-in page, then back to this approval */}
+            <Button variant="outline" className="w-full" onClick={logout} disabled={busy} data-testid="desktop-other-account">Use a different account</Button>
           </>
         )}
       </div>

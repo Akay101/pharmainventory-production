@@ -110,6 +110,7 @@ class SyncEngine {
   // ---- Talking to the cloud ---------------------------------------------------------
   request(method, url, { body, headers = {}, raw = false } = {}) {
     return new Promise((resolve, reject) => {
+      if (this.signingOut) return reject(Object.assign(new Error("Signing out"), { network: true }));
       const target = new URL(url, this.config.cloudUrl);
       const lib = target.protocol === "https:" ? https : http;
       const payload = body === undefined ? null : Buffer.isBuffer(body) ? body : Buffer.from(JSON.stringify(body));
@@ -167,7 +168,13 @@ class SyncEngine {
 
   async signOut({ force = false } = {}) {
     if (!force && this.pendingCount() > 0) throw new Error(`${this.pendingCount()} changes haven't reached the cloud yet. Connect to the internet first, so nothing is lost.`);
-    this.wipeShopData();
+    // Stops any sync in progress, so nothing arrives after the wipe
+    this.signingOut = true;
+    for (let i = 0; this.running && i < 100; i++) await new Promise((r) => setTimeout(r, 100));
+    this.signingOut = false;
+    // Best effort: offline, the computer simply stays listed until removed in Settings
+    await this.request("POST", "/api/desktop/sign-out", { body: {} }).catch(() => {});
+    await this.withWriteLock(async () => this.wipeShopData());
     for (const key of ["device_token", "device_id", "licence", "user_id", "pharmacy_id"]) this.db._db.prepare("DELETE FROM meta WHERE key = ?").run(key);
     this.token = null;
     this.blocked = null;

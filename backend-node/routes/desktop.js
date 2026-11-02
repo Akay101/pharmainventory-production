@@ -147,6 +147,16 @@ router.post("/session", deviceAuth, requireActive, async (req, res, next) => {
   }
 });
 
+// The app signing itself out: this computer stops counting on the account
+router.post("/sign-out", deviceAuth, async (req, res, next) => {
+  try {
+    await db().collection("desktop_devices").updateOne({ id: req.device.id }, { $set: { revoked_at: new Date(), revoked_by: "device" } });
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // ---- Computers on the account -------------------------------------------------------
 router.get("/devices", auth, async (req, res, next) => {
   try {
