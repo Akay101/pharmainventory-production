@@ -57,10 +57,24 @@ class SyncEngine {
     this.stopped = false;
     this.lastClockCheck = 0;
     db.onChange(() => this.wake());
+    this.resetIfCloudChanged();
   }
 
   meta(key) {
     return this.db.getMeta(key);
+  }
+
+  // Data from one cloud (say a test copy) must never mix with another's
+  resetIfCloudChanged() {
+    const previous = this.meta("cloud_url");
+    if (previous && previous !== this.config.cloudUrl) {
+      this.wipeShopData();
+      for (const key of ["device_token", "device_id", "licence", "user_id", "pharmacy_id", "last_seen_at", "catalog_done_at", "catalog_after_medicines", "catalog_after_doctors", "catalog_after_distributors"]) {
+        this.db._db.prepare("DELETE FROM meta WHERE key = ?").run(key);
+      }
+      this.catalog?.clear();
+    }
+    this.db.setMeta("cloud_url", this.config.cloudUrl);
   }
 
   note(text) {

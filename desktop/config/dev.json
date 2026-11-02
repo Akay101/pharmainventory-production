@@ -1,0 +1,6 @@
+{
+  "cloudUrl": "https://api-dev.davadesk.in",
+  "webUrl": "https://store-dev.davadesk.in",
+  "licencePublicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAYUjYmy9ZCbquFaIFx/098wagbN6ENacdtKSYa4VAhjw=\n-----END PUBLIC KEY-----\n",
+  "hardened": true
+}

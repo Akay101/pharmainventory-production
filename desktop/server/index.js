@@ -225,7 +225,13 @@ async function startServer({ dataDir, backendDir, webDir, dbKey, catalogKey, win
   const onlineAfterFlush = forward(true);
   // Reads that also work from the local copy when offline
   const onlineWrites = (req, res, next) => (req.method === "GET" && !sync.online ? next() : online(req, res, next));
-  for (const route of ["/api/assistant", "/api/credits", "/api/support", "/api/billing", "/api/plans", "/api/migrate"]) app.use(route, online);
+  for (const route of ["/api/credits", "/api/support", "/api/billing", "/api/plans", "/api/migrate"]) app.use(route, online);
+  // The assistant reads the shop's data in the cloud, so waiting work goes up first
+  app.use("/api/assistant", onlineAfterFlush);
+  // Until the offline catalogue is complete, the cloud gives the full results
+  const catalogPending = () => sync.online && sync.catalogState.state !== "ready";
+  app.get(["/api/medicines/search", "/api/bills/doctors"], (req, res, next) => (catalogPending() ? online(req, res, next) : next()));
+  app.get("/api/suppliers", (req, res, next) => (catalogPending() && req.query.include_global ? online(req, res, next) : next()));
   for (const route of ["/api/users", "/api/pharmacy", "/api/broadcasts"]) app.use(route, onlineWrites);
   for (const route of ["/api/purchases/scan-image", "/api/purchases/scan-bill", "/api/bills/scan-product", "/api/settings/request-lock-otp", "/api/settings/verify-and-update-lock"]) app.post(route, online);
   app.get("/api/purchases/scan-status/:id", online);

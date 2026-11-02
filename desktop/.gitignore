@@ -3,5 +3,7 @@ backend/
 web/
 dist/
 dist-test/
+dist-dev/
 .test-cloud/
+.dev-licence-key
 app-config.json

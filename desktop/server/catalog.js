@@ -13,7 +13,7 @@ const KINDS = {
 };
 const COLLECTION_KIND = { global_medicines: "medicines", global_doctors: "doctors", global_distributors: "distributors" };
 const GRAM_FIELDS = { s_name_grams: "name", s_salt_grams: "salt" };
-const MAX_CANDIDATES = 2000;
+const MAX_CANDIDATES = 400;
 
 const joined = (doc, fields) => fields.map((f) => doc[f]).filter((v) => typeof v === "string" && v).join(" ");
 
@@ -27,9 +27,13 @@ class Catalog {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS entries (rid INTEGER PRIMARY KEY, kind TEXT NOT NULL, ext_id TEXT NOT NULL, rank REAL NOT NULL DEFAULT 0, doc TEXT NOT NULL, UNIQUE (kind, ext_id));
       CREATE INDEX IF NOT EXISTS entries_kind_rank ON entries (kind, rank DESC);
+      CREATE TABLE IF NOT EXISTS ranks (rid INTEGER PRIMARY KEY, kind TEXT NOT NULL, rank REAL NOT NULL);
       CREATE VIRTUAL TABLE IF NOT EXISTS search USING fts5(name, salt, kind UNINDEXED, tokenize = 'trigram');
     `);
     this._upsert = this.db.prepare("INSERT INTO entries (kind, ext_id, rank, doc) VALUES (?, ?, ?, ?) ON CONFLICT (kind, ext_id) DO UPDATE SET rank = excluded.rank, doc = excluded.doc RETURNING rid");
+    // Ranks sit apart from the documents, so ordering thousands of matches reads little
+    this._rank = this.db.prepare("INSERT OR REPLACE INTO ranks (rid, kind, rank) VALUES (?, ?, ?)");
+    this._doc = this.db.prepare("SELECT doc FROM entries WHERE rid = ?");
     this._ftsDelete = this.db.prepare("DELETE FROM search WHERE rowid = ?");
     this._ftsInsert = this.db.prepare("INSERT INTO search (rowid, name, salt, kind) VALUES (?, ?, ?, ?)");
   }
@@ -40,10 +44,15 @@ class Catalog {
       for (const doc of docs) {
         const rank = spec.rank ? Number(doc[spec.rank]) || 0 : 0;
         const { rid } = this._upsert.get(kind, String(doc._id), rank, encode(doc));
+        this._rank.run(rid, kind, rank);
         this._ftsDelete.run(rid);
         this._ftsInsert.run(rid, joined(doc, spec.name), joined(doc, spec.salt), kind);
       }
     })();
+  }
+
+  clear() {
+    this.db.exec("DELETE FROM entries; DELETE FROM ranks; DELETE FROM search;");
   }
 
   count(kind) {
@@ -60,9 +69,9 @@ class Catalog {
     }
     if (parts.length) {
       return this.db
-        .prepare("SELECT e.doc FROM search JOIN entries e ON e.rid = search.rowid WHERE search MATCH ? AND e.kind = ? ORDER BY e.rank DESC LIMIT ?")
+        .prepare("SELECT r.rid FROM search JOIN ranks r ON r.rid = search.rowid WHERE search MATCH ? AND r.kind = ? ORDER BY r.rank DESC LIMIT ?")
         .all(parts.join(" AND "), kind, limit)
-        .map((r) => decode(r.doc));
+        .map((r) => decode(this._doc.get(r.rid).doc));
     }
     // Only very short terms: limited to the most used entries
     return this.db.prepare("SELECT doc FROM entries WHERE kind = ? ORDER BY rank DESC LIMIT ?").all(kind, limit).map((r) => decode(r.doc));
