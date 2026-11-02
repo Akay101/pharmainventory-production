@@ -2,4 +2,6 @@ node_modules/
 backend/
 web/
 dist/
+dist-test/
+.test-cloud/
 app-config.json

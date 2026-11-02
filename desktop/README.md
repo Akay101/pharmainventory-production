@@ -74,3 +74,12 @@ Limit: someone who controls their own computer, and is willing to reverse-engine
 - Bill number changes.
 - Signing: Mac packages are ad-hoc signed and not notarised, and Windows is unsigned. Signed Mac builds can also move the key files into the Keychain.
 - The Windows package has the default icon until it is built on Windows.
+
+## Trying it before going live
+
+```bash
+npm run dist:test
+npm run test-cloud
+```
+
+`dist:test` makes Mac installers in `dist-test/` that connect to the test cloud. `test-cloud` runs a private copy of the cloud on this computer, with sample data and test accounts listed in `.test-cloud/accounts.txt`. Stopping it with Ctrl+C acts like losing the internet. It never reaches production.
