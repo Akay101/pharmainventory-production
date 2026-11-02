@@ -1,6 +1,6 @@
 // A private copy of the cloud on this computer, for trying the desktop app before
 // anything goes live: its own MongoDB and Redis in Docker, the real backend started
-// outside the repo so it reads no .env, and the web app on http://localhost:3000.
+// outside the repo so it reads no .env, and the web app on http://localhost:3197.
 // Nothing here can reach production. Data stays between runs; --fresh starts over.
 const { execSync, spawn, spawnSync } = require("child_process");
 const crypto = require("crypto");
@@ -91,7 +91,7 @@ function buildWeb() {
   execSync("npx craco build", {
     cwd: path.join(repo, "frontend"),
     stdio: "inherit",
-    env: { ...process.env, CI: "false", BUILD_PATH: webDir, REACT_APP_BACKEND_URL: "http://localhost:18001", REACT_APP_DESKTOP_DOWNLOADS: "true", REACT_APP_DESKTOP_DOWNLOAD_URL: "http://localhost:3000/installers", GENERATE_SOURCEMAP: "false" },
+    env: { ...process.env, CI: "false", BUILD_PATH: webDir, REACT_APP_BACKEND_URL: "http://localhost:18001", REACT_APP_DESKTOP_DOWNLOADS: "true", REACT_APP_DESKTOP_DOWNLOAD_URL: "http://localhost:3197/installers", GENERATE_SOURCEMAP: "false" },
   });
 }
 
@@ -104,11 +104,11 @@ function serveWeb() {
       res.writeHead(200, { "content-type": types[path.extname(file)] || "application/octet-stream" });
       fs.createReadStream(file).pipe(res);
     })
-    .listen(3000, "127.0.0.1");
+    .listen(3197, "127.0.0.1");
 }
 
 function writeTestConfig(s) {
-  fs.writeFileSync(path.join(home, "app-config.json"), JSON.stringify({ cloudUrl: "http://localhost:18001", webUrl: "http://localhost:3000", licencePublicKey: s.licencePublic, hardened: true }, null, 2));
+  fs.writeFileSync(path.join(home, "app-config.json"), JSON.stringify({ cloudUrl: "http://localhost:18001", webUrl: "http://localhost:3197", licencePublicKey: s.licencePublic, hardened: true }, null, 2));
 }
 
 (async () => {
@@ -132,7 +132,7 @@ function writeTestConfig(s) {
     JWT_SECRET: s.jwt,
     ADMIN_PASSWORD: s.jwt,
     DESKTOP_LICENCE_PRIVATE_KEY: s.licencePrivate,
-    CORS_ORIGINS: "http://localhost:3000",
+    CORS_ORIGINS: "http://localhost:3197",
   };
   const log = fs.openSync(path.join(home, "cloud.log"), "a");
   const cloud = spawn("node", [path.join(backend, "server.js")], { cwd: home, env, stdio: ["ignore", log, log] });
@@ -144,7 +144,7 @@ function writeTestConfig(s) {
   process.on("SIGTERM", stop);
   cloud.on("exit", (code) => console.log(`Cloud stopped (${code}). This is how to test "internet lost": it also happens if you stop this script.`));
   serveWeb();
-  console.log(`\nTest cloud ready.\nWeb app: http://localhost:3000\nAccounts: ${path.join(home, "accounts.txt")}\nPress Ctrl+C to stop it. The desktop app then behaves as if the internet is gone.\n`);
+  console.log(`\nTest cloud ready.\nWeb app: http://localhost:3197\nAccounts: ${path.join(home, "accounts.txt")}\nPress Ctrl+C to stop it. The desktop app then behaves as if the internet is gone.\n`);
 })().catch((err) => {
   console.error(err.message);
   process.exit(1);
