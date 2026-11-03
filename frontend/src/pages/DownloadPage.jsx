@@ -1,10 +1,25 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Apple, Check, Download, Monitor, WifiOff } from "lucide-react";
+import { Check, Download, WifiOff } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { FIRST_OPEN_HELP, PACKAGES, detectComputer, downloadUrl } from "../lib/desktop";
 
-const ICONS = { win: Monitor, arm: Apple, intel: Apple };
+const AppleLogo = (props) => (
+  <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" {...props}>
+    <path d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701" />
+  </svg>
+);
+
+const WindowsLogo = (props) => (
+  <svg viewBox="0 0 24 24" fill="#0078D4" aria-hidden="true" {...props}>
+    <rect x="1" y="1" width="10.5" height="10.5" />
+    <rect x="12.5" y="1" width="10.5" height="10.5" />
+    <rect x="1" y="12.5" width="10.5" height="10.5" />
+    <rect x="12.5" y="12.5" width="10.5" height="10.5" />
+  </svg>
+);
+
+const ICONS = { win: WindowsLogo, arm: AppleLogo, intel: AppleLogo };
 
 const POINTS = [
   "Billing, purchases, CSV import and stock keep working with no internet",
@@ -24,7 +39,15 @@ export default function DownloadPage() {
 
   return (
     <div className="min-h-screen bg-background text-foreground">
-      <main className="mx-auto max-w-3xl px-4 py-12 sm:py-16 space-y-10">
+      <main className="mx-auto max-w-3xl px-4 py-8 sm:py-10 space-y-10">
+        <Link to="/" className="inline-flex items-center gap-3" aria-label="DavaDesk home" data-testid="download-brand">
+          <img src="/assets/svgs/logoBrand/logoOnlyWithoutBackground.svg" alt="" className="w-11 h-11 object-contain shrink-0" />
+          <span className="flex flex-col">
+            <span className="font-extrabold text-xl tracking-tight text-foreground leading-tight">DavaDesk</span>
+            <span className="text-xs font-semibold text-muted-foreground">Smart Pharmacy Software</span>
+          </span>
+        </Link>
+
         <header className="space-y-4">
           <span className="inline-flex items-center gap-1.5 rounded-full bg-orange-500/10 px-3 py-1 text-xs font-bold text-orange-600 dark:text-orange-400">
             <WifiOff className="h-3.5 w-3.5" aria-hidden="true" /> Works without internet
@@ -41,7 +64,9 @@ export default function DownloadPage() {
             return (
               <div key={key} className={`flex flex-wrap items-center justify-between gap-3 rounded-2xl border p-5 ${primary ? "border-orange-500/60 bg-orange-500/5" : "border-border/60 bg-card"}`}>
                 <div className="flex items-center gap-3 min-w-0">
-                  <Icon className="h-6 w-6 shrink-0 text-muted-foreground" aria-hidden="true" />
+                  <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-border/60 bg-background">
+                    <Icon className="h-6 w-6 text-foreground" />
+                  </span>
                   <div className="min-w-0">
                     <p className="font-bold">{pkg.label}{primary && <span className="ml-2 text-xs font-semibold text-orange-600 dark:text-orange-400">Recommended for this computer</span>}</p>
                     <p className="text-sm text-muted-foreground">{pkg.note}</p>
