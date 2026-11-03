@@ -19,6 +19,12 @@ concurrency:
 env:
   RELEASE_VERSION: 0.1.${{ github.run_number }}
 
+# Bash on every system: it stops at the first failed command. PowerShell, the Windows
+# default, only reports the last one, which hides a failed install.
+defaults:
+  run:
+    shell: bash
+
 jobs:
   ####################################################
   # CHECKS: nothing is built if these fail
@@ -58,7 +64,7 @@ jobs:
           node-version: 22
       - name: Install
         run: |
-          npm install --prefix frontend --no-audit --no-fund --legacy-peer-deps
+          (cd frontend && npm install --no-audit --no-fund --legacy-peer-deps)
           npm ci --prefix desktop --no-audit --no-fund
       - name: Build Mac installers (Intel and Apple Silicon)
         run: node desktop/scripts/build-release.js dev mac
@@ -82,7 +88,7 @@ jobs:
           node-version: 22
       - name: Install
         run: |
-          npm install --prefix frontend --no-audit --no-fund --legacy-peer-deps
+          (cd frontend && npm install --no-audit --no-fund --legacy-peer-deps)
           npm ci --prefix desktop --no-audit --no-fund
       - name: Build Windows installer
         run: node desktop/scripts/build-release.js dev win
