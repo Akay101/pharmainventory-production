@@ -4,7 +4,7 @@ import { Download, WifiOff } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "./ui/dialog";
 import { Button } from "./ui/button";
 import { useAuth } from "../App";
-import { DOWNLOADS_ENABLED, PACKAGES, detectComputer, downloadUrl } from "../lib/desktop";
+import { DOWNLOADS_ENABLED, FIRST_OPEN_HELP, PACKAGES, detectComputer, downloadUrl } from "../lib/desktop";
 
 const SEEN_KEY = "dd_desktop_choice_seen";
 const readSeen = () => {
@@ -56,6 +56,7 @@ export default function DesktopChoiceDialog() {
             </Button>
           ))}
           {computer.os === "mac" && <p className="text-xs text-muted-foreground">Not sure which Mac? Apple menu → About This Mac shows either an Apple chip or an Intel processor.</p>}
+          <p className="text-xs text-muted-foreground" data-testid="first-open-help">{FIRST_OPEN_HELP[computer.os]}</p>
           <Link to="/download" className="block text-xs underline text-muted-foreground" onClick={close}>Other computers</Link>
         </div>
         <Button variant="outline" className="w-full" onClick={close} data-testid="continue-in-browser">Continue in browser</Button>

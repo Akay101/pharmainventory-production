@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Apple, Check, Download, Monitor, WifiOff } from "lucide-react";
 import { Button } from "../components/ui/button";
-import { PACKAGES, detectComputer, downloadUrl } from "../lib/desktop";
+import { FIRST_OPEN_HELP, PACKAGES, detectComputer, downloadUrl } from "../lib/desktop";
 
 const ICONS = { win: Monitor, arm: Apple, intel: Apple };
 
@@ -54,6 +54,12 @@ export default function DownloadPage() {
             );
           })}
           <p className="text-sm text-muted-foreground">Not sure which Mac? Apple menu → About This Mac shows either an Apple chip or an Intel processor.</p>
+        </section>
+
+        <section className="space-y-2" data-testid="first-open-help">
+          <h2 className="text-lg font-bold">Opening it the first time</h2>
+          <p className="text-sm text-muted-foreground"><strong className="text-foreground">Mac:</strong> {FIRST_OPEN_HELP.mac}</p>
+          <p className="text-sm text-muted-foreground"><strong className="text-foreground">Windows:</strong> {FIRST_OPEN_HELP.windows}</p>
         </section>
 
         <section className="space-y-3">

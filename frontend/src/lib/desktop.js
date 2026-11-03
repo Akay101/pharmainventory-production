@@ -20,6 +20,11 @@ export const PACKAGES = {
   arm: { label: "Mac with Apple chip", note: "M1, M2, M3 or later", file: "DavaDesk-Mac-Apple-Silicon.dmg" },
   intel: { label: "Mac with Intel chip", note: "Older Macs", file: "DavaDesk-Mac-Intel.dmg" },
 };
+// The installers aren't signed by Apple or Microsoft yet, so both warn on first open
+export const FIRST_OPEN_HELP = {
+  mac: "First time opening it: if your Mac says it can't verify DavaDesk, close that message, go to System Settings → Privacy & Security, and click Open Anyway.",
+  windows: "First time opening it: if Windows says it protected your PC, click More info, then Run anyway.",
+};
 export const downloadUrl = (key) => `${DOWNLOAD_BASE}/${PACKAGES[key].file}`;
 
 // "windows" or "mac", plus the chip when the browser reports it. Safari doesn't,
