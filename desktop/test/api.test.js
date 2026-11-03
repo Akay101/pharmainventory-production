@@ -285,3 +285,83 @@ test("a counter pairs with the right code and can then work; wrong code and revo
   assert.strictEqual((await post("/api/auth/refresh", {}, header)).status, 401);
   await s.network.disable();
 });
+
+test("no create, edit or delete route fails on the local database with no internet", async () => {
+  const mounts = {
+    suppliers: "/api/suppliers", products: "/api/products", purchases: "/api/purchases", inventory: "/api/inventory", customers: "/api/customers",
+    bills: "/api/bills", medicines: "/api/medicines", activities: "/api/activities", settings: "/api/settings", expiry: "/api/expiry", returns: "/api/returns",
+    reminders: "/api/reminders", notifications: "/api/notifications", shortbook: "/api/shortbook", users: "/api/users", pharmacy: "/api/pharmacy",
+  };
+  const failures = [];
+  const logged = [];
+  const originalError = console.error;
+  console.error = (...args) => logged.push(args.map((a) => a?.message || String(a)).join(" "));
+  let checked = 0;
+  try {
+    for (const [file, mount] of Object.entries(mounts)) {
+      const src = fs.readFileSync(path.join(backendDir, "routes", `${file}.js`), "utf8");
+      for (const m of src.matchAll(/router\.(post|put|patch|delete)\(\s*["'`]([^"'`]+)["'`]/g)) {
+        const url = mount + m[2].replace(/:[a-zA-Z_]+/g, "does-not-exist").replace(/\/$/, "");
+        logged.length = 0;
+        const r = await call(m[1].toUpperCase(), url, {});
+        checked++;
+        if (r.status >= 500 && r.data?.code !== "NEEDS_INTERNET") failures.push(`${m[1].toUpperCase()} ${url}: ${r.status} ${logged.join(" ").slice(0, 160)}`);
+      }
+    }
+  } finally {
+    console.error = originalError;
+  }
+  assert.ok(checked >= 60, `only ${checked} routes found`);
+  // Writing code for an unsupported database feature fails loudly here
+  assert.deepStrictEqual(failures, []);
+});
+
+test("real offline work: edits, deletes, drafts, reminders, debts and settings", async () => {
+  const outcomes = [];
+  const step = async (name, method, url, body) => {
+    const r = await call(method, url, body);
+    outcomes.push(`${name}:${r.status}`);
+    assert.ok(r.status < 500, `${name} ${method} ${url} -> ${r.status} ${JSON.stringify(r.data).slice(0, 200)}`);
+    return r;
+  };
+  const pending = () => s.db._db.prepare("SELECT count(*) n FROM outbox WHERE status = 'pending'").get().n;
+  const before = pending();
+
+  const customers = (await step("customer", "POST", "/api/customers", { name: "Debt Customer", mobile: "9000000123" })).data.customer;
+  const product = await s.db.collection("products").findOne({ name: "Dolo 650" });
+  await step("edit product", "PUT", `/api/products/${product.id}`, { ...product, _id: undefined, mrp: 35 });
+  const stock = await s.db.collection("inventory").findOne({ product_name: "Crocin Advance" });
+  await step("add stock", "POST", `/api/inventory/${stock.id}/add-quantity`, { quantity: 5, add_quantity: 5 });
+  await step("edit stock", "PUT", `/api/inventory/${stock.id}`, { mrp: 26, selling_price: 26 });
+  await step("low stock level", "PUT", "/api/inventory/threshold", { product_id: stock.product_id, product_name: stock.product_name, threshold: 3 });
+
+  const credit = (await step("bill on credit", "POST", "/api/bills", { customer_id: customers.id, customer_name: customers.name, customer_mobile: customers.mobile, is_credit: true, is_paid: false, paid_now: 0, items: [{ inventory_id: stock.id, product_name: stock.product_name, batch_no: stock.batch_no, quantity: 2, unit_price: 25, purchase_price: 15 }] })).data;
+  assert.ok((await s.db.collection("customers").findOne({ id: customers.id })).total_debt > 0, "debt recorded");
+  await step("clear debt", "POST", `/api/customers/${customers.id}/clear-debt`, { amount: 10, payment_mode: "Cash" });
+
+  await step("edit bill", "PUT", `/api/bills/${credit.id}`, { customer_id: customers.id, customer_name: customers.name, customer_mobile: customers.mobile, is_credit: true, is_paid: false, items: [{ inventory_id: stock.id, product_name: stock.product_name, batch_no: stock.batch_no, quantity: 1, unit_price: 25, purchase_price: 15 }] });
+  const drafted = (await step("bill draft", "POST", "/api/bills/drafts", { customer_name: "Draft", items: [{ product_name: "Dolo 650", quantity: 1 }] })).data.draft;
+  if (drafted?.id) await step("delete bill draft", "DELETE", `/api/bills/drafts/${drafted.id}`);
+  await step("delete bill", "DELETE", `/api/bills/${credit.id}`);
+
+  const purchases = (await step("list purchases", "GET", "/api/purchases")).data.purchases || [];
+  if (purchases[0]) await step("edit purchase", "PUT", `/api/purchases/${purchases[0].id}`, { ...purchases[0], _id: undefined, invoice_no: "INV-EDITED" });
+  await step("purchase draft", "POST", "/api/purchases/drafts", { supplier_name: "Sai", items: [{ product_name: "Dolo 650", quantity: 2 }] });
+
+  const reminder = (await step("reminder", "POST", "/api/reminders", { customer_id: customers.id, customer_name: customers.name, customer_mobile: customers.mobile, refill_target_date: "2027-01-10", reminder_date: "2027-01-05", items: [{ product_name: "Dolo 650", quantity: 1 }] })).data;
+  const reminderId = reminder.id || reminder.reminder?.id;
+  if (reminderId) await step("delete reminder", "DELETE", `/api/reminders/${reminderId}`);
+  const short = (await step("short book", "POST", "/api/shortbook", { product_name: "Azee 500", quantity: 3 })).data;
+  const shortId = short.id || short.item?.id;
+  if (shortId) await step("delete short book", "DELETE", `/api/shortbook/${shortId}`);
+  await step("preferences", "POST", "/api/settings/update", { key: "theme", value: "dark" });
+  await step("notifications", "GET", "/api/notifications");
+  await step("reports", "GET", "/api/dashboard/stats");
+
+  const made = outcomes.filter((o) => /:2\d\d$/.test(o)).length;
+  assert.ok(made >= outcomes.length - 2, `Too many steps refused: ${outcomes.join(" ")}`);
+  assert.ok(pending() > before + 5, "the work is waiting to sync");
+  const queued = s.db._db.prepare("SELECT DISTINCT json_extract(value, '$.coll') c FROM outbox, json_each(outbox.changes)").all().map((r) => r.c);
+  for (const coll of ["bills", "customers", "inventory", "products"]) assert.ok(queued.includes(coll), `${coll} queued for sync`);
+});
+

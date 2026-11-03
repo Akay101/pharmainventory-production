@@ -369,6 +369,12 @@ axios.interceptors.response.use(
     const status = error.response?.status;
     const code = error.response?.data?.code;
 
+    // Desktop app with no internet: one clear message, whichever feature asked
+    if (code === "NEEDS_INTERNET") {
+      toast.info(error.response.data.detail, { id: "needs-internet" });
+      return Promise.reject(error);
+    }
+
     if (!originalRequest) {
       return Promise.reject(error);
     }

@@ -8,6 +8,8 @@ contextBridge.exposeInMainWorld("davadeskDesktop", {
   isDesktop: true,
   openCounters: () => call("openCounters"),
   signOut: (force) => call("signOut", { force }),
+  updateState: () => call("updateState"),
+  applyUpdate: () => call("applyUpdate"),
   platform: process.platform,
 });
 
@@ -17,6 +19,8 @@ if (window.location.protocol === "file:") {
     submitCode: (code) => call("submitCode", { code }),
     state: () => call("gateState"),
     openCounters: () => call("openCounters"),
+    continueSetup: () => call("continueSetup"),
+    applyUpdate: () => call("applyUpdate"),
     onError: (fn) => ipcRenderer.on("dd:signInError", (event, message) => fn(message)),
   });
   contextBridge.exposeInMainWorld("davadeskSetup", {

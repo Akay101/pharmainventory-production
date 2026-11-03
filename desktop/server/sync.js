@@ -14,6 +14,7 @@ const PUSH_BATCH = 50;
 const TOKEN_LIFE_MS = 10 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 30 * 1000;
 const CATALOG_REFRESH_MS = 30 * 24 * 60 * 60 * 1000;
+const PULL_EVERY_PAGES = 5;
 const CLOCK_TOLERANCE_MS = 10 * 60 * 1000;
 
 class CloudError extends Error {
@@ -339,6 +340,7 @@ class SyncEngine {
     const { catalogs } = await this.request("GET", "/api/desktop/catalog/manifest");
     const total = Object.values(catalogs).reduce((a, b) => a + b, 0);
     this.catalogState = { state: "downloading", done: 0, total };
+    let pages = 0;
     for (const kind of Object.keys(catalogs)) {
       let after = this.meta(`catalog_after_${kind}`) || "";
       if (after === "done") {
@@ -352,8 +354,9 @@ class SyncEngine {
         if (page.docs.length) after = String(page.docs[page.docs.length - 1]._id);
         this.db.setMeta(`catalog_after_${kind}`, page.done ? "done" : after);
         if (page.done) break;
-        // Billing stays ahead of the catalogue
+        // Bills and web changes keep flowing during a long download
         if (this.pendingCount() > 0) await this.push();
+        if (++pages % PULL_EVERY_PAGES === 0) await this.pull();
         if (this.stopped) return;
       }
     }
@@ -474,6 +477,8 @@ class SyncEngine {
       last_sync_at: Number(this.meta("last_sync_at")) || null,
       last_error: this.lastError,
       access_problem: this.accessProblem(),
+      // First setup waits for the catalogue, unless the user chooses to carry on
+      setup_pending: !this.meta("catalog_done_at") && this.meta("catalog_skip") !== "1",
       licence_valid_until: licence?.valid_until || null,
       plan: licence?.plan || null,
       catalog: this.catalogState,

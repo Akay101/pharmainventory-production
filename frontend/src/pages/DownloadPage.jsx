@@ -2,13 +2,9 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Apple, Check, Download, Monitor, WifiOff } from "lucide-react";
 import { Button } from "../components/ui/button";
-import { DOWNLOAD_BASE } from "../lib/desktop";
+import { PACKAGES, detectComputer, downloadUrl } from "../lib/desktop";
 
-const PACKAGES = {
-  win: { label: "Windows", note: "Windows 10 or later, 64-bit", file: "DavaDesk-Windows-Setup.exe", icon: Monitor },
-  arm: { label: "Mac with Apple chip", note: "M1, M2, M3 or later", file: "DavaDesk-Mac-Apple-Silicon.dmg", icon: Apple },
-  intel: { label: "Mac with Intel chip", note: "Older Macs", file: "DavaDesk-Mac-Intel.dmg", icon: Apple },
-};
+const ICONS = { win: Monitor, arm: Apple, intel: Apple };
 
 const POINTS = [
   "Billing, purchases, CSV import and stock keep working with no internet",
@@ -18,23 +14,10 @@ const POINTS = [
   "Optionally connect several counters in the shop",
 ];
 
-// Chrome and Edge can report the chip; Safari can't, so both Macs stay on offer
-async function detectPackage() {
-  const ua = navigator.userAgent;
-  if (/Windows/.test(ua)) return "win";
-  if (!/Macintosh/.test(ua)) return null;
-  try {
-    const hints = await navigator.userAgentData?.getHighEntropyValues?.(["architecture"]);
-    if (hints?.architecture === "arm") return "arm";
-    if (hints?.architecture === "x86") return "intel";
-  } catch {}
-  return null;
-}
-
 export default function DownloadPage() {
   const [best, setBest] = useState(null);
   useEffect(() => {
-    detectPackage().then(setBest);
+    detectComputer().then((c) => setBest(c.best));
     document.title = "Download DavaDesk";
   }, []);
   const order = best ? [best, ...Object.keys(PACKAGES).filter((k) => k !== best)] : Object.keys(PACKAGES);
@@ -53,7 +36,7 @@ export default function DownloadPage() {
         <section className="grid gap-3" aria-label="Downloads">
           {order.map((key, i) => {
             const pkg = PACKAGES[key];
-            const Icon = pkg.icon;
+            const Icon = ICONS[key];
             const primary = i === 0 && !!best;
             return (
               <div key={key} className={`flex flex-wrap items-center justify-between gap-3 rounded-2xl border p-5 ${primary ? "border-orange-500/60 bg-orange-500/5" : "border-border/60 bg-card"}`}>
@@ -65,7 +48,7 @@ export default function DownloadPage() {
                   </div>
                 </div>
                 <Button asChild variant={primary ? "default" : "outline"}>
-                  <a href={`${DOWNLOAD_BASE}/${pkg.file}`} data-testid={`download-${key}`}><Download className="h-4 w-4 mr-2" aria-hidden="true" />Download</a>
+                  <a href={downloadUrl(key)} data-testid={`download-${key}`}><Download className="h-4 w-4 mr-2" aria-hidden="true" />Download</a>
                 </Button>
               </div>
             );

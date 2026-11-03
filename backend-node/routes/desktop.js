@@ -41,6 +41,27 @@ const limiter = (limit, windowMs = 60 * 1000) =>
 const exchangeLimiter = limiter(20);
 const syncLimiter = limiter(600);
 
+// ---- Installers and updates --------------------------------------------------------
+// The files stay in the private bucket. Anyone may fetch them, since the app does
+// nothing without an account with an active subscription, and this hands out a
+// short-lived link to one named file in the release folder.
+const releaseChannel = (req) => process.env.DESKTOP_RELEASE_CHANNEL || (/-dev\./.test(req.hostname) ? "dev" : "production");
+const INSTALLERS = /\.(dmg|exe)$/;
+
+router.get("/releases/:file", limiter(120), async (req, res, next) => {
+  try {
+    const file = req.params.file;
+    if (!/^[A-Za-z0-9][A-Za-z0-9._ -]*$/.test(file)) return res.status(400).json({ detail: "Invalid file name" });
+    const s3 = require("../services/s3");
+    const key = `desktop/${releaseChannel(req)}/${file}`;
+    if (!(await s3.exists(key))) return res.status(404).json({ detail: "This download isn't available yet.", code: "RELEASE_NOT_FOUND" });
+    res.set("Cache-Control", "no-store");
+    res.redirect(302, await s3.downloadUrl(key, { filename: INSTALLERS.test(file) ? file : undefined }));
+  } catch (err) {
+    next(err);
+  }
+});
+
 // ---- Device identity -------------------------------------------------------------
 const deviceAuth = async (req, res, next) => {
   try {

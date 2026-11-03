@@ -9,6 +9,7 @@ const os = require("os");
 const path = require("path");
 const { discover, pair } = require("./pairing");
 const config = require("./config");
+const updates = require("./updates");
 
 // A shipped build refuses the switches that attach a debugger to it
 if (config.hardened && process.argv.some((arg) => /^--(remote-debugging|inspect|debug)/.test(arg))) {
@@ -201,6 +202,13 @@ function setupOpenHandlers(contents) {
     if (/^https?:|^mailto:|^tel:|^whatsapp:/.test(url)) shell.openExternal(url);
     return { action: "deny" };
   });
+  // A window opened for a link outside the app (WhatsApp, say) goes to the real browser
+  contents.on("did-create-window", (child) => {
+    setupOpenHandlers(child.webContents);
+    child.webContents.on("will-navigate", (event, url) => {
+      if (!currentOrigin || !url.startsWith(`${currentOrigin}/`)) setImmediate(() => !child.isDestroyed() && child.close());
+    });
+  });
   contents.on("will-navigate", (event, url) => {
     if (url.startsWith("file:") && (contents === setupWindow?.webContents || contents === mainWindow?.webContents)) return;
     if (currentOrigin && url.startsWith(`${currentOrigin}/`)) return;
@@ -230,7 +238,8 @@ function showGate() {
 async function checkAccess() {
   if (!server || readConfig().mode === "counter") return;
   try {
-    const { access_problem: problem } = await callServer("status");
+    const { access_problem: accessProblem, setup_pending: setupPending } = await callServer("status");
+    const problem = accessProblem || setupPending || updates.state().required;
     if (problem && !showingGate) showGate();
     else if (!problem && showingGate) {
       showingGate = false;
@@ -394,8 +403,8 @@ const describeState = async () => {
   };
 };
 
-const APP_ACTIONS = new Set(["openCounters", "signOut"]);
-const GATE_ACTIONS = new Set(["signIn", "submitCode", "gateState", "openCounters"]);
+const APP_ACTIONS = new Set(["openCounters", "signOut", "updateState", "applyUpdate"]);
+const GATE_ACTIONS = new Set(["signIn", "submitCode", "gateState", "openCounters", "continueSetup", "applyUpdate"]);
 
 function registerIpc() {
   const handle = (name, fn) =>
@@ -412,7 +421,13 @@ function registerIpc() {
   handle("openCounters", () => openSetup());
   handle("signIn", () => startSignIn());
   handle("submitCode", ({ code }) => finishSignIn(String(code).trim()));
-  handle("gateState", () => callServer("status"));
+  handle("gateState", async () => ({ ...(await callServer("status")), update: updates.state() }));
+  handle("continueSetup", async () => {
+    await callServer("continueSetup");
+    await checkAccess();
+  });
+  handle("updateState", () => updates.state());
+  handle("applyUpdate", () => updates.apply());
   handle("signOut", async ({ force }) => {
     await callServer("signOut", { force: !!force });
     await checkAccess();
@@ -490,6 +505,7 @@ if (!app.requestSingleInstanceLock()) {
     buildMenu();
     registerIpc();
     createMainWindow();
+    updates.start({ cloudUrl: config.cloudUrl, autoUpdate: process.platform === "win32" || !!config.macSigned, onChange: () => checkAccess() });
     const savedConfig = readConfig();
     try {
       if (savedConfig.mode === "counter" && savedConfig.main) {

@@ -8,6 +8,8 @@ const COPY = {
   licence_expired: ["Please connect to the internet", "DavaDesk has been offline for too long and needs to confirm your subscription. Your work is safe and will sync once connected."],
   clock: ["Check this computer's date and time", "The computer's clock looks wrong. Set the correct date and time to continue."],
   first_copy: ["Setting up your shop", "Getting your data from the cloud. This happens once."],
+  catalog: ["Downloading medicines, doctors and distributors", "This lets search work with no internet. It happens once and may take several minutes, depending on your connection."],
+  update_required: ["Please update DavaDesk", "This version is too old to keep working with your account. Your work is safe and syncs after the update."],
 };
 
 const cleanError = (err) => String(err.message || err).replace(/^Error invoking remote method '[^']*': (Error: )?/, "");
@@ -20,16 +22,25 @@ const showError = (text) => {
 async function refresh() {
   try {
     const s = await gate.state();
-    const problem = s.access_problem || "first_copy";
+    const problem = s.update?.required ? "update_required" : s.access_problem || (s.setup_pending ? "catalog" : "first_copy");
     const [title, message] = COPY[problem] || COPY.not_signed_in;
     $("title").textContent = title;
     $("message").textContent = message;
-    const copying = problem === "first_copy";
+    const copying = problem === "first_copy" || problem === "catalog";
+    const signInHidden = copying || problem === "clock" || problem === "update_required";
     $("copying").hidden = !copying;
-    $("signIn").hidden = copying || problem === "clock";
-    $("manual").hidden = copying || problem === "clock";
+    $("signIn").hidden = signInHidden;
+    $("manual").hidden = signInHidden;
     $("counters").hidden = problem !== "not_signed_in";
-    if (copying) {
+    $("update").hidden = problem !== "update_required";
+    $("update").textContent = s.update?.status === "ready" ? "Restart to update" : s.update?.status === "downloading" ? "Downloading the update…" : "Download the update";
+    $("update").disabled = s.update?.status === "downloading";
+    $("continueSetup").hidden = problem !== "catalog";
+    if (problem === "catalog") {
+      const c = s.catalog || {};
+      $("copyLabel").textContent = !s.online ? "Waiting for internet. It continues by itself." : c.total ? `${c.done.toLocaleString("en-IN")} of ${c.total.toLocaleString("en-IN")} entries` : "Starting…";
+      $("copyBar").style.width = c.total ? `${Math.round((c.done / c.total) * 100)}%` : "0";
+    } else if (copying) {
       const p = s.progress;
       $("copyLabel").textContent = !s.online ? "Waiting for internet…" : p ? `${p.label}: ${p.done} of ${p.total}` : "Starting…";
       $("copyBar").style.width = p && p.total ? `${Math.round((p.done / p.total) * 100)}%` : "0";
@@ -55,6 +66,8 @@ $("submit").addEventListener("click", async () => {
   }
 });
 $("counters").addEventListener("click", () => gate.openCounters());
+$("continueSetup").addEventListener("click", () => gate.continueSetup());
+$("update").addEventListener("click", () => gate.applyUpdate());
 gate.onError(showError);
 
 refresh();

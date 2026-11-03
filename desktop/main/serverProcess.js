@@ -17,6 +17,7 @@ const actions = {
   status: () => server.sync.status(),
   activate: (args) => server.sync.activate(args),
   signOut: (args) => server.sync.signOut(args),
+  continueSetup: () => server.db.setMeta("catalog_skip", "1"),
 };
 
 process.parentPort.on("message", async ({ data }) => {

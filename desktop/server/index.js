@@ -173,6 +173,10 @@ async function startServer({ dataDir, backendDir, webDir, dbKey, catalogKey, win
     res.setHeader("Cache-Control", "no-store");
     res.json({ version, ...sync.status() });
   });
+  app.post("/api/desktop/continue-setup", (req, res) => {
+    db.setMeta("catalog_skip", "1");
+    res.json({ ok: true });
+  });
   app.post("/api/desktop/sync-now", (req, res) => {
     sync.wake();
     res.json({ ok: true });
@@ -235,7 +239,7 @@ async function startServer({ dataDir, backendDir, webDir, dbKey, catalogKey, win
   for (const route of ["/api/users", "/api/pharmacy", "/api/broadcasts"]) app.use(route, onlineWrites);
   for (const route of ["/api/purchases/scan-image", "/api/purchases/scan-bill", "/api/bills/scan-product", "/api/settings/request-lock-otp", "/api/settings/verify-and-update-lock"]) app.post(route, online);
   app.get("/api/purchases/scan-status/:id", online);
-  app.use("/api/medicines/ai-enrich", online);
+  app.use("/api/medicines/enrich", (req, res, next) => (sync.online ? online(req, res, next) : res.json({ salt_composition: "", manufacturer: "" })));
   app.use("/api/bills/:bill_id/share", onlineAfterFlush);
   app.use("/api/bills/:bill_id/email", onlineAfterFlush);
   app.use("/api/bills/:bill_id/send-email", onlineAfterFlush);

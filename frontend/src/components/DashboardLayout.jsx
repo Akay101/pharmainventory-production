@@ -19,6 +19,7 @@ import {
   TooltipTrigger,
 } from "./ui/tooltip";
 import {
+  Download,
   Cloud,
   CloudOff,
   LayoutDashboard,
@@ -51,7 +52,7 @@ import RecentActivitySidebar from "./RecentActivitySidebar";
 import { formatCombo, isVisible } from "../lib/shortcuts";
 import { ShortcutProvider } from "./shortcuts/Shortcuts";
 import { toast } from "sonner";
-import { IS_DESKTOP, signOutDesktop, useDesktopStatus, useOnlineFeatures } from "../lib/desktop";
+import { DOWNLOADS_ENABLED, IS_DESKTOP, signOutDesktop, useDesktopStatus, useOnlineFeatures } from "../lib/desktop";
 import DesktopChoiceDialog from "./DesktopChoiceDialog";
 import AssistantLauncher from "./assistant/AssistantLauncher";
 import PlanBadge from "./PlanBadge";
@@ -581,6 +582,12 @@ export default function DashboardLayout() {
                     )}
                   </DropdownMenuItem>}
                   {!IS_DESKTOP && <TakeTourItem />}
+                  {DOWNLOADS_ENABLED && (
+                    <DropdownMenuItem onClick={() => navigate("/download")} data-testid="download-desktop" className="cursor-pointer font-bold py-2 px-3 rounded-xl group hover:bg-orange-500/10 focus:bg-orange-500/10 text-foreground hover:text-orange-600 focus:text-orange-600 dark:hover:text-orange-400 dark:focus:text-orange-400 transition-colors">
+                      <Download className="w-4 h-4 mr-2.5 text-orange-500" />
+                      Download desktop app
+                    </DropdownMenuItem>
+                  )}
                   {user?.subscription?.kind === "PROMO" && (
                     <DropdownMenuItem
                       onClick={() => navigate("/early-access/terms")}

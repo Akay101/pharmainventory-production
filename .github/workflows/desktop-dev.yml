@@ -1,0 +1,147 @@
+name: Desktop App (dev)
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "frontend/**"
+      - "backend-node/**"
+      - "desktop/**"
+      - ".github/workflows/desktop-dev.yml"
+  workflow_dispatch:
+
+# A newer push replaces a build still running
+concurrency:
+  group: desktop-dev
+  cancel-in-progress: true
+
+env:
+  RELEASE_VERSION: 0.1.${{ github.run_number }}
+
+jobs:
+  ####################################################
+  # CHECKS: nothing is built if these fail
+  ####################################################
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libnss3 libatk1.0-0t64 libatk-bridge2.0-0t64 libgtk-3-0t64 libgbm1 libasound2t64
+          npm ci --prefix backend-node --no-audit --no-fund
+          npm ci --prefix desktop --no-audit --no-fund
+      - name: New collections and libraries are handled
+        run: npm run check --prefix desktop
+      - name: Local database
+        run: npm run test:db --prefix desktop
+      - name: Offline features
+        run: npm run test:api --prefix desktop
+      - name: Sync with a private cloud
+        run: npm run test:sync --prefix desktop
+
+  ####################################################
+  # BUILD INSTALLERS
+  ####################################################
+  build-mac:
+    needs: checks
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install
+        run: |
+          npm install --prefix frontend --no-audit --no-fund --legacy-peer-deps
+          npm ci --prefix desktop --no-audit --no-fund
+      - name: Build Mac installers (Intel and Apple Silicon)
+        run: node desktop/scripts/build-release.js dev mac
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mac
+          retention-days: 3
+          path: |
+            desktop/dist-dev/*.dmg
+            desktop/dist-dev/*.zip
+            desktop/dist-dev/*.blockmap
+            desktop/dist-dev/latest-mac.yml
+
+  build-windows:
+    needs: checks
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install
+        run: |
+          npm install --prefix frontend --no-audit --no-fund --legacy-peer-deps
+          npm ci --prefix desktop --no-audit --no-fund
+      - name: Build Windows installer
+        run: node desktop/scripts/build-release.js dev win
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          retention-days: 3
+          path: |
+            desktop/dist-dev/*.exe
+            desktop/dist-dev/*.blockmap
+            desktop/dist-dev/latest.yml
+
+  ####################################################
+  # PUBLISH TO S3, USING THE DEV SERVER'S AWS ACCESS
+  ####################################################
+  publish:
+    needs: [build-mac, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Collect files
+        run: |
+          mkdir -p release/files
+          find artifacts -type f -exec mv {} release/files/ \;
+          cp desktop/config/release.json release/files/release.json
+          cp desktop/scripts/publish-release.js release/publish-release.js
+          ls -la release/files
+      - name: Copy to dev server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ubuntu
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          source: release
+          target: /tmp/davadesk-${{ github.run_number }}
+          command_timeout: 30m
+      - name: Upload to S3
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ubuntu
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          command_timeout: 30m
+          script: |
+            set -e
+            DIR=/tmp/davadesk-${{ github.run_number }}
+            trap 'rm -rf "$DIR"' EXIT
+            chmod -R a+rX "$DIR"
+            docker run --rm \
+              --env-file "$HOME/pharmainventory-production/backend-node/.env" \
+              -e NODE_PATH=/app/node_modules \
+              -e RELEASE_COMMIT=${{ github.sha }} \
+              -v "$DIR/release:/rel:ro" \
+              pharmalogy/pharmalogy-backend \
+              node /rel/publish-release.js /rel/files dev ${{ env.RELEASE_VERSION }}
+      - name: Summary
+        run: |
+          echo "### DavaDesk ${{ env.RELEASE_VERSION }} published to dev" >> "$GITHUB_STEP_SUMMARY"
+          echo "Download page: https://store-dev.davadesk.in/download" >> "$GITHUB_STEP_SUMMARY"

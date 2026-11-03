@@ -3507,6 +3507,10 @@ export default function PurchasesPage() {
   };
 
   const handleAutofillWithAI = async () => {
+    if (!onlineFeatures) {
+      toast.info("AI autofill needs internet. You can type the details by hand.");
+      return;
+    }
     const candidates = purchaseItems.filter(
       (item) =>
         item.product_name &&
@@ -4829,7 +4833,7 @@ export default function PurchasesPage() {
                     !item.manufacturer ||
                     !item.manufacturer.trim())
               ) && (
-                <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-1.5" style={onlineFeatures ? undefined : { display: "none" }}>
                   <Button
                     variant="default"
                     onClick={handleAutofillWithAI}

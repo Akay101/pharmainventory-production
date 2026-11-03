@@ -44,6 +44,7 @@ One computer becomes the main computer. Others find it on the network, or use it
 
 ## Account, licence and sync
 
+- **First setup:** after sign-in the app copies the shop's data, then waits for the full catalogue. The user may carry on sooner; search then uses the cloud until the download finishes.
 - **Sign-in:** the app opens the normal browser on the website. The signed-in user allows the computer, and only an active subscription can. The app proves it started the request (PKCE), and the code works once for 2 minutes.
 - **Licence:** signed by the cloud (Ed25519). The app holds only the public key. It runs offline until the licence's date: 30 days on a paid plan, 3 on a trial, never past the subscription's end.
 - **Sync:** each write request becomes one change set in a local outbox. Changes go up first, and pulls apply only when nothing is waiting. Counts such as stock travel as differences. See `server/sync.js` and `backend-node/routes/desktop.js`.
@@ -58,11 +59,24 @@ Enforced on the computer: signed licence, encrypted files, Electron fuses (asar 
 
 Limit: someone who controls their own computer, and is willing to reverse-engineer the app, can eventually read what is stored there and patch local checks. That gets them offline use of data they already had, and any catalogue already downloaded. It gets them nothing from the cloud.
 
-## Going live
+## Releases and updates
 
-1. On the production API, set `DESKTOP_LICENCE_PRIVATE_KEY` from `backend-node/.env`, and deploy the backend. Its MongoDB must be a replica set.
-2. `npm run dist`, then `node scripts/publish-installers.js`.
-3. On the web app, set `REACT_APP_DESKTOP_DOWNLOADS=true` and `REACT_APP_DESKTOP_DOWNLOAD_URL`, and deploy. This adds the choice after sign-in and the Settings link. `/download` exists either way.
+Pushing to `main` runs **Desktop App (dev)** in GitHub Actions: checks and tests, Mac and Windows builds, then upload to S3 (`desktop/dev/` in the private bucket), using the dev server's AWS access. Each build gets a new version.
+
+- **Downloads:** `GET /api/desktop/releases/<file>` redirects to a short-lived S3 link. The channel follows the API's address (`api-dev` is dev), or `DESKTOP_RELEASE_CHANNEL`.
+- **Updates:** the app reads `latest.json` when it starts and every hour. Windows downloads updates and installs them on close. A Mac needs Apple signing for that, so until `macSigned` is set in the channel's config it offers the download instead.
+- **Forcing an update:** raise `min_version` in `config/release.json`. Older apps then ask for the update before more work, and their unsent work still syncs.
+- **Offer on the website:** on for `store-dev` by hostname, in `frontend/src/lib/desktop.js`.
+
+## When a feature changes
+
+Features are built once, in `frontend` and `backend-node`. `npm run check` fails the build if a new MongoDB collection or backend library hasn't been classified, and says what to add. A route using a cloud service also needs adding to the forwarded list in `server/index.js`. Keep the backend able to serve older apps, because they update later than the server.
+
+## Going live on production
+
+1. Set `DESKTOP_LICENCE_PRIVATE_KEY` on the production API, then deploy the backend. Its public key is in `config/production.json`.
+2. Add a workflow for `production` like the dev one, using `build-release.js production` and the production server.
+3. Turn the offer on in `frontend/src/lib/desktop.js`, then deploy the web app.
 
 ## Tests
 
@@ -70,7 +84,6 @@ Limit: someone who controls their own computer, and is willing to reverse-engine
 
 ## Not in this version
 
-- Auto-update.
 - Bill number changes.
 - Signing: Mac packages are ad-hoc signed and not notarised, and Windows is unsigned. Signed Mac builds can also move the key files into the Keychain.
 - The Windows package has the default icon until it is built on Windows.

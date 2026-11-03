@@ -29,6 +29,8 @@ details { font-size:13.5px; color:var(--muted); } details > div { display:grid; 
   <button id="signIn">Sign in with your browser</button>
   <p id="waiting" class="muted" hidden>Waiting for you to allow this computer in your browser…</p>
   <div id="copying" hidden style="display:grid;gap:8px"><p id="copyLabel" class="muted"></p><div class="bar"><div id="copyBar"></div></div></div>
+  <button id="update" hidden>Update DavaDesk</button>
+  <button id="continueSetup" class="ghost" hidden>Continue now, and finish this in the background</button>
   <p id="error" class="error" role="alert" hidden></p>
   <details id="manual"><summary>The browser showed a code</summary><div><input id="code" aria-label="Sign-in code" autocomplete="off" spellcheck="false"><button id="submit" class="ghost">Use this code</button></div></details>
   <button id="counters" class="ghost">Connect to a main computer instead</button>

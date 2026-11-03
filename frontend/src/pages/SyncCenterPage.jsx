@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { AlertTriangle, CheckCircle2, CloudOff, Cloud, Database, Loader2, LogOut, RefreshCw } from "lucide-react";
@@ -36,6 +36,13 @@ const Card = ({ title, children }) => (
 export default function SyncCenterPage() {
   const s = useDesktopStatus();
   const [busy, setBusy] = useState(false);
+  const [update, setUpdate] = useState(null);
+  useEffect(() => {
+    const read = () => window.davadeskDesktop?.updateState?.().then(setUpdate).catch(() => {});
+    read();
+    const t = setInterval(read, 5000);
+    return () => clearInterval(t);
+  }, []);
   if (!s) return <div className="p-8 flex items-center gap-2 text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> Loading…</div>;
 
   const syncNow = async () => {
@@ -130,6 +137,15 @@ export default function SyncCenterPage() {
           <p className="text-sm text-muted-foreground">Nothing yet.</p>
         )}
       </Card>
+
+      {update && update.status !== "none" && (
+        <Card title="Update available">
+          <p className="text-sm text-muted-foreground">
+            {update.status === "ready" ? `Version ${update.latest} is ready. It installs when you close DavaDesk, or now if you restart.` : update.status === "downloading" ? `Downloading version ${update.latest}. You can keep working.` : `Version ${update.latest} is available. Download it and install it over this one; your data stays.`}
+          </p>
+          {update.status !== "downloading" && <Button onClick={() => window.davadeskDesktop?.applyUpdate()}>{update.status === "ready" ? "Restart to update" : "Download update"}</Button>}
+        </Card>
+      )}
 
       <Card title="This computer">
         <p className="text-sm text-muted-foreground">Works offline until {when(s.licence_valid_until)}. Connect to the internet before then to renew automatically. Version {s.version}.</p>
