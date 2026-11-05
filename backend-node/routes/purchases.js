@@ -14,6 +14,7 @@ const { parseMargin } = require("../utils/margin");
 const { h1Lines } = require("../utils/scheduleH1");
 const { lineNet, schemeFields } = require("../utils/purchaseLine");
 const { generatePurchasePDF } = require("../services/pdf");
+const { FORMATS, LEGACY_FORMAT } = require("../services/pdfFormats");
 const { uploadToR2 } = require("../services/r2");
 const { logActivity } = require("../utils/activityLogger");
 const { identityGaps } = require("../utils/catalogDetails");
@@ -105,7 +106,12 @@ router.post(
           matchForPurchase(db, req.user.pharmacy_id, {
             product_name: String(i?.product_name || ""),
             batch_no: String(i?.batch_no || ""),
-          }, { includeGlobal: true })
+            manufacturer: String(i?.manufacturer || ""),
+          }, { includeGlobal: true }).catch((err) => {
+            // One bad line must not lose the others' matches
+            console.error("[Purchases] match failed:", err.message);
+            return { suggestions: [], failed: true };
+          })
         )
       );
       res.json({ success: true, matches });
@@ -2025,13 +2031,18 @@ router.post(
         .collection("pharmacies")
         .findOne({ id: req.user.pharmacy_id }, { projection: { _id: 0 } });
 
-      const pdfBuffer = await generatePurchasePDF(purchase, pharmacy);
+      const format = req.body?.format;
+      if (format !== undefined && !FORMATS.includes(format)) {
+        return res.status(400).json({ detail: "Unknown PDF format" });
+      }
+      const pdfBuffer = await generatePurchasePDF(purchase, pharmacy, { format });
 
-      const key = `purchases/${req.user.pharmacy_id}/${purchase.invoice_no || purchase.id}.pdf`;
+      const key = `purchases/${req.user.pharmacy_id}/${purchase.invoice_no || purchase.id}${format && format !== LEGACY_FORMAT ? `-${format}` : ""}.pdf`;
 
       const pdfUrl = await uploadToR2(key, pdfBuffer, "application/pdf");
 
-      res.json({ pdf_url: pdfUrl });
+      // The same file name is regenerated: make the browser fetch this one
+      res.json({ pdf_url: `${pdfUrl}${pdfUrl.includes("?") ? "&" : "?"}v=${Date.now()}` });
     } catch (error) {
       next(error);
     }
@@ -2098,8 +2109,9 @@ const handleParseCsvUpload = async (req, res, next) => {
 
     const db = mongoose.connection.db;
     const fileBuffer = fs.readFileSync(req.file.path);
-    const content = fileBuffer.toString("utf-8");
-    const lines = content.split(/\r?\n/).filter((l) => l.trim());
+    // Excel adds a byte-order mark to the file and rows of bare commas at its end
+    const content = fileBuffer.toString("utf-8").replace(/^\uFEFF/, "");
+    const lines = content.split(/\r?\n/).filter((l) => l.replace(/[,;\t|"'\s]/g, ""));
 
     if (lines.length < 2) {
       try {
@@ -2129,9 +2141,16 @@ const handleParseCsvUpload = async (req, res, next) => {
     } catch (e) {}
 
     const delimiter = detectCSVDelimiter(lines[0]);
-    const headers = parseCSVRow(lines[0], delimiter).map((h) =>
-      h.replace(/^["']|["']$/g, "").trim()
-    );
+    // Column names as the mapping dialog lists them: a trailing comma gives an
+    // empty one, which is left out, and a repeated one gets a number
+    const seenHeaders = new Map();
+    const headers = parseCSVRow(lines[0], delimiter).map((h) => {
+      const name = h.replace(/^["']|["']$/g, "").trim();
+      if (!name) return "";
+      const seen = (seenHeaders.get(name) || 0) + 1;
+      seenHeaders.set(name, seen);
+      return seen > 1 ? `${name} (${seen})` : name;
+    });
 
     const sampleRows = lines.slice(1, 11).map((line) => {
       const values = parseCSVRow(line, delimiter).map((v) =>
@@ -2200,7 +2219,7 @@ const handleParseCsvUpload = async (req, res, next) => {
       success: true,
       r2_key: r2Key,
       r2_url: r2Url,
-      columns: headers,
+      columns: headers.filter(Boolean),
       sample_data: sampleRows,
       parsed_rows: parsedAllRows,
       total_rows: parsedAllRows.length,

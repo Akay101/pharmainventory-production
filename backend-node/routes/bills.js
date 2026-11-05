@@ -8,6 +8,7 @@ const { takeFromStock, returnToStock } = require("../services/stock");
 const { acceptImages, scanForBilling } = require("../services/ai/scanService");
 const { matchForBilling } = require("../services/ai/inventoryMatch");
 const { generateBillPDF } = require("../services/pdf");
+const { FORMATS, LEGACY_FORMAT } = require("../services/pdfFormats");
 const { uploadToR2 } = require("../services/r2");
 const billShare = require("../services/billShare");
 const { sendBillEmail } = require("../services/email");
@@ -1589,10 +1590,17 @@ router.post(
       if (upiQr && !String(pharmacyDoc?.upi_id || "").trim()) {
         return res.status(400).json({ detail: "Add your UPI ID in Settings to put a payment QR on bills", code: "NO_UPI_ID" });
       }
-      const pdfBuffer = await generateBillPDF(bill, pharmacy, { upiQr });
+      const format = req.body?.format;
+      if (format !== undefined && !FORMATS.includes(format)) {
+        return res.status(400).json({ detail: "Unknown PDF format" });
+      }
+      if (bill.schedule_h1_items === undefined) {
+        bill.schedule_h1_items = await h1Lines(db, req.user.pharmacy_id, bill.items || []);
+      }
+      const pdfBuffer = await generateBillPDF(bill, pharmacy, { upiQr, format });
 
       // Upload to R2
-      const key = `bills/${req.user.pharmacy_id}/${bill.bill_no}.pdf`;
+      const key = `bills/${req.user.pharmacy_id}/${bill.bill_no}${format && format !== LEGACY_FORMAT ? `-${format}` : ""}.pdf`;
       const pdfUrl = await uploadToR2(key, pdfBuffer, "application/pdf");
 
       // Update bill with PDF URL

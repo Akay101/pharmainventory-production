@@ -111,6 +111,7 @@ import { ItemQrScanDialog, findItemLabel, resolveItemLabel } from "../components
 import { marginLine, marginApplied, marginLabel } from "../lib/margin";
 import { isScheduleH1, h1Names } from "../lib/scheduleH1";
 import PrescriptionAttach, { openPrescription } from "../components/billing/PrescriptionAttach";
+import PdfFormatPicker, { usePdfFormat } from "../components/PdfFormatPicker";
 import { SuggestionList, ProductDetailsSheet, SUGGESTION_FILTERS, filterSuggestions } from "../components/billing/ProductSuggestions";
 
 const LOCAL_STORAGE_KEY_BILL = "pharmalogy_bill_draft";
@@ -2863,10 +2864,11 @@ export default function BillingPage() {
     } catch {}
   };
   const [pdfFor, setPdfFor] = useState(null); // bill picked from the list
+  const [pdfFormat, setPdfFormat] = usePdfFormat("bill");
   const generateBillPdf = async (billId, withQr) => {
     const win = window.open("", "_blank"); // inside the click, so pop-up blockers allow it
     try {
-      const response = await axios.post(`${API}/bills/${billId}/pdf`, { upi_qr: !!(withQr && hasUpiId) });
+      const response = await axios.post(`${API}/bills/${billId}/pdf`, { upi_qr: !!(withQr && hasUpiId), format: pdfFormat });
       if (response.data.pdf_url) {
         if (win) win.location.href = response.data.pdf_url;
         else window.open(response.data.pdf_url, "_blank");
@@ -6925,6 +6927,7 @@ export default function BillingPage() {
               Would you like to generate and view a PDF receipt for this newly recorded bill?
             </AlertDialogDescription>
           </AlertDialogHeader>
+          <PdfFormatPicker value={pdfFormat} onChange={setPdfFormat} />
           {pdfQrChoice(bills.find((b) => b.id === pdfConfirmDialog.billId) || null)}
           <AlertDialogFooter className="gap-2 mt-4">
             <AlertDialogCancel className="rounded-xl border-border/80 hover:bg-muted/80 h-10 px-4 transition-all">
@@ -7317,6 +7320,7 @@ export default function BillingPage() {
             </DialogTitle>
             <DialogDescription className="text-xs">{pdfFor?.bill_no ? `${pdfFor.bill_no} · ${pdfFor.customer_name || "Walk-in"}` : ""}</DialogDescription>
           </DialogHeader>
+          <PdfFormatPicker value={pdfFormat} onChange={setPdfFormat} />
           {pdfFor && pdfQrChoice(pdfFor.bill_no ? pdfFor : null)}
           <DialogFooter className="gap-2">
             <Button type="button" variant="outline" onClick={() => setPdfFor(null)} className="rounded-xl text-xs font-bold">
