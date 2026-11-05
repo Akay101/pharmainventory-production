@@ -30,6 +30,7 @@ export default function MatchChooser({ item, onPick, onNew }) {
                 {sourceLabel(s)}
                 {s.manufacturer ? ` · ${s.manufacturer}` : ""}
               </span>
+              {s.same_salt && <span className="block truncate text-[10px] text-muted-foreground">Same salt: {s.salt_composition}</span>}
             </span>
             <span className="inline-flex shrink-0 items-center gap-1 rounded-md bg-primary px-1.5 py-1 text-[10px] font-bold leading-none text-primary-foreground">
               <Check className="h-3 w-3" aria-hidden="true" /> Use

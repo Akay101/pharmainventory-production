@@ -44,6 +44,7 @@ import UpgradePage from "./pages/UpgradePage";
 import EarlyAccessTermsPage, { needsEarlyAccessTerms } from "./pages/EarlyAccessTermsPage";
 import PaymentSuccessPage from "./pages/PaymentSuccessPage";
 import Loader from "./components/Loader";
+import ErrorBoundary from "./components/ErrorBoundary";
 import { getPageTitle } from "./hooks/useDocumentTitle";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
@@ -450,6 +451,7 @@ function App() {
         <NavigationHandler />
         <DesktopRouteGuard />
         <PageTitleHandler />
+        <ErrorBoundary>
         <Routes>
           {/* Public Routes */}
           <Route path="/login" element={<LoginPage />} />
@@ -532,6 +534,7 @@ function App() {
           {/* Catch all */}
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>
+        </ErrorBoundary>
       </BrowserRouter>
       <Toaster position="top-right" richColors />
     </AuthProvider>

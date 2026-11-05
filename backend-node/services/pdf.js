@@ -1,5 +1,6 @@
 const { lineNet } = require("../utils/purchaseLine");
 const PDFDocument = require("pdfkit");
+const { isNewFormat, renderFormat, formatExpiry: shortExpiry, billColumns, purchaseColumns, rate } = require("./pdfFormats");
 
 const IST = "Asia/Kolkata";
 
@@ -144,18 +145,6 @@ const generateBillPDF = async (bill, pharmacy, options = {}) => {
         }
       }
 
-      const doc = new PDFDocument({
-        size: "A5",
-        layout: "landscape",
-        margin: 10,
-        compress: false,
-      });
-      const chunks = [];
-
-      doc.on("data", (c) => chunks.push(c));
-      doc.on("end", () => resolve(Buffer.concat(chunks)));
-      doc.on("error", reject);
-
       const ROW_H = 18;
       const TABLE_TOP = 98;
       const TABLE_BOTTOM = 300;
@@ -193,6 +182,140 @@ const generateBillPDF = async (bill, pharmacy, options = {}) => {
         const time = created.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true, timeZone: IST });
         return `${dateLabel} ${time}`;
       })();
+
+      if (isNewFormat(options.format)) {
+        const paymentLabel = balance <= 0.004
+          ? `PAID${bill.payment_mode ? ` (${String(bill.payment_mode).toUpperCase()})` : ""}`
+          : paid > 0
+          ? `PART PAID${isUdhar && bill.payment_mode ? ` (${String(bill.payment_mode).toUpperCase()})` : ""}`
+          : isUdhar
+          ? "UNPAID"
+          : "CREDIT";
+        const h1Names = new Set((bill.schedule_h1_items || []).map((n) => String(n).toLowerCase()));
+        const gstByRate = new Map();
+        const rows = [];
+        const receiptRows = [];
+        enrichedItems.forEach((item, i) => {
+          const { qty, mrp, discPct, discount, amount } = item.line;
+          const perPack = item.units_per_pack;
+          const packType = String(item.pack_type || "pack").replace(/^./, (c) => c.toUpperCase());
+          const gstPercent = (Number(item.cgst) || 0) + (Number(item.sgst) || 0);
+          const fullPacks = perPack > 1 && qty % perPack === 0 ? qty / perPack : 0;
+          const packWord = fullPacks === 1 ? `1 ${packType}` : `${fullPacks} ${/(s|x|ch|sh)$/i.test(packType) ? `${packType}es` : `${packType}s`}`;
+          const h1 = h1Names.has(String(item.product_name || "").toLowerCase());
+          const name = `${item.product_name || "-"}${h1 ? " (H1)" : ""}`;
+          const expiry = shortExpiry(item.expiry_date);
+          const hsn = item.hsn_no && item.hsn_no !== "-" ? item.hsn_no : "";
+          const discCell = {
+            t: discPct > 0 ? `${rate(discPct)}%` : discount > 0.004 ? money(discount) : "-",
+            s: discount > 0.004 && discPct > 0 ? `- ${money(discount)}` : "",
+            tone: discount > 0.004 ? "good" : undefined,
+            subTone: "good",
+          };
+          const mrpShown = fullPacks ? mrp * perPack : mrp;
+          rows.push({
+            no: i + 1,
+            item: { t: name, s: [item.manufacturer, perPack > 1 ? `${packType} of ${perPack}` : ""].filter(Boolean).join("  ·  ") },
+            hsn: hsn || "-",
+            batch: item.batch_no || "-",
+            exp: expiry,
+            batchExp: { t: item.batch_no || "-", s: `Exp ${expiry}` },
+            qty: { t: fullPacks ? packWord : String(qty), s: fullPacks ? `${qty} units` : packLabel(qty, perPack, packType) },
+            mrp: { t: money(mrpShown), s: fullPacks ? `${money(mrp)}/unit` : perPack > 1 ? `${money(mrp * perPack)}/${packType.toLowerCase()}` : "" },
+            disc: discCell,
+            gst: gstPercent ? rate(gstPercent) : "-",
+            amount: money(amount),
+          });
+          receiptRows.push({
+            name,
+            qty: `${fullPacks ? packWord : qty} x ${money(mrpShown)}`,
+            amount: money(amount),
+            details: [
+              [item.batch_no ? `Batch ${item.batch_no}` : "", expiry !== "-" ? `Exp ${expiry}` : ""].filter(Boolean).join("  "),
+              discount > 0.004 ? `Discount${discPct > 0 ? ` ${rate(discPct)}%` : ""}: - ${money(discount)}` : "",
+            ].filter(Boolean),
+          });
+          const c = Number(item.cgst) || 0;
+          const sg = Number(item.sgst) || 0;
+          if (c + sg > 0) {
+            const charged = amount * chargeFactor;
+            const taxable = charged / (1 + (c + sg) / 100);
+            const key = Number((c + sg).toFixed(2));
+            const r = gstByRate.get(key) || { rate: key, taxable: 0, cgst: 0, sgst: 0 };
+            r.taxable += taxable;
+            r.cgst += taxable * (c / 100);
+            r.sgst += taxable * (sg / 100);
+            gstByRate.set(key, r);
+          }
+        });
+        const bankRows = [["Bank", pharmacy?.bank_name], ["IFSC", pharmacy?.bank_ifsc], ["A/C No", pharmacy?.bank_acc_no], ["Holder", pharmacy?.bank_holder], ["UPI ID", upiId]];
+        const summary = [["Total MRP", money(totalGross)]];
+        if (itemDiscount > 0.004) summary.push(["Item discount", `- ${money(itemDiscount)}`, "good"]);
+        if (billDiscount > 0.004) {
+          const pct = bill.discount_percent ? ` (${rate(bill.discount_percent)}%)` : "";
+          summary.push([`Bill discount${pct}`, `- ${money(billDiscount)}`, "good"]);
+        }
+        const after = [];
+        if (paid > 0.004 && balance > 0.004) after.push(["Paid", money(paid)]);
+        if (balance > 0.004) after.push([isUdhar && paid <= 0 ? "Unpaid" : "Balance", money(balance), "bad"]);
+        const pdf = await renderFormat(
+          {
+            pdfTitle: `Bill ${bill.bill_no || ""}`,
+            title: "BILL OF SUPPLY",
+            numberLabel: "Bill No.",
+            number: bill.bill_no || "-",
+            date: billTimestamp,
+            logo: logoBuffer,
+            seller: {
+              name: pharmacy?.name || "",
+              address: pharmacy?.location || "",
+              lines: [["Ph", pharmacy?.contact], ["GSTIN", pharmacy?.gst_no], ["D.L.", pharmacy?.license_no || pharmacy?.drug_license_no]],
+            },
+            party: { heading: "BILLED TO", name: bill.customer_name || "Walk-in", lines: [customer?.address, customer?.mobile || bill.customer_mobile] },
+            meta: [
+              ["Payment", paymentLabel, balance <= 0.004 ? "good" : "bad"],
+              ["Doctor", bill.doctor],
+              ["Schedule H1", h1Names.size ? (bill.prescription ? "Prescription on record" : "Yes") : ""],
+            ],
+            receiptPartyLabel: "Patient",
+            receiptMeta: [
+              ["Mobile", customer?.mobile || bill.customer_mobile],
+              ["Doctor", bill.doctor],
+              ["Payment", paymentLabel],
+            ],
+            columns: billColumns,
+            rows,
+            receiptRows,
+            countLabel: `${enrichedItems.length} item${enrichedItems.length === 1 ? "" : "s"}  ·  ${totalQty} unit${totalQty === 1 ? "" : "s"}`,
+            summary,
+            netLabel: "NET AMOUNT",
+            net: grandTotal,
+            after,
+            gstRows: [...gstByRate.values()].sort((a, b) => a.rate - b.rate),
+            gstLine: gstRates ? `GST ${gstRates} included: Rs ${money(gst.cgst + gst.sgst)}` : "",
+            saved: saved > 0.004 ? `You saved Rs ${money(saved)} on MRP` : "",
+            note: bill.notes || "We wish you a speedy recovery!",
+            bank: bankRows,
+            qr: qrBuffer ? { buffer: qrBuffer, amount: qrAmount } : null,
+            signLabel: "Authorised Signatory",
+            generated: "Generated by DavaDesk",
+          },
+          options.format
+        );
+        return resolve(pdf);
+      }
+
+      const doc = new PDFDocument({
+        size: "A5",
+        layout: "landscape",
+        margin: 10,
+        compress: false,
+      });
+      const chunks = [];
+
+      doc.on("data", (c) => chunks.push(c));
+      doc.on("end", () => resolve(Buffer.concat(chunks)));
+      doc.on("error", reject);
 
       const columnWidths = [16, 178, 38, 50, 32, 46, 52, 50, 28, 85];
       const tableHeaders = ["#", "ITEM", "HSN", "BATCH", "EXP", "QTY", "MRP", "DISC", "GST%", "AMOUNT"];
@@ -630,7 +753,7 @@ const generateBillPDF = async (bill, pharmacy, options = {}) => {
   });
 };
 
-const generatePurchasePDF = async (purchase, pharmacy) => {
+const generatePurchasePDF = async (purchase, pharmacy, options = {}) => {
   return new Promise(async (resolve, reject) => {
     try {
       const PDFDocument = require("pdfkit");
@@ -673,6 +796,129 @@ const generatePurchasePDF = async (purchase, pharmacy) => {
             logoBuffer = rawBuffer;
           }
         }
+      }
+
+      if (isNewFormat(options.format)) {
+        const gstByRate = new Map();
+        let totalBase = 0;
+        let totalTax = 0;
+        let schemeOff = 0;
+        let totalPacks = 0;
+        const rows = [];
+        const receiptRows = [];
+        purchase.items.forEach((item, i) => {
+          const packs = Number(item.pack_quantity) || 1;
+          const free = Number(item.scheme) || 0;
+          const perPack = Number(item.units_per_pack) || 1;
+          const units = Number(item.quantity) || (packs + free) * perPack;
+          const price = Number(item.pack_price) || 0;
+          const mrpUnit = Number(item.mrp || item.mrp_per_unit) || 0;
+          const discount = Number(item.discount) || 0;
+          const cgst = Number(item.cgst) || 0;
+          const sgst = Number(item.sgst) || 0;
+          const line = lineNet(packs, price, discount, item);
+          const tax = (line.net * (cgst + sgst)) / 100;
+          const amount = item.item_total !== undefined ? Number(item.item_total) || 0 : line.net + tax;
+          const expiry = shortExpiry(item.expiry_date);
+          const packType = String(item.pack_type || "pack").replace(/^./, (c) => c.toUpperCase());
+          totalBase += line.net;
+          totalTax += tax;
+          schemeOff += line.schemeOff;
+          totalPacks += packs + free;
+          const schemeText = line.schemeOff > 0.004
+            ? `Sch ${line.scheme.type === "percent" ? `${rate(line.scheme.value)}%` : money(line.schemeOff)}`
+            : "";
+          rows.push({
+            no: i + 1,
+            item: { t: item.product_name || "-", s: [item.manufacturer, perPack > 1 ? `${packType} of ${perPack}` : "", item.hsn_no ? `HSN ${item.hsn_no}` : ""].filter(Boolean).join("  ·  ") },
+            batchExp: { t: item.batch_no || "-", s: `Exp ${expiry}` },
+            packs: { t: String(packs), s: free ? `+ ${free} free` : "" },
+            units: String(units),
+            rate: money(price),
+            disc: { t: discount ? `${rate(discount)}%` : "-", s: schemeText, tone: discount ? "good" : undefined, subTone: "good" },
+            gst: cgst + sgst ? rate(cgst + sgst) : "-",
+            mrp: money(mrpUnit),
+            amount: money(amount),
+          });
+          receiptRows.push({
+            name: item.product_name || "-",
+            qty: `${packs}${free ? ` + ${free} free` : ""} x ${money(price)}`,
+            amount: money(amount),
+            details: [
+              [item.batch_no ? `Batch ${item.batch_no}` : "", expiry !== "-" ? `Exp ${expiry}` : ""].filter(Boolean).join("  "),
+              [discount ? `Disc ${rate(discount)}%` : "", schemeText, cgst + sgst ? `GST ${rate(cgst + sgst)}%` : ""].filter(Boolean).join("  "),
+            ].filter(Boolean),
+          });
+          if (cgst + sgst > 0) {
+            const key = Number((cgst + sgst).toFixed(2));
+            const r = gstByRate.get(key) || { rate: key, taxable: 0, cgst: 0, sgst: 0 };
+            r.taxable += line.net;
+            r.cgst += (line.net * cgst) / 100;
+            r.sgst += (line.net * sgst) / 100;
+            gstByRate.set(key, r);
+          }
+        });
+        const grandTotal = Number(purchase.total_amount) || totalBase + totalTax;
+        const amountPaid = Number(purchase.amount_paid) || 0;
+        const balance = Math.max(0, grandTotal - amountPaid);
+        const dated = new Date(purchase.purchase_date || purchase.created_at || Date.now());
+        const dateLabel = isNaN(dated)
+          ? "-"
+          : dated.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric", timeZone: IST }).replace(/ /g, "-");
+        const paymentLabel = balance <= 0.004
+          ? `PAID${purchase.payment_mode ? ` (${String(purchase.payment_mode).toUpperCase()})` : ""}`
+          : amountPaid > 0
+          ? "PART PAID"
+          : "UNPAID";
+        const after = [];
+        if (amountPaid > 0.004) after.push(["Paid", money(amountPaid)]);
+        if (balance > 0.004) after.push(["Balance", money(balance), "bad"]);
+        const supplierName = purchase.supplier_name || supplier?.name || "";
+        const pdf = await renderFormat(
+          {
+            pdfTitle: `Purchase ${purchase.invoice_no || ""}`,
+            title: "PURCHASE INVOICE",
+            numberLabel: "Invoice No.",
+            number: purchase.invoice_no || "-",
+            date: dateLabel,
+            logo: logoBuffer,
+            seller: {
+              name: pharmacy?.name || "",
+              address: pharmacy?.location || "",
+              lines: [["Ph", pharmacy?.contact], ["GSTIN", pharmacy?.gst_no], ["D.L.", pharmacy?.license_no || pharmacy?.drug_license_no]],
+            },
+            party: {
+              heading: "SUPPLIER",
+              name: supplierName,
+              lines: [supplier?.address, supplier?.contact || supplier?.phone, supplier?.gst_no ? `GSTIN ${supplier.gst_no}` : ""],
+            },
+            meta: [["Payment", paymentLabel, balance <= 0.004 ? "good" : "bad"]],
+            receiptPartyLabel: "Supplier",
+            receiptMeta: [["GSTIN", supplier?.gst_no], ["Payment", paymentLabel]],
+            columns: purchaseColumns,
+            rows,
+            receiptRows,
+            countLabel: `${purchase.items.length} product${purchase.items.length === 1 ? "" : "s"}  ·  ${totalPacks} pack${totalPacks === 1 ? "" : "s"}`,
+            summary: [
+              ...(schemeOff > 0.004 ? [["Scheme discount", `- ${money(schemeOff)}`, "good"]] : []),
+              ["Taxable value", money(totalBase)],
+              ["Total GST", money(totalTax)],
+            ],
+            netLabel: "GRAND TOTAL",
+            net: grandTotal,
+            after,
+            gstRows: [...gstByRate.values()].sort((a, b) => a.rate - b.rate),
+            gstLine: "",
+            saved: "",
+            note: purchase.notes || "",
+            bank: null,
+            qr: null,
+            signLabel: "Authorised Signatory",
+            generated: "Generated by DavaDesk",
+          },
+          options.format
+        );
+        return resolve(pdf);
       }
 
       const doc = new PDFDocument({

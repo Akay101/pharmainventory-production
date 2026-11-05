@@ -23,6 +23,7 @@ import {
   DialogTitle,
   DialogTrigger,
   DialogDescription,
+  DialogFooter,
 } from "../components/ui/dialog";
 import {
   Popover,
@@ -102,12 +103,16 @@ import { rowCatalogGaps } from "../lib/catalogDetails";
 import ScheduleH1Badge, { H1_ROW_CLASS } from "../components/ScheduleH1Badge";
 import SchemeDiscountField from "../components/purchases/SchemeDiscountField";
 import MatchChooser from "../components/purchases/MatchChooser";
+import PdfFormatPicker, { usePdfFormat } from "../components/PdfFormatPicker";
 import { lineNet, rateFromTotal, schemeDiscountOf } from "../lib/purchaseLine";
 import { useShortcuts, useShortcutLayer } from "../components/shortcuts/Shortcuts";
 import { ItemLabelsDialog } from "../components/ItemQr";
 import ProductCatalogModal from "../components/ProductCatalogModal";
 
 const PACK_TYPES = ["Strip", "Bottle", "Tube", "Packet", "Box", "Unit"];
+
+// Some catalog and database records hold a list or a number where text belongs
+const asText = (v) => (Array.isArray(v) ? v.filter(Boolean).join(", ") : String(v ?? ""));
 
 const derivePackType = (med) => {
   if (med?.pack_type && PACK_TYPES.includes(med.pack_type)) return med.pack_type;
@@ -1153,16 +1158,24 @@ export default function PurchasesPage() {
     try {
       for (let i = 0; i < todo.length; i += 50) {
         const res = await axios.post(`${API}/purchases/match-suggestions`, {
-          items: todo.slice(i, i + 50).map((r) => ({ product_name: r.product_name, batch_no: r.batch_no })),
+          items: todo.slice(i, i + 50).map((r) => ({ product_name: r.product_name, batch_no: r.batch_no, manufacturer: r.manufacturer })),
         });
         matches.push(...(res.data.matches || []));
       }
     } catch {
       // Lookup down: the row can still be mapped by searching or added to the catalog
     }
+    if (matches.length < todo.length || matches.some((m) => m.failed)) {
+      toast.error("Couldn't check every product against the catalog. Save will check them again.");
+    }
     for (let i = 0; i < todo.length; i++) {
       const row = todo[i];
       const m = matches[i];
+      // Not looked up: left unchecked so that Save tries again
+      if (!m || m.failed) {
+        outcome.none.push(row);
+        continue;
+      }
       const suggestions = m?.suggestions || [];
       const sure = m?.batch_match
         ? suggestions.find((s) => s.product_id === m.batch_match.product_id)
@@ -2613,18 +2626,24 @@ export default function PurchasesPage() {
   };
 
   //Purchase pdf
+  const [pdfFormat, setPdfFormat] = usePdfFormat("purchase");
+  const [pdfFor, setPdfFor] = useState(null); // purchase picked from the list
   const handleGeneratePurchasePdf = async (purchaseId) => {
+    const win = window.open("", "_blank"); // inside the click, so pop-up blockers allow it
     try {
-      const res = await axios.post(`${API}/purchases/${purchaseId}/pdf`);
+      const res = await axios.post(`${API}/purchases/${purchaseId}/pdf`, { format: pdfFormat });
 
       if (res.data?.pdf_url) {
-        window.open(res.data.pdf_url, "_blank");
+        if (win) win.location.href = res.data.pdf_url;
+        else window.open(res.data.pdf_url, "_blank");
         toast.success("PDF generated");
       } else {
+        win?.close();
         toast.error("PDF generation failed");
       }
     } catch (error) {
-      toast.error("Failed to generate PDF");
+      win?.close();
+      toast.error(error.response?.data?.detail || "Failed to generate PDF");
     }
   };
 
@@ -3255,15 +3274,12 @@ export default function PurchasesPage() {
     const ratePackFixed = suggestedRatePack > 0 ? suggestedRatePack.toFixed(2) : "";
 
     // Manufacturer & Salt composition
-    const manufacturer =
-      medicine.manufacturer || medicine.manufacturer_name || "";
-    const salt_composition =
+    const manufacturer = asText(medicine.manufacturer || medicine.manufacturer_name);
+    const salt_composition = asText(
       medicine.salt_composition ||
-      medicine.active_ingredients ||
-      [medicine.short_composition1, medicine.short_composition2]
-        .filter(Boolean)
-        .join(", ") ||
-      "";
+        medicine.active_ingredients ||
+        [medicine.short_composition1, medicine.short_composition2].filter(Boolean)
+    );
 
     // Taxes (CGST & SGST)
     let finalCgst = "";
@@ -3516,9 +3532,9 @@ export default function PurchasesPage() {
         item.product_name &&
         item.product_name.trim().length > 0 &&
         (!item.salt_composition ||
-          !item.salt_composition.trim() ||
+          !asText(item.salt_composition).trim() ||
           !item.manufacturer ||
-          !item.manufacturer.trim())
+          !asText(item.manufacturer).trim())
     );
 
     if (candidates.length === 0) return;
@@ -3738,8 +3754,8 @@ export default function PurchasesPage() {
       if (settings?.purchase_permanent_autofill !== false) {
         const missingCandidates = itemsToProcess.filter(
           (item) =>
-            (!item.salt_composition || !item.salt_composition.trim()) ||
-            (!item.manufacturer || !item.manufacturer.trim())
+            (!item.salt_composition || !asText(item.salt_composition).trim()) ||
+            (!item.manufacturer || !asText(item.manufacturer).trim())
         );
         if (missingCandidates.length > 0) {
           try {
@@ -4131,6 +4147,8 @@ export default function PurchasesPage() {
 
   const handleCsvFileSelect = async (e) => {
     const file = e.target.files[0];
+    // Lets the same file be picked again after it's corrected
+    e.target.value = "";
     if (!file) return;
 
     setCsvFile(file);
@@ -4151,7 +4169,8 @@ export default function PurchasesPage() {
         }
       );
 
-      const cols = response.data.columns || [];
+      // A blank column name can't be an option in the mapping dropdowns
+      const cols = [...new Set(response.data.columns || [])].filter((c) => typeof c === "string" && c.trim());
       setCsvColumns(cols);
       setCsvSampleData(response.data.sample_data || []);
       setCsvParsedRows(response.data.parsed_rows || []);
@@ -4312,6 +4331,10 @@ export default function PurchasesPage() {
       setCsvMapping(newMapping);
     } catch (error) {
       toast.error(error.response?.data?.detail || "Failed to parse CSV file");
+      // A file that can't be read must not leave the previous file's rows behind
+      setCsvFile(null);
+      setCsvColumns([]);
+      setCsvParsedRows([]);
     } finally {
       setCsvReading(false);
     }
@@ -4829,9 +4852,9 @@ export default function PurchasesPage() {
                   item.product_name &&
                   item.product_name.trim().length > 0 &&
                   (!item.salt_composition ||
-                    !item.salt_composition.trim() ||
+                    !asText(item.salt_composition).trim() ||
                     !item.manufacturer ||
-                    !item.manufacturer.trim())
+                    !asText(item.manufacturer).trim())
               ) && (
                 <div className="flex items-center gap-1.5" style={onlineFeatures ? undefined : { display: "none" }}>
                   <Button
@@ -7384,9 +7407,7 @@ export default function PurchasesPage() {
                             size="icon"
                             variant="ghost"
                             className="h-7 w-7 text-primary"
-                            onClick={() =>
-                              handleGeneratePurchasePdf(purchase.id)
-                            }
+                            onClick={() => setPdfFor(purchase)}
                             data-testid={`pdf-purchase-${purchase.id}`}
                             data-row-key="p"
                           >
@@ -8067,6 +8088,7 @@ export default function PurchasesPage() {
               recorded purchase?
             </AlertDialogDescription>
           </AlertDialogHeader>
+          <PdfFormatPicker value={pdfFormat} onChange={setPdfFormat} />
           <AlertDialogFooter>
             <AlertDialogCancel>Skip</AlertDialogCancel>
             <AlertDialogAction
@@ -8081,6 +8103,39 @@ export default function PurchasesPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <Dialog open={!!pdfFor} onOpenChange={(o) => !o && setPdfFor(null)}>
+        <DialogContent className="max-w-md rounded-3xl p-5 sm:p-6">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base font-black">
+              <FileText className="h-5 w-5 text-orange-500" /> Purchase PDF
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              {[pdfFor?.invoice_no, pdfFor?.supplier_name].filter(Boolean).join(" · ")}
+            </DialogDescription>
+          </DialogHeader>
+          <PdfFormatPicker value={pdfFormat} onChange={setPdfFormat} />
+          <DialogFooter className="gap-2">
+            <Button type="button" variant="outline" onClick={() => setPdfFor(null)} className="rounded-xl text-xs font-bold">
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              autoFocus
+              data-shortcut="save"
+              data-testid="purchase-pdf-generate"
+              onClick={() => {
+                const id = pdfFor.id;
+                setPdfFor(null);
+                handleGeneratePurchasePdf(id);
+              }}
+              className="rounded-xl bg-orange-600 text-xs font-bold text-white hover:bg-orange-700"
+            >
+              <FileText className="mr-1.5 h-4 w-4" /> Generate PDF
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Price History Comparison Dialog */}
       <Dialog

@@ -114,6 +114,56 @@ function closeness(read, stored) {
   return Math.min(0.99, 0.55 * brand + 0.45 * overlap);
 }
 
+// Tablet and syrup of the same salt are different products
+const FORMS = [
+  [/\b(tab|tabs|tablet|tablets)\b/, "tablet"],
+  [/\b(cap|caps|capsule|capsules)\b/, "capsule"],
+  [/\b(syp|syrup|susp|suspension)\b/, "liquid"],
+  [/\b(inj|injection)\b/, "injection"],
+  [/\b(cream|gel|oint|ointment|lotion)\b/, "topical"],
+  [/\b(drop|drops)\b/, "drops"],
+];
+const formOf = (text) => FORMS.find(([re]) => re.test(String(text || "").toLowerCase()))?.[1] || null;
+const formsConflict = (read, stored, dosageForm) => {
+  const a = formOf(read);
+  const b = formOf(dosageForm) || formOf(stored);
+  return !!(a && b && a !== b);
+};
+
+const SINGLE_SALT = 0.75;
+const COMBINATION_SALT = 0.58;
+
+// An invoice often names the salt, not the brand ("Azithromycin 500 mg Tablets"
+// is "Azee 500 Tablet"): every word read is in the salt and the strength agrees.
+// A medicine with other salts in it is a weaker match.
+function saltCloseness(read, salt) {
+  const words = wordsOf(coreTokens(read));
+  const text = String(salt || "");
+  if (!words.length || !text.trim()) return 0;
+  const saltWords = wordsOf(tokenize(text));
+  const inSalt = (w) => saltWords.some((u) => w === u || (w.length >= 4 && u.length >= 4 && wordCloseness(w, u) >= 0.75));
+  if (!words.every(inSalt)) return 0;
+  const strengths = strengthsOf(read);
+  if (strengths.length && !strengths.some((n) => strengthsOf(text).includes(n))) return 0;
+  return text.split("+").length > words.length ? COMBINATION_SALT : SINGLE_SALT;
+}
+
+const makerKey = (s) => tokenize(s)[0] || "";
+const sameMaker = (a, b) => makerKey(a).length >= 3 && makerKey(a) === makerKey(b);
+
+// Closeness of a stored product, and whether it rests on the salt alone
+function matchScore(item, storedName, salt, maker, dosageForm) {
+  const read = item.product_name || "";
+  if (formsConflict(read, storedName, dosageForm)) return { sim: 0, bySalt: false };
+  const byName = Math.max(closeness(read, storedName), nameSimilarity(read, storedName));
+  const bySalt = saltCloseness(read, salt);
+  let sim = Math.max(byName, bySalt);
+  // "Paracetamol 500" is nearer plain paracetamol than a combination that names it
+  if (bySalt === COMBINATION_SALT && byName < 1) sim = COMBINATION_SALT;
+  if (sim < 1 && sim >= MIN_CLOSENESS && sameMaker(item.manufacturer, maker)) sim = Math.min(0.98, sim + 0.12);
+  return { sim, bySalt: bySalt > byName };
+}
+
 const MIN_CLOSENESS = 0.55;
 const MAX_SUGGESTIONS = 6;
 
@@ -125,7 +175,13 @@ async function catalogCandidates(db, pharmacyId, name) {
   return db
     .collection("products")
     .find(
-      { pharmacy_id: pharmacyId, name: { $regex: starts.map(escapeRegex).join("|"), $options: "i" } },
+      {
+        pharmacy_id: pharmacyId,
+        $or: [
+          { name: { $regex: starts.map(escapeRegex).join("|"), $options: "i" } },
+          { salt_composition: { $regex: words.map(escapeRegex).join("|"), $options: "i" } },
+        ],
+      },
       { projection: { _id: 0, id: 1, name: 1, manufacturer: 1, salt_composition: 1, units_per_pack: 1, mrp: 1, pack_type: 1, hsn_no: 1, cgst: 1, sgst: 1, category: 1, dosage_form: 1 } }
     )
     .limit(400)
@@ -133,18 +189,23 @@ async function catalogCandidates(db, pharmacyId, name) {
 }
 
 // Closest medicines in the global database; a missing or slow one never blocks
-async function globalSuggestions(name) {
-  const lookup = searchGlobalMedicines(cleanProductName(name) || name, { limit: 15 });
+async function globalSuggestions(item) {
+  const name = item.product_name;
+  // Brand or salt and strength: "mg" and "Tablets" narrow a search to nothing
+  const lookup = searchGlobalMedicines(coreTokens(name).join(" ") || cleanProductName(name) || name, { limit: 40 });
   const docs = await Promise.race([lookup, new Promise((r) => setTimeout(() => r([]), 2500))]).catch(() => []);
   return docs.map((d) => {
     const productName = d.product_name || d.name || "";
-    const sim = closeness(name, productName);
+    const salt = d.salt_composition || d.active_ingredients || d.short_composition1 || "";
+    const manufacturer = d.manufacturer || d.manufacturer_name || "";
+    const { sim, bySalt } = matchScore(item, productName, salt, manufacturer, d.dosage_form);
     return {
       source: "global",
       product_id: d.id || d.product_id || String(d._id),
       product_name: productName,
-      manufacturer: d.manufacturer || d.manufacturer_name || "",
-      salt_composition: d.salt_composition || d.active_ingredients || d.short_composition1 || "",
+      manufacturer,
+      salt_composition: salt,
+      same_salt: bySalt,
       units_per_pack: d.units_per_pack || null,
       mrp: d.mrp || d["price(₹)"] || 0,
       pack_type: d.pack_type || "",
@@ -391,7 +452,7 @@ async function matchForPurchase(db, pharmacyId, item, { includeGlobal = false } 
   let exactNameMatch = null;
   if (name) {
     for (const p of await catalogCandidates(db, pharmacyId, name)) {
-      const sim = Math.max(closeness(name, p.name), nameSimilarity(name, p.name));
+      const { sim, bySalt } = matchScore(item, p.name, p.salt_composition, p.manufacturer, p.dosage_form);
       if (sim < MIN_CLOSENESS) continue;
       const exact = sim === 1 || closeness(name, p.name) === 1;
       suggestions.push({
@@ -400,6 +461,7 @@ async function matchForPurchase(db, pharmacyId, item, { includeGlobal = false } 
         product_name: p.name,
         manufacturer: p.manufacturer || "",
         salt_composition: p.salt_composition || "",
+        same_salt: bySalt,
         units_per_pack: p.units_per_pack || 1,
         mrp: p.mrp || 0,
         pack_type: p.pack_type || "",
@@ -410,14 +472,14 @@ async function matchForPurchase(db, pharmacyId, item, { includeGlobal = false } 
         dosage_form: p.dosage_form || "",
         score: Math.round((exact ? 1 : sim) * 100),
         is_exact: exact,
-        is_high_confidence: exact || sim >= 0.8,
+        is_high_confidence: exact || (sim >= 0.8 && !bySalt),
       });
       if (exact && !exactNameMatch) exactNameMatch = { product_id: p.id, product_name: p.name, type: "name_exact" };
     }
     if (includeGlobal) {
       // A medicine already in the catalog appears once, as the catalog's
       const own = new Set(suggestions.map((s) => normalizeText(s.product_name)));
-      for (const g of await globalSuggestions(name)) {
+      for (const g of await globalSuggestions(item)) {
         const { sim, ...rest } = g;
         if (!own.has(normalizeText(g.product_name))) suggestions.push(rest);
       }
