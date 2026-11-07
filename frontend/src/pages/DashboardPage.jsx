@@ -204,23 +204,23 @@ function KpiCard({ icon: Icon, tone, label, value, delta, deltaLabel, footer, sp
     violet: "from-violet-500/15 to-violet-500/5 text-violet-500",
   };
   return (
-    <Card className="relative overflow-hidden p-5 flex flex-col gap-3">
+    <Card className="relative overflow-hidden p-5 flex flex-col gap-3 max-md:p-3.5 max-md:gap-2 max-md:rounded-2xl">
       <div className={`absolute -top-10 -right-10 w-36 h-36 rounded-full bg-gradient-to-br blur-2xl opacity-60 ${tones[tone]}`} />
       <div className="relative flex items-center justify-between">
-        <span className="text-[11px] font-extrabold uppercase tracking-wider text-muted-foreground">{label}</span>
-        <div className={`w-8 h-8 rounded-xl bg-gradient-to-br flex items-center justify-center ${tones[tone]}`}>
+        <span className="text-[11px] font-extrabold uppercase tracking-wider text-muted-foreground max-md:text-[10px] max-md:truncate">{label}</span>
+        <div className={`w-8 h-8 max-md:w-7 max-md:h-7 max-md:shrink-0 rounded-xl bg-gradient-to-br flex items-center justify-center ${tones[tone]}`}>
           <Icon className="w-4 h-4" />
         </div>
       </div>
       <div className="relative">
-        <div className="text-[28px] leading-none font-black tracking-tight text-foreground tabular-nums">{value}</div>
+        <div className="text-[28px] max-md:text-[22px] leading-none font-black tracking-tight text-foreground tabular-nums">{value}</div>
         <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px] font-semibold text-muted-foreground">
           {delta}
           {deltaLabel && <span>{deltaLabel}</span>}
         </div>
       </div>
       {spark}
-      {footer && <div className="relative border-t border-border pt-3 text-[11px] font-semibold text-muted-foreground">{footer}</div>}
+      {footer && <div className="relative border-t border-border pt-3 text-[11px] font-semibold text-muted-foreground max-md:pt-2 max-md:text-[10.5px]">{footer}</div>}
     </Card>
   );
 }
@@ -480,33 +480,33 @@ export default function DashboardPage() {
   ].filter(Boolean);
 
   return (
-    <div className="space-y-6 pb-16" data-testid="dashboard-page">
+    <div className="space-y-6 pb-16 max-md:space-y-4 max-md:pb-6" data-testid="dashboard-page">
       {/* ------------------------------------------------------------ Header */}
       <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-4">
         <div className="min-w-0">
           <p className="text-xs font-bold text-muted-foreground">
             {new Date().toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: "Asia/Kolkata" })}
           </p>
-          <h1 className="mt-1 text-2xl sm:text-3xl font-black tracking-tight text-foreground truncate">
+          <h1 className="mt-1 text-2xl sm:text-3xl font-black tracking-tight text-foreground truncate m-page-title">
             {greeting()}, {user?.name?.split(" ")[0] || "there"}
           </h1>
           <p className="mt-1 text-sm font-semibold text-muted-foreground truncate">
             Here's how <span className="text-foreground">{pharmacy?.name || "your pharmacy"}</span> is doing.
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2" data-tour="dashboard-actions">
+        <div className="flex flex-wrap items-center gap-2 max-md:flex-nowrap" data-tour="dashboard-actions">
           <span className="hidden sm:inline text-[11px] font-semibold text-muted-foreground mr-1">Updated {timeAgo(data.as_of)}</span>
           <Button
             variant="outline"
             size="icon"
             onClick={() => load(false)}
-            className="h-10 w-10 rounded-xl"
+            className="h-10 w-10 rounded-xl max-md:h-11 max-md:w-11 max-md:shrink-0"
             title="Refresh"
             data-testid="dashboard-refresh"
           >
             <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />
           </Button>
-          <Button variant="outline" onClick={() => navigate("/purchases")} className="h-10 rounded-xl font-bold">
+          <Button variant="outline" onClick={() => navigate("/purchases")} className="h-10 rounded-xl font-bold max-md:flex-1 max-md:h-11">
             <ShoppingCart className="w-4 h-4 mr-1.5 text-orange-500" /> Add purchase
           </Button>
           <Button variant="outline" onClick={() => window.open("/scan", "_blank")} style={onlineFeatures ? undefined : { display: "none" }} className="h-10 rounded-xl font-bold hidden sm:inline-flex">
@@ -514,7 +514,7 @@ export default function DashboardPage() {
           </Button>
           <Button
             onClick={() => navigate("/billing")}
-            className="h-10 rounded-xl font-bold text-white bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 shadow-lg shadow-orange-500/25"
+            className="h-10 rounded-xl font-bold text-white bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 shadow-lg shadow-orange-500/25 max-md:flex-1 max-md:h-11"
           >
             <Plus className="w-4 h-4 mr-1.5" /> New bill
           </Button>
@@ -522,7 +522,7 @@ export default function DashboardPage() {
       </div>
 
       {/* ------------------------------------------------------------ KPIs */}
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4" data-tour="dashboard-kpis">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4 max-md:grid-cols-2 max-md:gap-2.5 m-kpis" data-tour="dashboard-kpis">
         <KpiCard
           icon={IndianRupee}
           tone="orange"

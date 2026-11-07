@@ -551,11 +551,11 @@ export default function InventoryPage() {
   }
 
   return (
-    <div className="space-y-6 animate-fade-in" data-testid="inventory-page">
+    <div className="space-y-6 max-md:space-y-4 animate-fade-in" data-testid="inventory-page">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-border/40 pb-3">
-        <div className="flex items-center gap-3">
-          <h1 className="text-xl font-black tracking-tight text-foreground">Inventory</h1>
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-border/40 pb-3 max-md:flex-row max-md:flex-wrap max-md:items-center max-md:justify-between max-md:border-0 max-md:pb-0">
+        <div className="flex items-center gap-3 max-md:gap-2 min-w-0">
+          <h1 className="text-xl font-black tracking-tight text-foreground m-page-title">Inventory</h1>
           <span className="text-[10px] font-black bg-orange-500/15 text-orange-500 border border-orange-500/30 px-2 py-0.5 rounded-md font-mono">
             {pagination.total} items in stock
           </span>
@@ -591,7 +591,8 @@ export default function InventoryPage() {
             data-shortcut="new"
           >
             <Plus className="w-3.5 h-3.5 stroke-[3]" />
-            Add Product
+            <span className="max-md:hidden">Add Product</span>
+            <span className="md:hidden">Add</span>
           </Button>
 
           <ProductCatalogModal
@@ -603,7 +604,7 @@ export default function InventoryPage() {
       </div>
 
       {/* Filters Bar */}
-      <div className="flex flex-col md:flex-row items-center gap-3">
+      <div className="flex flex-col md:flex-row items-center gap-3 max-md:gap-2.5">
         <div className="flex-1 w-full relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
@@ -616,7 +617,7 @@ export default function InventoryPage() {
           />
         </div>
 
-        <div className="flex items-center gap-2 w-full md:w-auto shrink-0 justify-end flex-wrap">
+        <div className="flex items-center gap-2 w-full md:w-auto shrink-0 justify-end flex-wrap m-chips">
           <Button
             onClick={() => {
               setShowLowStock(!showLowStock);
@@ -734,7 +735,7 @@ export default function InventoryPage() {
               </span>
             </div>
           )}
-          <Table mobileCards>
+          <Table mobileCards className="m-cards-3">
             <TableHeader className="border-b border-border bg-muted/60">
               <TableRow className="hover:bg-transparent">
                 <TableHead data-card="corner" className="w-10 h-9 text-center py-1.5">

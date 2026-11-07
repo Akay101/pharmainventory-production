@@ -4905,7 +4905,7 @@ export default function PurchasesPage() {
 
           {/* Items Table - Inline Editable with enhanced fields */}
           <div className="border-2 border-border rounded-2xl relative overflow-hidden bg-card shadow-sm">
-            <Table mobileCards className="table-fixed min-w-[1344px] w-full" wrapperClassName="h-[420px]">
+            <Table mobileCards className="table-fixed min-w-[1344px] w-full m-purchase-cards" wrapperClassName="h-[420px]">
               <TableHeader className="sticky top-0 bg-muted/95 backdrop-blur z-[50] border-b-2 border-border shadow-xs">
                 <TableRow className="hover:bg-transparent">
                   <TableHead data-card="title" className="py-2.5 font-extrabold text-foreground text-left">
@@ -7097,9 +7097,9 @@ export default function PurchasesPage() {
         <>
           <div className="space-y-3 px-0.5 py-0.5">
             {/* Line 1: Page Title, Stats Badge & Action Buttons */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <h1 className="text-2xl font-black tracking-tight text-foreground">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 max-md:grid max-md:grid-cols-3 max-md:gap-2 max-md:items-center">
+              <div className="flex items-center gap-3 max-md:gap-2 max-md:col-span-2 max-md:min-w-0 max-md:order-1">
+                <h1 className="text-2xl font-black tracking-tight text-foreground m-page-title">
                   Purchases
                 </h1>
                 <span className="px-2.5 py-0.5 rounded-full bg-orange-500/10 border border-orange-500/30 text-orange-600 dark:text-orange-400 font-mono font-bold text-xs">
@@ -7110,7 +7110,7 @@ export default function PurchasesPage() {
                 </span>
               </div>
 
-              <div className="flex items-center gap-2 flex-wrap">
+              <div className="flex items-center gap-2 flex-wrap max-md:contents">
                 <Button
                   variant="outline"
                   size="sm"
@@ -7126,7 +7126,7 @@ export default function PurchasesPage() {
                 <Button
                   variant="outline"
                   size="sm"
-                  className="h-8 text-xs font-bold rounded-xl bg-gradient-to-r from-orange-500/10 to-amber-500/10 border-orange-500/30 text-orange-600 dark:text-orange-400 hover:border-orange-500/50"
+                  className="h-8 text-xs font-bold rounded-xl bg-gradient-to-r from-orange-500/10 to-amber-500/10 border-orange-500/30 text-orange-600 dark:text-orange-400 hover:border-orange-500/50 max-md:order-3 max-md:h-10"
                   onClick={() => openScanner("/scan")}
                   data-testid="scan-products-btn"
                   style={onlineFeatures ? undefined : { display: "none" }}
@@ -7138,7 +7138,7 @@ export default function PurchasesPage() {
                 <Button
                   variant="outline"
                   size="sm"
-                  className="h-8 text-xs font-bold rounded-xl border-border/70 cursor-pointer"
+                  className="h-8 text-xs font-bold rounded-xl border-border/70 cursor-pointer max-md:order-3 max-md:h-10 max-md:px-2"
                   onClick={() => setCsvDialog(true)}
                   data-testid="csv-import-btn"
                 >
@@ -7149,7 +7149,7 @@ export default function PurchasesPage() {
                 <Button
                   variant="outline"
                   size="sm"
-                  className={`h-8 text-xs font-bold rounded-xl cursor-pointer ${showPurchaseDrafts ? "border-orange-500/50 bg-orange-500/10 text-orange-600 dark:text-orange-400" : "border-border/70"}`}
+                  className={`h-8 text-xs font-bold rounded-xl cursor-pointer max-md:order-3 max-md:h-10 ${showPurchaseDrafts ? "border-orange-500/50 bg-orange-500/10 text-orange-600 dark:text-orange-400" : "border-border/70"}`}
                   onClick={() => setShowPurchaseDrafts((v) => !v)}
                   data-testid="purchase-drafts-btn"
                 >
@@ -7162,7 +7162,7 @@ export default function PurchasesPage() {
 
                 <Button
                   size="sm"
-                  className="h-8 px-3.5 text-xs font-extrabold bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white rounded-xl shadow-xs border-none"
+                  className="h-8 px-3.5 text-xs font-extrabold bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white rounded-xl shadow-xs border-none max-md:order-2 max-md:h-10 max-md:shadow-md max-md:shadow-orange-500/25"
                   onClick={handleStartNewPurchase}
                   data-testid="add-purchase-btn"
                   data-shortcut="new"
@@ -7251,12 +7251,12 @@ export default function PurchasesPage() {
                   />
                 </div>
               </div>
-              <div className="flex items-center gap-2 w-full md:w-auto flex-wrap">
+              <div className="flex items-center gap-2 w-full md:w-auto flex-wrap m-grid-2">
                 <SupplierSelector
                   selectedId={filterSupplier}
                   knownSuppliers={suppliers}
                   showAllOption={true}
-                  className="w-44"
+                  className="w-44 m-span-2"
                   onSelect={(s) => {
                     handleSupplierFilterChange(s.id);
                     if (
@@ -9102,9 +9102,14 @@ export default function PurchasesPage() {
                 <div className="flex flex-col items-center justify-center space-y-2 pointer-events-none">
                   <Upload className="w-7 h-7 text-orange-500 animate-bounce" />
                   <div className="text-xs font-bold text-foreground">
-                    {csvFile
-                      ? csvFile.name
-                      : "Click or drag & drop CSV file to upload"}
+                    {csvFile ? (
+                      csvFile.name
+                    ) : (
+                      <>
+                        <span className="max-md:hidden">Click or drag & drop CSV file to upload</span>
+                        <span className="md:hidden">Tap to choose a CSV file</span>
+                      </>
+                    )}
                   </div>
                   <span className="text-[10px] text-muted-foreground">
                     Supports .csv, .txt, semicolon, and tab delimited files
