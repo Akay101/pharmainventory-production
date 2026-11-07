@@ -108,7 +108,7 @@ export default function BillingScannerPage() {
     <div className="relative isolate min-h-screen bg-background text-foreground pb-32">
       <AiAmbient />
 
-      <header className="sticky top-0 z-40 border-b border-border bg-background/80 backdrop-blur-xl">
+      <header className="sticky top-0 z-40 border-b border-border bg-background/80 backdrop-blur-xl max-md:pt-[env(safe-area-inset-top)]">
         <div className="mx-auto flex max-w-2xl items-center gap-3 px-4 py-3">
           <button type="button" onClick={() => navigate("/billing")} className="h-9 w-9 rounded-xl hover:bg-muted flex items-center justify-center" aria-label="Back">
             <ArrowLeft className="h-5 w-5" />

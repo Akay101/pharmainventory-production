@@ -461,7 +461,7 @@ export default function DashboardLayout() {
                 size="icon"
                 onClick={toggleTheme}
                 data-testid="theme-toggle-btn"
-                className="group relative hover:bg-muted/80 rounded-xl transition-all duration-200 hover:scale-105 active:scale-90 border border-border/60 dark:border-border/40 h-9 w-9 cursor-pointer"
+                className="group relative hover:bg-muted/80 rounded-xl transition-all duration-200 hover:scale-105 active:scale-90 border border-border/60 dark:border-border/40 h-9 w-9 cursor-pointer max-md:hidden"
                 title={isDark ? "Switch to Light Mode" : "Switch to Dark Mode"}
               >
                 {isDark ? (
@@ -622,6 +622,8 @@ export default function DashboardLayout() {
           onOpenActivity={() => !activityOpen && toggleActivity()}
           pharmacy={pharmacy}
           planLabel={planLabel(user)}
+          isDark={isDark}
+          onToggleTheme={toggleTheme}
         />
 
         {/* DavaDesk AI launcher (phones use the header button) */}

@@ -19,7 +19,7 @@ export default function SchemeDiscountField({ id, testId, value, type, onValue, 
   );
   return (
     <div
-      className={`flex ${height} min-w-0 items-center rounded-lg border bg-background transition-colors focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/20 ${
+      className={`m-field-box flex ${height} min-w-0 items-center rounded-lg border bg-background transition-colors focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/20 ${
         active ? "border-emerald-500 bg-emerald-500/10" : "border-border"
       } ${className}`}
     >

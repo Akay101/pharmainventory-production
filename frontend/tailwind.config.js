@@ -1,5 +1,7 @@
 /** @type {import('tailwindcss').Config} */
 module.exports = {
+    // Phones: hover styles don't stick after a tap (mouse/trackpad unchanged)
+    future: { hoverOnlyWhenSupported: true },
     darkMode: ["class"],
     content: [
     "./src/**/*.{js,jsx,ts,tsx}",

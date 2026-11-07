@@ -333,7 +333,7 @@ export default function ProductCatalogModal({
                 </DialogDescription>
               </div>
             </div>
-            <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full bg-orange-500/10 text-orange-500 border border-orange-500/20">
+            <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full bg-orange-500/10 text-orange-500 border border-orange-500/20 max-md:hidden">
               Master Catalog
             </span>
           </div>

@@ -743,7 +743,7 @@ export default function AssistantPage() {
       )}
 
       <main className="flex min-w-0 flex-1 flex-col">
-        <header className="flex items-center gap-2 border-b border-border bg-background/70 px-3 py-2.5 backdrop-blur-xl sm:px-4">
+        <header className="flex items-center gap-2 border-b border-border bg-background/70 px-3 py-2.5 backdrop-blur-xl sm:px-4 max-md:pt-[calc(0.625rem+env(safe-area-inset-top))]">
           <button type="button" onClick={() => setSidebarOpen(true)} className="flex h-9 w-9 items-center justify-center rounded-xl hover:bg-muted md:hidden" aria-label="Chats">
             <Menu className="h-5 w-5" />
           </button>

@@ -3075,17 +3075,18 @@ export default function BillingPage() {
       {/* Header */}
       {!showNewBill && editingBillId === null && (
         <div className="space-y-3 px-0.5 py-0.5">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div className="flex items-center gap-3">
-              <h1 className="text-2xl font-black tracking-tight text-foreground">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 max-md:flex-row max-md:items-center max-md:gap-2">
+            <div className="flex items-center gap-3 max-md:gap-2 min-w-0">
+              <h1 className="text-2xl font-black tracking-tight text-foreground m-page-title">
                 Billing
               </h1>
-              <span className="px-2.5 py-0.5 rounded-full bg-orange-500/10 border border-orange-500/30 text-orange-600 dark:text-orange-400 font-mono font-bold text-xs">
-                {`${totalBills} bill${totalBills !== 1 ? "s" : ""} generated`}
+              <span className="px-2.5 py-0.5 rounded-full bg-orange-500/10 border border-orange-500/30 text-orange-600 dark:text-orange-400 font-mono font-bold text-xs max-md:whitespace-nowrap">
+                <span className="max-md:hidden">{`${totalBills} bill${totalBills !== 1 ? "s" : ""} generated`}</span>
+                <span className="md:hidden">{`${totalBills} bill${totalBills !== 1 ? "s" : ""}`}</span>
               </span>
             </div>
 
-            <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center gap-2 flex-wrap max-md:flex-nowrap max-md:shrink-0">
               <Button
                 variant="outline"
                 size="sm"
@@ -3104,14 +3105,14 @@ export default function BillingPage() {
                 data-testid="upi-qr-btn"
                 data-kbd={formatCombo("alt+q")}
                 title={`Show a UPI QR for any amount (${formatCombo("alt+q")})`}
-                className="h-8 text-xs font-bold rounded-xl border-border/70"
+                className="h-8 text-xs font-bold rounded-xl border-border/70 max-md:h-10"
               >
                 <QrCode className="w-3.5 h-3.5 mr-1.5 text-muted-foreground" />
                 UPI QR
               </Button>
               <Button
                 size="sm"
-                className="h-8 px-3.5 text-xs font-extrabold bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white rounded-xl shadow-xs border-none"
+                className="h-8 px-3.5 text-xs font-extrabold bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white rounded-xl shadow-xs border-none max-md:h-10 max-md:shadow-md max-md:shadow-orange-500/25"
                 onClick={handleStartNewBill}
                 data-testid="new-bill-btn"
                 data-shortcut="new"
@@ -3739,7 +3740,7 @@ export default function BillingPage() {
 
             {/* Items Table - Inline Editable */}
             <div className="border border-border/70 rounded-xl overflow-hidden shadow-sm bg-background/50 backdrop-blur-md mt-4">
-              <Table mobileCards wrapperClassName="max-h-[300px]">
+              <Table mobileCards className="m-item-cards m-bill-cards" wrapperClassName="max-h-[300px]">
                 <TableHeader className="sticky top-0 bg-muted/90 backdrop-blur-md z-[50] border-b border-border/80">
                   <TableRow className="hover:bg-transparent border-b border-border/80">
                     <TableHead data-card="title" className="w-[180px] font-bold text-foreground/80 text-xs uppercase tracking-wider">
@@ -5058,7 +5059,7 @@ export default function BillingPage() {
 
             {/* Items Table - Inline Editable */}
             <div className="border border-border/70 rounded-xl overflow-hidden shadow-sm bg-background/50 backdrop-blur-md mt-4">
-              <Table mobileCards wrapperClassName="max-h-[300px]">
+              <Table mobileCards className="m-item-cards m-bill-cards-edit" wrapperClassName="max-h-[300px]">
                 <TableHeader className="sticky top-0 bg-muted/90 backdrop-blur-md z-[50] border-b border-border/80">
                   <TableRow className="hover:bg-transparent border-b border-border/80">
                     <TableHead data-card="title" className="w-[180px] font-bold text-foreground/80 text-xs uppercase tracking-wider">
@@ -5726,7 +5727,7 @@ export default function BillingPage() {
                 />
               </div>
             </div>
-            <div className="flex items-center gap-2 w-full md:w-auto flex-wrap">
+            <div className="flex items-center gap-2 w-full md:w-auto flex-wrap m-chips">
               <Button
                 variant="outline"
                 size="sm"
