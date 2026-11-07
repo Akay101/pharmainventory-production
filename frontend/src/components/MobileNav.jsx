@@ -32,7 +32,10 @@ const TABS = [
 ];
 const TAB_PATHS = TABS.filter((t) => t.path).map((t) => t.path);
 
-// While typing, the on-screen keyboard leaves little room: hide the tab bar
+// While typing, the on-screen keyboard leaves little room: hide the tab bar.
+// Only while a field has focus AND the screen has actually shrunk, so the bar
+// always comes back once the keyboard goes, even if the field keeps focus or
+// is removed from the page without a blur.
 function useKeyboardOpen() {
   const [open, setOpen] = useState(false);
   useEffect(() => {
@@ -41,14 +44,30 @@ function useKeyboardOpen() {
       (el.tagName === "TEXTAREA" ||
         el.isContentEditable ||
         (el.tagName === "INPUT" && !["checkbox", "radio", "button", "submit", "file", "range", "color"].includes(el.type)));
-    const onIn = (e) => isField(e.target) && setOpen(true);
+    const vv = window.visualViewport;
+    let full = window.innerHeight;
+    let lastWidth = window.innerWidth;
+    const check = () => {
+      const h = vv ? vv.height : window.innerHeight;
+      // Rotation: start over with the new full height
+      if (window.innerWidth !== lastWidth) {
+        lastWidth = window.innerWidth;
+        full = h;
+      }
+      full = Math.max(full, h);
+      setOpen(isField(document.activeElement) && h < full * 0.8);
+    };
     // focus can move straight from one field to the next; check after it settles
-    const onOut = () => setTimeout(() => setOpen(isField(document.activeElement)), 60);
-    window.addEventListener("focusin", onIn);
-    window.addEventListener("focusout", onOut);
+    const later = () => setTimeout(check, 80);
+    window.addEventListener("focusin", later);
+    window.addEventListener("focusout", later);
+    vv?.addEventListener("resize", check);
+    window.addEventListener("resize", check);
     return () => {
-      window.removeEventListener("focusin", onIn);
-      window.removeEventListener("focusout", onOut);
+      window.removeEventListener("focusin", later);
+      window.removeEventListener("focusout", later);
+      vv?.removeEventListener("resize", check);
+      window.removeEventListener("resize", check);
     };
   }, []);
   return open;

@@ -53,6 +53,7 @@ import { dictationSupported, useDictation } from "../components/assistant/useDic
 import { onSpeakingChange, primeVoice, speakReply, stopVoice } from "../components/assistant/voicePlayer";
 import { AI_LOGO_SRC, AiAmbient } from "../components/scan/ScanUI";
 import { compressForScan } from "../components/scan/scanClient";
+import { isPhone } from "./utils";
 
 const MAX_PHOTOS = 4;
 
@@ -656,7 +657,7 @@ export default function AssistantPage() {
   const firstName = (user?.name || "").split(" ")[0];
 
   const sidebar = (
-    <aside className="flex h-full w-[280px] flex-col border-r border-border bg-card/70 backdrop-blur-xl">
+    <aside className="flex h-full w-[280px] max-w-[85vw] flex-col border-r border-border bg-card md:bg-card/70 backdrop-blur-xl max-md:pt-[env(safe-area-inset-top)] max-md:pb-[env(safe-area-inset-bottom)] max-md:shadow-2xl">
       <div className="flex items-center gap-2.5 px-4 pb-3 pt-4">
         <img src={AI_LOGO_SRC} alt="" className="h-9 w-9 rounded-full ring-1 ring-indigo-500/20" />
         <div className="min-w-0 flex-1">
@@ -959,7 +960,7 @@ export default function AssistantPage() {
                   e.currentTarget.style.height = "auto";
                   e.currentTarget.style.height = `${Math.min(e.currentTarget.scrollHeight, 160)}px`;
                 }}
-                placeholder={dictation.status === "starting" ? "Opening the mic…" : micBusy ? "Listening… speak now, tap the mic to stop" : photos.length ? "Say what to do with the photo… e.g. “iski purchase chadha do”" : "Ask anything… e.g. “Last 3 din ki purchase dikhao”"}
+                placeholder={dictation.status === "starting" ? "Opening the mic…" : micBusy ? "Listening… speak now, tap the mic to stop" : photos.length ? (isPhone() ? "Say what to do with the photo…" : "Say what to do with the photo… e.g. “iski purchase chadha do”") : isPhone() ? "Ask anything…" : "Ask anything… e.g. “Last 3 din ki purchase dikhao”"}
                 className="max-h-40 min-h-[40px] flex-1 resize-none bg-transparent px-2 py-2 text-[15px] outline-none placeholder:text-muted-foreground"
               />
               {micSupported && (
