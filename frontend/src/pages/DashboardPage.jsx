@@ -135,7 +135,7 @@ function CardHeader({ icon: Icon, tone = "orange", title, subtitle, action }) {
   };
   return (
     <div className="flex flex-wrap items-start justify-between gap-3 px-5 pt-5">
-      <div className="flex items-center gap-3 min-w-0 flex-1">
+      <div className="flex items-center gap-3 min-w-[min(100%,12rem)] flex-1">
         <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${tones[tone]}`}>
           <Icon className="w-[18px] h-[18px]" />
         </div>
@@ -589,7 +589,7 @@ export default function DashboardPage() {
             title="Sales performance"
             subtitle={`${inr(rangeTotals.revenue)} revenue · ${inr(rangeTotals.profit)} profit · ${rangeTotals.bills} bills in ${range} days`}
             action={
-              <div className="flex flex-wrap justify-end gap-2">
+              <div className="flex flex-wrap justify-end gap-2 max-md:w-full max-md:justify-between">
                 <SegmentedToggle
                   value={metric}
                   onChange={setMetric}

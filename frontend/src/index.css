@@ -1988,6 +1988,14 @@ input:-webkit-autofill:active {
   [data-sonner-toaster] [data-sonner-toast] {
     border-radius: 1rem !important;
   }
+
+  /* Dropdowns and floating panels: solid. Phones often drop the backdrop blur
+     (inside animated or scrolling parents), leaving the page showing through */
+  :is(.absolute, .fixed, [style*="position: fixed"], [style*="position: absolute"]):is([class*="bg-card/"], [class*="bg-popover/"]),
+  [data-radix-popper-content-wrapper] > [class*="bg-card/"],
+  [data-radix-popper-content-wrapper] > [class*="bg-popover/"] {
+    background-color: hsl(var(--card)) !important;
+  }
 }
 
 @media (max-width: 767.98px) and (prefers-reduced-motion: reduce) {
