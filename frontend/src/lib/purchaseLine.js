@@ -30,3 +30,10 @@ export const schemeLabel = (item) => {
   if (!s.value) return "";
   return s.type === "amount" ? `₹${s.value.toFixed(2)} off` : `${s.value}% off`;
 };
+
+// Packs can be part of a pack: a supplier bills 1.75 and gives 0.25 free, so two
+// strips arrive and 1.75 are paid for. Stock stays in whole units.
+export const packCount = (v) => Math.max(0, Math.round(num(parseFloat(v)) * 1000) / 1000);
+export const stockUnits = (packs, free, perPack) =>
+  Math.round((packCount(packs) + packCount(free)) * (num(perPack) || 1) * 1000) / 1000;
+export const unitsAreWhole = (units) => Number.isInteger(units);

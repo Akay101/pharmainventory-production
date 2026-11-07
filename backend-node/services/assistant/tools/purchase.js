@@ -2,7 +2,7 @@
 const { v4: uuidv4 } = require("uuid");
 const { parseExpiry } = require("../../ai/extract");
 const { parseMargin, marginPrice } = require("../../../utils/margin");
-const { lineNet, schemeDiscountOf } = require("../../../utils/purchaseLine");
+const { lineNet, schemeDiscountOf, billedAndFree, stockUnits, unitsAreWhole } = require("../../../utils/purchaseLine");
 const S = require("./shared");
 const L = require("./lookup");
 const { latinNames, hasDevanagari } = require("./names");
@@ -209,8 +209,8 @@ const tools = [
               confirm_new_item: { type: "boolean", description: "true only after the user agreed to add this medicine as a NEW catalog item (found in neither their catalog nor the medicine database)" },
               batch_no: { type: "string" },
               expiry: { type: "string", description: "As said: '08/27', 'Aug 2027' or YYYY-MM-DD" },
-              packs: { type: "number", description: "Packs/strips bought (excluding free)" },
-              free_packs: { type: "number", description: "Free packs in the supplier's scheme (e.g. 10+2 -> packs 10, free_packs 2)" },
+              packs: { type: "number", description: "Packs/strips bought (excluding free); can be part of a pack, keep decimals (1.75)" },
+              free_packs: { type: "number", description: "Free packs in the supplier's scheme (10+2 -> packs 10, free_packs 2; 1.75+0.25 -> packs 1.75, free_packs 0.25)" },
               scheme_discount: { type: "number", description: "Scheme discount from the supplier: a % of the line, or a ₹ amount off it (set scheme_discount_type)" },
               scheme_discount_type: { type: "string", enum: ["percent", "amount"], description: "percent (default) or amount (₹ off the line)" },
               units_per_pack: { type: "number" },
@@ -355,8 +355,8 @@ const tools = [
           pack_type: product?.pack_type || last?.pack_type || "Strip",
           batch_no: (it.batch_no || "").toUpperCase(),
           expiry_date: parseExpiry(it.expiry) || (S.isYmd(it.expiry) ? it.expiry : ""),
-          packs: Number(it.packs) || 0,
-          free_packs: Number(it.free_packs) || 0,
+          packs: billedAndFree(it.packs, it.free_packs).packs,
+          free_packs: billedAndFree(it.packs, it.free_packs).free,
           units_per_pack: units,
           rate_per_pack: Number(it.rate_per_pack) || 0,
           mrp_per_pack: Number(it.mrp_per_pack) || 0,
@@ -402,6 +402,9 @@ const tools = [
         }
         if (hasDevanagari(i.product_name)) draft.missing.push(`${n}: name must be in English`);
         if (!i.packs) draft.missing.push(`${n}: quantity`);
+        if (i.packs && !unitsAreWhole(stockUnits(i.packs, i.free_packs, i.units_per_pack))) {
+          draft.missing.push(`${n}: ${i.packs}${i.free_packs ? `+${i.free_packs}` : ""} comes to ${stockUnits(i.packs, i.free_packs, i.units_per_pack)} units, quantity and free packs must add up to whole units`);
+        }
         if (!i.rate_per_pack) draft.missing.push(`${n}: rate`);
         if (!i.mrp_per_pack) draft.missing.push(`${n}: MRP`);
         if (!i.batch_no) draft.missing.push(`${n}: batch`);

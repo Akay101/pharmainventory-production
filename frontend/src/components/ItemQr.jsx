@@ -49,7 +49,7 @@ export function ItemLabelsDialog({ purchase, only = null, onClose }) {
     items.map((it, i) => ({
       line: i,
       on: only === null || only === i,
-      copies: String(Math.max(1, (Number(it.pack_quantity ?? it.quantity) || 1) + (Number(it.scheme) || 0))),
+      copies: String(Math.max(1, Math.ceil((Number(it.pack_quantity ?? it.quantity) || 1) + (Number(it.scheme) || 0)))),
     }))
   );
   const [layout, setLayout] = useState(() => {

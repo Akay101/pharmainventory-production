@@ -12,7 +12,7 @@ const { auth } = require("../middleware/auth");
 const { normalizeName, normalizeExpiryDate } = require("../utils/helpers");
 const { parseMargin } = require("../utils/margin");
 const { h1Lines } = require("../utils/scheduleH1");
-const { lineNet, schemeFields } = require("../utils/purchaseLine");
+const { lineNet, schemeFields, packCount, stockUnits, unitsAreWhole } = require("../utils/purchaseLine");
 const { generatePurchasePDF } = require("../services/pdf");
 const { FORMATS, LEGACY_FORMAT } = require("../services/pdfFormats");
 const { uploadToR2 } = require("../services/r2");
@@ -470,6 +470,21 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
 
 // Lines naming a product the catalog doesn't have, without the details to
 // create a proper entry. `known`: names already on the purchase being edited.
+// Part packs are fine as long as they come to whole units: 1.75 + 0.25 strips of
+// 10 is 20 units, 1.75 alone is 17.5. The 400 body for the first bad line.
+function partUnitsError(items = []) {
+  for (const item of items) {
+    const units = stockUnits(item.pack_quantity || item.quantity || 1, item.scheme, item.units_per_pack || item.units || 1);
+    if (!unitsAreWhole(units)) {
+      return {
+        code: "UNITS_NOT_WHOLE",
+        detail: `${item.product_name || "A line"} comes to ${units} units. Quantity and free packs must add up to whole units.`,
+      };
+    }
+  }
+  return null;
+}
+
 async function uncatalogedLines(db, pharmacyId, items, known = new Set()) {
   const names = [];
   for (const item of items) {
@@ -716,6 +731,12 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
       session.endSession();
       return res.status(400).json(catalogRequired(notInCatalog));
     }
+    const partUnits = partUnitsError(items);
+    if (partUnits) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(400).json(partUnits);
+    }
 
     for (const item of items) {
       // Find or create product in products collection (unique product directory)
@@ -802,7 +823,7 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
         queueGlobalCheck("medicine", req.user.pharmacy_id, { ...item, id: resolvedProductId, name: normalizedName });
       }
 
-      let packQty = item.pack_quantity || item.quantity || 1;
+      let packQty = packCount(item.pack_quantity || item.quantity) || 1;
       let unitsPerPack = item.units_per_pack || item.units || 1;
       let packPrice = item.pack_price || item.rate_pack || 0;
       let mrpPerUnit = item.mrp_per_unit || item.mrp_unit || 0;
@@ -810,16 +831,16 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
         mrpPerUnit = Math.round(Number(mrpPerUnit) * 100) / 100;
       }
       const discount = parseFloat(item.discount) || 0;
-      const scheme = parseFloat(item.scheme) || 0;
+      const scheme = packCount(item.scheme);
 
       if (item.quantity && !item.pack_quantity && item.purchase_price) {
-        packQty = item.quantity;
+        packQty = packCount(item.quantity);
         unitsPerPack = 1;
         packPrice = item.purchase_price;
       }
 
       const totalPacks = packQty + scheme;
-      const totalUnits = totalPacks * unitsPerPack;
+      const totalUnits = stockUnits(packQty, scheme, unitsPerPack);
 
       // Scheme discount (% or ₹) after the trade discount, before GST
       const lineValue = lineNet(packQty, packPrice, discount, item);
@@ -1230,6 +1251,13 @@ router.put(
       const pharmacyId = req.user.pharmacy_id;
       const updateInventory = req.query.update_inventory !== "false";
 
+      const partUnits = partUnitsError(items);
+      if (partUnits) {
+        await session.abortTransaction();
+        session.endSession();
+        return res.status(400).json(partUnits);
+      }
+
       const notInCatalog = await uncatalogedLines(
         db,
         pharmacyId,
@@ -1327,7 +1355,7 @@ router.put(
         }
 
         const packQty =
-          parseInt(item.pack_quantity) || parseInt(item.quantity) || 1;
+          packCount(item.pack_quantity || item.quantity) || 1;
         const unitsPerPack =
           parseInt(item.units_per_pack) || parseInt(item.units) || 1;
         const packPrice =
@@ -1338,10 +1366,10 @@ router.put(
               100
           ) / 100;
         const discount = parseFloat(item.discount) || 0;
-        const scheme = parseFloat(item.scheme) || 0;
+        const scheme = packCount(item.scheme);
 
         const totalPacks = packQty + scheme;
-        const totalUnits = totalPacks * unitsPerPack;
+        const totalUnits = stockUnits(packQty, scheme, unitsPerPack);
 
         // No margin / scheme discount field on the line: keep what the stored line had
         const oldLine = (purchase.items || []).find(
@@ -2278,6 +2306,12 @@ router.post(
         session.endSession();
         return res.status(400).json(catalogRequired(notInCatalog));
       }
+      const partUnits = partUnitsError(items);
+      if (partUnits) {
+        await session.abortTransaction();
+        session.endSession();
+        return res.status(400).json(partUnits);
+      }
 
       const purchaseId = uuidv4();
       let totalAmount = 0;
@@ -2290,8 +2324,8 @@ router.post(
 
       for (const item of items) {
         const packQty =
-          parseInt(item.pack_quantity) || parseInt(item.quantity) || 1;
-        const scheme = parseFloat(item.scheme) || 0;
+          packCount(item.pack_quantity || item.quantity) || 1;
+        const scheme = packCount(item.scheme);
         // The CSV preview rows call it `units`
         const unitsPerPack = parseInt(item.units_per_pack) || parseInt(item.units) || 1;
         const marginPercent =
@@ -2305,7 +2339,7 @@ router.post(
         const discount = parseFloat(item.discount) || 0;
 
         const totalPacks = packQty + scheme;
-        const totalUnits = totalPacks * unitsPerPack;
+        const totalUnits = stockUnits(packQty, scheme, unitsPerPack);
         const cgst = parseFloat(item.cgst) || 0;
         const sgst = parseFloat(item.sgst) || 0;
         const lineValue = lineNet(packQty, packPrice, discount, item);
