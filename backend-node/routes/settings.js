@@ -113,6 +113,15 @@ const DEFAULT_REGISTRY = [
     description: "Automatically autofill composition, manufacturer, and pack details during purchase entry without manual confirmation.",
   },
   {
+    key: "purchase_new_product_check",
+    label: "New Products in Purchases",
+    type: "select",
+    options: ["warning", "error"],
+    default: "warning",
+    category: "Preferences",
+    description: "A product not picked from the suggestions. Warning: save it as a new catalog product with the details entered, after showing the closest matches. Error: block the save until its full catalog details are filled.",
+  },
+  {
     key: "expiry_warning_days",
     label: "Near Expiry Alert Threshold (Days)",
     type: "number",
