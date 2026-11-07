@@ -103,6 +103,7 @@ import { rowCatalogGaps } from "../lib/catalogDetails";
 import ScheduleH1Badge, { H1_ROW_CLASS } from "../components/ScheduleH1Badge";
 import SchemeDiscountField from "../components/purchases/SchemeDiscountField";
 import MatchChooser from "../components/purchases/MatchChooser";
+import NewProductsDialog from "../components/purchases/NewProductsDialog";
 import PdfFormatPicker, { usePdfFormat } from "../components/PdfFormatPicker";
 import { lineNet, packCount, rateFromTotal, schemeDiscountOf, stockUnits, unitsAreWhole } from "../lib/purchaseLine";
 import { useShortcuts, useShortcutLayer } from "../components/shortcuts/Shortcuts";
@@ -1066,6 +1067,13 @@ export default function PurchasesPage() {
 
   const [catalogModalInitialValues, setCatalogModalInitialValues] = useState(null);
 
+  // "warning" (default): products not picked from the suggestions are saved as
+  // new catalog entries after a warning. "error": their full details come first.
+  const newProductsNeedDetails = settings?.purchase_new_product_check === "error";
+  const [newProductsPrompt, setNewProductsPrompt] = useState(null);
+  const allowNewProductsRef = useRef(false);
+  const [resaveTick, setResaveTick] = useState(0);
+
   // The catalog form starts from what's already typed on the row
   const handleOpenCreateCatalog = (rowId, name = "") => {
     const row = purchaseItems.find((i) => i.id === rowId) || {};
@@ -1184,7 +1192,7 @@ export default function PurchasesPage() {
         await mapRowToProduct({ ...row, _match: { suggestions } }, sure, { quiet: true });
         outcome.mapped.push(row);
       } else {
-        (suggestions.length ? outcome.choose : outcome.none).push(row);
+        (suggestions.length ? outcome.choose : outcome.none).push({ ...row, _match: { suggestions }, _matchChecked: true });
         setPurchaseItems((prev) =>
           prev.map((x) => (x.id === row.id ? { ...x, _match: { suggestions }, _matchChecked: true } : x))
         );
@@ -3672,6 +3680,8 @@ export default function PurchasesPage() {
 
   const handleSubmitPurchase = async () => {
     setShowSuggestions(false);
+    const allowNewProducts = allowNewProductsRef.current;
+    allowNewProductsRef.current = false;
     if (!selectedSupplier) {
       toast.error("Please select a supplier", { description: "Pick one with ↑/↓ and Enter, then save again" });
       setSupplierPickerSignal((n) => n + 1);
@@ -3719,7 +3729,26 @@ export default function PurchasesPage() {
     }
 
     const uncatalogedItems = validItems.filter((item) => !isCatalogLinked(item));
-    if (uncatalogedItems.length > 0) {
+    if (uncatalogedItems.length > 0 && !newProductsNeedDetails && !allowNewProducts) {
+      // Warn, with the closest products we hold, then save them as new
+      let rows = uncatalogedItems;
+      const unchecked = rows.filter((i) => !i._matchChecked);
+      if (unchecked.length) {
+        const { mapped, choose, none } = await matchRows(unchecked);
+        const mappedIds = new Set(mapped.map((r) => r.id));
+        const looked = new Map([...choose, ...none].map((r) => [r.id, r]));
+        rows = rows.filter((r) => !mappedIds.has(r.id)).map((r) => looked.get(r.id) || r);
+        if (!rows.length) {
+          toast.info("Matched to your catalog. Check the rows and save again.");
+          return;
+        }
+      }
+      setNewProductsPrompt(
+        rows.map((r) => ({ id: r.id, product_name: r.product_name, suggestions: (r._match?.suggestions || []).slice(0, 3) }))
+      );
+      return;
+    }
+    if (uncatalogedItems.length > 0 && newProductsNeedDetails) {
       // Not looked up yet (typed by hand): find the closest products first
       const unchecked = uncatalogedItems.filter((i) => !i._matchChecked);
       if (unchecked.length) {
@@ -3788,9 +3817,9 @@ export default function PurchasesPage() {
         }
       }
 
-      // A new purchase needs proper details on every product (old catalog
-      // entries may have none, and autofill may not have found them)
-      const incomplete = editingPurchaseId ? null : itemsToProcess.find((i) => rowCatalogGaps(i).length);
+      // With the "error" setting a new purchase needs proper details on every
+      // product (old catalog entries may have none, and autofill may not have found them)
+      const incomplete = editingPurchaseId || !newProductsNeedDetails ? null : itemsToProcess.find((i) => rowCatalogGaps(i).length);
       if (incomplete) {
         toast.error(`"${incomplete.product_name}" needs its ${rowCatalogGaps(incomplete).join(" and ")}. Complete it, then save again.`);
         handleOpenCreateCatalog(incomplete.id, incomplete.product_name);
@@ -3924,6 +3953,25 @@ export default function PurchasesPage() {
 
     setPurchaseItems(mappedItems);
   };
+
+  // From the new-products warning: use a match, or save them all as new
+  const pickNewProductMatch = async (r, s) => {
+    const row = purchaseItems.find((i) => i.id === r.id);
+    if (!row) return;
+    await mapRowToProduct(row, s);
+    const left = (newProductsPrompt || []).filter((x) => x.id !== r.id);
+    setNewProductsPrompt(left.length ? left : null);
+    // Nothing new left: save from the next render, which has the mapped row
+    if (!left.length) setResaveTick((n) => n + 1);
+  };
+  const saveNewProducts = () => {
+    setNewProductsPrompt(null);
+    allowNewProductsRef.current = true;
+    handleSubmitPurchase();
+  };
+  useEffect(() => {
+    if (resaveTick) handleSubmitPurchase();
+  }, [resaveTick]);
 
   const handleSaveEditPurchase = async () => {
     if (!editingPurchase) return;
@@ -5156,7 +5204,11 @@ export default function PurchasesPage() {
                                 type="button"
                                 onClick={() => resolveUncatalogedRow(item)}
                                 className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/15 text-amber-600 dark:text-amber-400 hover:bg-amber-500/25 border border-amber-500/30 shrink-0 whitespace-nowrap transition-colors flex items-center gap-1 cursor-pointer"
-                                title="Not in your Product Catalog. Add its details to save this purchase."
+                                title={
+                                  newProductsNeedDetails
+                                    ? "Not in your Product Catalog. Add its details to save this purchase."
+                                    : "Not in your Product Catalog. Saving adds it as a new product; add its details here if you like."
+                                }
                               >
                                 <PackagePlus className="w-3 h-3 text-amber-500" />
                                 <span>+ Catalog</span>
@@ -5891,7 +5943,9 @@ export default function PurchasesPage() {
                                       "{searchMedicine}" not in Catalog
                                     </h4>
                                     <p className="text-[11px] font-medium text-muted-foreground mt-1 max-w-[340px] leading-relaxed">
-                                      To purchase this medicine, please create its master product catalog first.
+                                      {newProductsNeedDetails
+                                        ? "To purchase this medicine, please create its master product catalog first."
+                                        : "Saving the purchase adds it to your inventory as a new product. You can add its details now."}
                                     </p>
                                     <button
                                       type="button"
@@ -9277,6 +9331,13 @@ export default function PurchasesPage() {
           </div>
         </DialogContent>
       </Dialog>
+
+      <NewProductsDialog
+        rows={newProductsPrompt}
+        onPick={pickNewProductMatch}
+        onSave={saveNewProducts}
+        onCancel={() => setNewProductsPrompt(null)}
+      />
 
       {/* Product Catalog Modal */}
       <ProductCatalogModal
