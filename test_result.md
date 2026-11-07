@@ -658,3 +658,7 @@
 ##     message: "Purchase matching finds medicines by salt as well as brand: services/ai/inventoryMatch.js searches on brand or salt plus strength without mg/form words, adds same-salt suggestions (never auto-mapped), drops other dosage forms, ranks the invoice's manufacturer first and searches the catalog's salt too. MatchChooser shows 'Same salt'. A failed lookup now shows a message and leaves rows unchecked so Save retries. needs_retesting: true."
 ##   - agent: "main"
 ##     message: "Bill and purchase PDFs have paper sizes: services/pdfFormats.js lays out A4, A5 and 80mm/58mm receipts; the original layout stays as a5_landscape, the default. POST /bills/:id/pdf and /purchases/:id/pdf take format. components/PdfFormatPicker.jsx is in the PDF dialogs and remembers the choice. needs_retesting: true."
+##   - agent: "main"
+##     message: "Purchases take part packs (1.75 billed + 0.25 free, as distributors print them): quantity and free packs keep decimals on the form, edit, scanner, CSV ('1.75+0.25' in one cell), AI scan, POST/PUT/bulk-import. Stock stays whole: a line that doesn't come to whole units is refused (UNITS_NOT_WHOLE). needs_retesting: true."
+##   - agent: "main"
+##     message: "Purchase form: Free has its own column beside Sch. Disc, and rows with free or part packs show the working (Pay for 0.75 + 0.25 free = 1 Strip = 15 units). Bill scan and chatbot read '1.75+0.25' as billed + free; the chatbot draft flags lines that don't come to whole units. needs_retesting: true."

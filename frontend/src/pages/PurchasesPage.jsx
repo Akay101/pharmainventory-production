@@ -104,7 +104,7 @@ import ScheduleH1Badge, { H1_ROW_CLASS } from "../components/ScheduleH1Badge";
 import SchemeDiscountField from "../components/purchases/SchemeDiscountField";
 import MatchChooser from "../components/purchases/MatchChooser";
 import PdfFormatPicker, { usePdfFormat } from "../components/PdfFormatPicker";
-import { lineNet, rateFromTotal, schemeDiscountOf } from "../lib/purchaseLine";
+import { lineNet, packCount, rateFromTotal, schemeDiscountOf, stockUnits, unitsAreWhole } from "../lib/purchaseLine";
 import { useShortcuts, useShortcutLayer } from "../components/shortcuts/Shortcuts";
 import { ItemLabelsDialog } from "../components/ItemQr";
 import ProductCatalogModal from "../components/ProductCatalogModal";
@@ -1316,7 +1316,7 @@ export default function PurchasesPage() {
       prev.map((row) => {
         if (row.id === targetId) {
           const qty =
-            parseInt(row.quantity) || parseInt(row.pack_quantity) || 1;
+            packCount(row.quantity) || packCount(row.pack_quantity) || 1;
           const ratePack =
             parseFloat(batch.pack_price || batch.purchase_price) ||
             parseFloat(row.rate_pack) ||
@@ -1380,7 +1380,7 @@ export default function PurchasesPage() {
       prev.map((row) => {
         if (row.id === targetId) {
           const qty =
-            parseInt(row.quantity) || parseInt(row.pack_quantity) || 1;
+            packCount(row.quantity) || packCount(row.pack_quantity) || 1;
           const ratePack =
             parseFloat(record.pack_price) || parseFloat(row.rate_pack) || 0;
           return {
@@ -1468,7 +1468,7 @@ export default function PurchasesPage() {
             cgst: halfTax,
             sgst: halfTax,
           };
-          const qty = parseInt(updated.quantity || updated.pack_quantity) || 1;
+          const qty = packCount(updated.quantity || updated.pack_quantity) || 1;
           const ratePack =
             parseFloat(updated.rate_pack || updated.pack_price) || 0;
           const discountVal = parseFloat(updated.discount) || 0;
@@ -1489,7 +1489,7 @@ export default function PurchasesPage() {
         const cgstVal = parseFloat(firstRowCgst) || 0;
         return prevItems.map((item) => {
           const updated = { ...item, cgst: firstRowCgst, sgst: firstRowCgst };
-          const qty = parseInt(updated.quantity || updated.pack_quantity) || 1;
+          const qty = packCount(updated.quantity || updated.pack_quantity) || 1;
           const ratePack =
             parseFloat(updated.rate_pack || updated.pack_price) || 0;
           const base = qty * ratePack;
@@ -1512,7 +1512,7 @@ export default function PurchasesPage() {
         const sgstVal = parseFloat(firstRowSgst) || 0;
         return prevItems.map((item) => {
           const updated = { ...item, cgst: firstRowSgst, sgst: firstRowSgst };
-          const qty = parseInt(updated.quantity || updated.pack_quantity) || 1;
+          const qty = packCount(updated.quantity || updated.pack_quantity) || 1;
           const ratePack =
             parseFloat(updated.rate_pack || updated.pack_price) || 0;
           const base = qty * ratePack;
@@ -1809,7 +1809,7 @@ export default function PurchasesPage() {
       prev.map((row) => {
         if (row.id === itemId) {
           const qty =
-            parseInt(row.quantity) || parseInt(row.pack_quantity) || 1;
+            packCount(row.quantity) || packCount(row.pack_quantity) || 1;
           const finalRate =
             ratePack > 0 ? ratePack : parseFloat(row.rate_pack) || 0;
           return {
@@ -2742,7 +2742,7 @@ export default function PurchasesPage() {
       const updated = { ...prev, [field]: value };
 
       // Bidirectional calculation: Rate per Pack ↔ Total Amount
-      const qty = parseInt(updated.quantity) || 1;
+      const qty = packCount(updated.quantity) || 1;
 
       if (field === "rate_pack" && value !== "") {
         // User entered rate_pack, calculate total_amount
@@ -2807,7 +2807,7 @@ export default function PurchasesPage() {
       return;
     }
 
-    const qty = parseInt(newItemRow.quantity) || 1;
+    const qty = packCount(newItemRow.quantity) || 1;
     const units = parseInt(newItemRow.units) || 1;
     const ratePack = parseFloat(newItemRow.rate_pack) || 0;
     const mrpPack = parseFloat(newItemRow.mrp_pack) || 0;
@@ -2917,7 +2917,7 @@ export default function PurchasesPage() {
         if (i.id === itemId) {
           const { _editing, ...rest } = i;
           const qty =
-            parseInt(rest.quantity) || parseInt(rest.pack_quantity) || 1;
+            packCount(rest.quantity) || packCount(rest.pack_quantity) || 1;
           const units =
             parseInt(rest.units) || parseInt(rest.units_per_pack) || 1;
           const ratePack =
@@ -3065,7 +3065,7 @@ export default function PurchasesPage() {
         }
 
         const qty =
-          parseInt(
+          packCount(
             field === "quantity" && isTarget
               ? value
               : updated.quantity || updated.pack_quantity
@@ -3091,10 +3091,7 @@ export default function PurchasesPage() {
           const discountVal = parseFloat(updated.discount) || 0;
           const base = lineNet(qty, ratePack, discountVal, updated).net;
           // Recalculate total_amount to include GST
-          updated.total_amount = (
-            base *
-            (1 + (cgstVal + sgstVal) / 100)
-          ).toFixed(2);
+          updated.total_amount = (base * (1 + (cgstVal + sgstVal) / 100)).toFixed(2);
         } else if (field === "total_amount" && isTarget) {
           const newTotal = parseFloat(value) || 0;
           const discountVal = parseFloat(updated.discount) || 0;
@@ -3368,15 +3365,12 @@ export default function PurchasesPage() {
               ? String((parseFloat(cgstStr) || 0) + (parseFloat(sgstStr) || 0))
               : "";
 
-          const qtyVal = parseInt(item.quantity || item.pack_quantity) || 1;
+          const qtyVal = packCount(item.quantity || item.pack_quantity) || 1;
           const rateVal = parseFloat(finalRatePack) || 0;
           const cgstVal = parseFloat(cgstStr) || 0;
           const sgstVal = parseFloat(sgstStr) || 0;
-          const baseAmt = qtyVal * rateVal;
-          const calculatedTotal = (
-            baseAmt *
-            (1 + (cgstVal + sgstVal) / 100)
-          ).toFixed(2);
+          const baseAmt = lineNet(qtyVal, rateVal, item.discount, item).net;
+          const calculatedTotal = (baseAmt * (1 + (cgstVal + sgstVal) / 100)).toFixed(2);
 
           return {
             ...item,
@@ -3633,7 +3627,7 @@ export default function PurchasesPage() {
       manufacturer: item.manufacturer || null,
       salt_composition: item.salt_composition || null,
       pack_type: item.pack_type || "Strip",
-      pack_quantity: parseInt(item.quantity) || 1,
+      pack_quantity: packCount(item.quantity) || 1,
       units_per_pack: parseInt(item.units) || 1,
       pack_price: parseFloat(item.rate_pack) || 0,
       mrp_per_unit:
@@ -3649,7 +3643,7 @@ export default function PurchasesPage() {
       cgst: parseFloat(item.cgst) || 0,
       sgst: parseFloat(item.sgst) || 0,
       discount: parseFloat(item.discount) || 0,
-      scheme: parseInt(item.scheme) || 0,
+      scheme: packCount(item.scheme) || 0,
       ...schemeBody(item),
       shortage_threshold:
         item.shortage_threshold !== "" &&
@@ -3711,6 +3705,16 @@ export default function PurchasesPage() {
 
     if (validItems.length === 0) {
       toast.error("Please add at least one item");
+      return;
+    }
+
+    const partUnits = validItems.find(
+      (i) => !unitsAreWhole(stockUnits(i.quantity || i.pack_quantity || 1, i.scheme, parseInt(i.units || i.units_per_pack) || 1))
+    );
+    if (partUnits) {
+      const u = stockUnits(partUnits.quantity || partUnits.pack_quantity || 1, partUnits.scheme, parseInt(partUnits.units || partUnits.units_per_pack) || 1);
+      toast.error(`${partUnits.product_name} comes to ${u} units. Quantity and free packs must add up to whole units.`);
+      document.getElementById(`qty-${partUnits.id}`)?.focus();
       return;
     }
 
@@ -3938,7 +3942,7 @@ export default function PurchasesPage() {
             product_name: item.product_name,
             batch_no: item.batch_no,
             expiry_date: item.expiry_date ? expiryToIso(item.expiry_date) || item.expiry_date : null,
-            pack_quantity: parseInt(item.pack_quantity) || 1,
+            pack_quantity: packCount(item.pack_quantity) || 1,
             units_per_pack: parseInt(item.units_per_pack) || 1,
             pack_price: parseFloat(item.pack_price) || 0,
             mrp_per_unit: parseFloat(item.mrp_per_unit) || 0,
@@ -3946,7 +3950,7 @@ export default function PurchasesPage() {
             cgst: parseFloat(item.cgst) || 0,
             sgst: parseFloat(item.sgst) || 0,
             discount: parseFloat(item.discount) || 0,
-            scheme: parseInt(item.scheme) || 0,
+            scheme: packCount(item.scheme) || 0,
             shortage_threshold:
               item.shortage_threshold !== "" &&
               item.shortage_threshold !== undefined &&
@@ -4095,7 +4099,9 @@ export default function PurchasesPage() {
         return parseFloat(cleaned) || 0;
       };
 
-      const packQty = parseNum(rawQty) || 1;
+      // A cell can hold billed + free: "1.75+0.25"
+      const [billedQty, inlineFree] = String(rawQty).split("+");
+      const packQty = parseNum(billedQty) || 1;
       const unitsPerPack = parseNum(rawUnits) || 1;
       const ratePack = parseNum(rawRatePack) || 0;
       const mrpPack = parseNum(rawMrpPack) || 0;
@@ -4109,7 +4115,7 @@ export default function PurchasesPage() {
       }
 
       const discountVal = parseNum(rawDiscount) || 0;
-      const schemeVal = parseNum(rawScheme) || 0;
+      const schemeVal = parseNum(rawScheme) || parseNum(inlineFree) || 0;
       // GST-inclusive line value, net of discount and scheme discount
       const totalAmount =
         lineNet(packQty, ratePack, discountVal, { scheme_discount: Math.min(100, parseNum(rawSchemeDisc)) }).net *
@@ -4391,15 +4397,15 @@ export default function PurchasesPage() {
 
   // Calculate total units
   const totalUnits = purchaseItems.reduce((sum, item) => {
-    const qty = parseInt(item.quantity) || parseInt(item.pack_quantity) || 0;
+    const qty = packCount(item.quantity) || packCount(item.pack_quantity) || 0;
     const units = parseInt(item.units) || parseInt(item.units_per_pack) || 1;
-    return sum + qty * units;
+    return sum + stockUnits(qty, item.scheme, units);
   }, 0);
 
   // Calculate total packs
   const totalPacks = purchaseItems.reduce((sum, item) => {
-    const qty = parseInt(item.quantity) || parseInt(item.pack_quantity) || 0;
-    return sum + qty;
+    const qty = packCount(item.quantity) || packCount(item.pack_quantity) || 0;
+    return sum + qty + packCount(item.scheme);
   }, 0);
 
   useEffect(() => {
@@ -4899,7 +4905,7 @@ export default function PurchasesPage() {
 
           {/* Items Table - Inline Editable with enhanced fields */}
           <div className="border-2 border-border rounded-2xl relative overflow-hidden bg-card shadow-sm">
-            <Table mobileCards className="table-fixed min-w-[1300px] w-full" wrapperClassName="h-[420px]">
+            <Table mobileCards className="table-fixed min-w-[1344px] w-full" wrapperClassName="h-[420px]">
               <TableHeader className="sticky top-0 bg-muted/95 backdrop-blur z-[50] border-b-2 border-border shadow-xs">
                 <TableRow className="hover:bg-transparent">
                   <TableHead data-card="title" className="py-2.5 font-extrabold text-foreground text-left">
@@ -4920,8 +4926,11 @@ export default function PurchasesPage() {
                   <TableHead className="w-[72px] px-1.5 py-2.5 text-center font-extrabold text-foreground">
                     Qty.
                   </TableHead>
-                  <TableHead data-card="full" data-card-label="Scheme (free + discount)" className="w-[176px] px-1.5 py-2.5 text-center font-extrabold text-foreground" title="Supplier scheme: free packs and/or a scheme discount (% of the line or ₹ off it)">
-                    Scheme
+                  <TableHead data-card-label="Free packs" className="w-[84px] px-1.5 py-2.5 text-center font-extrabold text-foreground" title="Free packs from the supplier's scheme: 0.25 in 1.75+0.25">
+                    Free
+                  </TableHead>
+                  <TableHead data-card-label="Scheme discount" className="w-[136px] px-1.5 py-2.5 text-center font-extrabold text-foreground whitespace-nowrap" title="Supplier's scheme discount, as a % of the line or a ₹ amount off it">
+                    Sch. Disc
                   </TableHead>
                   <TableHead className="w-[66px] px-1.5 py-2.5 text-center font-extrabold text-foreground whitespace-nowrap">
                     Disc %
@@ -4963,8 +4972,8 @@ export default function PurchasesPage() {
                 {/* Editable Item Rows */}
                 {purchaseItems.map((item, index) => {
                   const qty =
-                    parseInt(item.quantity) ||
-                    parseInt(item.pack_quantity) ||
+                    packCount(item.quantity) ||
+                    packCount(item.pack_quantity) ||
                     1;
                   const scheme = parseFloat(item.scheme) || 0;
                   const units =
@@ -4977,7 +4986,7 @@ export default function PurchasesPage() {
                     parseFloat(item.mrp_pack) ||
                     parseFloat(item.mrp_per_unit) * units ||
                     0;
-                  const totalUnits = (qty + scheme) * units;
+                  const totalUnits = stockUnits(qty, scheme, units);
                   const mrpUnit = units > 0 ? mrpPack / units : 0;
                   const totalAmount =
                     parseFloat(item.total_amount) || qty * ratePack;
@@ -5903,6 +5912,25 @@ export default function PurchasesPage() {
                             </div>,
                             document.body
                           )}
+                          {(hasScheme || !Number.isInteger(qty)) && (
+                            <div
+                              data-testid={`qty-calc-${index}`}
+                              className={`mt-1.5 flex flex-wrap items-center gap-x-1.5 rounded-md border px-2 py-1 text-[11px] font-bold ${
+                                unitsAreWhole(totalUnits)
+                                  ? "border-emerald-500/50 bg-emerald-500/10 text-foreground"
+                                  : "border-red-500/50 bg-red-500/10 text-red-500"
+                              }`}
+                            >
+                              <span>Pay for {qty}{hasScheme ? ` + ${scheme} free` : ""}</span>
+                              <span>= {packCount(qty + scheme)} {packCount(qty + scheme) > 1 ? `${item.pack_type || "Strip"}s` : item.pack_type || "Strip"}</span>
+                              <span>= <strong>{totalUnits} {totalUnits === 1 ? "unit" : "units"}</strong></span>
+                              {unitsAreWhole(totalUnits) ? (
+                                <span className="font-mono">· ₹{((parseFloat(item.total_amount) || 0) / (totalUnits || 1)).toFixed(2)}/unit</span>
+                              ) : (
+                                <span>· must come to whole units</span>
+                              )}
+                            </div>
+                          )}
                       </TableCell>
 
                       {/* 2. BATCH */}
@@ -6401,6 +6429,8 @@ export default function PurchasesPage() {
                           <Input
                             id={`qty-${item.id}`}
                             type="number"
+                            step="any"
+                            inputMode="decimal"
                             value={item.quantity || item.pack_quantity || ""}
                             onChange={(e) =>
                               handleItemFieldChangeWithCalc(
@@ -6467,7 +6497,13 @@ export default function PurchasesPage() {
                               className="text-[10px] font-bold text-muted-foreground hover:text-foreground font-mono leading-none flex items-center gap-0.5 px-1 py-0.5 rounded hover:bg-muted/80 transition-colors cursor-pointer group"
                               title={`Click to edit pack units (${item.units || 1} units/pack)`}
                             >
-                              <span>{totalUnits}</span>
+                              <span
+                                data-testid={`row-units-${index}`}
+                                className={unitsAreWhole(totalUnits) ? "" : "text-red-600 dark:text-red-400"}
+                                title={unitsAreWhole(totalUnits) ? undefined : "Quantity and free packs must add up to whole units"}
+                              >
+                                {totalUnits}
+                              </span>
                               <span className="text-orange-500">u</span>
                               <Edit2 className="w-2.5 h-2.5 opacity-40 group-hover:opacity-100 text-primary transition-opacity ml-0.5" />
                             </button>
@@ -6475,13 +6511,13 @@ export default function PurchasesPage() {
                         </div>
                       </TableCell>
 
-                      {/* 7. SCHEME: free packs + scheme discount (% or ₹) */}
-                      <TableCell className="w-[176px] p-1.5 align-top">
-                        <div className="flex flex-col gap-1 items-center">
-                          <div className="flex items-center gap-1 w-full">
-                            <Input
+                      {/* 7. FREE packs */}
+                      <TableCell className="w-[84px] p-1.5 align-top">
+                        <Input
                               id={`scheme-${item.id}`}
                               type="number"
+                              step="any"
+                              inputMode="decimal"
                               value={item.scheme !== undefined ? item.scheme : ""}
                               onChange={(e) =>
                                 handleItemFieldChangeWithCalc(
@@ -6500,17 +6536,20 @@ export default function PurchasesPage() {
                               }}
                               placeholder="Free"
                               title="Free packs"
-                              className={`h-8 text-xs text-center w-[46px] shrink-0 px-1 font-semibold rounded-lg border-border bg-background text-foreground placeholder:font-normal ${
-                                hasScheme
-                                  ? "border-emerald-500 bg-emerald-500/10 font-bold text-emerald-500 dark:text-emerald-400"
-                                  : ""
-                              }`}
+                              className={`h-8 text-xs text-center w-full px-1 font-bold rounded-lg border-border bg-background text-foreground ${
+                              hasScheme ? "border-emerald-500 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" : ""
+                            }`}
                               min="0"
                             />
-                            <SchemeDiscountField
+                      </TableCell>
+
+                      {/* 7b. SCHEME DISCOUNT (% or ₹) */}
+                      <TableCell className="w-[136px] p-1.5 align-top">
+                        <div className="flex flex-col gap-1 items-center">
+                          <SchemeDiscountField
                               id={`scheme-disc-${item.id}`}
                               testId={`scheme-disc-${index}`}
-                              className="flex-1"
+                              className="w-full"
                               value={item.scheme_discount}
                               type={schemeType}
                               active={schemeOff > 0}
@@ -6518,12 +6557,9 @@ export default function PurchasesPage() {
                               onType={(t) => handleItemFieldChangeWithCalc(item.id, "scheme_discount_type", t)}
                               onEnter={() => document.getElementById(`discount-${item.id}`)?.focus({ preventScroll: true })}
                             />
-                          </div>
-                          {hasScheme || schemeOff > 0 ? (
+                          {schemeOff > 0 ? (
                             <div className="text-[10px] font-bold text-emerald-500 dark:text-emerald-400 leading-none text-center">
-                              {hasScheme ? `+${scheme} Free` : ""}
-                              {hasScheme && schemeOff > 0 ? " · " : ""}
-                              {schemeOff > 0 ? `-₹${schemeOff.toFixed(2)}` : ""}
+                              -₹{schemeOff.toFixed(2)}
                             </div>
                           ) : null}
                         </div>
@@ -6637,7 +6673,7 @@ export default function PurchasesPage() {
                           <div className="text-[10px] font-mono font-semibold text-muted-foreground leading-none">
                             ₹{(
                               (parseFloat(item.total_amount) || totalAmount) /
-                              ((qty * units) || 1)
+                              (totalUnits || 1)
                             ).toFixed(2)}/u
                           </div>
                         </div>
@@ -6671,7 +6707,7 @@ export default function PurchasesPage() {
                             }}
                             placeholder="Margin"
                             title="Margin over landed cost. Leave blank to bill at MRP"
-                            className={`h-8 text-xs text-center w-full px-1 font-semibold rounded-lg border-border bg-background text-foreground placeholder:font-normal ${
+                            className={`h-8 text-xs text-center w-full !px-1 font-semibold rounded-lg border-border bg-background text-foreground placeholder:font-normal ${
                               parseMargin(item.margin) !== null ? "border-sky-500 bg-sky-500/10" : ""
                             }`}
                           />
@@ -6726,7 +6762,7 @@ export default function PurchasesPage() {
                 {purchaseItems.length === 0 && (
                   <TableRow>
                     <TableCell
-                      colSpan={12}
+                      colSpan={13}
                       className="text-center py-8 text-muted-foreground"
                     >
                       <Package className="w-8 h-8 mx-auto mb-2 opacity-50" />
@@ -6846,10 +6882,10 @@ export default function PurchasesPage() {
                     </TableHeader>
                     <TableBody>
                       {editingPurchase.items.map((item, idx) => {
-                        const packQty = parseInt(item.pack_quantity) || 1;
+                        const packQty = packCount(item.pack_quantity) || 1;
                         const unitsPerPack = parseInt(item.units_per_pack) || 1;
                         const packPrice = parseFloat(item.pack_price) || 0;
-                        const totalUnits = packQty * unitsPerPack;
+                        const totalUnits = stockUnits(packQty, item.scheme, unitsPerPack);
                         const totalPrice = packQty * packPrice;
 
                         return (
@@ -6937,6 +6973,7 @@ export default function PurchasesPage() {
                             <TableCell>
                               <Input
                                 type="number"
+                                step="any"
                                 value={item.pack_quantity}
                                 onChange={(e) => {
                                   const items = [...editingPurchase.items];

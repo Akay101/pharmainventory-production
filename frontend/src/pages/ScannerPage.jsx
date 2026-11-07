@@ -19,7 +19,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { parseMargin, marginPrice } from "../lib/margin";
-import { lineNet, schemeDiscountOf } from "../lib/purchaseLine";
+import { lineNet, schemeDiscountOf, packCount } from "../lib/purchaseLine";
 import SchemeDiscountField from "../components/purchases/SchemeDiscountField";
 import { API, useAuth } from "../App";
 import { compressForScan, runQueuedScan, scanErrorMessage } from "../components/scan/scanClient";
@@ -259,8 +259,8 @@ function ItemCard({ item, index, onChange, onRemove }) {
         <div className="grid grid-cols-2 gap-2 border-t border-border p-3 sm:grid-cols-4 sm:p-4">
           <Field label="Batch"><input value={item.batch_no} onChange={(e) => onChange({ batch_no: e.target.value.toUpperCase() })} className={`${inputCls} font-mono`} /></Field>
           <Field label="Expiry"><input type="date" value={item.expiry_date} onChange={set("expiry_date")} className={inputCls} /></Field>
-          <Field label="Qty (packs)"><input type="number" inputMode="numeric" value={item.pack_quantity} onChange={set("pack_quantity")} className={inputCls} /></Field>
-          <Field label="Scheme: free packs"><input type="number" inputMode="numeric" value={item.free_quantity} onChange={set("free_quantity")} className={inputCls} /></Field>
+          <Field label="Qty (packs)"><input type="number" step="any" inputMode="decimal" value={item.pack_quantity} onChange={set("pack_quantity")} className={inputCls} /></Field>
+          <Field label="Scheme: free packs"><input type="number" step="any" inputMode="decimal" value={item.free_quantity} onChange={set("free_quantity")} className={inputCls} /></Field>
           <Field label="Units / pack"><input type="number" inputMode="numeric" value={item.units_per_pack} onChange={set("units_per_pack")} className={inputCls} /></Field>
           <Field label="Pack type">
             <select value={item.pack_type} onChange={set("pack_type")} className={inputCls}>
@@ -572,8 +572,8 @@ export default function ScannerPage() {
         batch_no: it.batch_no || null,
         hsn_no: it.hsn_no || null,
         expiry_date: it.expiry_date || null,
-        pack_quantity: parseInt(it.pack_quantity) || 1,
-        scheme: parseInt(it.free_quantity) || 0,
+        pack_quantity: packCount(it.pack_quantity) || 1,
+        scheme: packCount(it.free_quantity),
         units_per_pack: unitsPerPack,
         pack_price: num(it.rate_pack),
         mrp_per_unit: unitsPerPack > 0 ? num(it.mrp_pack) / unitsPerPack : num(it.mrp_pack),

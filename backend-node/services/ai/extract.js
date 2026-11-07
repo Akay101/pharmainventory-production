@@ -3,6 +3,7 @@
 // Prompts are short and specific; the JSON shape is enforced with a response
 // schema rather than described in prose. Everything the model returns is
 // treated as untrusted and normalised here: numbers, expiry dates, pack sizes.
+const { billedAndFree } = require("../../utils/purchaseLine");
 const { extractJson } = require("./gemini");
 
 const PRODUCT_SCHEMA = {
@@ -51,8 +52,8 @@ const BILL_SCHEMA = {
           units_per_pack: { type: "INTEGER", description: "Units in one pack from the pack column; 1 for liquids" },
           batch_no: { type: "STRING" },
           expiry: { type: "STRING", description: "As printed" },
-          quantity: { type: "NUMBER", description: "Billed quantity in packs (not free)" },
-          free_quantity: { type: "NUMBER", description: "Free/scheme quantity in packs, 0 if none" },
+          quantity: { type: "NUMBER", description: "Billed quantity in packs (not free); can be a decimal, 1.75 in '1.75+0.25'" },
+          free_quantity: { type: "NUMBER", description: "Free/scheme quantity in packs, 0 if none; can be a decimal, 0.25 in '1.75+0.25'" },
           rate: { type: "NUMBER", description: "Purchase rate per pack (PTR/Rate), before tax" },
           mrp: { type: "NUMBER", description: "MRP per pack" },
           discount_percent: { type: "NUMBER", description: "Trade discount %, 0 if none" },
@@ -73,6 +74,7 @@ Extract every product line of the item table, top to bottom, one object per prin
 - Use the column headers to map values. Do not skip lines and do not merge lines.
 - Copy names and batch numbers exactly as printed. Never substitute a different medicine.
 - quantity is the billed qty column; free/scheme qty goes in free_quantity.
+- A qty printed with a plus sign is billed + free: "1.75+0.25" is quantity 1.75 and free_quantity 0.25, "10+1" is quantity 10 and free_quantity 1. Quantities can be part of a pack: keep decimals exactly as printed, never round them. The line amount is the billed quantity x rate, which helps to check a qty that is hard to read.
 - rate is the purchase rate per pack (PTR/Rate). mrp is the MRP per pack. MRP is never lower than rate.
 - pack is the pack/packing column (e.g. "10S", "1X15", "100ML"). units_per_pack is the count of tablets/capsules in one pack; 1 for liquids.
 - gst_percent: if CGST and SGST are separate, add them. discount_percent is the trade discount column.
@@ -174,8 +176,8 @@ function normalizeBillItem(d = {}) {
     batch_no: str(d.batch_no).toUpperCase(),
     expiry_date: parseExpiry(d.expiry),
     expiry_raw: str(d.expiry),
-    quantity: Math.max(0, Math.round(num(d.quantity))),
-    free_quantity: Math.max(0, Math.round(num(d.free_quantity))),
+    quantity: billedAndFree(d.quantity, d.free_quantity).packs,
+    free_quantity: billedAndFree(d.quantity, d.free_quantity).free,
     rate_pack: rate,
     mrp,
     discount_percent: Math.min(100, Math.max(0, num(d.discount_percent))),
