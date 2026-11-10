@@ -13,10 +13,12 @@ import {
   ChevronRight,
   Sparkles,
   Compass,
+  Clapperboard,
 } from "lucide-react";
 import { Sheet, SheetContent, SheetTitle, SheetDescription } from "./ui/sheet";
 import { AI_LOGO_SRC } from "./scan/ScanUI";
 import { useTour } from "./tour/ProductTour";
+import { useGuide } from "./guide/GuideProvider";
 
 // Phone-only navigation (below md): a bottom tab bar like a native app, with
 // the rest of the app in a "More" sheet. Desktop keeps the top navigation.
@@ -53,6 +55,7 @@ function useKeyboardOpen() {
 
 export function MobileBottomNav({ items, isActive, onLogout, onOpenActivity, pharmacy, planLabel }) {
   const { start: startTour } = useTour();
+  const { openHub: openGuides } = useGuide();
   const navigate = useNavigate();
   const location = useLocation();
   const [sheet, setSheet] = useState(null); // "scan" | "more" | null
@@ -202,6 +205,17 @@ export function MobileBottomNav({ items, isActive, onLogout, onOpenActivity, pha
             className="mt-4 flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-orange-500/30 bg-orange-500/5 text-sm font-bold text-orange-600 active:scale-[0.98] dark:text-orange-400"
           >
             <Compass className="h-4 w-4" /> Take the tour
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setSheet(null);
+              setTimeout(openGuides, 250);
+            }}
+            data-testid="mobile-guided-tours"
+            className="mt-2 flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-violet-500/30 bg-violet-500/5 text-sm font-bold text-violet-600 active:scale-[0.98] dark:text-violet-400"
+          >
+            <Clapperboard className="h-4 w-4" /> Guided tours
           </button>
 
           <div className="mt-2 grid grid-cols-2 gap-2">

@@ -114,6 +114,7 @@ import { isScheduleH1, h1Names } from "../lib/scheduleH1";
 import PrescriptionAttach, { openPrescription } from "../components/billing/PrescriptionAttach";
 import PdfFormatPicker, { usePdfFormat } from "../components/PdfFormatPicker";
 import { SuggestionList, ProductDetailsSheet, SUGGESTION_FILTERS, filterSuggestions } from "../components/billing/ProductSuggestions";
+import { GuideButton } from "../components/guide/GuideProvider";
 
 const LOCAL_STORAGE_KEY_BILL = "pharmalogy_bill_draft";
 
@@ -3082,12 +3083,13 @@ export default function BillingPage() {
               <h1 className="text-2xl font-black tracking-tight text-foreground">
                 Billing
               </h1>
-              <span className="px-2.5 py-0.5 rounded-full bg-orange-500/10 border border-orange-500/30 text-orange-600 dark:text-orange-400 font-mono font-bold text-xs">
+              <span data-guide="bill-count" className="px-2.5 py-0.5 rounded-full bg-orange-500/10 border border-orange-500/30 text-orange-600 dark:text-orange-400 font-mono font-bold text-xs">
                 {`${totalBills} bill${totalBills !== 1 ? "s" : ""} generated`}
               </span>
             </div>
 
             <div className="flex items-center gap-2 flex-wrap">
+              <GuideButton tour="billing" />
               <Button
                 variant="outline"
                 size="sm"
@@ -3433,6 +3435,7 @@ export default function BillingPage() {
                 </Label>
                 <Input
                   type="date"
+                  data-guide="bill-date"
                   value={billingDate}
                   onChange={(e) => setBillingDate(e.target.value)}
                   className="h-9 text-xs font-semibold rounded-xl border-border bg-background text-foreground shadow-2xs focus-visible:ring-2 focus-visible:ring-primary/30 focus-visible:border-primary"
@@ -3690,7 +3693,7 @@ export default function BillingPage() {
             {/* Right: Customer Stats + Units / Total Summary Pill + Close */}
             <div className="flex items-center gap-2 shrink-0 self-end lg:self-center max-md:w-full max-md:flex-wrap max-md:self-stretch">
               {selectedCustomerStats && (
-                <div className="flex items-center gap-2 bg-primary/5 px-3 py-1 rounded-xl border border-primary/15 h-9 text-xs font-semibold animate-in fade-in">
+                <div data-guide="customer-stats" className="flex items-center gap-2 bg-primary/5 px-3 py-1 rounded-xl border border-primary/15 h-9 text-xs font-semibold animate-in fade-in">
                   <div className="flex items-center gap-1">
                     <span className="text-[10px] text-muted-foreground uppercase font-extrabold">Debt:</span>
                     <span className="text-xs font-black font-mono text-red-500">₹{selectedCustomerStats.totalDebt.toFixed(2)}</span>
@@ -3708,7 +3711,7 @@ export default function BillingPage() {
                 </div>
               )}
 
-              <div className="flex items-center gap-2 bg-muted px-3 py-1 rounded-xl border border-border shadow-2xs h-9">
+              <div data-guide="bill-summary" className="flex items-center gap-2 bg-muted px-3 py-1 rounded-xl border border-border shadow-2xs h-9">
                 <div className="flex items-center gap-1 border-r border-border pr-2.5">
                   <span className="text-[10px] uppercase font-extrabold text-muted-foreground">
                     Units:
@@ -3740,7 +3743,7 @@ export default function BillingPage() {
           </div>
 
             {/* Items Table - Inline Editable */}
-            <div className="border border-border/70 rounded-xl overflow-hidden shadow-sm bg-background/50 backdrop-blur-md mt-4">
+            <div data-guide="bill-items" className="border border-border/70 rounded-xl overflow-hidden shadow-sm bg-background/50 backdrop-blur-md mt-4">
               <Table mobileCards wrapperClassName="max-h-[300px]">
                 <TableHeader className="sticky top-0 bg-muted/90 backdrop-blur-md z-[50] border-b border-border/80">
                   <TableRow className="hover:bg-transparent border-b border-border/80">
@@ -3915,7 +3918,7 @@ export default function BillingPage() {
                               className="h-8 text-xs border-border/80 focus-visible:ring-1 focus-visible:ring-primary focus-visible:border-primary rounded-lg transition-all duration-200 w-28"
                             />
                           ) : (
-                            <span className="text-xs text-muted-foreground font-medium line-clamp-2 break-words" title={item.salt_composition || ""}>
+                            <span data-guide="salt" className="text-xs text-muted-foreground font-medium line-clamp-2 break-words" title={item.salt_composition || ""}>
                               {item.salt_composition || "-"}
                             </span>
                           )}
@@ -3998,7 +4001,7 @@ export default function BillingPage() {
                               Manual
                             </span>
                           ) : hasOverflow ? (
-                            <div className="text-center">
+                            <div className="text-center" data-guide="avail-neg">
                               <span className="text-xs font-bold text-amber-500">
                                 {available > 0 ? available : "0"}
                               </span>
@@ -4007,7 +4010,7 @@ export default function BillingPage() {
                               </p>
                             </div>
                           ) : (
-                            <span className="text-xs font-semibold text-emerald-500">
+                            <span data-guide="avail" className="text-xs font-semibold text-emerald-500">
                               {available > 0 ? available : "Out of Stock"}
                             </span>
                           )}
@@ -4021,6 +4024,7 @@ export default function BillingPage() {
                                   : null
                               }
                               type="number"
+                              data-guide="qty"
                               data-qty-for={item.id}
                               value={item.quantity || ""}
                               onFocus={(e) => e.target.select()}
@@ -4052,7 +4056,7 @@ export default function BillingPage() {
                               }`}
                             />
                             {!item.is_manual && item.units_per_pack && (
-                              <label className="flex items-center gap-1 cursor-pointer select-none text-[11px] font-bold text-muted-foreground/90 hover:text-foreground shrink-0 transition-colors">
+                              <label data-guide="pack" className="flex items-center gap-1 cursor-pointer select-none text-[11px] font-bold text-muted-foreground/90 hover:text-foreground shrink-0 transition-colors">
                                 <input
                                   type="checkbox"
                                   checked={
@@ -4088,7 +4092,7 @@ export default function BillingPage() {
                               className="h-8 text-xs text-center border-primary/30 bg-primary/5 text-primary font-bold focus-visible:ring-1 focus-visible:ring-primary focus-visible:border-primary rounded-lg transition-all duration-200 w-16"
                             />
                           ) : (
-                            <span className="text-xs text-primary font-mono font-bold">
+                            <span data-guide="cost" className="text-xs text-primary font-mono font-bold">
                               ₹{purchasePrice.toFixed(2)}
                             </span>
                           )}
@@ -4096,6 +4100,7 @@ export default function BillingPage() {
                         <TableCell>
                           <Input
                             id={`mrp-${item.id}`}
+                            data-guide="mrp"
                             type="number"
                             step="0.01"
                             value={item.unit_price || ""}
@@ -4122,6 +4127,7 @@ export default function BillingPage() {
                         <TableCell>
                           <Input
                             id={`discount-${item.id}`}
+                            data-guide="disc"
                             type="number"
                             value={item.discount_percent || ""}
                             onChange={(e) =>
@@ -4148,6 +4154,7 @@ export default function BillingPage() {
                         <TableCell>
                           <Input
                             id={`cgst-${item.id}`}
+                            data-guide="cgst"
                             type="number"
                             step="0.01"
                             value={item.cgst !== undefined ? item.cgst : ""}
@@ -4175,6 +4182,7 @@ export default function BillingPage() {
                         <TableCell>
                           <Input
                             id={`sgst-${item.id}`}
+                            data-guide="sgst"
                             type="number"
                             step="0.01"
                             value={item.sgst !== undefined ? item.sgst : ""}
@@ -4205,7 +4213,7 @@ export default function BillingPage() {
                             className="h-8 text-xs text-center border-border/80 focus-visible:ring-1 focus-visible:ring-primary focus-visible:border-primary rounded-lg transition-all duration-200 w-14"
                           />
                         </TableCell>
-                        <TableCell className="text-right font-mono text-sm font-semibold text-foreground">
+                        <TableCell data-guide="line-total" className="text-right font-mono text-sm font-semibold text-foreground">
                           ₹{itemTotal.toFixed(2)}
                         </TableCell>
                         <TableCell className="text-center">
@@ -4213,6 +4221,7 @@ export default function BillingPage() {
                             size="icon"
                             variant="ghost"
                             className="h-8 w-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-lg transition-all"
+                            data-guide="remove-line"
                             onClick={() => handleRemoveItem(item.id)}
                           >
                             <Trash2 className="h-4 w-4" />
@@ -4238,7 +4247,7 @@ export default function BillingPage() {
             </div>
 
             {/* Tip */}
-            <p className="text-xs text-muted-foreground bg-muted/45 p-3 rounded-xl border border-border/50 backdrop-blur-sm flex items-center gap-1.5">
+            <p data-guide="bill-tip" className="text-xs text-muted-foreground bg-muted/45 p-3 rounded-xl border border-border/50 backdrop-blur-sm flex items-center gap-1.5">
               <Sparkles className="w-4 h-4 text-primary shrink-0" />
               <span><strong>Tip:</strong> Search by product name or salt composition. All fields are editable. Enter moves to the next field; {formatCombo("alt+a")} adds a row, {formatCombo("mod+enter")} saves.</span>
             </p>
@@ -4391,7 +4400,7 @@ export default function BillingPage() {
                       onValueChange={setPaymentMode}
                       disabled={!isPaid && !isAdvancePaid && !(isCredit && parseFloat(paidNow) > 0)}
                     >
-                      <SelectTrigger className="h-9 w-36 bg-muted/20 border border-border/50 rounded-xl text-xs font-semibold" disabled={!isPaid && !isAdvancePaid && !(isCredit && parseFloat(paidNow) > 0)}>
+                      <SelectTrigger data-guide="payment-mode" className="h-9 w-36 bg-muted/20 border border-border/50 rounded-xl text-xs font-semibold" disabled={!isPaid && !isAdvancePaid && !(isCredit && parseFloat(paidNow) > 0)}>
                         <SelectValue placeholder="Payment Mode">
                           {paymentMode && paymentMode !== "none" ? (
                             <div className="flex items-center gap-1.5">
@@ -4442,7 +4451,7 @@ export default function BillingPage() {
                 <PrescriptionAttach h1Items={newBillH1} value={prescription} onChange={setPrescription} inputId="rx-attach-new" />
 
                 {/* Patient Restock / Refill Reminder Card */}
-                <div className={`p-3.5 rounded-2xl border transition-all duration-200 ${
+                <div data-guide="refill" className={`p-3.5 rounded-2xl border transition-all duration-200 ${
                   refillReminder.enabled 
                     ? "bg-gradient-to-br from-indigo-500/10 via-purple-500/5 to-primary/5 border-indigo-500/30 shadow-sm" 
                     : "bg-muted/15 border-border/60 hover:border-border"
@@ -4650,11 +4659,12 @@ export default function BillingPage() {
                 </div>
               </div>
 
-              <div className="space-y-3.5">
+              <div className="space-y-3.5" data-guide="bill-totals">
                 <div className="flex justify-between items-center gap-4 text-sm">
                   <span className="font-bold text-muted-foreground/85">Bill Discount %</span>
                   <Input
                     type="number"
+                    data-guide="bill-discount"
                     value={billDiscount}
                     placeholder="0"
                     onChange={(e) => {
@@ -4689,6 +4699,7 @@ export default function BillingPage() {
                     <Input
                       type="number"
                       step="0.01"
+                      data-guide="grand-total"
                       value={grandTotalInput}
                       onFocus={() => setIsEditingGrandTotal(true)}
                       onChange={(e) => {
@@ -4715,6 +4726,7 @@ export default function BillingPage() {
                 <div className="flex justify-between items-center pt-1">
                   <span className="text-xs font-bold text-muted-foreground/80">Estimated Profit</span>
                   <div
+                    data-guide="bill-profit"
                     className={`text-xs font-bold px-2.5 py-1 rounded-full border ${totalProfit >= 0 ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/25" : "bg-destructive/10 text-destructive border-destructive/20"}`}
                   >
                     ₹{totalProfit.toFixed(2)}
@@ -5753,7 +5765,7 @@ export default function BillingPage() {
                   setFilterBillType(val);
                 }}
               >
-                <SelectTrigger className="w-32 h-9 text-xs font-semibold border-border/70 rounded-xl bg-card/60 backdrop-blur-md">
+                <SelectTrigger data-guide="bill-type" className="w-32 h-9 text-xs font-semibold border-border/70 rounded-xl bg-card/60 backdrop-blur-md">
                   <SelectValue placeholder="All Bills" />
                 </SelectTrigger>
                 <SelectContent>
@@ -5922,7 +5934,7 @@ export default function BillingPage() {
 
             {/* Premium Insights Dashboard */}
             {(startDate || endDate) && (
-              <div className="mt-4 border border-border/70 rounded-2xl overflow-hidden glass bg-card/35 backdrop-blur-xl shadow-lg transition-all duration-700 ease-in-out">
+              <div data-guide="bill-insights" className="mt-4 border border-border/70 rounded-2xl overflow-hidden glass bg-card/35 backdrop-blur-xl shadow-lg transition-all duration-700 ease-in-out">
                 {insightsLoading ? (
                   <div className="p-10 flex flex-col items-center justify-center space-y-4 bg-muted/20 animate-pulse min-h-[250px]">
                     <div className="relative">
@@ -6413,7 +6425,7 @@ export default function BillingPage() {
                         {isExpanded && bill.items && bill.items.length > 0 && (
                           <TableRow className="bg-muted/15 border-b border-border/40">
                             <TableCell colSpan={8} className="p-0">
-                              <div className="p-6 pl-12 max-md:p-3">
+                              <div data-guide="bill-expanded" className="p-6 pl-12 max-md:p-3">
                                 <p className="text-xs font-bold text-muted-foreground/80 uppercase tracking-wider mb-3">
                                   Items Sold
                                 </p>
@@ -7119,7 +7131,7 @@ export default function BillingPage() {
 
       {/* TABS & ACTION NAVBAR */}
       {(showNewBill || editingBillId) && createPortal(
-        <div className="fixed bottom-0 left-0 right-0 z-[100] flex items-center justify-between bg-card/95 backdrop-blur-xl border-t-2 border-border shadow-2xl px-6 py-3.5 gap-4 overflow-x-auto scroller-hide overflow-y-hidden mb-0 transition-all duration-300 mobile-action-bar max-md:flex-wrap max-md:gap-2 max-md:px-3 max-md:pt-2.5 max-md:pb-[calc(0.625rem+env(safe-area-inset-bottom))]">
+        <div data-guide="bill-bar" className="fixed bottom-0 left-0 right-0 z-[100] flex items-center justify-between bg-card/95 backdrop-blur-xl border-t-2 border-border shadow-2xl px-6 py-3.5 gap-4 overflow-x-auto scroller-hide overflow-y-hidden mb-0 transition-all duration-300 mobile-action-bar max-md:flex-wrap max-md:gap-2 max-md:px-3 max-md:pt-2.5 max-md:pb-[calc(0.625rem+env(safe-area-inset-bottom))]">
           <div className="flex items-center gap-2 overflow-x-auto scroller-hide max-md:w-full empty:hidden">
             {showNewBill &&
               tabs.map((tab, idx) => {

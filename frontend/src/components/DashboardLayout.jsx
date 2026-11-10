@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
-import { Outlet, NavLink, useNavigate, useLocation } from "react-router-dom";
+import { NavLink, useNavigate, useLocation } from "react-router-dom";
 import axios from "axios";
 import { API, useAuth } from "../App";
 import { Button } from "./ui/button";
@@ -46,6 +46,7 @@ import {
   Compass,
   FileText,
   PackageCheck,
+  Clapperboard,
 } from "lucide-react";
 
 import RecentActivitySidebar from "./RecentActivitySidebar";
@@ -62,6 +63,7 @@ import { MobileBottomNav } from "./MobileNav";
 import TopNav from "./TopNav";
 import { AI_LOGO_SRC } from "./scan/ScanUI";
 import { TourProvider, useTour } from "./tour/ProductTour";
+import { GuideProvider, GuideOutlet, useGuide } from "./guide/GuideProvider";
 import { CreditsPill, CreditsSheet, useCredits } from "./assistant/Credits";
 
 const navItems = [
@@ -160,6 +162,21 @@ function TakeTourItem() {
     >
       <Compass className="w-4 h-4 mr-2.5 text-orange-500 group-hover:rotate-45 transition-transform duration-200" />
       Take the tour
+    </DropdownMenuItem>
+  );
+}
+
+// Profile menu entry that lists the guided tours of every module
+function GuidedToursItem() {
+  const { openHub } = useGuide();
+  return (
+    <DropdownMenuItem
+      onClick={openHub}
+      data-testid="guided-tours"
+      className="cursor-pointer font-bold py-2 px-3 rounded-xl group hover:bg-violet-500/10 focus:bg-violet-500/10 text-foreground hover:text-violet-600 focus:text-violet-600 dark:hover:text-violet-400 dark:focus:text-violet-400 transition-colors"
+    >
+      <Clapperboard className="w-4 h-4 mr-2.5 text-violet-500 group-hover:-rotate-6 transition-transform duration-200" />
+      Guided tours
     </DropdownMenuItem>
   );
 }
@@ -347,6 +364,7 @@ export default function DashboardLayout() {
   return (
     <ShortcutProvider globals={globalShortcuts}>
     <TourProvider user={user}>
+    <GuideProvider>
     <TooltipProvider delayDuration={0}>
     <BroadcastProvider>
       <div
@@ -582,6 +600,7 @@ export default function DashboardLayout() {
                     )}
                   </DropdownMenuItem>}
                   {!IS_DESKTOP && <TakeTourItem />}
+                  <GuidedToursItem />
                   {DOWNLOADS_ENABLED && (
                     <DropdownMenuItem onClick={() => navigate("/download")} data-testid="download-desktop" className="cursor-pointer font-bold py-2 px-3 rounded-xl group hover:bg-orange-500/10 focus:bg-orange-500/10 text-foreground hover:text-orange-600 focus:text-orange-600 dark:hover:text-orange-400 dark:focus:text-orange-400 transition-colors">
                       <Download className="w-4 h-4 mr-2.5 text-orange-500" />
@@ -629,7 +648,7 @@ export default function DashboardLayout() {
                   : "max-w-[1650px] mx-auto"
               }`}
             >
-              <Outlet />
+              <GuideOutlet />
             </div>
           </main>
 
@@ -675,6 +694,7 @@ export default function DashboardLayout() {
       </div>
     </BroadcastProvider>
     </TooltipProvider>
+    </GuideProvider>
     </TourProvider>
     </ShortcutProvider>
   );

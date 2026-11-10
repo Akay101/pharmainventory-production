@@ -1,0 +1,392 @@
+{
+ "en/billing/advance": {
+  "file": "en/billing/advance.m4a",
+  "hash": "80363401",
+  "seconds": 11.8
+ },
+ "en/billing/batch": {
+  "file": "en/billing/batch.m4a",
+  "hash": "1d124eff",
+  "seconds": 16.5
+ },
+ "en/billing/bill-discount": {
+  "file": "en/billing/bill-discount.m4a",
+  "hash": "701261b1",
+  "seconds": 6.8
+ },
+ "en/billing/bill-type": {
+  "file": "en/billing/bill-type.m4a",
+  "hash": "a0b6ec86",
+  "seconds": 12.2
+ },
+ "en/billing/customer-filter": {
+  "file": "en/billing/customer-filter.m4a",
+  "hash": "14aa313a",
+  "seconds": 6.8
+ },
+ "en/billing/discount": {
+  "file": "en/billing/discount.m4a",
+  "hash": "a38646b8",
+  "seconds": 6.4
+ },
+ "en/billing/doctor": {
+  "file": "en/billing/doctor.m4a",
+  "hash": "8803687a",
+  "seconds": 12.6
+ },
+ "en/billing/dose": {
+  "file": "en/billing/dose.m4a",
+  "hash": "58964cc7",
+  "seconds": 11.7
+ },
+ "en/billing/drafts": {
+  "file": "en/billing/drafts.m4a",
+  "hash": "84956ebe",
+  "seconds": 10.3
+ },
+ "en/billing/grand-total": {
+  "file": "en/billing/grand-total.m4a",
+  "hash": "dfce79ed",
+  "seconds": 8.3
+ },
+ "en/billing/insights": {
+  "file": "en/billing/insights.m4a",
+  "hash": "a5ec831b",
+  "seconds": 13.2
+ },
+ "en/billing/mode": {
+  "file": "en/billing/mode.m4a",
+  "hash": "11b46ee6",
+  "seconds": 9
+ },
+ "en/billing/more-filters": {
+  "file": "en/billing/more-filters.m4a",
+  "hash": "c638bbb0",
+  "seconds": 9.7
+ },
+ "en/billing/new-bill-btn": {
+  "file": "en/billing/new-bill-btn.m4a",
+  "hash": "3444f3e6",
+  "seconds": 8.1
+ },
+ "en/billing/pack": {
+  "file": "en/billing/pack.m4a",
+  "hash": "88e59002",
+  "seconds": 7.8
+ },
+ "en/billing/paid": {
+  "file": "en/billing/paid.m4a",
+  "hash": "3b8ebeed",
+  "seconds": 5.4
+ },
+ "en/billing/price": {
+  "file": "en/billing/price.m4a",
+  "hash": "5f9274e1",
+  "seconds": 14.9
+ },
+ "en/billing/product-type": {
+  "file": "en/billing/product-type.m4a",
+  "hash": "6bde8bd1",
+  "seconds": 7.2
+ },
+ "en/billing/profit": {
+  "file": "en/billing/profit.m4a",
+  "hash": "df1822fc",
+  "seconds": 7
+ },
+ "en/billing/qty": {
+  "file": "en/billing/qty.m4a",
+  "hash": "791a33d5",
+  "seconds": 5.1
+ },
+ "en/billing/remind": {
+  "file": "en/billing/remind.m4a",
+  "hash": "ec0c26d5",
+  "seconds": 13.3
+ },
+ "en/billing/row-actions": {
+  "file": "en/billing/row-actions.m4a",
+  "hash": "edbe2bdc",
+  "seconds": 17.7
+ },
+ "en/billing/rows": {
+  "file": "en/billing/rows.m4a",
+  "hash": "64e68e4d",
+  "seconds": 14.1
+ },
+ "en/billing/salt-stock": {
+  "file": "en/billing/salt-stock.m4a",
+  "hash": "130fd755",
+  "seconds": 6.2
+ },
+ "en/billing/scan-list": {
+  "file": "en/billing/scan-list.m4a",
+  "hash": "03abcd3f",
+  "seconds": 8.8
+ },
+ "en/billing/search": {
+  "file": "en/billing/search.m4a",
+  "hash": "28d22f9c",
+  "seconds": 11.4
+ },
+ "en/billing/second": {
+  "file": "en/billing/second.m4a",
+  "hash": "bae4a0df",
+  "seconds": 4.8
+ },
+ "en/billing/shortcuts": {
+  "file": "en/billing/shortcuts.m4a",
+  "hash": "c40d8059",
+  "seconds": 8.6
+ },
+ "en/billing/subtotal": {
+  "file": "en/billing/subtotal.m4a",
+  "hash": "852050a6",
+  "seconds": 5.2
+ },
+ "en/billing/suggestions": {
+  "file": "en/billing/suggestions.m4a",
+  "hash": "c745cee7",
+  "seconds": 15.5
+ },
+ "en/billing/summary": {
+  "file": "en/billing/summary.m4a",
+  "hash": "d9787c44",
+  "seconds": 5.6
+ },
+ "en/billing/table": {
+  "file": "en/billing/table.m4a",
+  "hash": "a9bbeef0",
+  "seconds": 14.3
+ },
+ "en/billing/udhar": {
+  "file": "en/billing/udhar.m4a",
+  "hash": "b49f3b85",
+  "seconds": 10.8
+ },
+ "en/billing/upi-qr": {
+  "file": "en/billing/upi-qr.m4a",
+  "hash": "0fd8eac7",
+  "seconds": 10.1
+ },
+ "en/billing/welcome": {
+  "file": "en/billing/welcome.m4a",
+  "hash": "4ef19054",
+  "seconds": 13.4
+ },
+ "hi/billing/add-item": {
+  "file": "hi/billing/add-item.m4a",
+  "hash": "8cc79927",
+  "seconds": 7.6
+ },
+ "hi/billing/bar": {
+  "file": "hi/billing/bar.m4a",
+  "hash": "2c63d74c",
+  "seconds": 11.2
+ },
+ "hi/billing/bill-type": {
+  "file": "hi/billing/bill-type.m4a",
+  "hash": "4ae949ff",
+  "seconds": 14.4
+ },
+ "hi/billing/cancel": {
+  "file": "hi/billing/cancel.m4a",
+  "hash": "417c242d",
+  "seconds": 3.8
+ },
+ "hi/billing/count": {
+  "file": "hi/billing/count.m4a",
+  "hash": "a3f29ba5",
+  "seconds": 11
+ },
+ "hi/billing/create": {
+  "file": "hi/billing/create.m4a",
+  "hash": "48c5a169",
+  "seconds": 8.2
+ },
+ "hi/billing/customer-pick": {
+  "file": "hi/billing/customer-pick.m4a",
+  "hash": "488269cb",
+  "seconds": 4.8
+ },
+ "hi/billing/customer-stats": {
+  "file": "hi/billing/customer-stats.m4a",
+  "hash": "ee9ad344",
+  "seconds": 14.9
+ },
+ "hi/billing/customer-type": {
+  "file": "hi/billing/customer-type.m4a",
+  "hash": "8f10981c",
+  "seconds": 16.6
+ },
+ "hi/billing/date": {
+  "file": "hi/billing/date.m4a",
+  "hash": "fba80c7a",
+  "seconds": 9.6
+ },
+ "hi/billing/discount": {
+  "file": "hi/billing/discount.m4a",
+  "hash": "308cdfce",
+  "seconds": 7.6
+ },
+ "hi/billing/doctor": {
+  "file": "hi/billing/doctor.m4a",
+  "hash": "32f66646",
+  "seconds": 13.2
+ },
+ "hi/billing/dose": {
+  "file": "hi/billing/dose.m4a",
+  "hash": "48ef0a7e",
+  "seconds": 12.3
+ },
+ "hi/billing/edit": {
+  "file": "hi/billing/edit.m4a",
+  "hash": "ff104cc2",
+  "seconds": 11.6
+ },
+ "hi/billing/full-pack": {
+  "file": "hi/billing/full-pack.m4a",
+  "hash": "1581e3c4",
+  "seconds": 6.3
+ },
+ "hi/billing/gst": {
+  "file": "hi/billing/gst.m4a",
+  "hash": "de2c20ed",
+  "seconds": 13.9
+ },
+ "hi/billing/insights": {
+  "file": "hi/billing/insights.m4a",
+  "hash": "13d689f9",
+  "seconds": 13.2
+ },
+ "hi/billing/line-total": {
+  "file": "hi/billing/line-total.m4a",
+  "hash": "5f39cd69",
+  "seconds": 5.4
+ },
+ "hi/billing/mark-paid": {
+  "file": "hi/billing/mark-paid.m4a",
+  "hash": "3186def6",
+  "seconds": 6.3
+ },
+ "hi/billing/mobile": {
+  "file": "hi/billing/mobile.m4a",
+  "hash": "8dde88fd",
+  "seconds": 8
+ },
+ "hi/billing/negative": {
+  "file": "hi/billing/negative.m4a",
+  "hash": "68ed29b8",
+  "seconds": 14
+ },
+ "hi/billing/new-bill-btn": {
+  "file": "hi/billing/new-bill-btn.m4a",
+  "hash": "963aab96",
+  "seconds": 9.8
+ },
+ "hi/billing/pack": {
+  "file": "hi/billing/pack.m4a",
+  "hash": "ecc3a7ba",
+  "seconds": 8.8
+ },
+ "hi/billing/pdf": {
+  "file": "hi/billing/pdf.m4a",
+  "hash": "86a770a5",
+  "seconds": 21.4
+ },
+ "hi/billing/price": {
+  "file": "hi/billing/price.m4a",
+  "hash": "18341be1",
+  "seconds": 18.4
+ },
+ "hi/billing/qty": {
+  "file": "hi/billing/qty.m4a",
+  "hash": "51230a4a",
+  "seconds": 4.8
+ },
+ "hi/billing/record-payment": {
+  "file": "hi/billing/record-payment.m4a",
+  "hash": "a27bbe45",
+  "seconds": 12.6
+ },
+ "hi/billing/refill": {
+  "file": "hi/billing/refill.m4a",
+  "hash": "e715baf6",
+  "seconds": 8.7
+ },
+ "hi/billing/remind": {
+  "file": "hi/billing/remind.m4a",
+  "hash": "d82c5774",
+  "seconds": 14.3
+ },
+ "hi/billing/row-actions": {
+  "file": "hi/billing/row-actions.m4a",
+  "hash": "b5bd2fe7",
+  "seconds": 16.5
+ },
+ "hi/billing/rows": {
+  "file": "hi/billing/rows.m4a",
+  "hash": "8d5a41a0",
+  "seconds": 16.1
+ },
+ "hi/billing/saved": {
+  "file": "hi/billing/saved.m4a",
+  "hash": "492bed62",
+  "seconds": 12.8
+ },
+ "hi/billing/scan-list": {
+  "file": "hi/billing/scan-list.m4a",
+  "hash": "f25feb15",
+  "seconds": 8.4
+ },
+ "hi/billing/search": {
+  "file": "hi/billing/search.m4a",
+  "hash": "9fbd0ee3",
+  "seconds": 10.9
+ },
+ "hi/billing/second": {
+  "file": "hi/billing/second.m4a",
+  "hash": "307e2cdd",
+  "seconds": 5.1
+ },
+ "hi/billing/shortcuts": {
+  "file": "hi/billing/shortcuts.m4a",
+  "hash": "27c606a7",
+  "seconds": 8.5
+ },
+ "hi/billing/start": {
+  "file": "hi/billing/start.m4a",
+  "hash": "1e2eab69",
+  "seconds": 9
+ },
+ "hi/billing/table": {
+  "file": "hi/billing/table.m4a",
+  "hash": "1adb71c1",
+  "seconds": 15.6
+ },
+ "hi/billing/upi-qr": {
+  "file": "hi/billing/upi-qr.m4a",
+  "hash": "a06ee358",
+  "seconds": 10.4
+ },
+ "hi/billing/welcome": {
+  "file": "hi/billing/welcome.m4a",
+  "hash": "7bfdeb8f",
+  "seconds": 12.6
+ },
+ "hi/billing/whatsapp": {
+  "file": "hi/billing/whatsapp.m4a",
+  "hash": "33daa089",
+  "seconds": 7.8
+ },
+ "hi/billing/customer-filter": {
+  "file": "hi/billing/customer-filter.m4a",
+  "hash": "10442964",
+  "seconds": 8.1
+ },
+ "hi/billing/drafts": {
+  "file": "hi/billing/drafts.m4a",
+  "hash": "8ab76e79",
+  "seconds": 10.6
+ }
+}
