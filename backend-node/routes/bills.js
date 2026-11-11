@@ -36,7 +36,10 @@ const generateBillNo = () => {
   // Timestamp in IST (servers run in UTC), e.g. BILL-20261022143005
   const ist = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
   const p = (n) => String(n).padStart(2, "0");
-  return `BILL-${ist.getUTCFullYear()}${p(ist.getUTCMonth() + 1)}${p(ist.getUTCDate())}${p(ist.getUTCHours())}${p(ist.getUTCMinutes())}${p(ist.getUTCSeconds())}`;
+  // The desktop app adds its computer's number (e.g. -D2): two computers working
+  // offline can't see each other's bills, so the time alone could repeat
+  const tag = process.env.DAVADESK_BILL_TAG ? `-${process.env.DAVADESK_BILL_TAG}` : "";
+  return `BILL-${ist.getUTCFullYear()}${p(ist.getUTCMonth() + 1)}${p(ist.getUTCDate())}${p(ist.getUTCHours())}${p(ist.getUTCMinutes())}${p(ist.getUTCSeconds())}${tag}`;
 };
 
 // Two counters billing in the same second would otherwise share a number

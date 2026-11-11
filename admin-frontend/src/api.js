@@ -238,6 +238,22 @@ export const AdminAPI = {
   offboardUser: (id, data) => api.post(`/users/${encodeURIComponent(id)}/offboard`, data, { timeout: 120000 }),
 
   // Global Data Manager (shared catalogues + review queue)
+  // Data imports for one pharmacy (forwarded to the main backend's import engine)
+  importsMeta: (pid) => api.get("/imports/meta", { headers: { "x-pharmacy-id": pid } }),
+  listImports: (pid) => api.get("/imports", { headers: { "x-pharmacy-id": pid } }),
+  createImport: (pid, form, onUploadProgress) =>
+    api.post("/imports", form, { headers: { "x-pharmacy-id": pid }, timeout: 180000, onUploadProgress }),
+  getImport: (pid, id) => api.get(`/imports/${id}`, { headers: { "x-pharmacy-id": pid } }),
+  mapImport: (pid, id, data) => api.put(`/imports/${id}/mapping`, data, { headers: { "x-pharmacy-id": pid } }),
+  importRows: (pid, id, params) => api.get(`/imports/${id}/rows`, { params, headers: { "x-pharmacy-id": pid } }),
+  importProducts: (pid, id, params) => api.get(`/imports/${id}/products`, { params, headers: { "x-pharmacy-id": pid } }),
+  decideImportProduct: (pid, id, data) => api.put(`/imports/${id}/products/decide`, data, { headers: { "x-pharmacy-id": pid } }),
+  commitImport: (pid, id) => api.post(`/imports/${id}/commit`, {}, { headers: { "x-pharmacy-id": pid } }),
+  undoImport: (pid, id) => api.post(`/imports/${id}/undo`, {}, { headers: { "x-pharmacy-id": pid }, timeout: 120000 }),
+  resumeImport: (pid, id) => api.post(`/imports/${id}/resume`, {}, { headers: { "x-pharmacy-id": pid } }),
+  discardImport: (pid, id) => api.delete(`/imports/${id}`, { headers: { "x-pharmacy-id": pid } }),
+  importProblemsCsv: (pid, id) => api.get(`/imports/${id}/problems.csv`, { headers: { "x-pharmacy-id": pid }, responseType: "blob", timeout: 120000 }),
+
   searchGlobal: (kind, params) => api.get(`/global-data/${kind}/search`, { params }),
   createGlobal: (kind, data) => api.post(`/global-data/${kind}`, data),
   updateGlobal: (kind, id, data) => api.put(`/global-data/${kind}/${id}`, data),

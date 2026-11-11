@@ -7,7 +7,6 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../co
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
-import { Avatar, AvatarFallback, AvatarImage } from "../components/ui/avatar";
 import { Separator } from "../components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
 import {
@@ -24,17 +23,18 @@ import {
   DialogTitle,
   DialogDescription,
 } from "../components/ui/dialog";
-import { Settings, Building2, User, Camera, Loader2, Save, Upload, Database, Download, FileJson, Edit2, KeyRound, Mail, Layout, Sliders, Search, QrCode } from "lucide-react";
+import { Settings, Building2, User, Loader2, Save, Upload, Database, Download, FileJson, KeyRound, Mail, Layout, Sliders, Search } from "lucide-react";
 import { toast } from "sonner";
 import { Switch } from "../components/ui/switch";
-import UpiQrDialog, { UPI_ID_RE } from "../components/UpiQr";
+import PharmacySettings from "../components/settings/PharmacySettings";
+import ProfileSettings from "../components/settings/ProfileSettings";
 
 export default function SettingsPage() {
-  const { user, pharmacy, setUser, setPharmacy, isAdmin, settings, settingsDefinitions, updateSetting, fetchSettings } = useAuth();
+  const { user, isAdmin, settings, settingsDefinitions, updateSetting, fetchSettings } = useAuth();
   const [numberDrafts, setNumberDrafts] = useState({}); // typed text, so a number field can be cleared
-  const [saving, setSaving] = useState(false);
-  const [uploadingLogo, setUploadingLogo] = useState(false);
-  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const [tab, setTab] = useState("pharmacy");
+  const [pharmacyDirty, setPharmacyDirty] = useState(false);
+  const [profileDirty, setProfileDirty] = useState(false);
   const [importingMedicines, setImportingMedicines] = useState(false);
   const [migrating, setMigrating] = useState(false);
   const [lockOtpDialog, setLockOtpDialog] = useState({
@@ -101,42 +101,12 @@ export default function SettingsPage() {
     }
   };
 
-  const logoInputRef = useRef(null);
-  const avatarInputRef = useRef(null);
   const migrationFileRef = useRef(null);
-
-  const [qrOpen, setQrOpen] = useState(false);
-  const [pharmacyData, setPharmacyData] = useState({
-    name: pharmacy?.name || "",
-    location: pharmacy?.location || "",
-    license_no: pharmacy?.license_no || "",
-    years_old: pharmacy?.years_old || "",
-    contact: pharmacy?.contact || "",
-    pan: pharmacy?.pan || "",
-    bank_name: pharmacy?.bank_name || "",
-    bank_ifsc: pharmacy?.bank_ifsc || "",
-    bank_acc_no: pharmacy?.bank_acc_no || "",
-    bank_holder: pharmacy?.bank_holder || "",
-    upi_id: pharmacy?.upi_id || "",
-    gst_no: pharmacy?.gst_no || "",
-  });
 
   const [migrationData, setMigrationData] = useState({
     dataType: "suppliers",
     file: null,
   });
-
-  // Profile update state
-  const [editingProfile, setEditingProfile] = useState(false);
-  const [profileData, setProfileData] = useState({
-    name: user?.name || "",
-    phone: user?.mobile || user?.phone || "",
-  });
-  const [requestingOtp, setRequestingOtp] = useState(false);
-  const [showOtpDialog, setShowOtpDialog] = useState(false);
-  const [otp, setOtp] = useState("");
-  const [displayedOtp, setDisplayedOtp] = useState(null); // For fallback when email fails
-  const [verifyingOtp, setVerifyingOtp] = useState(false);
 
   const [customThresholdModalOpen, setCustomThresholdModalOpen] = useState(false);
   const [productsForThreshold, setProductsForThreshold] = useState([]);
@@ -228,85 +198,6 @@ export default function SettingsPage() {
     }
   };
 
-  const upiDraft = String(pharmacyData.upi_id || "").trim();
-  const upiError = upiDraft && !UPI_ID_RE.test(upiDraft) ? "Should look like name@bank, e.g. medicalstore@okhdfcbank" : null;
-  const upiSaved = String(pharmacy?.upi_id || "").trim();
-
-  const handleSavePharmacy = async () => {
-    if (upiError) {
-      toast.error(`UPI ID: ${upiError}`);
-      return;
-    }
-    setSaving(true);
-    try {
-      const formData = new FormData();
-      formData.append("name", pharmacyData.name || "");
-      formData.append("location", pharmacyData.location || "");
-      formData.append("license_no", pharmacyData.license_no || "");
-      formData.append("years_old", pharmacyData.years_old || "");
-      formData.append("contact", pharmacyData.contact || "");
-      formData.append("pan", pharmacyData.pan || "");
-      formData.append("bank_name", pharmacyData.bank_name || "");
-      formData.append("bank_ifsc", pharmacyData.bank_ifsc || "");
-      formData.append("bank_acc_no", pharmacyData.bank_acc_no || "");
-      formData.append("bank_holder", pharmacyData.bank_holder || "");
-      formData.append("upi_id", pharmacyData.upi_id || "");
-      formData.append("gst_no", pharmacyData.gst_no || "");
-
-      const response = await axios.put(`${API}/pharmacy`, formData);
-      setPharmacy(response.data.pharmacy);
-      toast.success("Pharmacy details updated");
-    } catch (error) {
-      toast.error(error.response?.data?.detail || "Failed to update pharmacy");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleLogoUpload = async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    setUploadingLogo(true);
-    try {
-      const formData = new FormData();
-      formData.append("file", file);
-
-      const response = await axios.post(`${API}/pharmacy/logo`, formData, {
-        headers: { "Content-Type": "multipart/form-data" },
-      });
-
-      setPharmacy({ ...pharmacy, logo_url: response.data.logo_url });
-      toast.success("Logo uploaded successfully");
-    } catch (error) {
-      toast.error("Failed to upload logo");
-    } finally {
-      setUploadingLogo(false);
-    }
-  };
-
-  const handleAvatarUpload = async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    setUploadingAvatar(true);
-    try {
-      const formData = new FormData();
-      formData.append("file", file);
-
-      const response = await axios.post(`${API}/users/avatar`, formData, {
-        headers: { "Content-Type": "multipart/form-data" },
-      });
-
-      setUser({ ...user, image_url: response.data.image_url });
-      toast.success("Avatar uploaded successfully");
-    } catch (error) {
-      toast.error("Failed to upload avatar");
-    } finally {
-      setUploadingAvatar(false);
-    }
-  };
-
   const handleImportMedicineDatabase = async () => {
     setImportingMedicines(true);
     try {
@@ -379,102 +270,25 @@ export default function SettingsPage() {
     }
   };
 
-  // Profile update handlers
-  const handleStartEditProfile = () => {
-    setProfileData({
-      name: user?.name || "",
-      phone: user?.mobile || user?.phone || "",
-    });
-    setEditingProfile(true);
-  };
-
-  const handleCancelEditProfile = () => {
-    setEditingProfile(false);
-    setProfileData({
-      name: user?.name || "",
-      phone: user?.mobile || user?.phone || "",
-    });
-  };
-
-  const handleRequestOtp = async () => {
-    if (!profileData.name.trim()) {
-      toast.error("Name is required");
-      return;
-    }
-    
-    setRequestingOtp(true);
-    try {
-      const response = await axios.post(`${API}/users/request-profile-update`, {
-        name: profileData.name.trim(),
-        phone: profileData.phone.trim() || null,
-      });
-      
-      if (response.data.email_sent) {
-        toast.success("OTP sent to your email");
-        setDisplayedOtp(null);
-      } else {
-        toast.info("Email service unavailable - OTP shown below");
-        setDisplayedOtp(response.data.otp);
-      }
-      setShowOtpDialog(true);
-      setOtp("");
-    } catch (error) {
-      toast.error(error.response?.data?.detail || "Failed to request OTP");
-    } finally {
-      setRequestingOtp(false);
-    }
-  };
-
-  const handleVerifyOtpAndUpdate = async () => {
-    if (!otp.trim()) {
-      toast.error("Please enter the OTP");
-      return;
-    }
-    
-    setVerifyingOtp(true);
-    try {
-      const response = await axios.post(`${API}/users/verify-profile-update`, {
-        otp: otp.trim(),
-        name: profileData.name.trim(),
-        phone: profileData.phone.trim() || null,
-      });
-      
-      setUser(response.data.user);
-      toast.success("Profile updated successfully");
-      setShowOtpDialog(false);
-      setEditingProfile(false);
-      setOtp("");
-      setDisplayedOtp(null);
-    } catch (error) {
-      toast.error(error.response?.data?.detail || "Invalid OTP");
-    } finally {
-      setVerifyingOtp(false);
-    }
-  };
-
-  const handleCancelOtpDialog = () => {
-    setShowOtpDialog(false);
-    setOtp("");
-    setDisplayedOtp(null);
-  };
-
   return (
     <div className="space-y-6 animate-fade-in" data-testid="settings-page">
       {/* Header */}
       <div>
-        <h1 className="text-3xl font-bold">Settings</h1>
+        <h1 className="text-3xl font-extrabold tracking-tight bg-gradient-to-r from-foreground to-foreground/75 bg-clip-text text-transparent">Settings</h1>
         <p className="text-muted-foreground">Manage your pharmacy, profile, and data settings</p>
       </div>
 
-      <Tabs defaultValue="pharmacy" className="space-y-6">
-        <TabsList>
-          <TabsTrigger value="pharmacy">
+      <Tabs value={tab} onValueChange={setTab} className="space-y-6">
+        <TabsList className="max-md:flex max-md:w-full max-md:justify-start max-md:overflow-x-auto [scrollbar-width:none]">
+          <TabsTrigger value="pharmacy" data-testid="settings-tab-pharmacy">
             <Building2 className="w-4 h-4 mr-2" />
             Pharmacy
+            {pharmacyDirty && <span className="ml-2 w-1.5 h-1.5 rounded-full bg-amber-500" title="Unsaved changes" />}
           </TabsTrigger>
-          <TabsTrigger value="profile">
+          <TabsTrigger value="profile" data-testid="settings-tab-profile">
             <User className="w-4 h-4 mr-2" />
             Profile
+            {profileDirty && <span className="ml-2 w-1.5 h-1.5 rounded-full bg-amber-500" title="Unsaved changes" />}
           </TabsTrigger>
           <TabsTrigger value="preferences">
             <Sliders className="w-4 h-4 mr-2" />
@@ -488,458 +302,13 @@ export default function SettingsPage() {
           )}
         </TabsList>
 
-        {/* Pharmacy Tab */}
-        <TabsContent value="pharmacy">
-          <Card className="bg-card/50 backdrop-blur-sm border-white/5">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Building2 className="w-5 h-5 text-primary" />
-                Pharmacy Details
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              {/* Logo Upload */}
-              <div className="flex items-center gap-4">
-                <div className="relative">
-                  {pharmacy?.logo_url ? (
-                    <img
-                      src={pharmacy.logo_url}
-                      alt="Pharmacy Logo"
-                      className="w-20 h-20 rounded-xl object-cover border border-white/10"
-                    />
-                  ) : (
-                    <div className="w-20 h-20 rounded-xl bg-primary/10 flex items-center justify-center border border-white/10">
-                      <Building2 className="w-8 h-8 text-primary/50" />
-                    </div>
-                  )}
-
-                  {isAdmin && (
-                    <button
-                      onClick={() => logoInputRef.current?.click()}
-                      className="absolute -bottom-2 -right-2 w-8 h-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center shadow-lg hover:bg-primary/90 transition-colors"
-                      disabled={uploadingLogo}
-                    >
-                      {uploadingLogo ? (
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                      ) : (
-                        <Camera className="w-4 h-4" />
-                      )}
-                    </button>
-                  )}
-
-                  <input
-                    ref={logoInputRef}
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    onChange={handleLogoUpload}
-                    data-testid="logo-upload-input"
-                  />
-                </div>
-
-                <div>
-                  <p className="font-medium">Pharmacy Logo</p>
-                  <p className="text-sm text-muted-foreground">Upload your pharmacy logo (appears on bills)</p>
-                </div>
-              </div>
-
-              <Separator className="bg-white/5" />
-
-              {/* Pharmacy Form */}
-              <div className="space-y-4">
-                <div className="space-y-2">
-                  <Label>Pharmacy Name</Label>
-                  <Input
-                    value={pharmacyData.name}
-                    onChange={(e) => setPharmacyData({ ...pharmacyData, name: e.target.value })}
-                    disabled={!isAdmin}
-                    data-testid="pharmacy-name-input"
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <Label>Location</Label>
-                  <Input
-                    value={pharmacyData.location}
-                    onChange={(e) => setPharmacyData({ ...pharmacyData, location: e.target.value })}
-                    disabled={!isAdmin}
-                    data-testid="pharmacy-location-input"
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 max-md:grid-cols-1 gap-4">
-                  <div className="space-y-2">
-                    <Label>License Number</Label>
-                    <Input
-                      value={pharmacyData.license_no}
-                      onChange={(e) => setPharmacyData({ ...pharmacyData, license_no: e.target.value })}
-                      disabled={!isAdmin}
-                      data-testid="pharmacy-license-input"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Years in Business</Label>
-                    <Input
-                      type="number"
-                      value={pharmacyData.years_old}
-                      onChange={(e) => setPharmacyData({ ...pharmacyData, years_old: e.target.value })}
-                      disabled={!isAdmin}
-                      data-testid="pharmacy-years-input"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 max-md:grid-cols-1 gap-4">
-                  <div className="space-y-2">
-                    <Label>Contact Details (Email/Phone)</Label>
-                    <Input
-                      value={pharmacyData.contact}
-                      onChange={(e) => setPharmacyData({ ...pharmacyData, contact: e.target.value })}
-                      disabled={!isAdmin}
-                      placeholder="e.g. 8535085807, jk05493@gmail.com"
-                      data-testid="pharmacy-contact-input"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>PAN Number</Label>
-                    <Input
-                      value={pharmacyData.pan}
-                      onChange={(e) => setPharmacyData({ ...pharmacyData, pan: e.target.value })}
-                      disabled={!isAdmin}
-                      placeholder="e.g. EAAPK8941N"
-                      data-testid="pharmacy-pan-input"
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <Label>GST Number (GSTIN)</Label>
-                  <Input
-                    value={pharmacyData.gst_no}
-                    onChange={(e) => setPharmacyData({ ...pharmacyData, gst_no: e.target.value })}
-                    disabled={!isAdmin}
-                    placeholder="e.g. 09AAACH1111H1Z1"
-                    data-testid="pharmacy-gst-input"
-                  />
-                </div>
-
-                <div className="space-y-4 pt-2">
-                  <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Bank Details</h3>
-                  <div className="grid grid-cols-2 max-md:grid-cols-1 gap-4">
-                    <div className="space-y-2">
-                      <Label>Bank Name & Branch</Label>
-                      <Input
-                        value={pharmacyData.bank_name}
-                        onChange={(e) => setPharmacyData({ ...pharmacyData, bank_name: e.target.value })}
-                        disabled={!isAdmin}
-                        placeholder="e.g. STATE BANK OF INDIA, FARIDPUR"
-                        data-testid="pharmacy-bank-name-input"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>IFSC Code</Label>
-                      <Input
-                        value={pharmacyData.bank_ifsc}
-                        onChange={(e) => setPharmacyData({ ...pharmacyData, bank_ifsc: e.target.value })}
-                        disabled={!isAdmin}
-                        placeholder="e.g. SBIN0000637"
-                        data-testid="pharmacy-ifsc-input"
-                      />
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 max-md:grid-cols-1 gap-4">
-                    <div className="space-y-2">
-                      <Label>Account Number</Label>
-                      <Input
-                        value={pharmacyData.bank_acc_no}
-                        onChange={(e) => setPharmacyData({ ...pharmacyData, bank_acc_no: e.target.value })}
-                        disabled={!isAdmin}
-                        placeholder="e.g. 20300115911"
-                        data-testid="pharmacy-acc-no-input"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Account Holder Name</Label>
-                      <Input
-                        value={pharmacyData.bank_holder}
-                        onChange={(e) => setPharmacyData({ ...pharmacyData, bank_holder: e.target.value })}
-                        disabled={!isAdmin}
-                        placeholder="e.g. Jitendra Kumar"
-                        data-testid="pharmacy-holder-input"
-                      />
-                    </div>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="pharmacy-upi-id">UPI ID</Label>
-                    <div className="flex gap-2">
-                      <Input
-                        id="pharmacy-upi-id"
-                        value={pharmacyData.upi_id}
-                        onChange={(e) => setPharmacyData({ ...pharmacyData, upi_id: e.target.value.replace(/\s+/g, "") })}
-                        disabled={!isAdmin}
-                        placeholder="e.g. q201486073@ybl"
-                        aria-invalid={!!upiError}
-                        autoCapitalize="none"
-                        autoCorrect="off"
-                        spellCheck={false}
-                        className={upiError ? "border-rose-500" : ""}
-                        data-testid="pharmacy-upi-input"
-                      />
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() => setQrOpen(true)}
-                        disabled={!upiSaved || upiDraft !== upiSaved}
-                        title={!upiSaved ? "Save a UPI ID first" : upiDraft !== upiSaved ? "Save your changes first" : "Make a payment QR for any amount"}
-                        className="shrink-0"
-                        data-testid="generate-upi-qr-btn"
-                      >
-                        <QrCode className="w-4 h-4 mr-1.5" />
-                        Generate QR
-                      </Button>
-                    </div>
-                    {upiError ? (
-                      <p className="text-xs text-rose-500">{upiError}</p>
-                    ) : (
-                      <p className="text-xs text-muted-foreground">Used for payment QRs on bills and in the Billing page.</p>
-                    )}
-                  </div>
-                </div>
-
-                {isAdmin && (
-                  <Button
-                    onClick={handleSavePharmacy}
-                    disabled={saving}
-                    className="w-full btn-primary"
-                    data-testid="save-pharmacy-btn"
-                  >
-                    {saving ? (
-                      <>
-                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                        Saving...
-                      </>
-                    ) : (
-                      <>
-                        <Save className="w-4 h-4 mr-2" />
-                        Save Changes
-                      </>
-                    )}
-                  </Button>
-                )}
-              </div>
-            </CardContent>
-          </Card>
+        {/* Kept mounted so edits survive switching tabs */}
+        <TabsContent value="pharmacy" forceMount className="data-[state=inactive]:hidden">
+          <PharmacySettings active={tab === "pharmacy"} onDirtyChange={setPharmacyDirty} />
         </TabsContent>
 
-        {/* Profile Tab */}
-        <TabsContent value="profile">
-          <Card className="bg-card/50 backdrop-blur-sm border-white/5">
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <CardTitle className="flex items-center gap-2">
-                  <User className="w-5 h-5 text-primary" />
-                  Your Profile
-                </CardTitle>
-                {!editingProfile && (
-                  <Button 
-                    variant="outline" 
-                    size="sm" 
-                    onClick={handleStartEditProfile}
-                    data-testid="edit-profile-btn"
-                  >
-                    <Edit2 className="w-4 h-4 mr-2" />
-                    Edit Profile
-                  </Button>
-                )}
-              </div>
-              <CardDescription>
-                Update your personal information. Changes require OTP verification.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              {/* Avatar Upload */}
-              <div className="flex items-center gap-4">
-                <div className="relative">
-                  <Avatar className="w-20 h-20 border border-white/10">
-                    <AvatarImage src={user?.image_url} />
-                    <AvatarFallback className="bg-primary/10 text-primary text-2xl">
-                      {user?.name?.charAt(0)?.toUpperCase()}
-                    </AvatarFallback>
-                  </Avatar>
-
-                  <button
-                    onClick={() => avatarInputRef.current?.click()}
-                    className="absolute -bottom-2 -right-2 w-8 h-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center shadow-lg hover:bg-primary/90 transition-colors"
-                    disabled={uploadingAvatar}
-                  >
-                    {uploadingAvatar ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                    ) : (
-                      <Camera className="w-4 h-4" />
-                    )}
-                  </button>
-
-                  <input
-                    ref={avatarInputRef}
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    onChange={handleAvatarUpload}
-                    data-testid="avatar-upload-input"
-                  />
-                </div>
-
-                <div>
-                  <p className="font-medium">Profile Photo</p>
-                  <p className="text-sm text-muted-foreground">Upload your profile picture</p>
-                </div>
-              </div>
-
-              <Separator className="bg-white/5" />
-
-              {/* User Info - Editable or Read-only */}
-              <div className="space-y-4">
-                <div className="space-y-2">
-                  <Label>Full Name {editingProfile && <span className="text-destructive">*</span>}</Label>
-                  {editingProfile ? (
-                    <Input 
-                      value={profileData.name} 
-                      onChange={(e) => setProfileData({ ...profileData, name: e.target.value })}
-                      placeholder="Enter your full name"
-                      data-testid="edit-name-input"
-                    />
-                  ) : (
-                    <Input value={user?.name || ""} disabled data-testid="user-name-display" />
-                  )}
-                </div>
-
-                <div className="space-y-2">
-                  <Label>Email</Label>
-                  <Input value={user?.email || ""} disabled data-testid="user-email-display" />
-                  <p className="text-xs text-muted-foreground">Email cannot be changed</p>
-                </div>
-
-                <div className="space-y-2">
-                  <Label>Mobile / Phone</Label>
-                  {editingProfile ? (
-                    <Input 
-                      value={profileData.phone} 
-                      onChange={(e) => setProfileData({ ...profileData, phone: e.target.value })}
-                      placeholder="Enter your mobile number"
-                      data-testid="edit-phone-input"
-                    />
-                  ) : (
-                    <Input value={user?.mobile || user?.phone || ""} disabled data-testid="user-mobile-display" />
-                  )}
-                </div>
-
-                <div className="space-y-2">
-                  <Label>Role</Label>
-                  <Input value={user?.role || ""} disabled data-testid="user-role-display" />
-                </div>
-
-                {/* Edit Mode Actions */}
-                {editingProfile && (
-                  <div className="flex gap-2 pt-2">
-                    <Button 
-                      variant="outline" 
-                      onClick={handleCancelEditProfile}
-                      data-testid="cancel-edit-profile-btn"
-                    >
-                      Cancel
-                    </Button>
-                    <Button 
-                      onClick={handleRequestOtp}
-                      disabled={requestingOtp}
-                      className="btn-primary"
-                      data-testid="request-otp-btn"
-                    >
-                      {requestingOtp ? (
-                        <>
-                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                          Sending OTP...
-                        </>
-                      ) : (
-                        <>
-                          <KeyRound className="w-4 h-4 mr-2" />
-                          Verify & Save
-                        </>
-                      )}
-                    </Button>
-                  </div>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* OTP Verification Dialog */}
-          <Dialog open={showOtpDialog} onOpenChange={handleCancelOtpDialog}>
-            <DialogContent className="max-w-md">
-              <DialogHeader>
-                <DialogTitle className="flex items-center gap-2">
-                  <KeyRound className="w-5 h-5 text-primary" />
-                  Verify OTP
-                </DialogTitle>
-                <DialogDescription>
-                  Enter the OTP sent to your email ({user?.email}) to confirm profile changes.
-                </DialogDescription>
-              </DialogHeader>
-              <div className="space-y-4 pt-4">
-                {displayedOtp && (
-                  <div className="p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-lg">
-                    <div className="flex items-center gap-2 text-yellow-500 mb-2">
-                      <Mail className="w-4 h-4" />
-                      <span className="text-sm font-medium">Email service unavailable</span>
-                    </div>
-                    <p className="text-sm text-muted-foreground">
-                      Your OTP is: <span className="font-mono font-bold text-lg text-foreground">{displayedOtp}</span>
-                    </p>
-                  </div>
-                )}
-                
-                <div className="space-y-2">
-                  <Label>Enter OTP</Label>
-                  <Input
-                    value={otp}
-                    onChange={(e) => setOtp(e.target.value)}
-                    placeholder="Enter 6-digit OTP"
-                    maxLength={6}
-                    className="text-center text-lg font-mono tracking-widest"
-                    data-testid="otp-input"
-                    autoFocus
-                  />
-                </div>
-                
-                <div className="flex gap-2">
-                  <Button 
-                    variant="outline" 
-                    onClick={handleCancelOtpDialog}
-                    className="flex-1"
-                  >
-                    Cancel
-                  </Button>
-                  <Button 
-                    onClick={handleVerifyOtpAndUpdate}
-                    disabled={verifyingOtp || !otp.trim()}
-                    className="flex-1 btn-primary"
-                    data-testid="verify-otp-btn"
-                  >
-                    {verifyingOtp ? (
-                      <>
-                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                        Verifying...
-                      </>
-                    ) : (
-                      <>
-                        <Save className="w-4 h-4 mr-2" />
-                        Update Profile
-                      </>
-                    )}
-                  </Button>
-                </div>
-              </div>
-            </DialogContent>
-          </Dialog>
+        <TabsContent value="profile" forceMount className="data-[state=inactive]:hidden">
+          <ProfileSettings active={tab === "profile"} onDirtyChange={setProfileDirty} />
         </TabsContent>
         {/* Preferences Tab */}
         <TabsContent value="preferences">
@@ -1406,7 +775,6 @@ export default function SettingsPage() {
           </div>
         </DialogContent>
       </Dialog>
-      <UpiQrDialog open={qrOpen} onOpenChange={setQrOpen} />
     </div>
   );
 }

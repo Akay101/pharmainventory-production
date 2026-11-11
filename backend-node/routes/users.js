@@ -3,24 +3,17 @@ const router = express.Router();
 const bcrypt = require("bcryptjs");
 const mongoose = require("mongoose");
 const { v4: uuidv4 } = require("uuid");
-const multer = require("multer");
 const { z } = require("zod");
 const { auth, adminOnly } = require("../middleware/auth");
 const { sendOTPEmail } = require("../services/email");
-const { uploadToR2 } = require("../services/r2");
+const { uploadToR2, deleteFromR2 } = require("../services/r2");
+const { acceptImage, imageExtension, storeImageError } = require("../utils/imageUpload");
 const { requireSubscription } = require("../middleware/subscription");
 const { logActivity } = require("../utils/activityLogger");
 const { issueOtp, verifyOtp, sendOtpError, OtpError } = require("../services/auth/otp");
 const schemas = require("../services/auth/schemas");
 const { revokeAllForUser } = require("../services/auth/tokens");
 const { publicUser } = require("./auth");
-
-const AVATAR_TYPES = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" };
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 2 * 1024 * 1024, files: 1 },
-  fileFilter: (req, file, cb) => cb(null, !!AVATAR_TYPES[file.mimetype]),
-});
 
 const db = () => mongoose.connection.db;
 
@@ -36,7 +29,6 @@ const profileSchema = z.object({
   name: schemas.text("Name", 80),
   phone: schemas.mobile.optional().or(z.literal("")),
 });
-const profileVerifySchema = profileSchema.extend({ otp: schemas.otp });
 
 const sendCode = async (email, name, purpose, scenario) => {
   const otp = await issueOtp(db(), { purpose, subject: email });
@@ -233,21 +225,6 @@ router.delete("/:user_id", auth, requireSubscription(), adminOnly, async (req, r
   }
 });
 
-// POST /api/users/avatar - Upload avatar (JPEG/PNG/WebP, max 2 MB)
-router.post("/avatar", auth, requireSubscription(), upload.single("file"), async (req, res, next) => {
-  try {
-    if (!req.file) {
-      return res.status(400).json({ detail: "Upload a JPEG, PNG or WebP image up to 2 MB" });
-    }
-    const key = `avatars/${req.user.id}-${Date.now()}.${AVATAR_TYPES[req.file.mimetype]}`;
-    const url = await uploadToR2(key, req.file.buffer, req.file.mimetype);
-    await db().collection("users").updateOne({ id: req.user.id }, { $set: { image_url: url } });
-    res.json({ url, message: "Avatar uploaded" });
-  } catch (error) {
-    next(error);
-  }
-});
-
 // POST /api/users/request-profile-update
 router.post("/request-profile-update", auth, requireSubscription(), async (req, res, next) => {
   try {
@@ -260,28 +237,52 @@ router.post("/request-profile-update", auth, requireSubscription(), async (req, 
   }
 });
 
-// POST /api/users/verify-profile-update
-router.post("/verify-profile-update", auth, requireSubscription(), async (req, res, next) => {
+// POST /api/users/me/profile - Save name, mobile and photo together. Changing the
+// name or mobile needs the emailed code; a photo on its own doesn't. The photo is
+// stored first so a failed upload leaves the code usable and nothing saved.
+router.post("/me/profile", auth, requireSubscription(), acceptImage("avatar"), async (req, res, next) => {
+  let avatarKey = null;
   try {
-    const data = schemas.validate(profileVerifySchema, req.body, res);
+    const currentPhone = req.user.mobile || req.user.phone || "";
+    const rawPhone = String(req.body.phone ?? "").trim();
+    const phoneChanged = rawPhone !== currentPhone;
+    if (phoneChanged && !rawPhone) {
+      return res.status(400).json({ detail: "Mobile number can't be removed" });
+    }
+    const data = schemas.validate(profileSchema, { name: req.body.name, phone: phoneChanged ? rawPhone : "" }, res);
     if (!data) return;
-    await verifyOtp(db(), { purpose: "profile", subject: req.user.email, otp: data.otp });
 
-    await db()
-      .collection("users")
-      .updateOne(
-        { id: req.user.id },
-        {
-          $set: { name: data.name, mobile: data.phone || req.user.mobile },
-          $unset: { profile_update_otp: "", profile_update_otp_expiry: "", pending_name: "", pending_phone: "" },
-        }
-      );
+    const detailsChanged = data.name !== req.user.name || phoneChanged;
+    if (detailsChanged && !req.body.otp) {
+      return res.status(400).json({ code: "OTP_REQUIRED", detail: "Enter the code sent to your email" });
+    }
+
+    const update = { name: data.name, ...(phoneChanged ? { mobile: data.phone } : {}) };
+    if (req.file) {
+      avatarKey = `avatars/${req.user.id}-${Date.now()}.${imageExtension(req.file)}`;
+      try {
+        update.image_url = await uploadToR2(avatarKey, req.file.buffer, req.file.mimetype);
+      } catch (uploadError) {
+        console.error("Avatar upload failed:", uploadError.message);
+        avatarKey = null;
+        return storeImageError(res);
+      }
+    } else if (req.body.remove_avatar === "true") {
+      update.image_url = null;
+    }
+
+    if (detailsChanged) {
+      await verifyOtp(db(), { purpose: "profile", subject: req.user.email, otp: String(req.body.otp) });
+    }
+
+    await db().collection("users").updateOne({ id: req.user.id }, { $set: update });
 
     const updated = await db().collection("users").findOne({ id: req.user.id });
     const pharmacy = await db().collection("pharmacies").findOne({ id: req.user.pharmacy_id }, { projection: { subscription: 1 } });
     await logActivity(db(), req.user.pharmacy_id, req.user.id, req.user.name, "UPDATE", "USERS", req.user.id, `Updated their profile`, `/settings`);
     res.json({ message: "Profile updated", user: publicUser(updated, pharmacy) });
   } catch (error) {
+    if (avatarKey) deleteFromR2(avatarKey).catch(() => {});
     sendOtpError(res, error, next);
   }
 });

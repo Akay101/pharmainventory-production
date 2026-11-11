@@ -52,4 +52,10 @@ const COUNTERS = {
   suppliers: ["total_debt", "total_advance"],
 };
 
-module.exports = { TWO_WAY, PULL_ONLY, ALL, OWNER_FIELD, SECRET_FIELDS, COUNTERS };
+// Housekeeping where the last write simply wins: nobody needs to choose between two copies
+const QUIET = ["activities", "notifications", "user_settings"];
+
+// Stamped on every save, so a difference here isn't two people disagreeing
+const NOT_COMPARED = ["updated_at", "updated_by", "updated_by_name", "last_modified"];
+
+module.exports = { TWO_WAY, PULL_ONLY, ALL, OWNER_FIELD, SECRET_FIELDS, COUNTERS, QUIET, NOT_COMPARED };

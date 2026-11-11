@@ -119,13 +119,15 @@ function DesktopSyncChip() {
   const s = useDesktopStatus();
   const navigate = useNavigate();
   if (!s) return null;
-  const text = !s.online ? `Offline${s.pending ? ` · ${s.pending} waiting` : ""}` : s.pending ? `Syncing ${s.pending}` : "Synced";
+  // Changes the cloud held back wait for a person, so they outrank everything else
+  const review = (s.reviews?.length || 0) + (s.conflicts?.length || 0);
+  const text = review ? `${review} to review` : !s.online ? `Offline${s.pending ? ` · ${s.pending} waiting` : ""}` : s.pending ? `Syncing ${s.pending}` : "Synced";
   return (
     <button
       type="button"
       onClick={() => navigate("/sync")}
       data-testid="sync-chip"
-      className={`flex items-center gap-1.5 h-9 px-3 rounded-xl border border-border/60 text-xs font-bold whitespace-nowrap ${!s.online ? "text-amber-600 dark:text-amber-400" : s.pending ? "text-orange-600 dark:text-orange-400" : "text-emerald-600 dark:text-emerald-400"}`}
+      className={`flex items-center gap-1.5 h-9 px-3 rounded-xl border border-border/60 text-xs font-bold whitespace-nowrap ${review ? "text-rose-600 dark:text-rose-400" : !s.online ? "text-amber-600 dark:text-amber-400" : s.pending ? "text-orange-600 dark:text-orange-400" : "text-emerald-600 dark:text-emerald-400"}`}
     >
       {s.online ? <Cloud className="w-3.5 h-3.5" aria-hidden="true" /> : <CloudOff className="w-3.5 h-3.5" aria-hidden="true" />}
       {text}

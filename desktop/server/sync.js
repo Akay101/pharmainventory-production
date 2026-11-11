@@ -57,8 +57,18 @@ class SyncEngine {
     this.running = false;
     this.stopped = false;
     this.lastClockCheck = 0;
+    // What the cloud couldn't apply as sent, waiting for the shop to decide
+    db._db.exec("CREATE TABLE IF NOT EXISTS review (id TEXT PRIMARY KEY, data TEXT NOT NULL, created_at INTEGER NOT NULL)");
     db.onChange(() => this.wake());
     this.resetIfCloudChanged();
+    this.useDeviceNo();
+  }
+
+  // Bills made here carry this computer's number, so no other computer repeats them
+  useDeviceNo() {
+    const no = this.meta("device_no");
+    if (no) process.env.DAVADESK_BILL_TAG = `D${no}`;
+    else delete process.env.DAVADESK_BILL_TAG;
   }
 
   meta(key) {
@@ -70,7 +80,7 @@ class SyncEngine {
     const previous = this.meta("cloud_url");
     if (previous && previous !== this.config.cloudUrl) {
       this.wipeShopData();
-      for (const key of ["device_token", "device_id", "licence", "user_id", "pharmacy_id", "last_seen_at", "catalog_done_at", "catalog_after_medicines", "catalog_after_doctors", "catalog_after_distributors"]) {
+      for (const key of ["device_token", "device_id", "device_no", "licence", "user_id", "pharmacy_id", "last_seen_at", "catalog_done_at", "catalog_after_medicines", "catalog_after_doctors", "catalog_after_distributors"]) {
         this.db._db.prepare("DELETE FROM meta WHERE key = ?").run(key);
       }
       this.catalog?.clear();
@@ -158,6 +168,9 @@ class SyncEngine {
     }
     this.db.setMeta("device_token", out.device_token);
     this.db.setMeta("device_id", out.device_id);
+    // A new sign-in is a new computer on the account, with a number of its own
+    this.db._db.prepare("DELETE FROM meta WHERE key = 'device_no'").run();
+    this.useDeviceNo();
     this.db.setMeta("licence", out.licence);
     this.db.setMeta("pharmacy_id", licence.pharmacy_id);
     this.db.setMeta("user_id", licence.user_id);
@@ -176,7 +189,8 @@ class SyncEngine {
     // Best effort: offline, the computer simply stays listed until removed in Settings
     await this.request("POST", "/api/desktop/sign-out", { body: {} }).catch(() => {});
     await this.withWriteLock(async () => this.wipeShopData());
-    for (const key of ["device_token", "device_id", "licence", "user_id", "pharmacy_id"]) this.db._db.prepare("DELETE FROM meta WHERE key = ?").run(key);
+    for (const key of ["device_token", "device_id", "device_no", "licence", "user_id", "pharmacy_id"]) this.db._db.prepare("DELETE FROM meta WHERE key = ?").run(key);
+    this.useDeviceNo();
     this.token = null;
     this.blocked = null;
     this.online = false;
@@ -186,7 +200,7 @@ class SyncEngine {
   // Removes everything from this account on this computer
   wipeShopData() {
     const database = this.db._db;
-    database.exec("DELETE FROM docs; DELETE FROM idx; DELETE FROM outbox;");
+    database.exec("DELETE FROM docs; DELETE FROM idx; DELETE FROM outbox; DELETE FROM review;");
     for (const key of ["snapshot_done", "cursor"]) database.prepare("DELETE FROM meta WHERE key = ?").run(key);
     if (this.filesRoot) fs.rmSync(this.filesRoot, { recursive: true, force: true });
   }
@@ -197,6 +211,10 @@ class SyncEngine {
     this.token = out.token;
     this.tokenAt = Date.now();
     if (verifyLicence(out.licence, this.config.licencePublicKey)) this.db.setMeta("licence", out.licence);
+    if (Number.isInteger(out.device_no) && out.device_no > 0 && this.meta("device_no") !== String(out.device_no)) {
+      this.db.setMeta("device_no", String(out.device_no));
+      this.useDeviceNo();
+    }
     this.blocked = null;
     return this.token;
   }
@@ -224,6 +242,105 @@ class SyncEngine {
     this.wake();
   }
 
+  // Drops a change the cloud refused, and puts the cloud's copy of its records back here
+  async discardConflict(seq) {
+    const row = this.db._db.prepare("SELECT changes FROM outbox WHERE seq = ? AND status = 'conflict'").get(seq);
+    if (!row) return;
+    const items = [...new Map(JSON.parse(row.changes).map((c) => [`${c.coll}:${c.key}`, { coll: c.coll, key: c.key }])).values()];
+    const { docs } = await this.request("POST", "/api/desktop/sync/docs", { body: { items } });
+    await this.withWriteLock(async () => {
+      this.db._db.transaction(() => {
+        for (const d of docs) {
+          const col = this.db.collection(d.coll);
+          if (d.doc) col._putRaw(reviveDoc(d.doc));
+          else col._deleteRaw(d.key);
+        }
+        this.db._db.prepare("DELETE FROM outbox WHERE seq = ?").run(seq);
+      })();
+    });
+    this.db._emit();
+  }
+
+  // ---- Review: changes the cloud held back ----------------------------------------------
+  // Kinds: edited (someone else changed the same fields), deleted (the record was
+  // deleted elsewhere), changed_before_delete (deleted here, but changed elsewhere),
+  // stock_short (more sold than the batch had), duplicate_bill_no.
+  recordReview(items) {
+    const database = this.db._db;
+    for (const item of items) {
+      const local = this.db.collection(item.coll)._getRaw(item.key);
+      const existing = database.prepare("SELECT id, data FROM review").all().map((r) => ({ id: r.id, ...JSON.parse(r.data) })).find((r) => r.kind === item.kind && r.coll === item.coll && r.key === item.key);
+      const data = { ...item, title: titleOf(item.coll, local), snapshot: local ? JSON.parse(require("./docdb/values").encode(local)) : existing?.snapshot || null };
+      if (existing && item.kind === "edited") {
+        // A later change to the same field replaces "mine"; the cloud's value stays the first one seen
+        const fields = { ...existing.fields };
+        for (const [f, v] of Object.entries(item.fields)) fields[f] = { mine: v.mine, cloud: fields[f]?.cloud ?? v.cloud };
+        data.fields = fields;
+      }
+      if (existing && item.kind === "stock_short") data.short = (existing.short || 0) + item.short;
+      if (existing) database.prepare("UPDATE review SET data = ? WHERE id = ?").run(JSON.stringify(data), existing.id);
+      else database.prepare("INSERT INTO review (id, data, created_at) VALUES (?, ?, ?)").run(crypto.randomUUID(), JSON.stringify(data), Date.now());
+    }
+    if (items.length) this.note(`${items.length} change${items.length === 1 ? " needs" : "s need"} your review`);
+  }
+
+  reviews() {
+    return this.db._db
+      .prepare("SELECT id, data, created_at FROM review ORDER BY created_at DESC LIMIT 100")
+      .all()
+      .map((r) => {
+        const { snapshot, ...data } = JSON.parse(r.data);
+        return { id: r.id, created_at: r.created_at, can_restore: !!snapshot, ...data };
+      });
+  }
+
+  // The shop's decision on one review item. Runs inside a write request, so any
+  // change made here is sent to the cloud like any other.
+  resolveReview(id, choice, { quantity } = {}) {
+    const row = this.db._db.prepare("SELECT data FROM review WHERE id = ?").get(id);
+    if (!row) throw Object.assign(new Error("Already resolved"), { status: 404 });
+    const item = JSON.parse(row.data);
+    const col = this.db.collection(item.coll);
+    const send = (change) => (this.db._capture ? this.db._capture.push(change) : this.db._outboxAdd([change]));
+    const decode = (obj) => require("./docdb/values").decode(JSON.stringify(obj));
+    const putLocal = (fields) => {
+      const doc = col._getRaw(item.key);
+      if (doc) col._putRaw({ ...doc, ...decode(fields) });
+    };
+    const pick = (side) => Object.fromEntries(Object.entries(item.fields).map(([f, v]) => [f, v[side]]));
+    const valid = {
+      edited: ["mine", "cloud"],
+      deleted: item.snapshot ? ["restore", "accept"] : ["accept"],
+      changed_before_delete: ["delete", "keep"],
+      stock_short: ["count", "ok"],
+      duplicate_bill_no: ["ok"],
+    }[item.kind];
+    if (!valid?.includes(choice)) throw Object.assign(new Error("That choice isn't available here"), { status: 400 });
+
+    if (choice === "mine") {
+      // Sent with the cloud's value as the starting point: applied unless it changed yet again
+      send({ coll: item.coll, key: item.key, op: "upsert", set: pick("mine"), inc: {}, unset: [], was: pick("cloud") });
+      putLocal(pick("mine"));
+    } else if (choice === "cloud") {
+      putLocal(pick("cloud"));
+    } else if (choice === "restore") {
+      const { _id, ...fields } = item.snapshot;
+      send({ coll: item.coll, key: item.key, op: "upsert", new: true, set: fields, ...(fields.id ? { ref: String(fields.id) } : {}) });
+      col._putRaw(decode(item.snapshot));
+    } else if (choice === "accept" || choice === "delete") {
+      if (choice === "delete") send({ coll: item.coll, key: item.key, op: "delete" });
+      col._deleteRaw(item.key);
+    } else if (choice === "count") {
+      const n = Number(quantity);
+      if (!Number.isFinite(n) || n < 0) throw Object.assign(new Error("Enter the count on the shelf"), { status: 400 });
+      // A shelf count is a fact, not a difference: it replaces whatever the record says
+      send({ coll: item.coll, key: item.key, op: "upsert", set: { available_quantity: n }, inc: {}, unset: [], force: true });
+      putLocal({ available_quantity: n });
+    }
+    this.db._db.prepare("DELETE FROM review WHERE id = ?").run(id);
+    this.db._emit();
+  }
+
   async push() {
     const total = this.pendingCount();
     if (!total) return;
@@ -242,7 +359,14 @@ class SyncEngine {
           this.note(`A record needs review: ${result.detail}`);
         } else {
           await this.sendFilesFor(JSON.parse(row.changes));
-          this.db._db.prepare("DELETE FROM outbox WHERE seq = ?").run(row.seq);
+          // Read before the next pull replaces this computer's copy of those records.
+          // Under the write lock, so no request's rollback can take the review with it.
+          await this.withWriteLock(async () => {
+            this.db._db.transaction(() => {
+              if (result.review?.length) this.recordReview(result.review);
+              this.db._db.prepare("DELETE FROM outbox WHERE seq = ?").run(row.seq);
+            })();
+          });
         }
         done++;
         this.progress = { label: "Sending changes to the cloud", done, total: Math.max(total, done) };
@@ -474,6 +598,7 @@ class SyncEngine {
       pending: this.pendingCount(),
       pending_by_collection: this.pendingByCollection(),
       conflicts: this.conflicts(),
+      reviews: this.reviews(),
       last_sync_at: Number(this.meta("last_sync_at")) || null,
       last_error: this.lastError,
       access_problem: this.accessProblem(),
@@ -485,6 +610,14 @@ class SyncEngine {
       events: this.events.slice(0, 15),
     };
   }
+}
+
+// A name the shop recognises a record by
+function titleOf(coll, doc) {
+  if (!doc) return null;
+  if (coll === "inventory") return [doc.product_name, doc.batch_no && `batch ${doc.batch_no}`].filter(Boolean).join(", ") || null;
+  if (coll === "bills" || coll === "purchases") return doc.bill_no || doc.invoice_no || doc.purchase_no || null;
+  return doc.name || doc.product_name || doc.supplier_name || doc.customer_name || doc.title || null;
 }
 
 function reviveDoc(encoded) {

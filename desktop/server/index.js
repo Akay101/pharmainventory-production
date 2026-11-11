@@ -185,6 +185,14 @@ async function startServer({ dataDir, backendDir, webDir, dbKey, catalogKey, win
     sync.retryConflict(Number(req.params.seq));
     res.json({ ok: true });
   });
+  app.post("/api/desktop/conflicts/:seq/discard", async (req, res) => {
+    try {
+      await sync.discardConflict(Number(req.params.seq));
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(err.network ? 503 : 500).json({ detail: err.network ? "Connect to the internet to get the cloud's copy back." : err.message });
+    }
+  });
 
   // Nothing else works without a valid licence. The licence is signed by the cloud,
   // and this check runs on every request, on this computer and for its counters.
@@ -252,6 +260,18 @@ async function startServer({ dataDir, backendDir, webDir, dbKey, catalogKey, win
   app.use(express.urlencoded({ extended: true, limit: "10mb" }));
   app.use(sanitizeInput);
   app.use("/api", writeTransactions(db, acquireWriteLock));
+
+  // The shop's choice on a change the cloud held back. Inside the write transaction,
+  // so whatever it changes is sent to the cloud like any other edit.
+  app.post("/api/desktop/review/:id", (req, res) => {
+    try {
+      sync.resolveReview(req.params.id, String(req.body?.choice || ""), { quantity: req.body?.quantity });
+      sync.wake();
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(err.status || 500).json({ detail: err.message });
+    }
+  });
 
   const tokens = backend("services/auth/tokens");
   app.post("/api/auth/refresh", async (req, res, next) => {
