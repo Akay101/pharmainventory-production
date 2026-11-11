@@ -35,16 +35,16 @@ export function find(spec, root = document) {
     if (!r) return null;
     root = r;
   }
-  let list = [...root.querySelectorAll(spec.sel || TEXT_TAGS)].filter(visible);
+  let list = [...root.querySelectorAll(spec.sel || TEXT_TAGS)];
   if (spec.text) {
+    // Text first (textContent needs no layout), visibility only for matches:
+    // on a big page this keeps lookups from recalculating layout
     const want = String(spec.text).toLowerCase().replace(/\s+/g, " ").trim();
-    list = list.filter((el) => {
-      const t = (el.innerText || el.textContent || "").toLowerCase().replace(/\s+/g, " ").trim();
-      return spec.exact ? t === want : t.includes(want);
-    });
+    const norm = (el) => (el.textContent || "").toLowerCase().replace(/\s+/g, " ").trim();
+    list = list.filter((el) => (spec.exact ? norm(el) === want : norm(el).includes(want))).filter(visible);
     // Keep the innermost matches (a button, not the whole page around it)
     list = list.filter((el) => !list.some((o) => o !== el && el.contains(o)));
-  }
+  } else list = list.filter(visible);
   let el = spec.last ? list[list.length - 1] : list[spec.nth || 0];
   if (el && spec.closest) el = el.closest(spec.closest) || el;
   return el || null;

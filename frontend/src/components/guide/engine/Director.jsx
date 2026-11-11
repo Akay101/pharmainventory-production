@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { ChevronLeft, ChevronRight, Pause, Play, RotateCcw, X, Gauge, Captions, Languages, Loader2, FlaskConical, Volume2, VolumeX } from "lucide-react";
-import ParticleOrb from "../../assistant/ParticleOrb";
+import Orb from "./Orb";
 import Stage, { useFocusRect } from "./Stage";
 import { Runner, flatten } from "./runner";
 import { isPhone } from "./dom";
@@ -42,7 +42,7 @@ function LanguagePick({ tour, initial, onPick, onClose }) {
       <div className="relative w-full max-w-lg text-center text-white">
         <motion.div className="mx-auto flex h-36 w-36 items-center justify-center" initial={{ scale: 0.3, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ type: "spring", stiffness: 140, damping: 14 }}>
           <div className="absolute h-40 w-40 rounded-full bg-[radial-gradient(circle,rgba(236,72,153,0.45),transparent_65%)] blur-md" />
-          <ParticleOrb size={130} count={90} />
+          <Orb size={130} count={90} />
         </motion.div>
         <motion.p className="mt-2 text-xs font-black uppercase tracking-[0.4em] text-orange-300" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.3 }}>
           Guided tour · {tour.title.en}
@@ -128,10 +128,10 @@ function Bar({ runner, state, tour, lang, setLang, onClose, onToggle, phone, cap
   return (
     <div data-guide-layer className={`pointer-events-none fixed inset-x-0 z-[2147483002] flex justify-center px-2 ${atTop ? "top-3" : phone ? "bottom-[calc(8px+env(safe-area-inset-bottom))]" : "bottom-5"}`}>
     <motion.div className="pointer-events-auto w-full max-w-[760px]" layout transition={{ type: "spring", stiffness: 220, damping: 28 }}>
-      <div className="overflow-hidden rounded-[22px] bg-slate-950/90 text-white shadow-[0_24px_80px_rgba(0,0,0,0.55)] ring-1 ring-white/10 backdrop-blur-xl">
+      <div className="overflow-hidden rounded-[22px] bg-slate-950/95 text-white shadow-[0_24px_80px_rgba(0,0,0,0.55)] ring-1 ring-white/10">
         <div className="flex items-start gap-3 px-4 pb-2 pt-3">
           <div className="relative mt-0.5 shrink-0">
-            <ParticleOrb size={34} count={30} />
+            <Orb size={34} count={30} />
           </div>
           <div className="min-w-0 flex-1">
             <div className={`mb-0.5 flex items-center gap-2 text-[10px] font-black text-orange-300/90 ${lang === "hi" ? "text-[11px]" : "uppercase tracking-[0.18em]"}`}>
@@ -217,7 +217,7 @@ function Outro({ tour, lang, onReplay, onClose, next }) {
       <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_50%_40%,rgba(124,45,18,0.5),rgba(3,3,12,0.92)_65%)] backdrop-blur-xl" />
       <div className="relative max-w-md text-center text-white">
         <motion.div className="mx-auto flex h-28 w-28 items-center justify-center" initial={{ scale: 0.4 }} animate={{ scale: 1 }} transition={{ type: "spring", stiffness: 160, damping: 12 }}>
-          <ParticleOrb size={110} count={80} />
+          <Orb size={110} count={80} />
         </motion.div>
         <p className="mt-2 text-xs font-black uppercase tracking-[0.4em] text-orange-300">{t.done}</p>
         <h2 className="mt-2 text-4xl font-black">{tour.title[lang]}</h2>
@@ -337,7 +337,7 @@ export default function Director({ tour, env, initialLang, onLang, onClose, next
         <>
           {/* Catches clicks on the page while playing: they pause the tour */}
           {!state.paused && !state.busy && <div data-guide-layer className="fixed inset-0 z-[2147482999] cursor-pointer" onClick={() => runnerRef.current?.pause()} />}
-          {state.busy && <div data-guide-layer className="fixed inset-0 z-[2147482999] bg-slate-950/70 backdrop-blur-md" />}
+          {state.busy && <div data-guide-layer className="fixed inset-0 z-[2147482999] bg-slate-950/85" />}
           {!state.paused && <Stage state={state} speaking={speaking} compact={phone} lang={lang} />}
           <Bar runner={runnerRef.current} state={state} tour={tour} lang={lang} setLang={setLang} onClose={onClose} onToggle={toggle} phone={phone} captionsOn={captionsOn} setCaptionsOn={setCaptionsOn} />
         </>

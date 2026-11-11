@@ -203,7 +203,9 @@ export class Runner {
     await this.acts(b.before, token);
 
     if (b.focus !== undefined && !quick) {
-      const el = b.focus && find(Array.isArray(b.focus) && b.focus[0]?.union ? b.focus[0].union : b.focus);
+      const spec = Array.isArray(b.focus) && b.focus[0]?.union ? b.focus[0].union : b.focus;
+      // Cards and dialogs fade in, so give the target a moment to appear
+      const el = b.focus && (find(spec) || (await waitFor(spec, { timeout: 1500 }).catch(() => null)));
       // Plays on without a light, but the line may describe something that isn't there
       if (b.focus && !el) console.warn(`[guide] focus not found ${b.id}`);
       if (el && scrollIntoViewIfNeeded(el)) await this.wait(450, token);
@@ -224,7 +226,10 @@ export class Runner {
     preload(
       this.beats.slice(i + 1, i + 3).map((n) => ({ tour: this.tour.id, beat: n.id, lang: this.lang, text: n.say?.[this.lang] || "" }))
     );
-    const speech = text ? speak({ tour: this.tour.id, beat: b.id, lang: this.lang, text, rate: this.rate, onProgress: (p) => token === this.token && this.set({ progress: p }) }) : Promise.resolve();
+    const speech = text ? speak({ tour: this.tour.id, beat: b.id, lang: this.lang, text, rate: this.rate, onProgress: (p) => {
+      // Captions light up word by word; ~2% steps are plenty and spare re-renders
+      if (token === this.token && (p >= 1 || Math.abs(p - this.state.progress) >= 0.02)) this.set({ progress: p });
+    } }) : Promise.resolve();
     const doing = (async () => {
       await this.wait(b.delay ?? 500, token);
       await this.acts(b.during, token);

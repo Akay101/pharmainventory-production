@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useMotionTemplate, useReducedMotion, useSpring, useTransform } from "framer-motion";
-import ParticleOrb from "../../assistant/ParticleOrb";
+import Orb from "./Orb";
 import { find, union } from "./dom";
 import { voiceLevel } from "./narration";
 import Graphic from "./Graphics";
@@ -26,7 +26,7 @@ export function useFocusRect(spec) {
     const specs = Array.isArray(spec) && spec.some((s) => s?.union) ? spec.map((s) => s.union) : [spec];
     const tick = (now) => {
       const c = cache.current;
-      if (c.spec !== spec || now - c.at > 400 || c.els.some((e) => !e?.isConnected)) {
+      if (c.spec !== spec || now - c.at > 1000 || c.els.some((e) => !e?.isConnected)) {
         c.spec = spec;
         c.at = now;
         c.els = specs.map((s) => find(s)).filter(Boolean);
@@ -70,27 +70,61 @@ function Iris({ rect, look, vp }) {
   const y = useSpring(hole.y, cfg);
   const w = useSpring(hole.w, cfg);
   const h = useSpring(hole.h, cfg);
+  // The blur is the costly part: it is re-shaped only once the light has
+  // settled, and fades out while the light moves (the dim layer follows the
+  // light every frame and costs little)
+  const [settled, setSettled] = useState(hole);
+  const [moving, setMoving] = useState(false);
+  const key = `${Math.round(hole.x)},${Math.round(hole.y)},${Math.round(hole.w)},${Math.round(hole.h)}`;
   useEffect(() => {
     x.set(hole.x);
     y.set(hole.y);
     w.set(hole.w);
     h.set(hole.h);
-  }, [hole.x, hole.y, hole.w, hole.h]); // eslint-disable-line
+    if (reduce) {
+      setSettled(hole);
+      return undefined;
+    }
+    setMoving(true);
+    const t = setTimeout(() => {
+      setSettled(hole);
+      setMoving(false);
+    }, 520);
+    return () => clearTimeout(t);
+  }, [key]); // eslint-disable-line
 
   const clip = useTransform([x, y, w, h], ([X, Y, W, H]) => `path(evenodd, "M0 0H${vp.w}V${vp.h}H0Z ${W > 1 ? roundedRect(X, Y, W, H, 14) : ""}")`);
+  const blurClip = `path(evenodd, "M0 0H${vp.w}V${vp.h}H0Z ${settled.w > 1 ? roundedRect(settled.x, settled.y, settled.w, settled.h, 14) : ""}")`;
   const dim = look === "stage" ? 0 : look === "wide" ? 0.38 : 0.6;
   const blur = look === "stage" ? 0 : look === "wide" ? 1.5 : 3;
+  const tx = useMotionTemplate`translate3d(${x}px, ${y}px, 0)`;
+  // The spinning gradient only needs to cover the frame's diagonal
+  const ring = useTransform([w, h], ([W, H]) => Math.ceil(Math.hypot(W, H)) + 12);
 
   return (
     <>
-      <motion.div
-        className="pointer-events-none fixed inset-0"
-        style={{ clipPath: clip, WebkitClipPath: clip, background: `rgba(6, 8, 20, ${dim})`, backdropFilter: `blur(${blur}px) saturate(0.8)`, WebkitBackdropFilter: `blur(${blur}px) saturate(0.8)`, transition: "background 400ms, backdrop-filter 400ms" }}
-      />
+      {blur > 0 && (
+        <div
+          className="pointer-events-none fixed inset-0"
+          style={{
+            clipPath: blurClip,
+            WebkitClipPath: blurClip,
+            backdropFilter: `blur(${blur}px) saturate(0.8)`,
+            WebkitBackdropFilter: `blur(${blur}px) saturate(0.8)`,
+            opacity: moving ? 0 : 1,
+            transition: "opacity 260ms ease",
+          }}
+        />
+      )}
+      <motion.div className="pointer-events-none fixed inset-0" style={{ clipPath: clip, WebkitClipPath: clip, background: `rgba(6, 8, 20, ${dim})`, transition: "background 400ms" }} />
       {rect && look !== "stage" && (
-        <motion.div className="pointer-events-none fixed" style={{ left: x, top: y, width: w, height: h, borderRadius: 14 }}>
-          <div className="guide-halo absolute inset-0 rounded-[14px]" />
-          {!reduce && <Sweep key={`${Math.round(hole.x)}-${Math.round(hole.y)}`} />}
+        <motion.div className="pointer-events-none fixed left-0 top-0" style={{ transform: tx, width: w, height: h, borderRadius: 14, willChange: "transform" }}>
+          <div className="guide-halo absolute inset-0 rounded-[14px]">
+            <div className="guide-halo-ring">
+              <motion.div className="guide-halo-spin" style={{ width: ring, height: ring }} />
+            </div>
+          </div>
+          {!reduce && <Sweep key={key} />}
         </motion.div>
       )}
     </>
@@ -102,10 +136,10 @@ function Sweep() {
   return (
     <div className="absolute inset-0 overflow-hidden rounded-[14px]">
       <motion.div
-        className="absolute inset-y-[-40%] w-[45%]"
+        className="absolute inset-y-[-40%] left-0 w-[45%]"
         style={{ background: "linear-gradient(100deg, transparent, rgba(255,255,255,0.28), transparent)", rotate: 12 }}
-        initial={{ left: "-60%" }}
-        animate={{ left: "130%" }}
+        initial={{ x: "-140%" }}
+        animate={{ x: "290%" }}
         transition={{ duration: 1.1, delay: 0.35, ease: [0.4, 0, 0.2, 1] }}
       />
     </div>
@@ -196,7 +230,7 @@ function Presenter({ rect, cursor, vp, speaking, compact }) {
       <motion.div animate={{ scale: big ? 2.1 : cursor?.press ? 0.72 : 1 }} transition={{ type: "spring", stiffness: 380, damping: 18 }} className="relative" style={{ width: size, height: size }}>
         <div ref={glowRef} className="absolute inset-[-35%] rounded-full" style={{ background: "radial-gradient(circle, rgba(236,72,153,0.55), rgba(168,85,247,0.25) 45%, transparent 70%)", transition: "transform 80ms linear" }} />
         <div className="absolute inset-0 rounded-full bg-[radial-gradient(circle_at_35%_30%,rgba(255,255,255,0.9),rgba(255,237,213,0.55)_30%,rgba(249,115,22,0.25)_60%,transparent_72%)]" />
-        <ParticleOrb size={size} count={compact ? 34 : 46} className="relative" />
+        <Orb size={size} count={compact ? 34 : 46} className="relative" />
       </motion.div>
       <AnimatePresence>
         {cursor?.press && (
@@ -252,7 +286,7 @@ function ChapterCard({ card }) {
   );
 }
 
-export default function Stage({ state, speaking, compact, lang = "en" }) {
+function Stage({ state, speaking, compact, lang = "en" }) {
   const vp = useViewport();
   const rect = useFocusRect(state.card ? null : state.focus);
   const small = rect && (state.look === "loupe" || (rect.width < 44 && rect.height < 44));
@@ -271,3 +305,11 @@ export default function Stage({ state, speaking, compact, lang = "en" }) {
     </div>
   );
 }
+
+// The stage ignores the caption's progress ticks; only what it draws re-renders it
+const same = (a, b) =>
+  a.speaking === b.speaking &&
+  a.compact === b.compact &&
+  a.lang === b.lang &&
+  ["focus", "look", "fx", "card", "cursor", "busy"].every((k) => a.state[k] === b.state[k]);
+export default memo(Stage, same);
