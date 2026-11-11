@@ -4,39 +4,41 @@ const mongoose = require('mongoose');
 const { v4: uuidv4 } = require('uuid');
 const { auth, adminOnly } = require('../middleware/auth');
 
+const TEMPLATES = {
+  suppliers: {
+    name: 'Supplier Name',
+    contact: '9876543210',
+    email: 'supplier@email.com',
+    address: 'Full Address',
+    gst_no: 'GST Number'
+  },
+  customers: {
+    name: 'Customer Name',
+    mobile: '9876543210',
+    email: 'customer@email.com',
+    address: 'Full Address'
+  },
+  products: {
+    name: 'Product Name',
+    description: 'Product Description',
+    low_stock_threshold: 10
+  },
+  inventory: {
+    product_name: 'Medicine Name',
+    batch_no: 'BATCH001',
+    expiry_date: '2025-12-31',
+    quantity: 100,
+    available_quantity: 100,
+    purchase_price: 10.5,
+    mrp: 15.0
+  }
+};
+
 // GET /api/migrate/template/:data_type
 router.get('/template/:data_type', auth, adminOnly, (req, res) => {
   const { data_type } = req.params;
 
-  const templates = {
-    suppliers: {
-      name: 'Supplier Name',
-      contact: '9876543210',
-      email: 'supplier@email.com',
-      address: 'Full Address',
-      gst_no: 'GST Number'
-    },
-    customers: {
-      name: 'Customer Name',
-      mobile: '9876543210',
-      email: 'customer@email.com',
-      address: 'Full Address'
-    },
-    products: {
-      name: 'Product Name',
-      description: 'Product Description',
-      low_stock_threshold: 10
-    },
-    inventory: {
-      product_name: 'Medicine Name',
-      batch_no: 'BATCH001',
-      expiry_date: '2025-12-31',
-      quantity: 100,
-      available_quantity: 100,
-      purchase_price: 10.5,
-      mrp: 15.0
-    }
-  };
+  const templates = TEMPLATES;
 
   if (!templates[data_type]) {
     return res.status(400).json({ detail: 'Invalid data type' });
@@ -63,13 +65,18 @@ router.post('/:data_type', auth, adminOnly, async (req, res, next) => {
 
     let imported = 0;
     let skipped = 0;
+    const allowed = Object.keys(TEMPLATES[data_type]);
 
     for (const item of data) {
       try {
+        // Only the template's fields; the server sets the ids, so a row can't
+        // write into another pharmacy or reuse another record's id
+        const fields = {};
+        for (const key of allowed) if (item && item[key] !== undefined) fields[key] = item[key];
         const docData = {
+          ...fields,
           id: uuidv4(),
           pharmacy_id: req.user.pharmacy_id,
-          ...item,
           created_at: new Date().toISOString()
         };
 

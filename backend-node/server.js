@@ -154,6 +154,7 @@ app.use("/api/bills", billRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/medicines", medicineRoutes);
 app.use("/api/migrate", migrateRoutes);
+app.use("/api/imports", require("./routes/imports"));
 app.use("/api/pharmacy", pharmacyRoutes);
 app.use("/api/activities", activityRoutes);
 app.use("/api/settings", settingsRoutes);
