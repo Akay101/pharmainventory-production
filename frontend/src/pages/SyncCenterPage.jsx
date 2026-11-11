@@ -26,6 +26,81 @@ function Bar({ done, total, label }) {
   );
 }
 
+const SINGULAR = { bills: "Bill", purchases: "Purchase", inventory: "Batch", products: "Product", customers: "Customer", suppliers: "Supplier", doctors: "Doctor", reminders: "Reminder" };
+const fieldName = (f) => f.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
+// Values arrive as the cloud stores them: dates as { $date }, lists as arrays
+const show = (v) => {
+  if (v === null || v === undefined || v === "") return "(empty)";
+  if (typeof v === "object" && typeof v.$date === "number") return new Date(v.$date).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" });
+  if (Array.isArray(v)) return `${v.length} item${v.length === 1 ? "" : "s"}`;
+  if (typeof v === "object") return "(details)";
+  return String(v);
+};
+
+// One change the cloud held back, with the choices that settle it
+function ReviewItem({ item }) {
+  const [busy, setBusy] = useState(false);
+  const [count, setCount] = useState("");
+  const name = `${SINGULAR[item.coll] || LABELS[item.coll] || item.coll}${item.title ? ` "${item.title}"` : ""}`;
+  const choose = async (choice, extra = {}) => {
+    setBusy(true);
+    try {
+      await axios.post(`${API}/desktop/review/${item.id}`, { choice, ...extra });
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Couldn't save that choice");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const Choice = ({ choice, children, variant = "outline", extra }) => (
+    <Button size="sm" variant={variant} disabled={busy} onClick={() => choose(choice, extra)}>{children}</Button>
+  );
+
+  let text;
+  let actions;
+  if (item.kind === "edited") {
+    text = `${name} was changed on another computer or the web while this one changed it too.`;
+    actions = <><Choice choice="mine" variant="default">Keep this computer's</Choice><Choice choice="cloud">Keep the other</Choice></>;
+  } else if (item.kind === "deleted") {
+    text = `${name} was deleted elsewhere, but this computer changed it${item.coll === "inventory" ? " or sold from it" : ""}. Any bill made here is saved either way.`;
+    actions = <>{item.can_restore && <Choice choice="restore" variant="default">Bring it back</Choice>}<Choice choice="accept">Leave it deleted</Choice></>;
+  } else if (item.kind === "changed_before_delete") {
+    text = `${name} was deleted here, but changed elsewhere first (${item.fields.map(fieldName).join(", ")}). It has been kept for now.`;
+    actions = <><Choice choice="keep" variant="default">Keep it</Choice><Choice choice="delete">Delete anyway</Choice></>;
+  } else if (item.kind === "stock_short") {
+    text = `${name}: ${item.short} more ${item.short === 1 ? "unit was" : "units were"} sold than the stock had, across computers. Every bill stands; the stock is now 0. Count the shelf and enter what's there.`;
+    actions = (
+      <form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); if (count !== "") choose("count", { quantity: Number(count) }); }}>
+        <input type="number" min="0" inputMode="numeric" value={count} onChange={(e) => setCount(e.target.value)} aria-label="Count on the shelf" placeholder="On shelf" className="w-24 rounded-md border border-input bg-background px-2 text-sm" />
+        <Button size="sm" type="submit" disabled={busy || count === ""}>Save count</Button>
+        <Choice choice="ok">It's right at 0</Choice>
+      </form>
+    );
+  } else if (item.kind === "duplicate_bill_no") {
+    text = `Bill number ${item.bill_no} was also used on another computer. Both bills are saved; tell your accountant if it was already filed.`;
+    actions = <Choice choice="ok">OK</Choice>;
+  }
+
+  return (
+    <li className="rounded-xl border border-border/60 p-3 space-y-2 text-sm" data-testid="review-item">
+      <p className="flex gap-2"><AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-amber-500" aria-hidden="true" /><span>{text}</span></p>
+      {item.kind === "edited" && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-left">
+            <thead className="text-muted-foreground"><tr><th className="font-medium py-1 pr-3">Field</th><th className="font-medium py-1 pr-3">This computer</th><th className="font-medium py-1">Other</th></tr></thead>
+            <tbody>
+              {Object.entries(item.fields).map(([f, v]) => (
+                <tr key={f} className="border-t border-border/50"><td className="py-1 pr-3">{fieldName(f)}</td><td className="py-1 pr-3 font-medium">{show(v.mine)}</td><td className="py-1">{show(v.cloud)}</td></tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <div className="flex flex-wrap gap-2">{actions}</div>
+    </li>
+  );
+}
+
 const Card = ({ title, children }) => (
   <section className="rounded-2xl border border-border/60 bg-card p-5 space-y-3">
     <h2 className="font-bold">{title}</h2>
@@ -50,6 +125,11 @@ export default function SyncCenterPage() {
     toast.info(s.online ? "Syncing now" : "No internet right now. It will sync when you're back online.");
   };
   const retry = (seq) => axios.post(`${API}/desktop/conflicts/${seq}/retry`).catch(() => {});
+  const discard = async (seq) => {
+    if (!window.confirm("Drop this change? This computer goes back to the cloud's copy of these records.")) return;
+    await axios.post(`${API}/desktop/conflicts/${seq}/discard`).catch((err) => toast.error(err.response?.data?.detail || "Couldn't drop the change"));
+  };
+  const reviews = s.reviews || [];
   const signOut = async () => {
     if (!window.confirm("Sign out of this computer? Its copy of your shop's data will be removed. Everything already synced stays safe in your account.")) return;
     setBusy(true);
@@ -62,7 +142,7 @@ export default function SyncCenterPage() {
     }
   };
 
-  const synced = s.online && !s.pending && s.phase === "idle" && !s.conflicts.length;
+  const synced = s.online && !s.pending && s.phase === "idle" && !s.conflicts.length && !reviews.length;
   const StatusIcon = !s.online ? CloudOff : synced ? CheckCircle2 : Cloud;
   const headline = !s.online
     ? s.pending ? `Offline. ${s.pending} change${s.pending === 1 ? "" : "s"} waiting to sync` : "Offline. Everything so far is synced"
@@ -103,13 +183,18 @@ export default function SyncCenterPage() {
         )}
       </Card>
 
-      {s.conflicts.length > 0 && (
+      {(s.conflicts.length > 0 || reviews.length > 0) && (
         <Card title="Needs your attention">
+          <p className="text-sm text-muted-foreground">Everything else has synced. These changes clashed with work done elsewhere, so nothing was overwritten. Choose what to keep.</p>
           <ul className="space-y-2">
+            {reviews.map((item) => <ReviewItem key={item.id} item={item} />)}
             {s.conflicts.map((c) => (
-              <li key={c.seq} className="flex flex-wrap items-center justify-between gap-2 text-sm">
-                <span className="flex gap-2 min-w-0"><AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-amber-500" aria-hidden="true" /><span>{[...new Set(c.records.map((r) => LABELS[r] || r))].join(", ")}: {c.detail}</span></span>
-                <Button size="sm" variant="outline" onClick={() => retry(c.seq)}>Try again</Button>
+              <li key={c.seq} className="rounded-xl border border-border/60 p-3 space-y-2 text-sm">
+                <p className="flex gap-2"><AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-amber-500" aria-hidden="true" /><span>The cloud refused a change to {[...new Set(c.records.map((r) => LABELS[r] || r))].join(", ")}: {c.detail}</span></p>
+                <div className="flex flex-wrap gap-2">
+                  <Button size="sm" variant="outline" onClick={() => retry(c.seq)}>Try again</Button>
+                  <Button size="sm" variant="outline" onClick={() => discard(c.seq)}>Drop this change</Button>
+                </div>
               </li>
             ))}
           </ul>

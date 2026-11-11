@@ -1023,7 +1023,7 @@ const generatePurchasePDF = async (purchase, pharmacy, options = {}) => {
 
         if (logoBuffer) {
           try {
-            doc.image(logoBuffer, 30, 28, { width: 60, height: 48 });
+            doc.image(logoBuffer, 30, 28, { fit: [60, 48], align: "center", valign: "center" });
           } catch (err) {
             drawVectorMonogram();
           }

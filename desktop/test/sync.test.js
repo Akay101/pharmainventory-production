@@ -185,6 +185,104 @@ test("a repeated push doesn't apply twice", async () => {
   assert.strictEqual((await cdb.collection("inventory").findOne({ id: "b-1" })).available_quantity, 77);
 });
 
+// ---- Work done in two places -------------------------------------------------------
+const offline = async () => {
+  s.sync.config.cloudUrl = "http://127.0.0.1:9";
+  s.sync.wake();
+  await until(() => !s.sync.online, "goes offline");
+};
+const online = async () => {
+  s.sync.config.cloudUrl = CLOUD;
+  s.sync.wake();
+  await until(async () => s.sync.online && s.sync.pendingCount() === 0, "back online and sent");
+};
+const reviewsOf = async (kind) => ok(await local("GET", "/api/desktop/status"), "status").reviews.filter((r) => r.kind === kind);
+const resolve = async (id, body) => {
+  ok(await local("POST", `/api/desktop/review/${id}`, body), "resolve");
+  await until(async () => s.sync.pendingCount() === 0, "choice sent");
+};
+const batch = async (id, qty) => {
+  await cdb.collection("inventory").insertOne({ id, pharmacy_id: PHARMACY, product_id: `p-${id}`, product_name: `Med ${id}`, batch_no: id.toUpperCase(), expiry_date: "2028-06-30", quantity: qty, available_quantity: qty, purchase_price: 20, mrp: 30, units_per_pack: 1 });
+  await until(() => s.db.collection("inventory").findOne({ id }), `${id} arrives`);
+};
+const sell = (where, id, qty, mobile) => where("POST", "/api/bills", { customer_name: "Walk-in", customer_mobile: mobile, payment_mode: "Cash", is_paid: true, items: [{ inventory_id: id, product_name: `Med ${id}`, batch_no: id.toUpperCase(), quantity: qty, unit_price: 30, purchase_price: 20 }] });
+
+test("bills made here carry this computer's number", async () => {
+  const bill = ok(await sell(local, "b-1", 1, "9000000010"), "bill");
+  assert.match(bill.bill_no, /^BILL-\d{14}-D\d+$/);
+  await until(async () => s.sync.pendingCount() === 0, "push");
+});
+
+test("the same field changed in two places is held for the shop, other fields merge", async () => {
+  await offline();
+  ok(await local("PUT", "/api/customers/c-mine", { name: "Name From Desktop", mobile: "9111111111", email: "", address: "" }), "desktop edit");
+  ok(await web("PUT", "/api/customers/c-mine", { name: "Name From Web", mobile: "9555555555", email: "", address: "" }), "web edit");
+  await online();
+  const cloud = await cdb.collection("customers").findOne({ id: "c-mine" });
+  assert.strictEqual(cloud.name, "Name From Web", "nothing overwritten");
+  assert.strictEqual(cloud.mobile, "9555555555");
+  const [item] = await reviewsOf("edited");
+  assert.deepStrictEqual(item.fields, { name: { mine: "Name From Desktop", cloud: "Name From Web" } });
+  assert.strictEqual(item.title, "Name From Desktop");
+  await resolve(item.id, { choice: "mine" });
+  assert.strictEqual((await cdb.collection("customers").findOne({ id: "c-mine" })).name, "Name From Desktop");
+  await until(async () => (await s.db.collection("customers").findOne({ id: "c-mine" }))?.mobile === "9555555555", "web's other field arrives here");
+  assert.strictEqual((await reviewsOf("edited")).length, 0);
+});
+
+test("a batch deleted online, then sold here offline: the bill stands, no empty record, the shop decides", async () => {
+  await batch("b-gone", 10);
+  await offline();
+  const bill = ok(await sell(local, "b-gone", 3, "9000000011"), "offline bill");
+  await cdb.collection("inventory").deleteOne({ id: "b-gone" });
+  await online();
+  const cloudBill = await cdb.collection("bills").findOne({ id: bill.id });
+  assert.ok(cloudBill, "bill saved");
+  assert.strictEqual(cloudBill.items[0].stock_deducted, 0, "a return can't give back stock that was never taken from the cloud");
+  assert.strictEqual(await cdb.collection("inventory").findOne({ pharmacy_id: PHARMACY, id: "b-gone" }), null);
+  assert.strictEqual(await cdb.collection("inventory").countDocuments({ pharmacy_id: PHARMACY, product_name: { $exists: false } }), 0, "no empty shells");
+  await until(async () => !(await s.db.collection("inventory").findOne({ id: "b-gone" })), "delete arrives here");
+  const [item] = await reviewsOf("deleted");
+  assert.strictEqual(item.coll, "inventory");
+  assert.ok(item.can_restore);
+  await resolve(item.id, { choice: "restore" });
+  const back = await cdb.collection("inventory").findOne({ id: "b-gone" });
+  assert.strictEqual(back.product_name, "Med b-gone");
+  assert.strictEqual(back.available_quantity, 7);
+  assert.ok(await until(() => s.db.collection("inventory").findOne({ id: "b-gone" }), "restored here"));
+});
+
+test("more sold than the stock across computers: both bills stand, each keeps only what it took", async () => {
+  await batch("b-short", 6);
+  await offline();
+  const here = ok(await sell(local, "b-short", 5, "9000000012"), "offline bill");
+  const there = ok(await sell(web, "b-short", 5, "9000000013"), "web bill");
+  await online();
+  assert.strictEqual((await cdb.collection("inventory").findOne({ id: "b-short" })).available_quantity, 0);
+  assert.strictEqual((await cdb.collection("bills").findOne({ id: there.id })).items[0].stock_deducted, 5);
+  assert.strictEqual((await cdb.collection("bills").findOne({ id: here.id })).items[0].stock_deducted, 1);
+  const [item] = await reviewsOf("stock_short");
+  assert.strictEqual(item.short, 4);
+  await resolve(item.id, { choice: "count", quantity: 2 });
+  assert.strictEqual((await cdb.collection("inventory").findOne({ id: "b-short" })).available_quantity, 2);
+  await until(async () => (await s.db.collection("bills").findOne({ id: here.id }))?.items[0].stock_deducted === 1, "corrected bill arrives here");
+});
+
+test("deleted here but changed online first: kept until the shop decides", async () => {
+  const made = ok(await web("POST", "/api/customers", { name: "Two Minds", mobile: "9666666666" }), "customer").customer;
+  await until(() => s.db.collection("customers").findOne({ id: made.id }), "arrives");
+  await offline();
+  ok(await local("DELETE", `/api/customers/${made.id}`), "delete here");
+  ok(await web("PUT", `/api/customers/${made.id}`, { name: "Two Minds", mobile: "9777777777", email: "", address: "" }), "web edit");
+  await online();
+  assert.ok(await cdb.collection("customers").findOne({ id: made.id }), "not deleted");
+  const [item] = await reviewsOf("changed_before_delete");
+  assert.ok(item.fields.includes("mobile"));
+  await until(() => s.db.collection("customers").findOne({ id: made.id }), "comes back here");
+  await resolve(item.id, { choice: "delete" });
+  assert.strictEqual(await cdb.collection("customers").findOne({ id: made.id }), null);
+});
+
 test("a tampered app still can't do anything the server forbids", async () => {
   const headers = { "x-device-token": s.db.getMeta("device_token") };
   const push = async (change) => (await send(CLOUD, "POST", "/api/desktop/sync/push", { changesets: [{ id: crypto.randomUUID(), changes: JSON.stringify([change]) }] }, headers)).data.results?.[0];
@@ -202,21 +300,28 @@ test("a tampered app still can't do anything the server forbids", async () => {
   }
   // Another pharmacy's record, by its real id
   const theirs = await cdb.collection("customers").findOne({ id: "c-theirs" });
-  assert.strictEqual((await push({ coll: "customers", key: String(theirs._id), op: "upsert", set: { name: "Hacked" } })).result, "conflict");
+  // As an edit it isn't found in this shop; as a new record its id is already taken
+  const edit = await push({ coll: "customers", key: String(theirs._id), op: "upsert", set: { name: "Hacked" }, was: {} });
+  assert.strictEqual(edit.review[0].kind, "deleted");
+  assert.strictEqual((await push({ coll: "customers", key: String(theirs._id), op: "upsert", new: true, set: { name: "Hacked" } })).result, "conflict");
   assert.strictEqual((await push({ coll: "customers", key: String(theirs._id), op: "delete" })).result, "applied");
   const after = await cdb.collection("customers").findOne({ id: "c-theirs" });
   assert.strictEqual(after.name, "Secret Customer of Another Shop", "delete was scoped to this shop, so nothing happened");
   // Putting a record in another pharmacy, or using Mongo operators
-  const mine = await push({ coll: "customers", key: new ObjectId().toHexString(), op: "upsert", set: { id: "c-planted", name: "Planted", pharmacy_id: "ph-other" } });
+  const mine = await push({ coll: "customers", key: new ObjectId().toHexString(), op: "upsert", new: true, set: { id: "c-planted", name: "Planted", pharmacy_id: "ph-other" } });
   assert.strictEqual(mine.result, "applied");
   assert.strictEqual((await cdb.collection("customers").findOne({ id: "c-planted" })).pharmacy_id, PHARMACY);
-  assert.strictEqual((await push({ coll: "customers", key: new ObjectId().toHexString(), op: "upsert", set: { name: { $gt: "" } } })).result, "conflict");
-  assert.strictEqual((await push({ coll: "inventory", key: new ObjectId().toHexString(), op: "upsert", inc: { mrp: 5 } })).result, "conflict");
+  assert.strictEqual((await push({ coll: "customers", key: new ObjectId().toHexString(), op: "upsert", new: true, set: { name: { $gt: "" } } })).result, "conflict");
+  assert.strictEqual((await push({ coll: "inventory", key: new ObjectId().toHexString(), op: "upsert", new: true, inc: { mrp: 5 } })).result, "conflict");
   // Dates survive the trip as real dates
   const dated = new ObjectId().toHexString();
-  assert.strictEqual((await push({ coll: "customers", key: dated, op: "upsert", set: { id: "c-dated", name: "Dated", at: { $date: 1700000000000 } } })).result, "applied");
+  assert.strictEqual((await push({ coll: "customers", key: dated, op: "upsert", new: true, set: { id: "c-dated", name: "Dated", at: { $date: 1700000000000 } } })).result, "applied");
   assert.ok((await cdb.collection("customers").findOne({ id: "c-dated" })).at instanceof Date);
   await cdb.collection("customers").deleteOne({ id: "c-dated" });
+  // An app from before 0.1.5 marks nothing as new: its new records must still arrive
+  assert.strictEqual((await push({ coll: "customers", key: new ObjectId().toHexString(), op: "upsert", set: { id: "c-legacy", name: "Old App" } })).result, "applied");
+  assert.ok(await cdb.collection("customers").findOne({ id: "c-legacy" }));
+  await cdb.collection("customers").deleteOne({ id: "c-legacy" });
   // Reading without a device, or as someone else
   assert.strictEqual((await send(CLOUD, "GET", "/api/desktop/sync/pull?cursor=0")).status, 401);
   assert.strictEqual((await send(CLOUD, "GET", "/api/desktop/catalog/page?kind=medicines")).status, 401);

@@ -18,6 +18,7 @@ import {
   Gift,
   Database,
   Megaphone,
+  Upload,
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 
@@ -58,6 +59,12 @@ export default function Sidebar({
       id: "globaldata",
       label: "Global Data",
       icon: Database,
+      section: "MONITORING",
+    },
+    {
+      id: "imports",
+      label: "Data Import",
+      icon: Upload,
       section: "MONITORING",
     },
     {

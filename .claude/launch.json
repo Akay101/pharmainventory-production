@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "guide-tours-frontend",
+      "runtimeExecutable": "/bin/sh",
+      "runtimeArgs": ["-c", "cd /Users/abcom/Documents/pharmalogy-tours/frontend && REACT_APP_BACKEND_URL=http://localhost:8094 PORT=3094 BROWSER=none WDS_SOCKET_PORT=3094 npx craco start"],
+      "port": 3094
+    }
+  ]
+}

@@ -16,7 +16,7 @@ const { GLOBAL_PROJECTION } = require("../services/search/medicineSearch");
 const licence = require("../services/desktop/licence");
 const { STATE_ID } = require("../services/desktop/changeLog");
 const { toId, fromId, outgoing, incoming } = require("../services/desktop/codec");
-const { TWO_WAY, ALL, OWNER_FIELD, SECRET_FIELDS, COUNTERS } = require("../services/desktop/collections");
+const { TWO_WAY, ALL, OWNER_FIELD, SECRET_FIELDS, COUNTERS, QUIET, NOT_COMPARED } = require("../services/desktop/collections");
 
 const router = express.Router();
 const db = () => mongoose.connection.db;
@@ -92,6 +92,13 @@ const requireActive = (req, res, next) => {
 };
 
 // ---- Browser approval -------------------------------------------------------------
+// Each computer of a shop gets its own number, which goes into its bill numbers.
+// Removed computers keep theirs, so a number is never reused.
+const nextDeviceNo = async (pharmacyId) => {
+  const last = await db().collection("desktop_devices").find({ pharmacy_id: pharmacyId, device_no: { $gt: 0 } }).sort({ device_no: -1 }).limit(1).next();
+  return (last?.device_no || 0) + 1;
+};
+
 // The signed-in browser asks for a one-time code for a computer it was told about.
 router.post("/authorize", auth, requireSubscription(), async (req, res, next) => {
   try {
@@ -138,6 +145,7 @@ router.post("/token", exchangeLimiter, async (req, res, next) => {
     const device = {
       id: uuidv4(),
       token_hash: sha256(deviceToken),
+      device_no: await nextDeviceNo(stored.pharmacy_id),
       name: stored.device_name,
       user_id: user.id,
       pharmacy_id: stored.pharmacy_id,
@@ -157,7 +165,13 @@ router.post("/token", exchangeLimiter, async (req, res, next) => {
 // The token is the same as a browser's, so every web route applies its usual checks.
 router.post("/session", deviceAuth, requireActive, async (req, res, next) => {
   try {
+    let deviceNo = req.device.device_no;
+    if (!deviceNo) {
+      deviceNo = await nextDeviceNo(req.device.pharmacy_id);
+      await db().collection("desktop_devices").updateOne({ id: req.device.id }, { $set: { device_no: deviceNo } });
+    }
     res.json({
+      device_no: deviceNo,
       token: signAccess(req.deviceUser),
       licence: licence.issue({ device: req.device, user: req.deviceUser, subscription: req.subscription }),
       user_id: req.deviceUser.id,
@@ -266,40 +280,161 @@ function buildUpdate(coll, change, req) {
   return update;
 }
 
-async function applyChange(req, change, session) {
+// Two values compared as the device sends them, whatever order their fields are in
+const sortKeys = (v) => {
+  if (Array.isArray(v)) return v.map(sortKeys);
+  if (v && typeof v === "object") return Object.fromEntries(Object.keys(v).sort().map((k) => [k, sortKeys(v[k])]));
+  return v;
+};
+const same = (a, b) => JSON.stringify(sortKeys(a ?? null)) === JSON.stringify(sortKeys(b ?? null));
+const compared = (field) => !NEVER_PUSHED.has(field) && !NOT_COMPARED.includes(field);
+
+// Fields of the cloud's copy that differ from what the device last saw
+function changedSince(current, was) {
+  const fields = new Set([...Object.keys(current), ...Object.keys(was)]);
+  return [...fields].filter((f) => compared(f) && !same(outgoing(current[f]), was[f]));
+}
+
+// Each change carries what the record looked like on the device before it (`was`).
+// A field is written only if the cloud still holds that value, so nothing someone
+// else changed meanwhile is overwritten. What can't be written goes back to the
+// device as something for the shop to decide; the rest of the change still applies.
+async function applyChange(req, change, session, ctx) {
   const { coll, key, op } = change;
   if (!TWO_WAY.includes(coll)) throw Object.assign(new Error(`${coll} can't be changed from a device`), { status: 400 });
   if (typeof key !== "string") throw Object.assign(new Error("Invalid key"), { status: 400 });
   const col = db().collection(coll);
   const owner = coll === "user_settings" ? { user_id: req.deviceUser.id } : { pharmacy_id: req.device.pharmacy_id };
   const filter = { _id: toId(key), ...owner };
+  const quiet = QUIET.includes(coll);
+  const was = change.was && typeof change.was === "object" ? change.was : null;
+  const current = await col.findOne(filter, { session });
+
   if (op === "delete") {
+    if (!current) return;
+    if (was && !quiet) {
+      const fields = changedSince(current, was);
+      if (fields.length) return ctx.review.push({ kind: "changed_before_delete", coll, key, fields });
+    }
     await col.deleteOne(filter, { session });
     return;
   }
   if (op !== "upsert") throw Object.assign(new Error("Invalid change"), { status: 400 });
-  await col.updateOne(filter, buildUpdate(coll, change, req), { upsert: true, session });
-  // The shelf can't go below zero, same as a live bill: the sale stands
+
+  // Apps before 0.1.5 send neither `new` nor `was`: their changes apply as they always
+  // did. `force` is the shop's own choice in the Sync Center: written as is, but
+  // still never into a record that no longer exists.
+  const legacy = !change.new && !was && !change.force;
+  if (legacy) {
+    await col.updateOne(filter, buildUpdate(coll, change, req), { upsert: true, session });
+    if (coll === "inventory" && change.inc?.available_quantity < 0) {
+      await col.updateOne({ ...filter, available_quantity: { $lt: 0 } }, { $set: { available_quantity: 0 } }, { session });
+    }
+    return;
+  }
+
+  if (!current && !change.new) {
+    // Deleted in the cloud meanwhile. Writing part of a record would leave an empty
+    // shell behind, so nothing is written and the shop decides.
+    if (coll === "inventory") ctx.lose(key, change.ref, -(change.inc?.available_quantity || 0));
+    if (!quiet) ctx.review.push({ kind: "deleted", coll, key });
+    return;
+  }
+
+  let apply = change;
+  if (current && was && !quiet) {
+    const set = { ...(change.set || {}) };
+    let unset = [...(change.unset || [])];
+    const fields = {};
+    for (const field of [...Object.keys(set), ...unset]) {
+      if (!compared(field)) continue;
+      const cloud = outgoing(current[field]);
+      const mine = field in set ? set[field] : null;
+      if (same(cloud, was[field]) || same(cloud, mine)) continue;
+      fields[field] = { mine, cloud: cloud ?? null };
+      delete set[field];
+      unset = unset.filter((f) => f !== field);
+    }
+    if (Object.keys(fields).length) {
+      ctx.review.push({ kind: "edited", coll, key, fields });
+      apply = { ...change, set, unset };
+    }
+  }
+
+  // Each computer numbers its own bills, so this is a safety net, not the plan
+  if (coll === "bills" && change.new && typeof change.set?.bill_no === "string") {
+    const clash = await col.findOne({ pharmacy_id: req.device.pharmacy_id, bill_no: change.set.bill_no, _id: { $ne: toId(key) } }, { session, projection: { _id: 1 } });
+    if (clash) ctx.review.push({ kind: "duplicate_bill_no", coll, key, bill_no: change.set.bill_no });
+  }
+
+  await col.updateOne(filter, buildUpdate(coll, apply, req), { upsert: !!change.new, session });
+
+  // The shelf can't go below zero, same as a live bill: the sale stands, and the
+  // shop is told the count is off
   if (coll === "inventory" && change.inc?.available_quantity < 0) {
-    await col.updateOne({ ...filter, available_quantity: { $lt: 0 } }, { $set: { available_quantity: 0 } }, { session });
+    const after = await col.findOne(filter, { session, projection: { available_quantity: 1 } });
+    if (after && after.available_quantity < 0) {
+      await col.updateOne(filter, { $set: { available_quantity: 0 } }, { session });
+      const short = Math.min(-after.available_quantity, -change.inc.available_quantity);
+      ctx.lose(key, change.ref || current?.id, short);
+      ctx.review.push({ kind: "stock_short", coll, key, short });
+    }
+  }
+}
+
+// Units a bill took from a batch that the cloud couldn't give (deleted, or not
+// enough left) were never taken, so the bill mustn't give them back on a return
+async function settleBillStock(req, changeset, ctx, session) {
+  if (!ctx.lost.size) return;
+  const col = db().collection("bills");
+  for (const change of changeset.changes) {
+    if (change.coll !== "bills" || change.op !== "upsert" || !change.set?.items) continue;
+    const filter = { _id: toId(change.key), pharmacy_id: req.device.pharmacy_id };
+    const bill = await col.findOne(filter, { session, projection: { items: 1 } });
+    if (!Array.isArray(bill?.items)) continue;
+    let touched = false;
+    const items = bill.items.map((item) => {
+      const lost = [...ctx.lost.values()].find((l) => l.ids.has(String(item.inventory_id)));
+      const deducted = Number(item.stock_deducted) || 0;
+      if (!lost || lost.units <= 0 || deducted <= 0) return item;
+      const cut = Math.min(lost.units, deducted);
+      lost.units -= cut;
+      touched = true;
+      return { ...item, stock_deducted: deducted - cut };
+    });
+    if (touched) await col.updateOne(filter, { $set: { items } }, { session });
   }
 }
 
 const noteConflict = (req, changeset, err) =>
   db().collection("sync_conflicts").insertOne({ device_id: req.device.id, pharmacy_id: req.device.pharmacy_id, changeset_id: changeset.id, detail: err.message, changes: outgoing(changeset.changes), at: new Date() }).catch(() => {});
 
+const noteReview = (req, changeset, review) =>
+  db().collection("sync_conflicts").insertOne({ device_id: req.device.id, pharmacy_id: req.device.pharmacy_id, changeset_id: changeset.id, review, at: new Date() }).catch(() => {});
+
 async function applyChangeset(req, changeset) {
   const applied = db().collection("sync_applied");
   const mark = { device_id: req.device.id, changeset_id: changeset.id };
   if (await applied.findOne(mark)) return { id: changeset.id, result: "duplicate" };
   const session = mongoose.connection.getClient().startSession();
+  let ctx;
   try {
     await session.withTransaction(async () => {
+      // Started afresh on each attempt, since a transaction may be retried
+      ctx = { review: [], lost: new Map() };
+      ctx.lose = (key, ref, units) => {
+        if (!(units > 0)) return;
+        const entry = ctx.lost.get(key) || { ids: new Set([key, ...(ref ? [String(ref)] : [])]), units: 0 };
+        entry.units += units;
+        ctx.lost.set(key, entry);
+      };
       // Recording the id in the same transaction is what makes a retry safe
       await applied.insertOne({ ...mark, at: new Date() }, { session });
-      for (const change of changeset.changes) await applyChange(req, change, session);
+      for (const change of changeset.changes) await applyChange(req, change, session, ctx);
+      await settleBillStock(req, changeset, ctx, session);
     });
-    return { id: changeset.id, result: "applied" };
+    if (ctx.review.length) await noteReview(req, changeset, ctx.review);
+    return { id: changeset.id, result: "applied", review: ctx.review };
   } catch (err) {
     // Two copies of one retry racing: the other copy has already done it
     if (err.code === 11000 && (await applied.findOne(mark))) return { id: changeset.id, result: "duplicate" };
@@ -328,6 +463,23 @@ router.post("/sync/push", deviceAuth, syncLimiter, async (req, res, next) => {
       results.push(await applyChangeset(req, { id: changeset.id, changes }));
     }
     res.json({ results });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// The cloud's copy of a few records, for the shop's choices in the Sync Center
+router.post("/sync/docs", deviceAuth, requireActive, syncLimiter, async (req, res, next) => {
+  try {
+    const items = req.body?.items;
+    if (!Array.isArray(items) || items.length > 100) return res.status(400).json({ detail: "Invalid request" });
+    const docs = [];
+    for (const { coll, key } of items) {
+      if (!TWO_WAY.includes(coll) || typeof key !== "string") return res.status(400).json({ detail: "Invalid request" });
+      const doc = await db().collection(coll).findOne({ _id: toId(key), ...(await scopeFilter(req, coll)) });
+      docs.push({ coll, key, doc: doc ? safeDoc(doc) : null });
+    }
+    res.json({ docs });
   } catch (err) {
     next(err);
   }

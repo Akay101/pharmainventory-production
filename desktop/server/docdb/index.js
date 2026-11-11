@@ -476,6 +476,11 @@ class Collection {
     this._indexRow(rid, doc);
   }
 
+  _getRaw(id) {
+    const existing = this.s.idGet.get(this.collectionName, idKey(id));
+    return existing ? decode(this.db._db.prepare("SELECT doc FROM docs WHERE rid = ?").get(existing.rid).doc) : null;
+  }
+
   _deleteRaw(id) {
     const existing = this.s.idGet.get(this.collectionName, idKey(id));
     if (!existing) return;
@@ -569,25 +574,40 @@ class Collection {
 }
 
 // What one write changed, by top-level field. Counters travel as differences so
-// that a sale here and a sale elsewhere both count.
+// that a sale here and a sale elsewhere both count. `was` holds the values before
+// the write, so the cloud can tell whether someone else changed them meanwhile;
+// `ref` is the record's own id, which bills use to point at a batch.
 function diffChange(coll, id, before, after, counters) {
   const key = typeof id === "string" ? id : String(id);
-  if (!after) return { coll, key, op: "delete" };
+  const ref = (after || before)?.id;
+  const tag = ref !== undefined && ref !== null ? { ref: String(ref) } : {};
+  if (!after) {
+    const { _id, ...was } = before || {};
+    return { coll, key, op: "delete", was: JSON.parse(encode(was)), ...tag };
+  }
   const { _id, ...fields } = after;
-  if (!before) return { coll, key, op: "upsert", set: JSON.parse(encode(fields)) };
+  if (!before) return { coll, key, op: "upsert", new: true, set: JSON.parse(encode(fields)), ...tag };
   const set = {};
   const inc = {};
   const unset = [];
+  const was = {};
   for (const [field, value] of Object.entries(fields)) {
     if (encode({ v: value }) === encode({ v: before[field] })) continue;
-    if (counters.includes(field) && typeof value === "number" && typeof before[field] === "number") inc[field] = value - before[field];
-    else set[field] = value;
+    if (counters.includes(field) && typeof value === "number" && typeof before[field] === "number") {
+      inc[field] = value - before[field];
+    } else {
+      set[field] = value;
+      if (field in before) was[field] = before[field];
+    }
   }
   for (const field of Object.keys(before)) {
-    if (field !== "_id" && !(field in after)) unset.push(field);
+    if (field !== "_id" && !(field in after)) {
+      unset.push(field);
+      was[field] = before[field];
+    }
   }
   if (!Object.keys(set).length && !Object.keys(inc).length && !unset.length) return null;
-  return { coll, key, op: "upsert", set: JSON.parse(encode(set)), inc, unset };
+  return { coll, key, op: "upsert", set: JSON.parse(encode(set)), inc, unset, was: JSON.parse(encode(was)), ...tag };
 }
 
 // ---- Sessions -----------------------------------------------------------------
