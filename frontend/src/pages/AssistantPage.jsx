@@ -51,6 +51,7 @@ import { ComposerHint, CreditsBlock, CreditsPill, CreditsSheet, EngineNote, Engi
 import { useVoiceInput } from "../components/assistant/useVoice";
 import { dictationSupported, useDictation } from "../components/assistant/useDictation";
 import { onSpeakingChange, primeVoice, speakReply, stopVoice } from "../components/assistant/voicePlayer";
+import { GuideButton } from "../components/guide/GuideProvider";
 import { AI_LOGO_SRC, AiAmbient } from "../components/scan/ScanUI";
 import { compressForScan } from "../components/scan/scanClient";
 
@@ -656,7 +657,7 @@ export default function AssistantPage() {
   const firstName = (user?.name || "").split(" ")[0];
 
   const sidebar = (
-    <aside className="flex h-full w-[280px] flex-col border-r border-border bg-card/70 backdrop-blur-xl">
+    <aside data-guide="ai-sidebar" className="flex h-full w-[280px] flex-col border-r border-border bg-card/70 backdrop-blur-xl">
       <div className="flex items-center gap-2.5 px-4 pb-3 pt-4">
         <img src={AI_LOGO_SRC} alt="" className="h-9 w-9 rounded-full ring-1 ring-indigo-500/20" />
         <div className="min-w-0 flex-1">
@@ -758,6 +759,7 @@ export default function AssistantPage() {
             <EngineSwitch data={credits.data} active={activeEngine} live={streaming} compact />
           </div>
           <p className="min-w-0 flex-1 truncate text-sm font-semibold md:pl-2">{empty ? "New chat" : title || "Chat"}</p>
+          <GuideButton tour="assistant" className="max-md:px-2" />
           <CreditsPill wallet={credits.data?.wallet} onOpen={() => setCreditsOpen(true)} />
           <button type="button" onClick={newChat} className="flex h-9 w-9 items-center justify-center rounded-xl hover:bg-muted md:hidden" aria-label="New chat">
             <MessageSquarePlus className="h-5 w-5" />
@@ -792,7 +794,7 @@ export default function AssistantPage() {
                 <p className="mt-2 max-w-md text-sm text-muted-foreground">
                   Ask in English, Hindi or Hinglish, type or speak. I can create purchases and bills, find anything in your data, check stock and answer medicine questions.
                 </p>
-                <div className="mt-6 grid w-full grid-cols-1 gap-2 sm:grid-cols-2">
+                <div data-guide="ai-suggestions" className="mt-6 grid w-full grid-cols-1 gap-2 sm:grid-cols-2">
                   {SUGGESTIONS.map((s) => {
                     const Icon = AGENT_ICON[s.agent];
                     return (
@@ -916,7 +918,7 @@ export default function AssistantPage() {
                 e.target.value = "";
               }}
             />
-            <div className={`flex items-end gap-2 rounded-2xl border bg-card p-2 shadow-sm transition ${micBusy ? "border-rose-500/50 ring-2 ring-rose-500/20" : "border-border focus-within:border-orange-500/50 focus-within:ring-2 focus-within:ring-orange-500/15"}`}>
+            <div data-guide="ai-composer" className={`flex items-end gap-2 rounded-2xl border bg-card p-2 shadow-sm transition ${micBusy ? "border-rose-500/50 ring-2 ring-rose-500/20" : "border-border focus-within:border-orange-500/50 focus-within:ring-2 focus-within:ring-orange-500/15"}`}>
               <button
                 type="button"
                 onClick={() => fileRef.current?.click()}
@@ -1015,7 +1017,7 @@ export default function AssistantPage() {
                 </button>
               )}
             </div>
-            <div className="mt-1.5 space-y-0.5">
+            <div data-guide="ai-hints" className="mt-1.5 space-y-0.5">
               <ComposerHint data={credits.data} hasPhotos={photos.length > 0} listening={dictation.active} spokenReply={dictated && !micBusy} estimate={credits.estimate} />
               <p className="text-center text-[11px] text-muted-foreground">Nothing is saved until you confirm on a card. AI can make mistakes; check important details.</p>
             </div>

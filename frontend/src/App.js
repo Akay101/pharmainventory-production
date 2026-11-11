@@ -45,6 +45,7 @@ import EarlyAccessTermsPage, { needsEarlyAccessTerms } from "./pages/EarlyAccess
 import PaymentSuccessPage from "./pages/PaymentSuccessPage";
 import Loader from "./components/Loader";
 import ErrorBoundary from "./components/ErrorBoundary";
+import { GuideProvider, GuideStage } from "./components/guide/GuideProvider";
 import { getPageTitle } from "./hooks/useDocumentTitle";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
@@ -451,6 +452,7 @@ function App() {
         <NavigationHandler />
         <DesktopRouteGuard />
         <PageTitleHandler />
+        <GuideProvider>
         <ErrorBoundary>
         <Routes>
           {/* Public Routes */}
@@ -484,7 +486,9 @@ function App() {
             path="/assistant"
             element={
               <ProtectedRoute>
-                <AssistantPage />
+                <GuideStage>
+                  <AssistantPage />
+                </GuideStage>
               </ProtectedRoute>
             }
           />
@@ -535,6 +539,7 @@ function App() {
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>
         </ErrorBoundary>
+        </GuideProvider>
       </BrowserRouter>
       <Toaster position="top-right" richColors />
     </AuthProvider>

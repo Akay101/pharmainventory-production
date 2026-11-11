@@ -128,7 +128,7 @@ export function speak({ tour, beat, lang, text, rate = 1, onProgress }) {
       if (me.finished) return;
       const entry = manifest[`${lang}/${tour}/${beat}`];
       if (muted || !entry || entry.hash !== lineHash(text)) return silent();
-      const audio = new Audio(`${process.env.PUBLIC_URL || ""}/guide-audio/${entry.file}`);
+      const audio = new Audio(`${process.env.PUBLIC_URL || ""}/guide-audio/${entry.file}?v=${entry.hash}`);
       audio.preload = "auto";
       audio.playbackRate = rate;
       audio.preservesPitch = true;
@@ -209,7 +209,7 @@ export function preload(entries) {
       if (e && e.hash === lineHash(text)) {
         const a = new Audio();
         a.preload = "auto";
-        a.src = `${process.env.PUBLIC_URL || ""}/guide-audio/${e.file}`;
+        a.src = `${process.env.PUBLIC_URL || ""}/guide-audio/${e.file}?v=${e.hash}`;
       }
     });
   });

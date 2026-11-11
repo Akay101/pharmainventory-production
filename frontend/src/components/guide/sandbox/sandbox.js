@@ -1,5 +1,6 @@
 import axios from "axios";
-import { createDemoStore, insertBill, round2 } from "./demoData";
+import { createDemoStore, insertBill, insertPurchase, round2 } from "./demoData";
+import { demoConversations, demoTurnResponse } from "./assistantDemo";
 
 // Demo-data mode for guided tours.
 //
@@ -226,6 +227,130 @@ function route(store, { method, path, query, body }) {
     }
   }
 
+  // ---- AI assistant (the chat itself streams through fetch, see stubWindow)
+  if (seg[0] === "assistant") {
+    if (seg[1] === "conversations") {
+      if (method === "get") return demoConversations(store, seg[2]) || { conversation: null, messages: [] };
+      const chats = store.chats || [];
+      const c = chats.find((x) => x.id === seg[2]);
+      if (method === "patch" && c) Object.assign(c, body || {});
+      if (method === "delete") store.chats = seg[2] ? chats.filter((x) => x.id !== seg[2]) : [];
+      return { message: "ok" };
+    }
+    if (seg[1] === "messages") return { message: "ok" };
+    if (seg[1] === "lookup") return { items: searchInventory(store, query.q || "").map((g) => ({ id: g.id, name: g.product_name, subtitle: g.salt_composition })) };
+  }
+
+  // ---- Purchases
+  if (seg[0] === "purchases") {
+    if (seg[1] === "drafts") {
+      if (method === "get") return { drafts: store.purchaseDrafts };
+      return { message: "Draft saved (demo)", draft: { id: `demo-pdraft-${Date.now()}`, ...(body || {}) } };
+    }
+    if (seg[1] === "price-history") return { history: [], records: [], is_higher: false, is_mrp_lower: false, cheaper_suppliers: [] };
+    if (seg[1] === "product-history") return { purchases: [] };
+    if (seg[1] === "match-suggestions") return { success: true, matches: [] };
+    if (seg[1] === "parse-csv") return { columns: [], rows: [] };
+    if (method === "get" && seg.length === 1) {
+      let list = [...store.purchases].sort((a, b) => (b.purchase_date + b.created_at).localeCompare(a.purchase_date + a.created_at));
+      if (query.supplier_id && query.supplier_id !== "all") list = list.filter((x) => x.supplier_id === query.supplier_id);
+      if (query.start_date) list = list.filter((x) => x.purchase_date >= query.start_date);
+      if (query.end_date) list = list.filter((x) => x.purchase_date <= query.end_date);
+      if (query.search) list = list.filter((x) => like(x.supplier_name, query.search) || like(x.invoice_no, query.search) || x.items.some((i) => like(i.product_name, query.search)));
+      const { items, pagination } = paginate(list, query, 10);
+      return { purchases: items, pagination };
+    }
+    if (method === "post" && seg.length === 1) {
+      const purchase = insertPurchase(store, body || {});
+      emit("purchase-created", purchase);
+      return { message: "Purchase recorded", purchase, created_supplier: null };
+    }
+    const pur = store.purchases.find((x) => x.id === seg[1]);
+    if (pur) {
+      if (method === "get" && seg.length === 2) return pur;
+      if (seg[2] === "stock-impact") {
+        return {
+          consumed: false,
+          batches: pur.items.map((i) => ({ inventory_id: `${pur.id}-${i.product_name}`, product_name: i.product_name, batch_no: i.batch_no, purchased: i.total_units, consumed: 0, on_hand: i.total_units })),
+        };
+      }
+      if (seg[2] === "payments") {
+        const amt = Number(body?.amount) || 0;
+        pur.amount_paid = round2(Math.min(pur.total_amount, (pur.amount_paid || 0) + amt));
+        pur.payment_status = pur.amount_paid >= pur.total_amount ? "Paid" : "Partial";
+        pur.payments = [...(pur.payments || []), { amount: amt, mode: body?.payment_mode || "Cash", date: new Date().toISOString(), notes: body?.notes || "Payment" }];
+        return { message: "Payment recorded", purchase: pur };
+      }
+      if (seg[2] === "pdf") {
+        emit("pdf", pur);
+        return { pdf_url: "about:blank#demo-purchase", demo: true };
+      }
+      if (seg[2] === "labels") return { labels: [] };
+      if (method === "put" && seg.length === 2) {
+        Object.assign(pur, body || {});
+        return { message: "Purchase updated", purchase: pur };
+      }
+      if (method === "delete") {
+        store.purchases.splice(store.purchases.indexOf(pur), 1);
+        return { message: "Purchase deleted", deleted_inventory_items: [], removed_units: 0 };
+      }
+    }
+  }
+
+  // ---- Suppliers
+  if (seg[0] === "suppliers") {
+    if (method === "get" && seg.length === 1) {
+      let list = store.suppliers.filter((x) => query.include_global === "true" || x.is_local);
+      if (query.search) list = list.filter((x) => like(x.name, query.search) || like(x.phone, query.search) || like(x.gstin, query.search));
+      const { items, pagination } = paginate(list, query, 20);
+      return { suppliers: items, pagination };
+    }
+    if (method === "post" && seg.length === 1) {
+      const sup = { id: `demo-sup-${Date.now()}`, ...(body || {}), is_local: true, source: "local" };
+      store.suppliers.unshift(sup);
+      return { message: "Supplier created", supplier: sup };
+    }
+    const sup = store.suppliers.find((x) => x.id === seg[1]);
+    if (sup && method === "get") {
+      const purchases = store.purchases.filter((x) => x.supplier_id === sup.id);
+      return { supplier: sup, purchases, total_amount_owed: round2(purchases.reduce((t, x) => t + (x.total_amount - (x.amount_paid || 0)), 0)) };
+    }
+  }
+
+  // ---- Medicine search for purchases: your stock first, then the shared database
+  if (seg[0] === "medicines") {
+    if (seg[1] === "search") {
+      const q = query.q || "";
+      const own = searchInventory(store, q).map((g) => ({
+        ...g,
+        name: g.product_name,
+        source: "inventory",
+        mrp: round2((g.mrp || 0) * (g.units_per_pack || 1)),
+        unit_mrp: g.mrp,
+        purchase_price: g.purchase_price,
+        batch_no: g.batches[0]?.batch_no,
+        expiry_date: g.batches[0]?.expiry_date,
+        tax_rate: (g.cgst || 0) + (g.sgst || 0),
+        hsn_code: g.hsn_no,
+        packaging_label: `${g.pack_type || "strip"} of ${g.units_per_pack} ${g.units_per_pack > 1 ? "units" : "unit"}`,
+      }));
+      const global = store.catalog.filter((c) => like(c.name, q) || like(c.salt_composition, q)).map((c) => ({ ...c, product_name: c.name, tax_rate: c.cgst + c.sgst }));
+      return { medicines: [...own, ...global], meta: { has_more: false } };
+    }
+    if (seg[1] === "enrich") return { salt_composition: "", manufacturer: "" };
+  }
+  if (seg[0] === "inventory" && seg[1] === "product-batches") {
+    const name = String(query.product_name || "").toLowerCase();
+    const batches = store.inventory
+      .filter((i) => i.product_name.toLowerCase() === name || (query.product_id && i.product_id === query.product_id))
+      .map((i) => ({ ...i, units: i.units_per_pack, mrp_pack: round2(i.mrp * i.units_per_pack), rate_pack: round2(i.purchase_price * i.units_per_pack) }));
+    return { batches };
+  }
+  if (seg[0] === "products" && method === "post") {
+    const prod = { id: `demo-prod-${Date.now()}`, ...(body || {}) };
+    return { message: "Product created", product: prod, ...prod };
+  }
+
   // ---- Short book
   if (seg[0] === "shortbook" && method === "post") {
     const entry = { id: `demo-sb-${Date.now()}`, ...body, added_at: new Date().toISOString() };
@@ -308,6 +433,13 @@ function stubWindow() {
   window.fetch = (input, init = {}) => {
     const method = String(init.method || (input && input.method) || "GET").toUpperCase();
     const url = String(typeof input === "string" ? input : input?.url || "");
+    if (active && method === "POST" && /\/api\/assistant\/chat/.test(url)) {
+      let body = {};
+      try {
+        body = typeof init.body === "string" ? JSON.parse(init.body) : Object.fromEntries(init.body?.entries?.() || []);
+      } catch {}
+      return Promise.resolve(demoTurnResponse(active.store, body));
+    }
     if (method !== "GET" && /\/api\//.test(url)) {
       emit("blocked-write", { method, path: url });
       return Promise.resolve(new Response(JSON.stringify({ demo: true }), { status: 200, headers: { "content-type": "application/json" } }));

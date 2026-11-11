@@ -1,9 +1,13 @@
 import { LayoutDashboard, Receipt, ShoppingCart, Package, Users, Truck, BarChart3, Bot, ScanLine, Settings, Undo2, ClipboardList, RefreshCw, UserCog, LifeBuoy } from "lucide-react";
 import billing from "./billing";
+import purchases from "./purchases";
+import assistant from "./assistant";
 
 // Tours that are ready to play, by id
 export const TOURS = {
   billing,
+  purchases,
+  assistant,
 };
 
 // Every module, in the order the hub lists them. Ones without a tour yet

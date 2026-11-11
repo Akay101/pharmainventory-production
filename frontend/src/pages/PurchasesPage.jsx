@@ -100,6 +100,7 @@ import { formatCombo } from "../lib/shortcuts";
 import { parseMargin, marginPrice } from "../lib/margin";
 import { isScheduleH1 } from "../lib/scheduleH1";
 import { rowCatalogGaps } from "../lib/catalogDetails";
+import { GuideButton } from "../components/guide/GuideProvider";
 import ScheduleH1Badge, { H1_ROW_CLASS } from "../components/ScheduleH1Badge";
 import SchemeDiscountField from "../components/purchases/SchemeDiscountField";
 import MatchChooser from "../components/purchases/MatchChooser";
@@ -4697,7 +4698,7 @@ export default function PurchasesPage() {
                 <Label className="text-[11px] font-extrabold text-foreground/80">
                   Payment Status
                 </Label>
-                <div className="flex bg-muted p-1 rounded-xl h-9 border border-border">
+                <div data-guide="pay-status" className="flex bg-muted p-1 rounded-xl h-9 border border-border">
                   {["Unpaid", "Partial", "Paid"]
                     .filter(
                       (status) =>
@@ -4773,7 +4774,7 @@ export default function PurchasesPage() {
                     processingRowId !== null || paymentStatus === "Unpaid"
                   }
                 >
-                  <SelectTrigger className="h-9 w-full bg-background border border-border rounded-xl text-xs font-semibold text-foreground">
+                  <SelectTrigger data-guide="pay-mode" className="h-9 w-full bg-background border border-border rounded-xl text-xs font-semibold text-foreground">
                     <SelectValue placeholder="Mode" />
                   </SelectTrigger>
                   <SelectContent>
@@ -4810,7 +4811,7 @@ export default function PurchasesPage() {
             {/* Right: Stats Summary + AI Autofill + Close */}
             <div className="flex items-center gap-2 shrink-0 self-end lg:self-center max-md:w-full max-md:flex-wrap max-md:self-stretch">
               {/* Total Stats Pill */}
-              <div className="flex items-center gap-2 bg-muted px-3 py-1 rounded-xl border border-border shadow-2xs h-9">
+              <div data-guide="purchase-summary" className="flex items-center gap-2 bg-muted px-3 py-1 rounded-xl border border-border shadow-2xs h-9">
                 <div className="flex items-center gap-1 border-r border-border pr-2.5">
                   <span className="text-[10px] uppercase font-extrabold text-muted-foreground">
                     Units:
@@ -4904,7 +4905,7 @@ export default function PurchasesPage() {
           {/* Items Table Container */}
 
           {/* Items Table - Inline Editable with enhanced fields */}
-          <div className="border-2 border-border rounded-2xl relative overflow-hidden bg-card shadow-sm">
+          <div data-guide="purchase-items" className="border-2 border-border rounded-2xl relative overflow-hidden bg-card shadow-sm">
             <Table mobileCards className="table-fixed min-w-[1344px] w-full" wrapperClassName="h-[420px]">
               <TableHeader className="sticky top-0 bg-muted/95 backdrop-blur z-[50] border-b-2 border-border shadow-xs">
                 <TableRow className="hover:bg-transparent">
@@ -6775,7 +6776,7 @@ export default function PurchasesPage() {
           </div>
 
           {/* Hint for unit-based system */}
-          <p className="text-xs text-muted-foreground bg-muted/30 p-2 rounded flex items-center gap-1.5">
+          <p data-guide="purchase-tip" className="text-xs text-muted-foreground bg-muted/30 p-2 rounded flex items-center gap-1.5">
             <Info className="w-3.5 h-3.5 text-orange-500 shrink-0" />
             <span>
               <strong>Tip:</strong> Enter Qty and either Rate(Pack) OR Total -
@@ -7102,7 +7103,7 @@ export default function PurchasesPage() {
                 <h1 className="text-2xl font-black tracking-tight text-foreground">
                   Purchases
                 </h1>
-                <span className="px-2.5 py-0.5 rounded-full bg-orange-500/10 border border-orange-500/30 text-orange-600 dark:text-orange-400 font-mono font-bold text-xs">
+                <span data-guide="purchase-count" className="px-2.5 py-0.5 rounded-full bg-orange-500/10 border border-orange-500/30 text-orange-600 dark:text-orange-400 font-mono font-bold text-xs">
                   {pagination.total} recorded
                 </span>
                 <span className="hidden md:inline-block text-xs font-semibold text-muted-foreground">
@@ -7111,6 +7112,7 @@ export default function PurchasesPage() {
               </div>
 
               <div className="flex items-center gap-2 flex-wrap">
+                <GuideButton tour="purchases" />
                 <Button
                   variant="outline"
                   size="sm"
@@ -7251,7 +7253,7 @@ export default function PurchasesPage() {
                   />
                 </div>
               </div>
-              <div className="flex items-center gap-2 w-full md:w-auto flex-wrap">
+              <div data-guide="purchase-filters" className="flex items-center gap-2 w-full md:w-auto flex-wrap">
                 <SupplierSelector
                   selectedId={filterSupplier}
                   knownSuppliers={suppliers}
@@ -8415,7 +8417,7 @@ export default function PurchasesPage() {
       {/* TABS & ACTION NAVBAR */}
       {(showNewPurchase || editingPurchaseId) &&
         createPortal(
-          <div className="fixed bottom-0 left-0 right-0 z-[100] flex items-center justify-between bg-card/95 backdrop-blur-xl border-t-2 border-border shadow-2xl px-6 py-3.5 gap-4 overflow-x-auto scroller-hide overflow-y-hidden mb-0 transition-all duration-300 mobile-action-bar max-md:flex-wrap max-md:gap-2 max-md:px-3 max-md:pt-2.5 max-md:pb-[calc(0.625rem+env(safe-area-inset-bottom))]">
+          <div data-guide="purchase-bar" className="fixed bottom-0 left-0 right-0 z-[100] flex items-center justify-between bg-card/95 backdrop-blur-xl border-t-2 border-border shadow-2xl px-6 py-3.5 gap-4 overflow-x-auto scroller-hide overflow-y-hidden mb-0 transition-all duration-300 mobile-action-bar max-md:flex-wrap max-md:gap-2 max-md:px-3 max-md:pt-2.5 max-md:pb-[calc(0.625rem+env(safe-area-inset-bottom))]">
             <div className="flex items-center gap-2 overflow-x-auto scroller-hide max-md:w-full empty:hidden">
               {showNewPurchase &&
                 tabs.map((tab, idx) => {

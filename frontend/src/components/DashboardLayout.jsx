@@ -63,7 +63,7 @@ import { MobileBottomNav } from "./MobileNav";
 import TopNav from "./TopNav";
 import { AI_LOGO_SRC } from "./scan/ScanUI";
 import { TourProvider, useTour } from "./tour/ProductTour";
-import { GuideProvider, GuideOutlet, useGuide } from "./guide/GuideProvider";
+import { GuideOutlet, useGuide } from "./guide/GuideProvider";
 import { CreditsPill, CreditsSheet, useCredits } from "./assistant/Credits";
 
 const navItems = [
@@ -364,7 +364,6 @@ export default function DashboardLayout() {
   return (
     <ShortcutProvider globals={globalShortcuts}>
     <TourProvider user={user}>
-    <GuideProvider>
     <TooltipProvider delayDuration={0}>
     <BroadcastProvider>
       <div
@@ -694,7 +693,6 @@ export default function DashboardLayout() {
       </div>
     </BroadcastProvider>
     </TooltipProvider>
-    </GuideProvider>
     </TourProvider>
     </ShortcutProvider>
   );
