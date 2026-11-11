@@ -202,6 +202,8 @@ const ATTENTION = {
   suppliers: ["contact"],
   customers: ["mobile"],
 };
+// The ones a row imports fine without (a purchase still needs its bill date)
+const LEAVABLE = { ...ATTENTION, purchases: ["invoice_no", "batch_no", "expiry_date"] };
 // Which field an error is about, so the table can point at the cell
 const ERROR_FIELD = [
   [/^Bill date/, "invoice_date"], [/^Expiry/, "expiry_date"], [/MRP/, "mrp"], [/^Rate|Purchase rate/, "purchase_rate"],
@@ -226,7 +228,8 @@ function normalizeOne(job, row, t) {
   for (const f of ENTITIES[job.entity].fields) values[f.key] = eff.mapping[f.key] === undefined ? "" : display(eff.cells[eff.mapping[f.key]]);
   if (r.noise) return { status: "ignored", data: null, errors: [], warnings: [], skip: null, values, missing: [], bad: [], product_key: null, result: null };
   const bad = [...new Set(r.errors.map((e) => ERROR_FIELD.find(([re]) => re.test(e))?.[1]).filter(Boolean))];
-  const missing = (ATTENTION[job.entity] || []).filter((k) => !bad.includes(k) && (values[k] === "" || (k === "batch_no" && /^n\/?a$/i.test(values[k]))));
+  const left = new Set(job.leave_empty || []);
+  const missing = (ATTENTION[job.entity] || []).filter((k) => !left.has(k) && !bad.includes(k) && (values[k] === "" || (k === "batch_no" && /^n\/?a$/i.test(values[k]))));
   const status = r.errors.length ? "error" : r.skip ? "skipped" : "ok";
   return { status, data: r.data, errors: r.errors, warnings: r.warnings, skip: r.skip || null, values, missing, bad, product_key: r.data?.product_key || null, result: null };
 }
@@ -306,6 +309,24 @@ async function fillField(db, pharmacyId, jobId, { field, value }) {
   if (v) fills[field] = v;
   else delete fills[field];
   await db.collection("migration_jobs").updateOne({ id: job.id }, { $set: { fills } });
+  return applyMapping(db, pharmacyId, jobId, {});
+}
+
+// Fields a person chose to leave empty stop counting as "needs attention"; the rows
+// import as they are (batch "NA", no expiry). Only fields a row can import without.
+async function leaveEmpty(db, pharmacyId, jobId, { field, leave }) {
+  const job = await getJob(db, pharmacyId, jobId);
+  if (job.status !== "ready") throw new JobError("This import can't be changed now");
+  if (!(LEAVABLE[job.entity] || []).includes(field)) throw new JobError("This field can't be left empty: rows need it to be imported");
+  const set = new Set(job.leave_empty || []);
+  if (leave) set.add(field);
+  else set.delete(field);
+  await db.collection("migration_jobs").updateOne({ id: job.id }, { $set: { leave_empty: [...set] } });
+  if (leave) {
+    await db.collection("migration_rows").updateMany({ job_id: job.id, missing: field }, { $pull: { missing: field } });
+    await setJob(db, job, { counts: await countJob(db, job) });
+    return;
+  }
   return applyMapping(db, pharmacyId, jobId, {});
 }
 
@@ -1132,6 +1153,7 @@ module.exports = {
   decideProduct,
   decideAll,
   editRow,
+  leaveEmpty,
   fillField,
   jobView,
   listRows,

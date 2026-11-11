@@ -598,13 +598,13 @@ function ReviewTable({ pid, view, filter, setFilter, onView, readOnly }) {
 
 const today = () => new Date().toISOString().slice(0, 10);
 
-function FillRow({ field, label, count, current, isDate, reportEnd, busy, onFill, onShow }) {
+function FillRow({ field, label, count, current, isDate, reportEnd, busy, onFill, onShow, canLeave, left, onLeave }) {
   const [v, setV] = useState(current || "");
   useEffect(() => setV(current || ""), [current]);
   return (
     <div className="flex flex-wrap items-center gap-2 py-2">
       <span className="text-sm font-semibold text-slate-800 min-w-[9rem]">{label}</span>
-      <span className="text-xs text-amber-700 font-semibold min-w-[7rem]">{count ? `${num(count)} rows empty` : "Filled"}</span>
+      <span className={`text-xs font-semibold min-w-[7rem] ${left ? "text-slate-500" : "text-amber-700"}`}>{left ? "Left empty" : count ? `${num(count)} rows empty` : "Filled"}</span>
       <button className={`${btnGhost} h-8`} onClick={onShow} disabled={!count}>Show them</button>
       <span className="text-xs text-slate-500">Fill every empty one with</span>
       <input type={isDate ? "date" : "text"} className="h-8 px-2 rounded-lg border border-slate-200 bg-white text-xs w-40" value={v} onChange={(e) => setV(e.target.value)} placeholder={isDate ? "" : FIELD_HINT[field] || "Value"} />
@@ -612,20 +612,31 @@ function FillRow({ field, label, count, current, isDate, reportEnd, busy, onFill
       {isDate && reportEnd && <button className={`${btnGhost} h-8`} disabled={busy} onClick={() => setV(reportEnd)}>Report's last day</button>}
       <button className={`${btnPrimary} h-8`} disabled={busy || !v || v === current} onClick={() => onFill(field, v)}>Fill all</button>
       {current && <button className={`${btnGhost} h-8`} disabled={busy} onClick={() => onFill(field, "")} title="Stop filling this field">Clear fill ({current})</button>}
+      {canLeave && !current && (
+        left ? (
+          <button className={`${btnGhost} h-8`} disabled={busy} onClick={() => onLeave(field, false)} title="Show these empty cells again">Undo leave empty</button>
+        ) : (
+          <button className={`${btnGhost} h-8`} disabled={busy || !count} onClick={() => onLeave(field, true)} title="Import these rows with this field empty">Leave empty</button>
+        )
+      )}
     </div>
   );
 }
 
-function MissingPanel({ view, busy, onFill, onShow }) {
+// Fields a row can import without; a bill date or a required field can't be left empty
+const CAN_LEAVE_EMPTY = { purchases: ["invoice_no", "batch_no", "expiry_date"], stock: ["batch_no", "expiry_date", "purchase_rate"], products: ["mrp", "manufacturer"], suppliers: ["contact"], customers: ["mobile"] };
+
+function MissingPanel({ view, busy, onFill, onShow, onLeave }) {
   const { job, fields } = view;
   const counts = job.counts?.missing || {};
   const fills = job.fills || {};
-  const list = fields.filter((f) => counts[f.key] || fills[f.key]);
+  const left = new Set(job.leave_empty || []);
+  const list = fields.filter((f) => counts[f.key] || fills[f.key] || left.has(f.key));
   if (!list.length) return null;
   return (
     <div className={`${card} p-4`}>
       <p className="text-sm font-bold text-slate-800 flex items-center gap-2"><AlertTriangle className="w-4 h-4 text-amber-600" /> Missing in the file</p>
-      <p className="text-xs text-slate-500">Fill them one by one in the table below, or give one value for every empty cell. Rows with a red problem aren't imported until it's fixed.</p>
+      <p className="text-xs text-slate-500">Fill them one by one in the table below, give one value for every empty cell, or leave them empty and import the rows as they are. Rows with a red problem (like a missing bill date) aren't imported until it's fixed.</p>
       <div className="divide-y divide-slate-100 mt-1">
         {list.map((f) => (
           <FillRow
@@ -639,6 +650,9 @@ function MissingPanel({ view, busy, onFill, onShow }) {
             busy={busy}
             onFill={onFill}
             onShow={() => onShow(f.key)}
+            canLeave={(CAN_LEAVE_EMPTY[job.entity] || []).includes(f.key)}
+            left={left.has(f.key)}
+            onLeave={onLeave}
           />
         ))}
       </div>
@@ -891,6 +905,7 @@ function ImportView({ pid, pharmacyName, jobId, onBack, onChanged }) {
               busy={busy}
               onFill={(field, value) => act(() => AdminAPI.fillImport(pid, jobId, field, value), value ? "Filling every empty cell…" : "Fill removed")}
               onShow={(field) => { setTab("rows"); setFilter(`missing:${field}`); }}
+              onLeave={(field, leave) => act(() => AdminAPI.leaveImportFieldEmpty(pid, jobId, field, leave), leave ? "These rows will import with it empty" : "Showing them again")}
             />
           )}
 

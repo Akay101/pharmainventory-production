@@ -251,6 +251,7 @@ export const AdminAPI = {
   decideAllImportProducts: (pid, id, data) => api.put(`/imports/${id}/products/decide-all`, data, { headers: { "x-pharmacy-id": pid } }),
   editImportRow: (pid, id, rowNo, values) => api.put(`/imports/${id}/rows/${rowNo}`, { values }, { headers: { "x-pharmacy-id": pid } }),
   fillImport: (pid, id, field, value) => api.post(`/imports/${id}/fill`, { field, value }, { headers: { "x-pharmacy-id": pid } }),
+  leaveImportFieldEmpty: (pid, id, field, leave) => api.post(`/imports/${id}/leave-empty`, { field, leave }, { headers: { "x-pharmacy-id": pid } }),
   importUndoPreview: (pid, id) => api.get(`/imports/${id}/undo-preview`, { headers: { "x-pharmacy-id": pid }, timeout: 60000 }),
   importHistory: (params) => api.get("/imports/history", { params }),
   commitImport: (pid, id) => api.post(`/imports/${id}/commit`, {}, { headers: { "x-pharmacy-id": pid } }),

@@ -122,6 +122,12 @@ router.post("/:id/fill", handle(async (req, res) => {
   res.json(await jobs.jobView(db(), req.importer.pharmacyId, req.params.id));
 }));
 
+// POST /api/imports/:id/leave-empty {field, leave} - import rows with this field empty, without asking again
+router.post("/:id/leave-empty", handle(async (req, res) => {
+  await jobs.leaveEmpty(db(), req.importer.pharmacyId, req.params.id, { field: String(req.body?.field || ""), leave: req.body?.leave !== false });
+  res.json(await jobs.jobView(db(), req.importer.pharmacyId, req.params.id));
+}));
+
 // GET /api/imports/:id/undo-preview - what an undo would remove, keep and take back
 router.get("/:id/undo-preview", handle(async (req, res) => res.json(await jobs.undoPreview(db(), req.importer.pharmacyId, req.params.id))));
 
