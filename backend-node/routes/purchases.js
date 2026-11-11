@@ -509,6 +509,10 @@ async function uncatalogedLines(db, pharmacyId, items, known = new Set()) {
   return names;
 }
 
+// "warning" (default): a product typed in without its details is saved as a new
+// catalog entry with what was entered. "error": it needs its full details first.
+const newProductsNeedDetails = (preferences = {}) => preferences.purchase_new_product_check === "error";
+
 const catalogRequired = (names) => ({
   code: "CATALOG_REQUIRED",
   detail: `${names.join(", ")} ${names.length > 1 ? "are" : "is"} not in your Product Catalog. Add the manufacturer and salt first, or save as a draft and finish it on the Purchases page.`,
@@ -725,7 +729,9 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
         .json({ detail: "Every item needs a product name" });
     }
 
-    const notInCatalog = await uncatalogedLines(db, req.user.pharmacy_id, items);
+    const notInCatalog = newProductsNeedDetails(preferences)
+      ? await uncatalogedLines(db, req.user.pharmacy_id, items)
+      : [];
     if (notInCatalog.length) {
       await session.abortTransaction();
       session.endSession();
@@ -1258,7 +1264,7 @@ router.put(
         return res.status(400).json(partUnits);
       }
 
-      const notInCatalog = await uncatalogedLines(
+      const notInCatalog = !newProductsNeedDetails(preferences) ? [] : await uncatalogedLines(
         db,
         pharmacyId,
         items,
@@ -2300,7 +2306,10 @@ router.post(
         return res.status(400).json({ detail: "No items provided" });
       }
 
-      const notInCatalog = await uncatalogedLines(db, req.user.pharmacy_id, items);
+      const prefs = (await db.collection("user_settings").findOne({ user_id: req.user.id }))?.preferences;
+      const notInCatalog = newProductsNeedDetails(prefs)
+        ? await uncatalogedLines(db, req.user.pharmacy_id, items)
+        : [];
       if (notInCatalog.length) {
         await session.abortTransaction();
         session.endSession();

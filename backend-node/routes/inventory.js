@@ -11,7 +11,6 @@ const { findAlternates } = require("../services/alternates");
 const { cleanProductName } = require("../services/search/normalize");
 const { flagScheduleH1, h1InventoryMatch } = require("../utils/scheduleH1");
 const {
-  searchGlobalMedicines,
   tenantTokenMatch,
   scoreMatch,
   batchMatchScore,
@@ -481,8 +480,8 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
       return res.status(400).json({ detail: "Search query required" });
     }
 
-    // Not cached: billing needs live stock. The global catalogue layer is
-    // cached inside searchGlobalMedicines.
+    // Not cached: billing needs live stock. Only the pharmacy's own products:
+    // billing never suggests the global catalogue (unlisted items are typed in by hand).
     const parsedLimit = Math.min(parseInt(limit) || 15, 100);
     const parsedPage = Math.max(parseInt(page) || 1, 1);
 
@@ -681,119 +680,9 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
       console.warn("Catalog search warning in inventory/search:", catErr.message);
     }
 
-    // 3. Search Centralized Global Medicines (4.09L+ Records)
-    let globalMedicines = [];
-    try {
-      // Index-backed n-gram lookup, ranked and deduped by normalised name
-      const rawGlobal = await searchGlobalMedicines(q, { limit: 40 });
-
-      // DEDUPLICATION: Prevent duplicate suggestions for products already in inventory / catalog
-      for (const med of rawGlobal) {
-        const medName = (med.product_name || med.name || "").trim();
-        if (!medName) continue;
-        const exactLower = medName.toLowerCase();
-        const normKey = normalizeMedKey(medName);
-
-        // Strict Check: If this medicine is already in local inventory or catalog, SKIP IT!
-        if (seenExactNames.has(exactLower) || seenNormKeys.has(normKey))
-          continue;
-        if (med.product_id && seenProductIds.has(String(med.product_id)))
-          continue;
-        if (med.id && seenProductIds.has(String(med.id))) continue;
-
-        seenExactNames.add(exactLower);
-        if (normKey) seenNormKeys.add(normKey);
-        if (med.product_id) seenProductIds.add(String(med.product_id));
-        if (med.id) seenProductIds.add(String(med.id));
-
-        let medUnits =
-          typeof med.units_per_pack === "number" && med.units_per_pack > 0
-            ? med.units_per_pack
-            : 1;
-        const packLabel =
-          med.packaging_label ||
-          med.package_details ||
-          med.pack_size_label ||
-          med.pack_size ||
-          "";
-        if (medUnits <= 1 && packLabel) {
-          const matchNum = packLabel.match(/\d+/);
-          if (matchNum) {
-            const parsed = parseInt(matchNum[0]);
-            if (!isNaN(parsed) && parsed > 0 && parsed <= 500)
-              medUnits = parsed;
-          }
-        }
-
-        const medMrp =
-          typeof med.mrp === "number"
-            ? med.mrp
-            : parseFloat(med["price(₹)"]) || 0;
-        const medUnitMrp =
-          typeof med.unit_mrp === "number" && med.unit_mrp > 0
-            ? med.unit_mrp
-            : medUnits > 0 && medMrp > 0
-              ? parseFloat((medMrp / medUnits).toFixed(2))
-              : medMrp;
-        const medTrade =
-          typeof med.trade_price === "number" && med.trade_price > 0
-            ? med.trade_price
-            : typeof med.purchase_price === "number" && med.purchase_price > 0
-              ? med.purchase_price
-              : parseFloat((medMrp * 0.7).toFixed(2));
-        const medTax =
-          typeof med.tax_rate === "number"
-            ? med.tax_rate
-            : med.gst_percentage || 5;
-        const medMfg = med.manufacturer_name || med.manufacturer || "";
-        const medSalt =
-          med.active_ingredients ||
-          [med.short_composition1, med.short_composition2]
-            .map((s) => (s || "").trim())
-            .filter(Boolean)
-            .join(", ") ||
-          "";
-
-        globalMedicines.push({
-          id: `global-${med._id || med.id || uuidv4()}`,
-          product_id:
-            med.product_id || med.id || (med._id ? String(med._id) : undefined),
-          product_name: medName,
-          manufacturer: medMfg,
-          manufacturer_name: medMfg,
-          salt_composition: medSalt,
-          hsn_no: med.hsn_code || med.hsn_no || "300490",
-          available_quantity: 0,
-          available_units: 0,
-          quantity: 0,
-          units_per_pack: medUnits,
-          pack_type:
-            med.pack_type ||
-            (med.dosage_form === "syrup" ? "Bottle" : "Strip"),
-          purchase_price: medTrade,
-          cost_per_unit:
-            medUnits > 0
-              ? parseFloat((medTrade / medUnits).toFixed(2))
-              : medTrade,
-          mrp: medMrp,
-          mrp_per_unit: medUnitMrp,
-          cgst: medTax / 2,
-          sgst: medTax / 2,
-          drug_schedule: med.drug_schedule || "",
-          source: "global",
-          stock_status: "Global Catalog",
-          is_manual: true,
-          batches: [],
-        });
-      }
-    } catch (gErr) {
-      console.warn("Global search warning in inventory/search:", gErr.message);
-    }
-
-    // 4. Priority Ranking:
+    // 3. Priority Ranking:
     // Tier 1: In-stock local inventory (available_quantity > 0) ALWAYS comes first!
     // Tier 2: Out-of-stock local inventory & custom catalog comes second!
-    // Tier 3: Global medicines come third!
     const scoreItem = (item) => {
       const matchScore =
         Math.max(
@@ -801,14 +690,10 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
           batchMatchScore(q, item.batches)
         ) || 10;
 
-      let sourceTier = 0;
-      if (item.source === "inventory" && (item.available_quantity || 0) > 0) {
-        sourceTier = 3000; // In-stock inventory
-      } else if (item.source === "inventory" || item.source === "catalog") {
-        sourceTier = 2000; // Local catalog / out-of-stock
-      } else {
-        sourceTier = 1000; // Global medicines
-      }
+      const sourceTier =
+        item.source === "inventory" && (item.available_quantity || 0) > 0
+          ? 3000 // In-stock inventory
+          : 2000; // Local catalog / out-of-stock
 
       return sourceTier + matchScore;
     };
@@ -816,7 +701,6 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
     const combined = [
       ...processedInventory,
       ...customCatalog,
-      ...globalMedicines,
     ];
     combined.sort((a, b) => scoreItem(b) - scoreItem(a));
 

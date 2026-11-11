@@ -1553,6 +1553,461 @@ input:-webkit-autofill:active {
   }
 }
 
+/* ----------------------------------------------------
+   Phone polish (below md / 768px): native-app touch feel.
+   Everything here is inside the phone media query, so the
+   desktop and tablet layouts are untouched.
+------------------------------------------------------- */
+@media (max-width: 767.98px) {
+  /* Pressed state: a quick, small squeeze. `scale` composes with the
+     transforms Tailwind classes already set. */
+  :is(button, a[href], [role="button"], [role="tab"], [role="switch"], [role="checkbox"], [role="radio"], summary):not(:disabled):not([aria-disabled="true"]) {
+    touch-action: manipulation;
+  }
+  :is(button, [role="button"], [role="tab"], summary):not([class*="transition"]) {
+    transition: scale 0.14s ease-out, background-color 0.18s ease, color 0.18s ease, opacity 0.18s ease;
+  }
+  :is(button, a[href], [role="button"], [role="tab"], summary):not(:disabled):not([aria-disabled="true"]):not([role="option"]):not([role="menuitem"]):active {
+    scale: 0.96;
+  }
+  /* Wide, card-sized tap targets squeeze less */
+  :is(main, [role="dialog"]) :is(button, a[href], [role="button"]).w-full:not(:disabled):active,
+  :is(main, [role="dialog"]) :is(button, a[href], [role="button"])[class*="p-3"]:not(:disabled):active,
+  :is(main, [role="dialog"]) :is(button, a[href], [role="button"])[class*="p-4"]:not(:disabled):active {
+    scale: 0.985;
+  }
+  /* List and menu rows light up instead */
+  :is([role="option"], [role="menuitem"]):active {
+    background-color: hsl(var(--muted)) !important;
+  }
+
+  /* Text is legible and fields don't trigger the browser's zoom-on-focus */
+  [data-testid="dashboard-layout"] :is(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]), textarea, select),
+  [role="dialog"] :is(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]), textarea, select) {
+    font-size: max(15px, 1em) !important;
+  }
+
+  /* Search fields: a filled, rounded pill with the icon inside */
+  .m-search,
+  main div.relative:has(> svg.lucide-search):has(input[placeholder^="Search"]),
+  main div.relative:has(> svg.lucide-search):has(input[data-shortcut="search"]) {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    min-height: 2.75rem;
+    padding: 0 0.85rem !important;
+    border-radius: 0.9rem;
+    border: 1px solid hsl(var(--border) / 0.8);
+    background: hsl(var(--muted) / 0.45);
+    transition: border-color 0.18s ease, box-shadow 0.18s ease, background-color 0.18s ease;
+  }
+  main div.relative:has(> svg.lucide-search):has(input:focus) {
+    border-color: rgb(249 115 22 / 0.6);
+    background: hsl(var(--background));
+    box-shadow: 0 0 0 3px rgb(249 115 22 / 0.14);
+  }
+  main div.relative:has(> svg.lucide-search) > svg.lucide-search {
+    position: static !important;
+    transform: none !important;
+    flex: none;
+    width: 1.05rem;
+    height: 1.05rem;
+    margin-right: 0.55rem;
+    color: hsl(var(--muted-foreground));
+  }
+  main div.relative:has(> svg.lucide-search):has(input[placeholder^="Search"], input[data-shortcut="search"]) :is(div, .wave-group) {
+    min-width: 0;
+  }
+  main div.relative:has(> svg.lucide-search):has(input[placeholder^="Search"], input[data-shortcut="search"]) > :is(div, input) {
+    flex: 1 1 auto;
+    height: auto !important;
+    padding: 0 !important;
+    border: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+  }
+  main div.relative:has(> svg.lucide-search) :is(input[placeholder^="Search"], input[data-shortcut="search"]) {
+    height: 2.65rem !important;
+    padding: 0 !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    outline: none !important;
+    text-overflow: ellipsis;
+  }
+  main div.relative:has(> svg.lucide-search) :is(input[placeholder^="Search"], input[data-shortcut="search"]) ~ .wave-bar {
+    display: none;
+  }
+  main div.relative:has(> svg.lucide-search) :is(input[placeholder^="Search"], input[data-shortcut="search"])::-webkit-search-decoration {
+    display: none;
+  }
+
+  /* A card that only holds a search field steps back; the field is the surface */
+  main .glass:has(> div > .flex > .relative > svg.lucide-search):not(:has(table)) {
+    border-color: transparent !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+    overflow: visible !important;
+  }
+  main .glass:has(> div > .flex > .relative > svg.lucide-search):not(:has(table)) > div {
+    padding: 0 !important;
+  }
+  main .glass:has(> div > .flex > .relative > svg.lucide-search):not(:has(table)) > div > .flex {
+    gap: 0.5rem !important;
+  }
+
+  /* A row of filter chips scrolls sideways instead of wrapping into a pile */
+  .m-chips {
+    display: flex !important;
+    flex-wrap: nowrap !important;
+    justify-content: flex-start !important;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scroll-snap-type: x proximity;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    margin-left: -0.625rem;
+    margin-right: -0.625rem;
+    padding: 0.125rem 0.625rem;
+    width: calc(100% + 1.25rem) !important;
+    max-width: none !important;
+    min-width: 0;
+    align-self: stretch;
+    flex-shrink: 0;
+    scroll-padding-inline: 0.625rem;
+    -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 0.625rem, #000 calc(100% - 1.25rem), transparent);
+    mask-image: linear-gradient(90deg, transparent 0, #000 0.625rem, #000 calc(100% - 1.25rem), transparent);
+  }
+  .m-chips::-webkit-scrollbar {
+    display: none;
+  }
+  .m-chips > * {
+    flex: none !important;
+    scroll-snap-align: start;
+  }
+
+  /* Two equal columns (filters, buttons) */
+  .m-grid-2 {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 0.5rem !important;
+    width: 100% !important;
+  }
+  .m-grid-2 > * {
+    width: 100% !important;
+    min-width: 0 !important;
+  }
+  .m-grid-2 > .m-span-2 {
+    grid-column: 1 / -1;
+  }
+
+  /* Dashboard KPIs: today and stock value span the row, month and profit pair up */
+  .m-kpis > :first-child,
+  .m-kpis > :last-child {
+    grid-column: 1 / -1;
+  }
+
+  /* Page title row: one compact, consistent large title */
+  .m-page-title,
+  [data-testid="dashboard-layout"] main h1:is(.text-2xl, .text-3xl, .text-4xl) {
+    font-size: 1.6rem !important;
+    line-height: 2rem !important;
+    letter-spacing: -0.02em !important;
+  }
+  /* Title icon tiles shrink with the title */
+  [data-testid="dashboard-layout"] main h1:is(.text-2xl, .text-3xl, .text-4xl) > div:has(> svg) {
+    padding: 0.4rem !important;
+  }
+  [data-testid="dashboard-layout"] main h1:is(.text-2xl, .text-3xl, .text-4xl) svg:is(.w-8, .w-7, .w-6) {
+    width: 1.35rem !important;
+    height: 1.35rem !important;
+  }
+  .m-page-sub {
+    font-size: 0.8rem !important;
+    line-height: 1.15rem !important;
+  }
+
+  /* Taller touch targets for compact controls inside pages and sheets */
+  main :is(button, [role="button"], [role="tab"], [role="combobox"]):is(.h-7, .h-8) {
+    min-height: 2.25rem;
+  }
+  main :is(button, [role="button"]).h-9:not(.w-9) {
+    min-height: 2.5rem;
+  }
+
+  /* Scrolling: the page scrolls with momentum and a focused field never
+     ends up hidden behind the bottom bar */
+  [data-testid="dashboard-layout"] main {
+    overflow-x: hidden;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: contain;
+    scroll-padding-top: 0.75rem;
+    scroll-padding-bottom: 6rem;
+  }
+  body:has(.mobile-action-bar) [data-testid="dashboard-layout"] main {
+    scroll-padding-bottom: 9.5rem;
+  }
+
+  /* Menus and popovers never run past the screen edge */
+  [data-radix-popper-content-wrapper] > * {
+    max-width: calc(100vw - 1rem);
+  }
+  [role="menu"] [role="menuitem"] {
+    min-height: 2.6rem;
+  }
+  [role="listbox"] [role="option"] {
+    min-height: 2.5rem;
+  }
+
+  /* Side sheets cover the phone; bottom sheets clear the home indicator */
+  [role="dialog"][data-state][class*="inset-y-0"] {
+    width: 100% !important;
+    max-width: 100% !important;
+    padding-top: calc(1.25rem + env(safe-area-inset-top)) !important;
+  }
+  [role="dialog"][data-state][class*="inset-x-0"][class*="bottom-0"] {
+    border-top-left-radius: 1.5rem;
+    border-top-right-radius: 1.5rem;
+    max-height: 92dvh;
+    overflow-y: auto;
+  }
+
+  /* ...also when a plain scroll wrapper sits between the box and the list */
+  *:has(> div[class*="overflow"]:not([class*="border"]) > .table-cards-wrap) {
+    border-color: transparent !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+    overflow: visible !important;
+  }
+
+  /* Cards from tables: softer surface, a press state when the card opens something */
+  table.table-cards > tbody > tr {
+    border-radius: 1.1rem;
+    padding: 0.85rem 0.9rem;
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.04), 0 6px 16px -10px rgb(0 0 0 / 0.22);
+    transition: scale 0.14s ease-out, background-color 0.18s ease;
+  }
+  table.table-cards > tbody > tr.cursor-pointer:active {
+    scale: 0.985;
+  }
+  table.table-cards.m-cards-3 > tbody > tr {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.6rem 0.65rem;
+  }
+  table.table-cards td[data-label]:not([data-label=""])::before {
+    font-size: 9.5px;
+    letter-spacing: 0.06em;
+    margin-bottom: 0.15rem;
+  }
+
+  /* Fields inside cards: one boxed style (desktop mixes underline and box) */
+  table.table-cards td :is(input.wave-input, input:not([type="checkbox"]):not([type="radio"])):not(.m-field-box *) {
+    min-height: 2.5rem;
+    height: 2.5rem !important;
+    padding: 0 0.7rem !important;
+    border: 1px solid hsl(var(--border)) !important;
+    border-radius: 0.7rem !important;
+    background: hsl(var(--muted) / 0.35) !important;
+    box-shadow: none !important;
+    text-align: left !important;
+  }
+  table.table-cards td :is(input.wave-input, input:not([type="checkbox"]):not([type="radio"])):not(.m-field-box *):focus {
+    border-color: rgb(249 115 22 / 0.65) !important;
+    background: hsl(var(--background)) !important;
+    box-shadow: 0 0 0 3px rgb(249 115 22 / 0.14) !important;
+  }
+  table.table-cards td .wave-bar {
+    display: none;
+  }
+  /* A field with its own controls inside (e.g. % / ₹ switch) is the box */
+  table.table-cards td .m-field-box {
+    height: 2.5rem !important;
+    border-radius: 0.7rem !important;
+  }
+  table.table-cards td .m-field-box:not([class*="emerald"]) {
+    background: hsl(var(--muted) / 0.35) !important;
+  }
+  table.table-cards td .m-field-box input {
+    border: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    width: auto !important;
+    flex: 1 1 0;
+    text-align: left !important;
+    padding: 0 0.7rem !important;
+  }
+  table.table-cards td .m-field-box button {
+    width: 1.9rem;
+  }
+  /* The Input wrapper carries the desktop box classes; the field draws its own box */
+  table.table-cards td div:has(> .wave-group) {
+    height: auto !important;
+    padding: 0 !important;
+    border: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+
+  /* Item entry (purchase, bill): each item is a numbered card with a tidy field grid */
+  table.table-cards:is(.m-purchase-cards, .m-item-cards) {
+    counter-reset: entry-item;
+  }
+  table.table-cards:is(.m-purchase-cards, .m-item-cards) > tbody > tr:not(:has(> td:only-child)) {
+    counter-increment: entry-item;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 0.7rem 0.5rem;
+    padding: 2.4rem 0.85rem 0.85rem;
+  }
+  table.table-cards:is(.m-purchase-cards, .m-item-cards) > tbody > tr:not(:has(> td:only-child))::before {
+    content: "Item " counter(entry-item);
+    position: absolute;
+    top: 0.85rem;
+    left: 0.9rem;
+    font-size: 10.5px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: rgb(249 115 22);
+  }
+  table.table-cards:is(.m-purchase-cards, .m-item-cards) > tbody > tr > td[data-card="title"] {
+    padding-right: 0 !important;
+  }
+  table.table-cards:is(.m-purchase-cards, .m-item-cards) > tbody > tr > td[data-card="corner"] {
+    top: 0.3rem;
+    right: 0.35rem;
+  }
+  table.table-cards.m-purchase-cards > tbody > tr > td:nth-child(2) { grid-column: span 3; order: 1; }
+  table.table-cards.m-purchase-cards > tbody > tr > td:nth-child(3) { grid-column: span 3; order: 2; }
+  table.table-cards.m-purchase-cards > tbody > tr > td:nth-child(4) { grid-column: span 2; order: 3; }
+  table.table-cards.m-purchase-cards > tbody > tr > td:nth-child(5) { grid-column: span 2; order: 4; }
+  table.table-cards.m-purchase-cards > tbody > tr > td:nth-child(6) { grid-column: span 2; order: 5; }
+  table.table-cards.m-purchase-cards > tbody > tr > td:nth-child(7) { grid-column: span 2; order: 6; }
+  table.table-cards.m-purchase-cards > tbody > tr > td:nth-child(9) { grid-column: span 2; order: 7; }
+  table.table-cards.m-purchase-cards > tbody > tr > td:nth-child(10) { grid-column: span 2; order: 8; }
+  table.table-cards.m-purchase-cards > tbody > tr > td:nth-child(8) { grid-column: span 3; order: 9; }
+  table.table-cards.m-purchase-cards > tbody > tr > td:nth-child(12) { grid-column: span 3; order: 10; }
+  /* Bill: Product · Salt · Batch · Avail · Qty · Cost · MRP · Disc · CGST · SGST · Total */
+  table.table-cards.m-bill-cards > tbody > tr > td:nth-child(2) { grid-column: 1 / -1; order: 1; }
+  table.table-cards.m-bill-cards > tbody > tr > td:nth-child(3) { grid-column: span 4; order: 2; }
+  table.table-cards.m-bill-cards > tbody > tr > td:nth-child(4) { grid-column: span 2; order: 3; }
+  table.table-cards.m-bill-cards > tbody > tr > td:nth-child(5) { grid-column: span 3; order: 4; }
+  table.table-cards.m-bill-cards > tbody > tr > td:nth-child(7) { grid-column: span 3; order: 5; }
+  table.table-cards.m-bill-cards > tbody > tr > td:nth-child(8) { grid-column: span 2; order: 6; }
+  table.table-cards.m-bill-cards > tbody > tr > td:nth-child(9) { grid-column: span 2; order: 7; }
+  table.table-cards.m-bill-cards > tbody > tr > td:nth-child(10) { grid-column: span 2; order: 8; }
+  /* Cost per unit: one quiet line above the total */
+  :is(table.table-cards.m-bill-cards > tbody > tr > td:nth-child(6), table.table-cards.m-bill-cards-edit > tbody > tr > td:nth-child(7)) {
+    grid-column: 1 / -1;
+    order: 10;
+    display: flex !important;
+    align-items: baseline;
+    justify-content: space-between;
+  }
+  :is(table.table-cards.m-bill-cards > tbody > tr > td:nth-child(6), table.table-cards.m-bill-cards-edit > tbody > tr > td:nth-child(7))::before {
+    margin: 0 !important;
+  }
+  /* Editing a bill adds Expiry after Avail */
+  table.table-cards.m-bill-cards-edit > tbody > tr > td:nth-child(2) { grid-column: 1 / -1; order: 1; }
+  table.table-cards.m-bill-cards-edit > tbody > tr > td:nth-child(3) { grid-column: span 4; order: 2; }
+  table.table-cards.m-bill-cards-edit > tbody > tr > td:nth-child(4) { grid-column: span 2; order: 3; }
+  table.table-cards.m-bill-cards-edit > tbody > tr > td:nth-child(5) { grid-column: span 2; order: 4; }
+  table.table-cards.m-bill-cards-edit > tbody > tr > td:nth-child(6) { grid-column: span 4; order: 5; }
+  table.table-cards.m-bill-cards-edit > tbody > tr > td:nth-child(8) { grid-column: span 3; order: 6; }
+  table.table-cards.m-bill-cards-edit > tbody > tr > td:nth-child(9) { grid-column: span 3; order: 7; }
+  table.table-cards.m-bill-cards-edit > tbody > tr > td:nth-child(10) { grid-column: span 3; order: 8; }
+  table.table-cards.m-bill-cards-edit > tbody > tr > td:nth-child(11) { grid-column: span 3; order: 9; }
+  /* Line amount closes the card, like a receipt total */
+  :is(table.table-cards.m-purchase-cards > tbody > tr > td:nth-child(11), table.table-cards.m-bill-cards > tbody > tr > td:nth-child(11), table.table-cards.m-bill-cards-edit > tbody > tr > td:nth-child(12)) {
+    grid-column: 1 / -1;
+    order: 11;
+    display: flex !important;
+    align-items: center;
+    gap: 0.75rem;
+    margin: 0.15rem -0.85rem -0.85rem;
+    padding: 0.7rem 0.85rem !important;
+    border-top: 1px dashed hsl(var(--border)) !important;
+    border-radius: 0 0 1.1rem 1.1rem;
+    background: hsl(var(--muted) / 0.3);
+  }
+  :is(table.table-cards.m-bill-cards > tbody > tr > td:nth-child(11), table.table-cards.m-bill-cards-edit > tbody > tr > td:nth-child(12)) {
+    font-size: 1.05rem;
+    font-weight: 800;
+  }
+  :is(table.table-cards.m-purchase-cards > tbody > tr > td:nth-child(11), table.table-cards.m-bill-cards > tbody > tr > td:nth-child(11), table.table-cards.m-bill-cards-edit > tbody > tr > td:nth-child(12))::before {
+    margin: 0 auto 0 0 !important;
+    font-size: 11px !important;
+  }
+  :is(table.table-cards.m-purchase-cards > tbody > tr > td:nth-child(11), table.table-cards.m-bill-cards > tbody > tr > td:nth-child(11), table.table-cards.m-bill-cards-edit > tbody > tr > td:nth-child(12)) > div {
+    flex-direction: row !important;
+    align-items: center !important;
+    gap: 0.6rem !important;
+    width: auto !important;
+    flex: none !important;
+  }
+  :is(table.table-cards.m-purchase-cards > tbody > tr > td:nth-child(11), table.table-cards.m-bill-cards > tbody > tr > td:nth-child(11), table.table-cards.m-bill-cards-edit > tbody > tr > td:nth-child(12)) input {
+    width: 8.5rem !important;
+    font-size: 17px !important;
+    font-weight: 800 !important;
+    text-align: right !important;
+  }
+
+  /* Bottom sheets show a grab handle, like the dialogs that become sheets */
+  [role="dialog"][data-state][class*="inset-x-0"][class*="bottom-0"]::before {
+    content: "";
+    display: block;
+    width: 2.5rem;
+    height: 0.3rem;
+    border-radius: 999px;
+    background: hsl(var(--muted-foreground) / 0.35);
+    margin: -0.6rem auto 0.6rem;
+  }
+
+  /* Sign-in screens: full dynamic height, clear of the notch and home bar */
+  :is([data-testid="login-page"], [data-testid="register-page"], [data-testid="forgot-password-page"], [data-testid="reset-link-page"]) {
+    min-height: 100dvh !important;
+  }
+  :is([data-testid="login-page"], [data-testid="register-page"], [data-testid="forgot-password-page"], [data-testid="reset-link-page"]) > div:last-child {
+    min-height: 100dvh;
+    max-height: none !important;
+    padding-top: calc(4.5rem + env(safe-area-inset-top)) !important;
+    padding-bottom: calc(1.5rem + env(safe-area-inset-bottom)) !important;
+  }
+  :is([data-testid="login-page"], [data-testid="register-page"], [data-testid="forgot-password-page"], [data-testid="reset-link-page"]) > div:last-child > .absolute.top-6 {
+    top: calc(1rem + env(safe-area-inset-top)) !important;
+    right: 1rem !important;
+  }
+
+  /* Toasts: full width under the status bar */
+  [data-sonner-toaster][data-y-position="top"] {
+    top: calc(env(safe-area-inset-top) + 0.5rem) !important;
+  }
+  [data-sonner-toaster] [data-sonner-toast] {
+    border-radius: 1rem !important;
+  }
+
+  /* Dropdowns and floating panels: solid. Phones often drop the backdrop blur
+     (inside animated or scrolling parents), leaving the page showing through */
+  :is(.absolute, .fixed, [style*="position: fixed"], [style*="position: absolute"]):is([class*="bg-card/"], [class*="bg-popover/"]),
+  [data-radix-popper-content-wrapper] > [class*="bg-card/"],
+  [data-radix-popper-content-wrapper] > [class*="bg-popover/"] {
+    background-color: hsl(var(--card)) !important;
+  }
+}
+
+@media (max-width: 767.98px) and (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scale: none !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 /* Hold Alt (⌥): every control marked data-kbd shows its shortcut */
 html.kbd-hints [data-kbd]:not(.fixed):not(.absolute):not(.sticky) {
   position: relative;

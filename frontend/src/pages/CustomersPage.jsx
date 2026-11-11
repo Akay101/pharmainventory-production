@@ -441,7 +441,7 @@ export default function CustomersPage() {
   }, null);
 
   return (
-    <div className="space-y-6 animate-fade-in" data-testid="customers-page">
+    <div className="space-y-6 max-md:space-y-4 animate-fade-in" data-testid="customers-page">
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
@@ -537,9 +537,9 @@ export default function CustomersPage() {
       </div>
 
       {/* Search */}
-      <Card className="glass bg-card/45 border border-border/70 shadow-md rounded-2xl overflow-hidden">
-        <CardContent className="p-4">
-          <div className="flex gap-4">
+      <Card className="glass bg-card/45 border border-border/70 shadow-md rounded-2xl overflow-hidden max-md:border-0 max-md:bg-transparent max-md:shadow-none max-md:backdrop-blur-none max-md:overflow-visible">
+        <CardContent className="p-4 max-md:p-0">
+          <div className="flex gap-4 max-md:gap-2">
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4.5 h-4.5 text-muted-foreground/60" />
               <Input

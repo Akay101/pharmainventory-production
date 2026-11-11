@@ -102,7 +102,7 @@ import { TierBadge } from "../components/customers/CustomerTiers";
 import ScheduleH1Badge, { H1_ROW_CLASS } from "../components/ScheduleH1Badge";
 import Loader from "../components/Loader";
 import BillingScannerModal from "../components/BillingScannerModal";
-import { formatDate, formatExpiry, formatExpiryInput, expiryToIso, openScanner } from "./utils";
+import { formatDate, formatExpiry, formatExpiryInput, expiryToIso, openScanner, isPhone } from "./utils";
 import { formatCombo } from "../lib/shortcuts";
 import { fmtDay, parseDose, refillPlan, reminderOn } from "../lib/refill";
 import { useShortcuts, useShortcutLayer } from "../components/shortcuts/Shortcuts";
@@ -703,8 +703,27 @@ export default function BillingPage() {
       ? inputRefs.current[activeBillItemId]
       : editingInputRefs.current[activeEditingItemId];
     if (el) {
-      const rect = el.getBoundingClientRect();
+      let rect = el.getBoundingClientRect();
       const dropdownWidth = Math.max(rect.width, 540);
+
+      // Phones: always below the field, so it never covers the fields above;
+      // once something is typed, scroll the field up when the footer leaves no room
+      if (isPhone()) {
+        const footer = 150;
+        if (el.value.trim() && window.innerHeight - rect.bottom - footer < 220 && !el.dataset.scrolledForList) {
+          el.dataset.scrolledForList = "1";
+          el.scrollIntoView({ block: "start" });
+          rect = el.getBoundingClientRect();
+        }
+        setDropdownPosition({
+          top: rect.bottom + 4,
+          left: rect.left,
+          width: dropdownWidth,
+          transform: "none",
+          maxHeight: Math.max(160, window.innerHeight - rect.bottom - footer),
+        });
+        return;
+      }
 
       const spaceBelow = window.innerHeight - rect.bottom;
       const spaceAbove = rect.top;
@@ -730,7 +749,10 @@ export default function BillingPage() {
     };
 
     rafId = requestAnimationFrame(runUpdate);
-    return () => cancelAnimationFrame(rafId);
+    return () => {
+      cancelAnimationFrame(rafId);
+      document.querySelectorAll("[data-scrolled-for-list]").forEach((e) => delete e.dataset.scrolledForList);
+    };
   }, [showInventorySuggestions, showEditingInventorySuggestions, activeBillItemId, activeEditingItemId]);
 
   // Keyboard navigation scroll-into-view. The first option scrolls the list to
@@ -1860,7 +1882,7 @@ export default function BillingPage() {
       top: dropdownPosition.top,
       left: Math.max(16, Math.min(dropdownPosition.left, vw - width - 16)),
       width,
-      maxHeight: "440px",
+      maxHeight: dropdownPosition.maxHeight ? `${dropdownPosition.maxHeight}px` : "440px",
       transform: dropdownPosition.transform || "none",
       overscrollBehavior: "contain",
       // Keyboard-highlighted rows stop below the sticky header, not under it
@@ -3078,18 +3100,19 @@ export default function BillingPage() {
       {/* Header */}
       {!showNewBill && editingBillId === null && (
         <div className="space-y-3 px-0.5 py-0.5">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div className="flex items-center gap-3">
-              <h1 className="text-2xl font-black tracking-tight text-foreground">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 max-md:flex-row max-md:items-center max-md:gap-2">
+            <div className="flex items-center gap-3 max-md:gap-2 min-w-0">
+              <h1 className="text-2xl font-black tracking-tight text-foreground m-page-title">
                 Billing
               </h1>
-              <span data-guide="bill-count" className="px-2.5 py-0.5 rounded-full bg-orange-500/10 border border-orange-500/30 text-orange-600 dark:text-orange-400 font-mono font-bold text-xs">
-                {`${totalBills} bill${totalBills !== 1 ? "s" : ""} generated`}
+              <span data-guide="bill-count" className="px-2.5 py-0.5 rounded-full bg-orange-500/10 border border-orange-500/30 text-orange-600 dark:text-orange-400 font-mono font-bold text-xs max-md:whitespace-nowrap">
+                <span className="max-md:hidden">{`${totalBills} bill${totalBills !== 1 ? "s" : ""} generated`}</span>
+                <span className="md:hidden">{`${totalBills} bill${totalBills !== 1 ? "s" : ""}`}</span>
               </span>
             </div>
 
-            <div className="flex items-center gap-2 flex-wrap">
-              <GuideButton tour="billing" />
+            <div className="flex items-center gap-2 flex-wrap max-md:flex-nowrap max-md:shrink-0">
+              <GuideButton tour="billing" compact />
               <Button
                 variant="outline"
                 size="sm"
@@ -3108,14 +3131,14 @@ export default function BillingPage() {
                 data-testid="upi-qr-btn"
                 data-kbd={formatCombo("alt+q")}
                 title={`Show a UPI QR for any amount (${formatCombo("alt+q")})`}
-                className="h-8 text-xs font-bold rounded-xl border-border/70"
+                className="h-8 text-xs font-bold rounded-xl border-border/70 max-md:h-10"
               >
                 <QrCode className="w-3.5 h-3.5 mr-1.5 text-muted-foreground" />
                 UPI QR
               </Button>
               <Button
                 size="sm"
-                className="h-8 px-3.5 text-xs font-extrabold bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white rounded-xl shadow-xs border-none"
+                className="h-8 px-3.5 text-xs font-extrabold bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white rounded-xl shadow-xs border-none max-md:h-10 max-md:shadow-md max-md:shadow-orange-500/25"
                 onClick={handleStartNewBill}
                 data-testid="new-bill-btn"
                 data-shortcut="new"
@@ -3606,7 +3629,7 @@ export default function BillingPage() {
                 />
               </div>
 
-              <div className="space-y-1 w-[140px] relative">
+              <div className="space-y-1 w-[140px] max-md:w-full relative">
                 <Label className="text-[11px] font-extrabold text-foreground/80">
                   Doctor
                 </Label>
@@ -3632,7 +3655,7 @@ export default function BillingPage() {
                 />
                 {showDoctorSuggestions && (
                   <div
-                    className="absolute z-[100] w-[320px] -left-36 sm:left-0 mt-1 bg-card/95 backdrop-blur-md border border-border shadow-2xl rounded-xl max-h-60 overflow-y-auto top-full custom-scrollbar transition-all duration-150 animate-in fade-in slide-in-from-top-2"
+                    className="absolute z-[100] w-[min(320px,calc(100vw-3rem))] sm:w-[320px] left-0 mt-1 bg-card md:bg-card/95 backdrop-blur-md border border-border shadow-2xl rounded-xl max-h-60 overflow-y-auto top-full custom-scrollbar transition-all duration-150 animate-in fade-in slide-in-from-top-2"
                     onScroll={(e) => {
                       const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
                       if (scrollHeight - scrollTop <= clientHeight + 40 && hasMoreDoctors && !loadingDoctors) {
@@ -3744,7 +3767,7 @@ export default function BillingPage() {
 
             {/* Items Table - Inline Editable */}
             <div data-guide="bill-items" className="border border-border/70 rounded-xl overflow-hidden shadow-sm bg-background/50 backdrop-blur-md mt-4">
-              <Table mobileCards wrapperClassName="max-h-[300px]">
+              <Table mobileCards className="m-item-cards m-bill-cards" wrapperClassName="max-h-[300px]">
                 <TableHeader className="sticky top-0 bg-muted/90 backdrop-blur-md z-[50] border-b border-border/80">
                   <TableRow className="hover:bg-transparent border-b border-border/80">
                     <TableHead data-card="title" className="w-[180px] font-bold text-foreground/80 text-xs uppercase tracking-wider">
@@ -4940,7 +4963,7 @@ export default function BillingPage() {
                 />
               </div>
 
-              <div className="space-y-1 w-[140px] relative">
+              <div className="space-y-1 w-[140px] max-md:w-full relative">
                 <Label className="text-[11px] font-extrabold text-foreground/80">
                   Doctor
                 </Label>
@@ -4968,7 +4991,7 @@ export default function BillingPage() {
                 />
                 {showDoctorSuggestions && (
                   <div
-                    className="absolute z-[100] w-[320px] -left-36 sm:left-0 mt-1 bg-card/95 backdrop-blur-md border border-border shadow-2xl rounded-xl max-h-60 overflow-y-auto top-full custom-scrollbar transition-all duration-150 animate-in fade-in slide-in-from-top-2"
+                    className="absolute z-[100] w-[min(320px,calc(100vw-3rem))] sm:w-[320px] left-0 mt-1 bg-card md:bg-card/95 backdrop-blur-md border border-border shadow-2xl rounded-xl max-h-60 overflow-y-auto top-full custom-scrollbar transition-all duration-150 animate-in fade-in slide-in-from-top-2"
                     onScroll={(e) => {
                       const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
                       if (scrollHeight - scrollTop <= clientHeight + 40 && hasMoreDoctors && !loadingDoctors) {
@@ -5073,7 +5096,7 @@ export default function BillingPage() {
 
             {/* Items Table - Inline Editable */}
             <div className="border border-border/70 rounded-xl overflow-hidden shadow-sm bg-background/50 backdrop-blur-md mt-4">
-              <Table mobileCards wrapperClassName="max-h-[300px]">
+              <Table mobileCards className="m-item-cards m-bill-cards-edit" wrapperClassName="max-h-[300px]">
                 <TableHeader className="sticky top-0 bg-muted/90 backdrop-blur-md z-[50] border-b border-border/80">
                   <TableRow className="hover:bg-transparent border-b border-border/80">
                     <TableHead data-card="title" className="w-[180px] font-bold text-foreground/80 text-xs uppercase tracking-wider">
@@ -5741,7 +5764,7 @@ export default function BillingPage() {
                 />
               </div>
             </div>
-            <div className="flex items-center gap-2 w-full md:w-auto flex-wrap">
+            <div className="flex items-center gap-2 w-full md:w-auto flex-wrap m-chips">
               <Button
                 variant="outline"
                 size="sm"

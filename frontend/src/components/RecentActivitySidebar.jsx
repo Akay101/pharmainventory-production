@@ -38,6 +38,10 @@ const ACTION_ICONS = {
   DELETE: Trash2,
 };
 
+// Logged amounts can carry float noise (₹828.8000000000001): show them to the paisa
+const tidyAmounts = (text) =>
+  typeof text === "string" ? text.replace(/₹(\d+\.\d{3,})/g, (_, n) => `₹${Number(n).toFixed(2)}`) : text;
+
 export default function RecentActivitySidebar({ open, onClose }) {
   const [activities, setActivities] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -148,7 +152,7 @@ export default function RecentActivitySidebar({ open, onClose }) {
   }, [filterModule]);
 
   return (
-    <div className="w-80 h-full bg-card/90 dark:bg-zinc-950/85 backdrop-blur-2xl border-l border-border/40 flex flex-col transition-all duration-300">
+    <div className="w-80 max-md:w-screen h-full bg-card/90 dark:bg-zinc-950/85 max-md:bg-card max-md:dark:bg-zinc-950 backdrop-blur-2xl border-l border-border/40 flex flex-col transition-all duration-300 max-md:pt-[env(safe-area-inset-top)] max-md:pb-[env(safe-area-inset-bottom)]">
       {/* Sidebar Header */}
       <div className="p-4 md:h-16 border-b border-border/40 flex items-center justify-between bg-card/30 shrink-0 z-10">
         <div className="flex items-center gap-2">
@@ -245,7 +249,7 @@ export default function RecentActivitySidebar({ open, onClose }) {
                     {/* Timeline Item Description Body */}
                     <div className="flex-1 pt-0.5 min-w-0">
                       <p className="text-xs font-bold text-foreground leading-normal line-clamp-2 mb-1.5 transition-colors group-hover:text-primary">
-                        {activity.description}
+                        {tidyAmounts(activity.description)}
                       </p>
                       
                       {/* Meta Footer */}

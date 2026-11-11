@@ -104,6 +104,7 @@ import { GuideButton } from "../components/guide/GuideProvider";
 import ScheduleH1Badge, { H1_ROW_CLASS } from "../components/ScheduleH1Badge";
 import SchemeDiscountField from "../components/purchases/SchemeDiscountField";
 import MatchChooser from "../components/purchases/MatchChooser";
+import NewProductsDialog from "../components/purchases/NewProductsDialog";
 import PdfFormatPicker, { usePdfFormat } from "../components/PdfFormatPicker";
 import { lineNet, packCount, rateFromTotal, schemeDiscountOf, stockUnits, unitsAreWhole } from "../lib/purchaseLine";
 import { useShortcuts, useShortcutLayer } from "../components/shortcuts/Shortcuts";
@@ -1067,6 +1068,13 @@ export default function PurchasesPage() {
 
   const [catalogModalInitialValues, setCatalogModalInitialValues] = useState(null);
 
+  // "warning" (default): products not picked from the suggestions are saved as
+  // new catalog entries after a warning. "error": their full details come first.
+  const newProductsNeedDetails = settings?.purchase_new_product_check === "error";
+  const [newProductsPrompt, setNewProductsPrompt] = useState(null);
+  const allowNewProductsRef = useRef(false);
+  const [resaveTick, setResaveTick] = useState(0);
+
   // The catalog form starts from what's already typed on the row
   const handleOpenCreateCatalog = (rowId, name = "") => {
     const row = purchaseItems.find((i) => i.id === rowId) || {};
@@ -1185,7 +1193,7 @@ export default function PurchasesPage() {
         await mapRowToProduct({ ...row, _match: { suggestions } }, sure, { quiet: true });
         outcome.mapped.push(row);
       } else {
-        (suggestions.length ? outcome.choose : outcome.none).push(row);
+        (suggestions.length ? outcome.choose : outcome.none).push({ ...row, _match: { suggestions }, _matchChecked: true });
         setPurchaseItems((prev) =>
           prev.map((x) => (x.id === row.id ? { ...x, _match: { suggestions }, _matchChecked: true } : x))
         );
@@ -3673,6 +3681,8 @@ export default function PurchasesPage() {
 
   const handleSubmitPurchase = async () => {
     setShowSuggestions(false);
+    const allowNewProducts = allowNewProductsRef.current;
+    allowNewProductsRef.current = false;
     if (!selectedSupplier) {
       toast.error("Please select a supplier", { description: "Pick one with ↑/↓ and Enter, then save again" });
       setSupplierPickerSignal((n) => n + 1);
@@ -3720,7 +3730,26 @@ export default function PurchasesPage() {
     }
 
     const uncatalogedItems = validItems.filter((item) => !isCatalogLinked(item));
-    if (uncatalogedItems.length > 0) {
+    if (uncatalogedItems.length > 0 && !newProductsNeedDetails && !allowNewProducts) {
+      // Warn, with the closest products we hold, then save them as new
+      let rows = uncatalogedItems;
+      const unchecked = rows.filter((i) => !i._matchChecked);
+      if (unchecked.length) {
+        const { mapped, choose, none } = await matchRows(unchecked);
+        const mappedIds = new Set(mapped.map((r) => r.id));
+        const looked = new Map([...choose, ...none].map((r) => [r.id, r]));
+        rows = rows.filter((r) => !mappedIds.has(r.id)).map((r) => looked.get(r.id) || r);
+        if (!rows.length) {
+          toast.info("Matched to your catalog. Check the rows and save again.");
+          return;
+        }
+      }
+      setNewProductsPrompt(
+        rows.map((r) => ({ id: r.id, product_name: r.product_name, suggestions: (r._match?.suggestions || []).slice(0, 3) }))
+      );
+      return;
+    }
+    if (uncatalogedItems.length > 0 && newProductsNeedDetails) {
       // Not looked up yet (typed by hand): find the closest products first
       const unchecked = uncatalogedItems.filter((i) => !i._matchChecked);
       if (unchecked.length) {
@@ -3789,9 +3818,9 @@ export default function PurchasesPage() {
         }
       }
 
-      // A new purchase needs proper details on every product (old catalog
-      // entries may have none, and autofill may not have found them)
-      const incomplete = editingPurchaseId ? null : itemsToProcess.find((i) => rowCatalogGaps(i).length);
+      // With the "error" setting a new purchase needs proper details on every
+      // product (old catalog entries may have none, and autofill may not have found them)
+      const incomplete = editingPurchaseId || !newProductsNeedDetails ? null : itemsToProcess.find((i) => rowCatalogGaps(i).length);
       if (incomplete) {
         toast.error(`"${incomplete.product_name}" needs its ${rowCatalogGaps(incomplete).join(" and ")}. Complete it, then save again.`);
         handleOpenCreateCatalog(incomplete.id, incomplete.product_name);
@@ -3925,6 +3954,25 @@ export default function PurchasesPage() {
 
     setPurchaseItems(mappedItems);
   };
+
+  // From the new-products warning: use a match, or save them all as new
+  const pickNewProductMatch = async (r, s) => {
+    const row = purchaseItems.find((i) => i.id === r.id);
+    if (!row) return;
+    await mapRowToProduct(row, s);
+    const left = (newProductsPrompt || []).filter((x) => x.id !== r.id);
+    setNewProductsPrompt(left.length ? left : null);
+    // Nothing new left: save from the next render, which has the mapped row
+    if (!left.length) setResaveTick((n) => n + 1);
+  };
+  const saveNewProducts = () => {
+    setNewProductsPrompt(null);
+    allowNewProductsRef.current = true;
+    handleSubmitPurchase();
+  };
+  useEffect(() => {
+    if (resaveTick) handleSubmitPurchase();
+  }, [resaveTick]);
 
   const handleSaveEditPurchase = async () => {
     if (!editingPurchase) return;
@@ -4906,7 +4954,7 @@ export default function PurchasesPage() {
 
           {/* Items Table - Inline Editable with enhanced fields */}
           <div data-guide="purchase-items" className="border-2 border-border rounded-2xl relative overflow-hidden bg-card shadow-sm">
-            <Table mobileCards className="table-fixed min-w-[1344px] w-full" wrapperClassName="h-[420px]">
+            <Table mobileCards className="table-fixed min-w-[1344px] w-full m-purchase-cards" wrapperClassName="h-[420px]">
               <TableHeader className="sticky top-0 bg-muted/95 backdrop-blur z-[50] border-b-2 border-border shadow-xs">
                 <TableRow className="hover:bg-transparent">
                   <TableHead data-card="title" className="py-2.5 font-extrabold text-foreground text-left">
@@ -5157,7 +5205,11 @@ export default function PurchasesPage() {
                                 type="button"
                                 onClick={() => resolveUncatalogedRow(item)}
                                 className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/15 text-amber-600 dark:text-amber-400 hover:bg-amber-500/25 border border-amber-500/30 shrink-0 whitespace-nowrap transition-colors flex items-center gap-1 cursor-pointer"
-                                title="Not in your Product Catalog. Add its details to save this purchase."
+                                title={
+                                  newProductsNeedDetails
+                                    ? "Not in your Product Catalog. Add its details to save this purchase."
+                                    : "Not in your Product Catalog. Saving adds it as a new product; add its details here if you like."
+                                }
                               >
                                 <PackagePlus className="w-3 h-3 text-amber-500" />
                                 <span>+ Catalog</span>
@@ -5892,7 +5944,9 @@ export default function PurchasesPage() {
                                       "{searchMedicine}" not in Catalog
                                     </h4>
                                     <p className="text-[11px] font-medium text-muted-foreground mt-1 max-w-[340px] leading-relaxed">
-                                      To purchase this medicine, please create its master product catalog first.
+                                      {newProductsNeedDetails
+                                        ? "To purchase this medicine, please create its master product catalog first."
+                                        : "Saving the purchase adds it to your inventory as a new product. You can add its details now."}
                                     </p>
                                     <button
                                       type="button"
@@ -7098,9 +7152,9 @@ export default function PurchasesPage() {
         <>
           <div className="space-y-3 px-0.5 py-0.5">
             {/* Line 1: Page Title, Stats Badge & Action Buttons */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <h1 className="text-2xl font-black tracking-tight text-foreground">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 max-md:grid max-md:grid-cols-3 max-md:gap-2 max-md:items-center">
+              <div className="flex items-center gap-3 max-md:gap-2 max-md:col-span-2 max-md:min-w-0 max-md:order-1">
+                <h1 className="text-2xl font-black tracking-tight text-foreground m-page-title">
                   Purchases
                 </h1>
                 <span data-guide="purchase-count" className="px-2.5 py-0.5 rounded-full bg-orange-500/10 border border-orange-500/30 text-orange-600 dark:text-orange-400 font-mono font-bold text-xs">
@@ -7111,8 +7165,8 @@ export default function PurchasesPage() {
                 </span>
               </div>
 
-              <div className="flex items-center gap-2 flex-wrap">
-                <GuideButton tour="purchases" />
+              <div className="flex items-center gap-2 flex-wrap max-md:contents">
+                <GuideButton tour="purchases" compact />
                 <Button
                   variant="outline"
                   size="sm"
@@ -7128,7 +7182,7 @@ export default function PurchasesPage() {
                 <Button
                   variant="outline"
                   size="sm"
-                  className="h-8 text-xs font-bold rounded-xl bg-gradient-to-r from-orange-500/10 to-amber-500/10 border-orange-500/30 text-orange-600 dark:text-orange-400 hover:border-orange-500/50"
+                  className="h-8 text-xs font-bold rounded-xl bg-gradient-to-r from-orange-500/10 to-amber-500/10 border-orange-500/30 text-orange-600 dark:text-orange-400 hover:border-orange-500/50 max-md:order-3 max-md:h-10"
                   onClick={() => openScanner("/scan")}
                   data-testid="scan-products-btn"
                   style={onlineFeatures ? undefined : { display: "none" }}
@@ -7140,7 +7194,7 @@ export default function PurchasesPage() {
                 <Button
                   variant="outline"
                   size="sm"
-                  className="h-8 text-xs font-bold rounded-xl border-border/70 cursor-pointer"
+                  className="h-8 text-xs font-bold rounded-xl border-border/70 cursor-pointer max-md:order-3 max-md:h-10 max-md:px-2"
                   onClick={() => setCsvDialog(true)}
                   data-testid="csv-import-btn"
                 >
@@ -7151,7 +7205,7 @@ export default function PurchasesPage() {
                 <Button
                   variant="outline"
                   size="sm"
-                  className={`h-8 text-xs font-bold rounded-xl cursor-pointer ${showPurchaseDrafts ? "border-orange-500/50 bg-orange-500/10 text-orange-600 dark:text-orange-400" : "border-border/70"}`}
+                  className={`h-8 text-xs font-bold rounded-xl cursor-pointer max-md:order-3 max-md:h-10 ${showPurchaseDrafts ? "border-orange-500/50 bg-orange-500/10 text-orange-600 dark:text-orange-400" : "border-border/70"}`}
                   onClick={() => setShowPurchaseDrafts((v) => !v)}
                   data-testid="purchase-drafts-btn"
                 >
@@ -7164,7 +7218,7 @@ export default function PurchasesPage() {
 
                 <Button
                   size="sm"
-                  className="h-8 px-3.5 text-xs font-extrabold bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white rounded-xl shadow-xs border-none"
+                  className="h-8 px-3.5 text-xs font-extrabold bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white rounded-xl shadow-xs border-none max-md:order-2 max-md:h-10 max-md:shadow-md max-md:shadow-orange-500/25"
                   onClick={handleStartNewPurchase}
                   data-testid="add-purchase-btn"
                   data-shortcut="new"
@@ -7253,12 +7307,12 @@ export default function PurchasesPage() {
                   />
                 </div>
               </div>
-              <div data-guide="purchase-filters" className="flex items-center gap-2 w-full md:w-auto flex-wrap">
+              <div data-guide="purchase-filters" className="flex items-center gap-2 w-full md:w-auto flex-wrap m-grid-2">
                 <SupplierSelector
                   selectedId={filterSupplier}
                   knownSuppliers={suppliers}
                   showAllOption={true}
-                  className="w-44"
+                  className="w-44 m-span-2"
                   onSelect={(s) => {
                     handleSupplierFilterChange(s.id);
                     if (
@@ -9104,9 +9158,14 @@ export default function PurchasesPage() {
                 <div className="flex flex-col items-center justify-center space-y-2 pointer-events-none">
                   <Upload className="w-7 h-7 text-orange-500 animate-bounce" />
                   <div className="text-xs font-bold text-foreground">
-                    {csvFile
-                      ? csvFile.name
-                      : "Click or drag & drop CSV file to upload"}
+                    {csvFile ? (
+                      csvFile.name
+                    ) : (
+                      <>
+                        <span className="max-md:hidden">Click or drag & drop CSV file to upload</span>
+                        <span className="md:hidden">Tap to choose a CSV file</span>
+                      </>
+                    )}
                   </div>
                   <span className="text-[10px] text-muted-foreground">
                     Supports .csv, .txt, semicolon, and tab delimited files
@@ -9274,6 +9333,13 @@ export default function PurchasesPage() {
           </div>
         </DialogContent>
       </Dialog>
+
+      <NewProductsDialog
+        rows={newProductsPrompt}
+        onPick={pickNewProductMatch}
+        onSave={saveNewProducts}
+        onCancel={() => setNewProductsPrompt(null)}
+      />
 
       {/* Product Catalog Modal */}
       <ProductCatalogModal

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { motion, MotionConfig } from "framer-motion";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import {
   LayoutDashboard,
@@ -13,6 +14,8 @@ import {
   ChevronRight,
   Sparkles,
   Compass,
+  Sun,
+  Moon,
   Clapperboard,
 } from "lucide-react";
 import { Sheet, SheetContent, SheetTitle, SheetDescription } from "./ui/sheet";
@@ -31,7 +34,10 @@ const TABS = [
 ];
 const TAB_PATHS = TABS.filter((t) => t.path).map((t) => t.path);
 
-// While typing, the on-screen keyboard leaves little room: hide the tab bar
+// While typing, the on-screen keyboard leaves little room: hide the tab bar.
+// Only while a field has focus AND the screen has actually shrunk, so the bar
+// always comes back once the keyboard goes, even if the field keeps focus or
+// is removed from the page without a blur.
 function useKeyboardOpen() {
   const [open, setOpen] = useState(false);
   useEffect(() => {
@@ -40,20 +46,36 @@ function useKeyboardOpen() {
       (el.tagName === "TEXTAREA" ||
         el.isContentEditable ||
         (el.tagName === "INPUT" && !["checkbox", "radio", "button", "submit", "file", "range", "color"].includes(el.type)));
-    const onIn = (e) => isField(e.target) && setOpen(true);
+    const vv = window.visualViewport;
+    let full = window.innerHeight;
+    let lastWidth = window.innerWidth;
+    const check = () => {
+      const h = vv ? vv.height : window.innerHeight;
+      // Rotation: start over with the new full height
+      if (window.innerWidth !== lastWidth) {
+        lastWidth = window.innerWidth;
+        full = h;
+      }
+      full = Math.max(full, h);
+      setOpen(isField(document.activeElement) && h < full * 0.8);
+    };
     // focus can move straight from one field to the next; check after it settles
-    const onOut = () => setTimeout(() => setOpen(isField(document.activeElement)), 60);
-    window.addEventListener("focusin", onIn);
-    window.addEventListener("focusout", onOut);
+    const later = () => setTimeout(check, 80);
+    window.addEventListener("focusin", later);
+    window.addEventListener("focusout", later);
+    vv?.addEventListener("resize", check);
+    window.addEventListener("resize", check);
     return () => {
-      window.removeEventListener("focusin", onIn);
-      window.removeEventListener("focusout", onOut);
+      window.removeEventListener("focusin", later);
+      window.removeEventListener("focusout", later);
+      vv?.removeEventListener("resize", check);
+      window.removeEventListener("resize", check);
     };
   }, []);
   return open;
 }
 
-export function MobileBottomNav({ items, isActive, onLogout, onOpenActivity, pharmacy, planLabel }) {
+export function MobileBottomNav({ items, isActive, onLogout, onOpenActivity, pharmacy, planLabel, isDark, onToggleTheme }) {
   const { start: startTour } = useTour();
   const { openHub: openGuides } = useGuide();
   const navigate = useNavigate();
@@ -74,49 +96,54 @@ export function MobileBottomNav({ items, isActive, onLogout, onOpenActivity, pha
   return (
     <>
       <nav
-        className={`md:hidden shrink-0 border-t border-border/70 bg-background/95 backdrop-blur-xl pb-[env(safe-area-inset-bottom)] ${keyboardOpen ? "hidden" : ""}`}
+        className={`mobile-tabbar md:hidden shrink-0 border-t border-border/70 bg-background/95 backdrop-blur-xl pb-[env(safe-area-inset-bottom)] ${keyboardOpen ? "hidden" : ""}`}
         data-testid="mobile-bottom-nav"
         data-tour="mobile-nav"
       >
-        <div className="grid grid-cols-5 h-16">
-          {TABS.map((tab) => {
-            if (tab.scan) {
-              return (
-                <div key="scan" className="flex items-start justify-center">
-                  <button
-                    type="button"
-                    onClick={() => setSheet("scan")}
-                    aria-label="Scan"
-                    data-tour="mtab-scan"
-                    className="-mt-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-orange-500 to-amber-500 text-white shadow-lg shadow-orange-500/30 ring-4 ring-background active:scale-95 transition-transform"
-                  >
-                    <ScanLine className="h-6 w-6" />
+        <MotionConfig reducedMotion="user">
+          <div className="grid grid-cols-5 h-[3.75rem]">
+            {TABS.map((tab) => {
+              const cls = "relative flex flex-col items-center justify-center gap-1 touch-manipulation";
+              if (tab.scan) {
+                // Sits inside the bar like the other tabs, so it never covers the page
+                return (
+                  <button key="scan" type="button" onClick={() => setSheet("scan")} aria-label="Scan" data-tour="mtab-scan" className={`${cls} group`}>
+                    <span className="flex h-8 w-12 items-center justify-center rounded-[0.9rem] bg-gradient-to-br from-orange-500 to-amber-500 text-white shadow-md shadow-orange-500/30 transition-transform duration-150 group-active:scale-90">
+                      <ScanLine className="h-[1.15rem] w-[1.15rem]" />
+                    </span>
+                    <span className={`text-[10.5px] font-bold leading-none ${sheet === "scan" ? "text-orange-500" : "text-muted-foreground"}`}>Scan</span>
                   </button>
-                </div>
+                );
+              }
+              const active = tab.more ? moreActive || sheet === "more" : isActive(tab.path);
+              const Icon = tab.icon;
+              const inner = (
+                <>
+                  <span className="relative flex h-8 w-12 items-center justify-center transition-transform duration-150 group-active:scale-90">
+                    {active && (
+                      <motion.span
+                        layoutId="mobile-tab-pill"
+                        className="absolute inset-0 rounded-full bg-orange-500/15"
+                        transition={{ type: "spring", stiffness: 520, damping: 38 }}
+                      />
+                    )}
+                    <Icon className={`relative h-5 w-5 transition-colors duration-200 ${active ? "text-orange-500" : "text-muted-foreground"}`} strokeWidth={active ? 2.4 : 2} />
+                  </span>
+                  <span className={`text-[10.5px] font-bold leading-none transition-colors duration-200 ${active ? "text-orange-500" : "text-muted-foreground"}`}>{tab.label}</span>
+                </>
               );
-            }
-            const active = tab.more ? moreActive || sheet === "more" : isActive(tab.path);
-            const Icon = tab.icon;
-            const inner = (
-              <>
-                <span className={`flex h-7 w-12 items-center justify-center rounded-full transition-colors ${active ? "bg-orange-500/15" : ""}`}>
-                  <Icon className={`h-5 w-5 ${active ? "text-orange-500" : "text-muted-foreground"}`} />
-                </span>
-                <span className={`text-[10.5px] font-bold leading-none ${active ? "text-orange-500" : "text-muted-foreground"}`}>{tab.label}</span>
-              </>
-            );
-            const cls = "flex flex-col items-center justify-center gap-1 active:scale-95 transition-transform";
-            return tab.more ? (
-              <button key="more" type="button" onClick={() => setSheet("more")} className={cls} data-tour="mtab-more">
-                {inner}
-              </button>
-            ) : (
-              <NavLink key={tab.path} to={tab.path} className={cls} data-testid={`tab-${tab.path.slice(1)}`} data-tour={`mtab-${tab.path}`}>
-                {inner}
-              </NavLink>
-            );
-          })}
-        </div>
+              return tab.more ? (
+                <button key="more" type="button" onClick={() => setSheet("more")} className={`${cls} group`} data-tour="mtab-more" aria-current={active ? "page" : undefined}>
+                  {inner}
+                </button>
+              ) : (
+                <NavLink key={tab.path} to={tab.path} className={`${cls} group`} data-testid={`tab-${tab.path.slice(1)}`} data-tour={`mtab-${tab.path}`}>
+                  {inner}
+                </NavLink>
+              );
+            })}
+          </div>
+        </MotionConfig>
       </nav>
 
       {/* Scan chooser */}
@@ -196,13 +223,30 @@ export function MobileBottomNav({ items, isActive, onLogout, onOpenActivity, pha
             })}
           </div>
 
+          {onToggleTheme && (
+            <button
+              type="button"
+              onClick={onToggleTheme}
+              role="switch"
+              aria-checked={!!isDark}
+              data-testid="mobile-theme-toggle"
+              className="mt-4 flex h-12 w-full items-center gap-3 rounded-2xl border border-border/60 bg-muted/30 px-3.5 text-left text-sm font-bold active:scale-[0.99] transition-transform"
+            >
+              {isDark ? <Moon className="h-4 w-4 text-orange-500" /> : <Sun className="h-4 w-4 text-amber-500" />}
+              <span className="flex-1">Dark mode</span>
+              <span className={`relative h-6 w-10 rounded-full transition-colors duration-200 ${isDark ? "bg-orange-500" : "bg-muted-foreground/30"}`}>
+                <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-[left] duration-200 ${isDark ? "left-[1.125rem]" : "left-0.5"}`} />
+              </span>
+            </button>
+          )}
+
           <button
             type="button"
             onClick={() => {
               setSheet(null);
               setTimeout(startTour, 250); // after the sheet has closed
             }}
-            className="mt-4 flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-orange-500/30 bg-orange-500/5 text-sm font-bold text-orange-600 active:scale-[0.98] dark:text-orange-400"
+            className="mt-2 flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-orange-500/30 bg-orange-500/5 text-sm font-bold text-orange-600 active:scale-[0.98] dark:text-orange-400"
           >
             <Compass className="h-4 w-4" /> Take the tour
           </button>

@@ -199,7 +199,7 @@ export function GuideProvider({ children }) {
 
 // "Watch tour" button for a page header. The first few times a user opens
 // the page it glows and says what it is.
-export function GuideButton({ tour, className = "" }) {
+export function GuideButton({ tour, className = "", compact = false }) {
   const { start, has, lang, active } = useGuide();
   const { active: welcomeTour } = useTour();
   const [hint, setHintOpen] = useState(false);
@@ -231,10 +231,12 @@ export function GuideButton({ tour, className = "" }) {
         onClick={() => start(tour)}
         data-testid={`guide-start-${tour}`}
         title={hi ? "इस पेज का गाइडेड टूर देखें" : "Watch the guided tour of this page"}
-        className={`group relative inline-flex h-8 items-center gap-1.5 overflow-hidden rounded-xl border border-violet-500/30 bg-gradient-to-r from-violet-500/10 via-fuchsia-500/10 to-orange-500/10 px-3 text-xs font-bold text-violet-700 transition hover:border-violet-500/60 dark:text-violet-300 ${hint ? "ring-2 ring-violet-500/60 ring-offset-2 ring-offset-background" : ""} ${className}`}
+        aria-label={hi ? "गाइडेड टूर" : "Guided tour"}
+        className={`group relative inline-flex h-8 shrink-0 items-center gap-1.5 overflow-hidden rounded-xl ${compact ? "max-md:w-8 max-md:justify-center max-md:px-0" : ""} border border-violet-500/30 bg-gradient-to-r from-violet-500/10 via-fuchsia-500/10 to-orange-500/10 px-3 text-xs font-bold text-violet-700 transition hover:border-violet-500/60 dark:text-violet-300 ${hint ? "ring-2 ring-violet-500/60 ring-offset-2 ring-offset-background" : ""} ${className}`}
       >
         <Sparkles className="h-3.5 w-3.5 transition group-hover:rotate-12" />
-        {hi ? "टूर देखें" : "Watch tour"}
+        {/* compact: icon only on phones, where the header has no room */}
+        <span className={compact ? "max-md:sr-only" : ""}>{hi ? "टूर देखें" : "Watch tour"}</span>
       </button>
       <AnimatePresence>
         {hint && (

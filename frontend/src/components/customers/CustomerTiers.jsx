@@ -73,7 +73,7 @@ export function TierFilterBar({ value, onChange, counts, onRules, canEdit }) {
   const chip = (active) =>
     `inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs font-bold transition-colors ${active ? "border-primary bg-primary text-primary-foreground shadow-xs" : "border-border/70 bg-card/60 text-foreground hover:bg-muted"}`;
   return (
-    <div className="flex flex-wrap items-center gap-2" data-testid="tier-filter">
+    <div className="flex flex-wrap items-center gap-2 m-chips" data-testid="tier-filter">
       <button type="button" onClick={() => onChange("")} className={chip(!value)}>
         All {total !== null && <span className="opacity-70">{total}</span>}
       </button>

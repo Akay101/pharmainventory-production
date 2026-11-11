@@ -642,9 +642,9 @@ export default function SuppliersPage() {
   const totalMergedOnPage = suppliers.filter(s => s.merge_history && s.merge_history.length > 0).length;
 
   return (
-    <div className="space-y-6 animate-fade-in pb-12" data-testid="suppliers-page">
+    <div className="space-y-6 max-md:space-y-4 animate-fade-in pb-12" data-testid="suppliers-page">
       {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 border-b border-border/40 pb-6">
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 border-b border-border/40 pb-6 max-md:gap-3 max-md:pb-0 max-md:border-0">
         <div>
           <h1 className="text-3xl font-extrabold tracking-tight bg-gradient-to-r from-foreground to-foreground/75 bg-clip-text text-transparent flex items-center gap-3">
             <div className="p-2.5 rounded-xl bg-primary/10 text-primary border border-primary/20 shrink-0">
@@ -652,12 +652,12 @@ export default function SuppliersPage() {
             </div>
             Suppliers Directory
           </h1>
-          <p className="text-sm text-muted-foreground mt-1.5 font-medium">
+          <p className="text-sm text-muted-foreground mt-1.5 font-medium max-md:text-xs max-md:mt-1">
             Manage pharmaceutical vendors, review ledger invoices, and resolve outstanding balances.
           </p>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 max-md:grid max-md:grid-cols-2 max-md:gap-2">
           {/* Merge Suppliers Dialog */}
           <Dialog open={mergeDialogOpen} onOpenChange={setMergeDialogOpen}>
             <Button 
