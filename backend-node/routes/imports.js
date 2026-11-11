@@ -11,6 +11,7 @@ const { auth, adminOnly } = require("../middleware/auth");
 const { requireSubscription } = require("../middleware/subscription");
 const { ENTITIES, SOURCES } = require("../services/migration/fields");
 const jobs = require("../services/migration/jobs");
+const { renderReport } = require("../services/migration/report");
 
 const router = express.Router();
 const db = () => mongoose.connection.db;
@@ -126,6 +127,15 @@ router.post("/:id/fill", handle(async (req, res) => {
 router.post("/:id/leave-empty", handle(async (req, res) => {
   await jobs.leaveEmpty(db(), req.importer.pharmacyId, req.params.id, { field: String(req.body?.field || ""), leave: req.body?.leave !== false });
   res.json(await jobs.jobView(db(), req.importer.pharmacyId, req.params.id));
+}));
+
+// GET /api/imports/:id/report.pdf - the branded import report
+router.get("/:id/report.pdf", handle(async (req, res) => {
+  const data = await jobs.reportData(db(), req.importer.pharmacyId, req.params.id);
+  const name = `DavaDesk import report - ${data.pharmacy.name || "pharmacy"} - ${String(data.job.committed_at || data.job.created_at).slice(0, 10)}`.replace(/[^\w.\- ]/g, "_");
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Content-Disposition", `attachment; filename="${name}.pdf"`);
+  renderReport(data).pipe(res);
 }));
 
 // GET /api/imports/:id/undo-preview - what an undo would remove, keep and take back

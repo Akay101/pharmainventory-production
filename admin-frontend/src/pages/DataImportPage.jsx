@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
-  AlertTriangle, ArrowLeft, Check, CheckCircle2, ChevronRight, Download, FileSpreadsheet, Loader2, PackagePlus, RefreshCw, Search, Trash2, Undo2, Upload, X,
+  AlertTriangle, ArrowLeft, Check, CheckCircle2, ChevronRight, Download, FileSpreadsheet, FileText, Loader2, PackagePlus, RefreshCw, Search, Trash2, Undo2, Upload, X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { AdminAPI, apiError } from "../api";
@@ -753,6 +753,22 @@ function Steps({ job }) {
   );
 }
 
+async function downloadReport(pid, job) {
+  const t = toast.loading("Preparing the report…");
+  try {
+    const r = await AdminAPI.importReportPdf(pid, job.id);
+    const url = URL.createObjectURL(r.data);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `DavaDesk import report - ${(job.pharmacy_name || "pharmacy").replace(/[^\w.\- ]/g, "_")} - ${job.file_name.replace(/\.[^.]+$/, "")}.pdf`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    toast.success("Report downloaded", { id: t });
+  } catch (e) {
+    toast.error("Couldn't make the report", { id: t });
+  }
+}
+
 function ImportView({ pid, pharmacyName, jobId, onBack, onChanged }) {
   const [view, setView] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -834,6 +850,7 @@ function ImportView({ pid, pharmacyName, jobId, onBack, onChanged }) {
             {job.error && <p className="text-xs text-rose-600 mt-1">{job.error}</p>}
           </div>
           <div className="flex flex-wrap gap-2">
+            {done && <button className={btnPrimary} onClick={() => downloadReport(pid, { ...job, pharmacy_name: pharmacyName })}><FileText className="w-4 h-4" /> Import report (PDF)</button>}
             {(done || job.status === "ready") && <button className={btnGhost} onClick={download}><Download className="w-4 h-4" /> Problem rows</button>}
             {["mapped", "ready", "failed"].includes(job.status) && <button className={btnGhost} onClick={() => setConfirm("discard")}><Trash2 className="w-4 h-4" /> Discard</button>}
             {["committed", "partly_undone", "failed_commit"].includes(job.status) && <button className={`${btn} bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100`} onClick={() => setConfirm("undo")}><Undo2 className="w-4 h-4" /> Undo import</button>}
@@ -993,6 +1010,9 @@ function History({ pharmacyId, onOpen, refreshKey }) {
                   <td className="py-2 pr-3 truncate max-w-[10rem]">{j.committed_by?.email || j.created_by?.email || ""}</td>
                   <td className="py-2 text-right whitespace-nowrap">
                     <button className={`${btnGhost} h-7`} onClick={() => onOpen(j)}>Open</button>
+                    {["committed", "partly_undone", "undone", "failed_commit"].includes(j.status) && (
+                      <button className={`${btnGhost} h-7 ml-1`} onClick={() => downloadReport(j.pharmacy_id, j)} title="Download the import report"><FileText className="w-3.5 h-3.5" /> Report</button>
+                    )}
                     {["committed", "partly_undone", "failed_commit"].includes(j.status) && (
                       <button className={`${btn} h-7 ml-1 bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100`} onClick={() => setUndo(j)}><Undo2 className="w-3.5 h-3.5" /> Undo</button>
                     )}

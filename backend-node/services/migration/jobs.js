@@ -1116,6 +1116,128 @@ async function undo(db, pharmacyId, jobId, actor) {
   }
 }
 
+// ---- 6. Report ------------------------------------------------------------------------------
+
+const FILE_FORMAT = (name) => {
+  const ext = String(name || "").toLowerCase().split(".").pop();
+  return { xls: "Excel 97-2003 workbook (.xls)", xlsx: "Excel workbook (.xlsx)", csv: "CSV text (.csv)", txt: "Text (.txt)" }[ext] || `.${ext} file`;
+};
+
+// Everything the import report shows: what came in, what was missing and what was done about it, row by row
+async function reportData(db, pharmacyId, jobId) {
+  const job = await getJob(db, pharmacyId, jobId);
+  const pharmacy = await db.collection("pharmacies").findOne({ id: job.pharmacy_id }, { projection: { _id: 0, name: 1, location: 1, gst_no: 1 } });
+  const fields = ENTITIES[job.entity].fields;
+  const label = Object.fromEntries(fields.map((f) => [f.key, f.label]));
+  const watch = new Set([...(ATTENTION[job.entity] || []), ...fields.filter((f) => f.required).map((f) => f.key)]);
+  const left = new Set(job.leave_empty || []);
+  const fills = job.fills || {};
+  const perField = Object.fromEntries(fields.map((f) => [f.key, { field: f.key, label: f.label, empty_in_file: 0, filled_by_hand: 0, corrected_by_hand: 0, filled_for_all: 0, fill_value: fills[f.key] || null, left_empty: 0, still_empty: 0 }]));
+  const records = [];
+  const statusCount = {};
+
+  for await (const r of db.collection("migration_rows").find({ job_id: job.id, status: { $ne: "ignored" } }).sort({ row_no: 1 })) {
+    statusCount[r.status] = (statusCount[r.status] || 0) + 1;
+    const notes = [];
+    for (const f of fields) {
+      const k = f.key;
+      const col = job.mapping?.[k];
+      const orig = col === undefined || col === null ? "" : display(r.cells[col]);
+      const origEmpty = orig === "" || (k === "batch_no" && /^n\/?a$/i.test(orig));
+      const override = r.overrides?.[k];
+      const now = r.values?.[k] ?? "";
+      const pf = perField[k];
+      if (origEmpty) pf.empty_in_file++;
+      if (override !== undefined && String(override).trim() !== "") {
+        if (origEmpty) {
+          pf.filled_by_hand++;
+          notes.push({ kind: "hand", text: `${label[k]} filled by hand: ${override}` });
+        } else if (String(override).trim() !== orig) {
+          pf.corrected_by_hand++;
+          notes.push({ kind: "hand", text: `${label[k]} corrected by hand: ${orig} -> ${override}` });
+        }
+        continue;
+      }
+      if (!origEmpty) continue;
+      if (fills[k] !== undefined && String(now).trim() !== "") {
+        pf.filled_for_all++;
+        if (watch.has(k)) notes.push({ kind: "fill", field: k, text: `${label[k]} missing, filled for all: ${fills[k]}` });
+      } else if (left.has(k)) {
+        pf.left_empty++;
+        notes.push({ kind: "left", text: `${label[k]} missing, left empty` });
+      } else {
+        pf.still_empty++;
+        if (watch.has(k)) notes.push({ kind: "missing", text: `${label[k]} missing` });
+      }
+    }
+    const outcome =
+      r.status === "error" ? `Not imported: ${(r.errors || []).join("; ")}`
+      : r.status === "skipped" ? `Not imported: ${r.skip === "expired" ? "expired batch" : "no stock"}`
+      : r.result === "duplicate" ? "Skipped: already in DavaDesk"
+      : r.result === "product_skipped" ? "Not imported: product left out"
+      : r.result === "merged" ? "Imported (added to the same batch)"
+      : r.result === "created" ? "Imported"
+      : job.status === "ready" ? "Ready to import" : "-";
+    if (true) {
+      const v = r.values || {};
+      records.push({
+        row_no: r.row_no,
+        who: v.supplier_name || v.name || "",
+        ref: [v.invoice_no && `Bill ${v.invoice_no}`, v.invoice_date].filter(Boolean).join(" · "),
+        item: v.product_name || v.name || "",
+        batch: v.batch_no || "",
+        expiry: v.expiry_date || "",
+        notes,
+        outcome,
+      });
+    }
+  }
+
+  // A field missing on every row and filled for all is told once in the overview, not on each record
+  const total = Object.values(statusCount).reduce((a, b) => a + b, 0);
+  const everywhere = new Set(Object.values(perField).filter((f) => f.filled_for_all === total && total > 0).map((f) => f.field));
+  const unmapped = fields.filter((f) => job.mapping?.[f.key] === undefined && !fills[f.key]).map((f) => f.key);
+  const kept = records.filter((r) => {
+    r.notes = r.notes.filter((n) => !(n.kind === "fill" && everywhere.has(n.field)));
+    return r.notes.length || !["Imported", "Ready to import", "Imported (added to the same batch)"].includes(r.outcome);
+  });
+  records.length = 0;
+  records.push(...kept);
+
+  const made = {};
+  const P = job.pharmacy_id;
+  for (const coll of ["purchases", "inventory", "products", "suppliers", "customers"]) made[coll] = await db.collection(coll).countDocuments({ pharmacy_id: P, import_job_id: job.id });
+  made.incomplete_products = await db.collection("products").countDocuments({ pharmacy_id: P, import_job_id: job.id, catalog_incomplete: true });
+  made.topped_up = await db.collection("import_changes").countDocuments({ job_id: job.id });
+  // After an undo the records are gone: report what the import added, and what the undo removed or kept
+  if (job.undo) {
+    made.kept = {};
+    for (const coll of ["purchases", "inventory", "products", "suppliers", "customers"]) {
+      const removed = job.undo.removed?.[coll] || 0;
+      const kept = job.undo.kept?.[coll] || 0;
+      made[coll] = removed + kept;
+      made.kept[coll] = kept;
+    }
+    made.topped_up = job.undo.stock_taken_back || 0;
+  }
+  const products = await db.collection("migration_products").aggregate([{ $match: { job_id: job.id } }, { $group: { _id: "$decision", n: { $sum: 1 } } }]).toArray();
+
+  return {
+    job: publicJob(job),
+    pharmacy: pharmacy || { name: job.pharmacy_name },
+    source: SOURCES[job.source]?.label || job.source,
+    entity: ENTITIES[job.entity].label,
+    format: FILE_FORMAT(job.file_name),
+    fields: Object.values(perField).filter((f) => !unmapped.includes(f.field) && (f.empty_in_file || f.filled_by_hand || f.corrected_by_hand || f.filled_for_all || f.left_empty)),
+    not_in_file: unmapped.map((k) => label[k]),
+    filled_everywhere: [...everywhere].map((k) => ({ label: label[k], value: fills[k], rows: total })),
+    status_count: statusCount,
+    made,
+    product_decisions: Object.fromEntries(products.map((p) => [p._id || "undecided", p.n])),
+    records,
+  };
+}
+
 async function listJobs(db, pharmacyId) {
   await ensureIndexes(db);
   const jobs = await db.collection("migration_jobs").find({ pharmacy_id: pharmacyId }, { projection: { _id: 0, headers: 0 } }).sort({ created_at: -1 }).limit(100).toArray();
@@ -1154,6 +1276,7 @@ module.exports = {
   decideAll,
   editRow,
   leaveEmpty,
+  reportData,
   fillField,
   jobView,
   listRows,
