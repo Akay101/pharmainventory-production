@@ -1,143 +1,273 @@
 {
+ "en/billing/add-item": {
+  "file": "en/billing/add-item.m4a",
+  "hash": "4dc6cbf5",
+  "seconds": 7.4
+ },
  "en/billing/advance": {
   "file": "en/billing/advance.m4a",
   "hash": "80363401",
-  "seconds": 11.8
+  "seconds": 9.7
+ },
+ "en/billing/bar": {
+  "file": "en/billing/bar.m4a",
+  "hash": "5f1ba986",
+  "seconds": 10
  },
  "en/billing/batch": {
   "file": "en/billing/batch.m4a",
   "hash": "1d124eff",
-  "seconds": 16.5
+  "seconds": 15.3
  },
  "en/billing/bill-discount": {
   "file": "en/billing/bill-discount.m4a",
   "hash": "701261b1",
-  "seconds": 6.8
+  "seconds": 6.4
  },
  "en/billing/bill-type": {
   "file": "en/billing/bill-type.m4a",
   "hash": "a0b6ec86",
-  "seconds": 12.2
+  "seconds": 11.8
+ },
+ "en/billing/cancel": {
+  "file": "en/billing/cancel.m4a",
+  "hash": "66b9d5f7",
+  "seconds": 3.5
+ },
+ "en/billing/count": {
+  "file": "en/billing/count.m4a",
+  "hash": "6b23e74c",
+  "seconds": 7.8
+ },
+ "en/billing/create": {
+  "file": "en/billing/create.m4a",
+  "hash": "54a3bbb9",
+  "seconds": 7.5
  },
  "en/billing/customer-filter": {
   "file": "en/billing/customer-filter.m4a",
   "hash": "14aa313a",
-  "seconds": 6.8
+  "seconds": 6.5
+ },
+ "en/billing/customer-pick": {
+  "file": "en/billing/customer-pick.m4a",
+  "hash": "63eaca0e",
+  "seconds": 3.9
+ },
+ "en/billing/customer-stats": {
+  "file": "en/billing/customer-stats.m4a",
+  "hash": "dac1c8cb",
+  "seconds": 11.2
+ },
+ "en/billing/customer-type": {
+  "file": "en/billing/customer-type.m4a",
+  "hash": "8f210d17",
+  "seconds": 14
+ },
+ "en/billing/date": {
+  "file": "en/billing/date.m4a",
+  "hash": "8d5d1237",
+  "seconds": 6.7
+ },
+ "en/billing/delete": {
+  "file": "en/billing/delete.m4a",
+  "hash": "11e4891a",
+  "seconds": 13
  },
  "en/billing/discount": {
   "file": "en/billing/discount.m4a",
   "hash": "a38646b8",
-  "seconds": 6.4
+  "seconds": 5.1
  },
  "en/billing/doctor": {
   "file": "en/billing/doctor.m4a",
   "hash": "8803687a",
-  "seconds": 12.6
+  "seconds": 13.5
  },
  "en/billing/dose": {
   "file": "en/billing/dose.m4a",
   "hash": "58964cc7",
-  "seconds": 11.7
+  "seconds": 9.9
  },
  "en/billing/drafts": {
   "file": "en/billing/drafts.m4a",
   "hash": "84956ebe",
-  "seconds": 10.3
+  "seconds": 9.5
+ },
+ "en/billing/edit": {
+  "file": "en/billing/edit.m4a",
+  "hash": "e4254391",
+  "seconds": 9.6
+ },
+ "en/billing/finale": {
+  "file": "en/billing/finale.m4a",
+  "hash": "2be808f0",
+  "seconds": 6.5
+ },
+ "en/billing/full-pack": {
+  "file": "en/billing/full-pack.m4a",
+  "hash": "46d9d4aa",
+  "seconds": 5.3
  },
  "en/billing/grand-total": {
   "file": "en/billing/grand-total.m4a",
   "hash": "dfce79ed",
-  "seconds": 8.3
+  "seconds": 7
+ },
+ "en/billing/gst": {
+  "file": "en/billing/gst.m4a",
+  "hash": "315dfbf6",
+  "seconds": 11.3
  },
  "en/billing/insights": {
   "file": "en/billing/insights.m4a",
   "hash": "a5ec831b",
-  "seconds": 13.2
+  "seconds": 12.6
+ },
+ "en/billing/keys": {
+  "file": "en/billing/keys.m4a",
+  "hash": "291eccaf",
+  "seconds": 6.6
+ },
+ "en/billing/line-total": {
+  "file": "en/billing/line-total.m4a",
+  "hash": "f7cc2374",
+  "seconds": 4.2
+ },
+ "en/billing/mark-paid": {
+  "file": "en/billing/mark-paid.m4a",
+  "hash": "0e14a8e1",
+  "seconds": 6.1
+ },
+ "en/billing/mobile": {
+  "file": "en/billing/mobile.m4a",
+  "hash": "b800110e",
+  "seconds": 6.4
  },
  "en/billing/mode": {
   "file": "en/billing/mode.m4a",
   "hash": "11b46ee6",
-  "seconds": 9
+  "seconds": 8.3
  },
  "en/billing/more-filters": {
   "file": "en/billing/more-filters.m4a",
   "hash": "c638bbb0",
-  "seconds": 9.7
+  "seconds": 8.1
+ },
+ "en/billing/negative": {
+  "file": "en/billing/negative.m4a",
+  "hash": "292fc3cd",
+  "seconds": 11.2
+ },
+ "en/billing/negative-alert": {
+  "file": "en/billing/negative-alert.m4a",
+  "hash": "6139a0ae",
+  "seconds": 4.3
  },
  "en/billing/new-bill-btn": {
   "file": "en/billing/new-bill-btn.m4a",
   "hash": "3444f3e6",
-  "seconds": 8.1
+  "seconds": 7
  },
  "en/billing/pack": {
   "file": "en/billing/pack.m4a",
   "hash": "88e59002",
-  "seconds": 7.8
+  "seconds": 6.5
  },
  "en/billing/paid": {
   "file": "en/billing/paid.m4a",
   "hash": "3b8ebeed",
-  "seconds": 5.4
+  "seconds": 4.1
+ },
+ "en/billing/pdf": {
+  "file": "en/billing/pdf.m4a",
+  "hash": "59e63ac9",
+  "seconds": 15.5
  },
  "en/billing/price": {
   "file": "en/billing/price.m4a",
   "hash": "5f9274e1",
-  "seconds": 14.9
+  "seconds": 12.8
  },
  "en/billing/product-type": {
   "file": "en/billing/product-type.m4a",
   "hash": "6bde8bd1",
-  "seconds": 7.2
+  "seconds": 5.4
  },
  "en/billing/profit": {
   "file": "en/billing/profit.m4a",
   "hash": "df1822fc",
-  "seconds": 7
+  "seconds": 5.4
  },
  "en/billing/qty": {
   "file": "en/billing/qty.m4a",
   "hash": "791a33d5",
-  "seconds": 5.1
+  "seconds": 4.4
+ },
+ "en/billing/record-payment": {
+  "file": "en/billing/record-payment.m4a",
+  "hash": "d3cb7fc5",
+  "seconds": 11
+ },
+ "en/billing/refill": {
+  "file": "en/billing/refill.m4a",
+  "hash": "1c4cb391",
+  "seconds": 5.6
  },
  "en/billing/remind": {
   "file": "en/billing/remind.m4a",
   "hash": "ec0c26d5",
-  "seconds": 13.3
+  "seconds": 11.4
  },
  "en/billing/row-actions": {
   "file": "en/billing/row-actions.m4a",
   "hash": "edbe2bdc",
-  "seconds": 17.7
+  "seconds": 16.1
  },
  "en/billing/rows": {
   "file": "en/billing/rows.m4a",
   "hash": "64e68e4d",
-  "seconds": 14.1
+  "seconds": 13.6
  },
  "en/billing/salt-stock": {
   "file": "en/billing/salt-stock.m4a",
   "hash": "130fd755",
-  "seconds": 6.2
+  "seconds": 5
+ },
+ "en/billing/saved": {
+  "file": "en/billing/saved.m4a",
+  "hash": "fc22c553",
+  "seconds": 13.9
+ },
+ "en/billing/scan-buttons": {
+  "file": "en/billing/scan-buttons.m4a",
+  "hash": "00d32bc9",
+  "seconds": 9
  },
  "en/billing/scan-list": {
   "file": "en/billing/scan-list.m4a",
   "hash": "03abcd3f",
-  "seconds": 8.8
+  "seconds": 7.4
  },
  "en/billing/search": {
   "file": "en/billing/search.m4a",
   "hash": "28d22f9c",
-  "seconds": 11.4
+  "seconds": 10
  },
  "en/billing/second": {
   "file": "en/billing/second.m4a",
   "hash": "bae4a0df",
-  "seconds": 4.8
+  "seconds": 4.3
  },
  "en/billing/shortcuts": {
   "file": "en/billing/shortcuts.m4a",
   "hash": "c40d8059",
-  "seconds": 8.6
+  "seconds": 9.8
+ },
+ "en/billing/start": {
+  "file": "en/billing/start.m4a",
+  "hash": "adf46276",
+  "seconds": 6.3
  },
  "en/billing/subtotal": {
   "file": "en/billing/subtotal.m4a",
@@ -147,246 +277,346 @@
  "en/billing/suggestions": {
   "file": "en/billing/suggestions.m4a",
   "hash": "c745cee7",
-  "seconds": 15.5
+  "seconds": 14.8
  },
  "en/billing/summary": {
   "file": "en/billing/summary.m4a",
   "hash": "d9787c44",
-  "seconds": 5.6
+  "seconds": 5.5
  },
  "en/billing/table": {
   "file": "en/billing/table.m4a",
   "hash": "a9bbeef0",
-  "seconds": 14.3
+  "seconds": 11.7
  },
  "en/billing/udhar": {
   "file": "en/billing/udhar.m4a",
   "hash": "b49f3b85",
-  "seconds": 10.8
+  "seconds": 8.2
  },
  "en/billing/upi-qr": {
   "file": "en/billing/upi-qr.m4a",
   "hash": "0fd8eac7",
-  "seconds": 10.1
+  "seconds": 8.2
  },
  "en/billing/welcome": {
   "file": "en/billing/welcome.m4a",
   "hash": "4ef19054",
-  "seconds": 13.4
+  "seconds": 11.2
+ },
+ "en/billing/whatsapp": {
+  "file": "en/billing/whatsapp.m4a",
+  "hash": "9e244b51",
+  "seconds": 6.8
  },
  "hi/billing/add-item": {
   "file": "hi/billing/add-item.m4a",
   "hash": "8cc79927",
-  "seconds": 7.6
+  "seconds": 7.2
+ },
+ "hi/billing/advance": {
+  "file": "hi/billing/advance.m4a",
+  "hash": "ca26d812",
+  "seconds": 9.4
  },
  "hi/billing/bar": {
   "file": "hi/billing/bar.m4a",
   "hash": "2c63d74c",
-  "seconds": 11.2
+  "seconds": 10.3
+ },
+ "hi/billing/batch": {
+  "file": "hi/billing/batch.m4a",
+  "hash": "78ffe880",
+  "seconds": 15.1
+ },
+ "hi/billing/bill-discount": {
+  "file": "hi/billing/bill-discount.m4a",
+  "hash": "71ae48ed",
+  "seconds": 6.6
  },
  "hi/billing/bill-type": {
   "file": "hi/billing/bill-type.m4a",
   "hash": "4ae949ff",
-  "seconds": 14.4
+  "seconds": 10.6
  },
  "hi/billing/cancel": {
   "file": "hi/billing/cancel.m4a",
   "hash": "417c242d",
-  "seconds": 3.8
+  "seconds": 2.9
  },
  "hi/billing/count": {
   "file": "hi/billing/count.m4a",
   "hash": "a3f29ba5",
-  "seconds": 11
+  "seconds": 9.8
  },
  "hi/billing/create": {
   "file": "hi/billing/create.m4a",
   "hash": "48c5a169",
-  "seconds": 8.2
- },
- "hi/billing/customer-pick": {
-  "file": "hi/billing/customer-pick.m4a",
-  "hash": "488269cb",
-  "seconds": 4.8
- },
- "hi/billing/customer-stats": {
-  "file": "hi/billing/customer-stats.m4a",
-  "hash": "ee9ad344",
-  "seconds": 14.9
- },
- "hi/billing/customer-type": {
-  "file": "hi/billing/customer-type.m4a",
-  "hash": "8f10981c",
-  "seconds": 16.6
- },
- "hi/billing/date": {
-  "file": "hi/billing/date.m4a",
-  "hash": "fba80c7a",
-  "seconds": 9.6
- },
- "hi/billing/discount": {
-  "file": "hi/billing/discount.m4a",
-  "hash": "308cdfce",
-  "seconds": 7.6
- },
- "hi/billing/doctor": {
-  "file": "hi/billing/doctor.m4a",
-  "hash": "32f66646",
-  "seconds": 13.2
- },
- "hi/billing/dose": {
-  "file": "hi/billing/dose.m4a",
-  "hash": "48ef0a7e",
-  "seconds": 12.3
- },
- "hi/billing/edit": {
-  "file": "hi/billing/edit.m4a",
-  "hash": "ff104cc2",
-  "seconds": 11.6
- },
- "hi/billing/full-pack": {
-  "file": "hi/billing/full-pack.m4a",
-  "hash": "1581e3c4",
-  "seconds": 6.3
- },
- "hi/billing/gst": {
-  "file": "hi/billing/gst.m4a",
-  "hash": "de2c20ed",
-  "seconds": 13.9
- },
- "hi/billing/insights": {
-  "file": "hi/billing/insights.m4a",
-  "hash": "13d689f9",
-  "seconds": 13.2
- },
- "hi/billing/line-total": {
-  "file": "hi/billing/line-total.m4a",
-  "hash": "5f39cd69",
-  "seconds": 5.4
- },
- "hi/billing/mark-paid": {
-  "file": "hi/billing/mark-paid.m4a",
-  "hash": "3186def6",
-  "seconds": 6.3
- },
- "hi/billing/mobile": {
-  "file": "hi/billing/mobile.m4a",
-  "hash": "8dde88fd",
   "seconds": 8
- },
- "hi/billing/negative": {
-  "file": "hi/billing/negative.m4a",
-  "hash": "68ed29b8",
-  "seconds": 14
- },
- "hi/billing/new-bill-btn": {
-  "file": "hi/billing/new-bill-btn.m4a",
-  "hash": "963aab96",
-  "seconds": 9.8
- },
- "hi/billing/pack": {
-  "file": "hi/billing/pack.m4a",
-  "hash": "ecc3a7ba",
-  "seconds": 8.8
- },
- "hi/billing/pdf": {
-  "file": "hi/billing/pdf.m4a",
-  "hash": "86a770a5",
-  "seconds": 21.4
- },
- "hi/billing/price": {
-  "file": "hi/billing/price.m4a",
-  "hash": "18341be1",
-  "seconds": 18.4
- },
- "hi/billing/qty": {
-  "file": "hi/billing/qty.m4a",
-  "hash": "51230a4a",
-  "seconds": 4.8
- },
- "hi/billing/record-payment": {
-  "file": "hi/billing/record-payment.m4a",
-  "hash": "a27bbe45",
-  "seconds": 12.6
- },
- "hi/billing/refill": {
-  "file": "hi/billing/refill.m4a",
-  "hash": "e715baf6",
-  "seconds": 8.7
- },
- "hi/billing/remind": {
-  "file": "hi/billing/remind.m4a",
-  "hash": "d82c5774",
-  "seconds": 14.3
- },
- "hi/billing/row-actions": {
-  "file": "hi/billing/row-actions.m4a",
-  "hash": "b5bd2fe7",
-  "seconds": 16.5
- },
- "hi/billing/rows": {
-  "file": "hi/billing/rows.m4a",
-  "hash": "8d5a41a0",
-  "seconds": 16.1
- },
- "hi/billing/saved": {
-  "file": "hi/billing/saved.m4a",
-  "hash": "492bed62",
-  "seconds": 12.8
- },
- "hi/billing/scan-list": {
-  "file": "hi/billing/scan-list.m4a",
-  "hash": "f25feb15",
-  "seconds": 8.4
- },
- "hi/billing/search": {
-  "file": "hi/billing/search.m4a",
-  "hash": "9fbd0ee3",
-  "seconds": 10.9
- },
- "hi/billing/second": {
-  "file": "hi/billing/second.m4a",
-  "hash": "307e2cdd",
-  "seconds": 5.1
- },
- "hi/billing/shortcuts": {
-  "file": "hi/billing/shortcuts.m4a",
-  "hash": "27c606a7",
-  "seconds": 8.5
- },
- "hi/billing/start": {
-  "file": "hi/billing/start.m4a",
-  "hash": "1e2eab69",
-  "seconds": 9
- },
- "hi/billing/table": {
-  "file": "hi/billing/table.m4a",
-  "hash": "1adb71c1",
-  "seconds": 15.6
- },
- "hi/billing/upi-qr": {
-  "file": "hi/billing/upi-qr.m4a",
-  "hash": "a06ee358",
-  "seconds": 10.4
- },
- "hi/billing/welcome": {
-  "file": "hi/billing/welcome.m4a",
-  "hash": "7bfdeb8f",
-  "seconds": 12.6
- },
- "hi/billing/whatsapp": {
-  "file": "hi/billing/whatsapp.m4a",
-  "hash": "33daa089",
-  "seconds": 7.8
  },
  "hi/billing/customer-filter": {
   "file": "hi/billing/customer-filter.m4a",
   "hash": "10442964",
-  "seconds": 8.1
+  "seconds": 7.7
+ },
+ "hi/billing/customer-pick": {
+  "file": "hi/billing/customer-pick.m4a",
+  "hash": "488269cb",
+  "seconds": 4
+ },
+ "hi/billing/customer-stats": {
+  "file": "hi/billing/customer-stats.m4a",
+  "hash": "ee9ad344",
+  "seconds": 12.8
+ },
+ "hi/billing/customer-type": {
+  "file": "hi/billing/customer-type.m4a",
+  "hash": "8f10981c",
+  "seconds": 15.5
+ },
+ "hi/billing/date": {
+  "file": "hi/billing/date.m4a",
+  "hash": "fba80c7a",
+  "seconds": 8
+ },
+ "hi/billing/delete": {
+  "file": "hi/billing/delete.m4a",
+  "hash": "a8a99cac",
+  "seconds": 13.2
+ },
+ "hi/billing/discount": {
+  "file": "hi/billing/discount.m4a",
+  "hash": "308cdfce",
+  "seconds": 6.4
+ },
+ "hi/billing/doctor": {
+  "file": "hi/billing/doctor.m4a",
+  "hash": "32f66646",
+  "seconds": 11.3
+ },
+ "hi/billing/dose": {
+  "file": "hi/billing/dose.m4a",
+  "hash": "48ef0a7e",
+  "seconds": 10.7
  },
  "hi/billing/drafts": {
   "file": "hi/billing/drafts.m4a",
   "hash": "8ab76e79",
+  "seconds": 10.1
+ },
+ "hi/billing/edit": {
+  "file": "hi/billing/edit.m4a",
+  "hash": "ff104cc2",
+  "seconds": 11.4
+ },
+ "hi/billing/finale": {
+  "file": "hi/billing/finale.m4a",
+  "hash": "026a8384",
+  "seconds": 7.4
+ },
+ "hi/billing/full-pack": {
+  "file": "hi/billing/full-pack.m4a",
+  "hash": "1581e3c4",
+  "seconds": 5.9
+ },
+ "hi/billing/grand-total": {
+  "file": "hi/billing/grand-total.m4a",
+  "hash": "0a5f40d7",
+  "seconds": 8.1
+ },
+ "hi/billing/gst": {
+  "file": "hi/billing/gst.m4a",
+  "hash": "de2c20ed",
+  "seconds": 11.8
+ },
+ "hi/billing/insights": {
+  "file": "hi/billing/insights.m4a",
+  "hash": "13d689f9",
+  "seconds": 13.1
+ },
+ "hi/billing/keys": {
+  "file": "hi/billing/keys.m4a",
+  "hash": "09934f13",
+  "seconds": 5.7
+ },
+ "hi/billing/line-total": {
+  "file": "hi/billing/line-total.m4a",
+  "hash": "5f39cd69",
+  "seconds": 4.6
+ },
+ "hi/billing/mark-paid": {
+  "file": "hi/billing/mark-paid.m4a",
+  "hash": "3186def6",
+  "seconds": 6.9
+ },
+ "hi/billing/mobile": {
+  "file": "hi/billing/mobile.m4a",
+  "hash": "8dde88fd",
+  "seconds": 7.2
+ },
+ "hi/billing/mode": {
+  "file": "hi/billing/mode.m4a",
+  "hash": "4d28a3d1",
+  "seconds": 9.3
+ },
+ "hi/billing/more-filters": {
+  "file": "hi/billing/more-filters.m4a",
+  "hash": "3da3ed3d",
+  "seconds": 8.8
+ },
+ "hi/billing/negative": {
+  "file": "hi/billing/negative.m4a",
+  "hash": "68ed29b8",
+  "seconds": 11.4
+ },
+ "hi/billing/negative-alert": {
+  "file": "hi/billing/negative-alert.m4a",
+  "hash": "06866eaf",
+  "seconds": 4.8
+ },
+ "hi/billing/new-bill-btn": {
+  "file": "hi/billing/new-bill-btn.m4a",
+  "hash": "963aab96",
+  "seconds": 8.4
+ },
+ "hi/billing/pack": {
+  "file": "hi/billing/pack.m4a",
+  "hash": "ecc3a7ba",
+  "seconds": 7.3
+ },
+ "hi/billing/paid": {
+  "file": "hi/billing/paid.m4a",
+  "hash": "a9f62749",
+  "seconds": 4
+ },
+ "hi/billing/pdf": {
+  "file": "hi/billing/pdf.m4a",
+  "hash": "86a770a5",
+  "seconds": 16.3
+ },
+ "hi/billing/price": {
+  "file": "hi/billing/price.m4a",
+  "hash": "18341be1",
+  "seconds": 14.3
+ },
+ "hi/billing/product-type": {
+  "file": "hi/billing/product-type.m4a",
+  "hash": "2c4fe1ef",
+  "seconds": 4.2
+ },
+ "hi/billing/profit": {
+  "file": "hi/billing/profit.m4a",
+  "hash": "4f8e5df9",
+  "seconds": 6.7
+ },
+ "hi/billing/qty": {
+  "file": "hi/billing/qty.m4a",
+  "hash": "51230a4a",
+  "seconds": 4.3
+ },
+ "hi/billing/record-payment": {
+  "file": "hi/billing/record-payment.m4a",
+  "hash": "a27bbe45",
+  "seconds": 10.9
+ },
+ "hi/billing/refill": {
+  "file": "hi/billing/refill.m4a",
+  "hash": "e715baf6",
+  "seconds": 7.2
+ },
+ "hi/billing/remind": {
+  "file": "hi/billing/remind.m4a",
+  "hash": "d82c5774",
+  "seconds": 11.2
+ },
+ "hi/billing/row-actions": {
+  "file": "hi/billing/row-actions.m4a",
+  "hash": "b5bd2fe7",
+  "seconds": 16
+ },
+ "hi/billing/rows": {
+  "file": "hi/billing/rows.m4a",
+  "hash": "8d5a41a0",
+  "seconds": 13
+ },
+ "hi/billing/salt-stock": {
+  "file": "hi/billing/salt-stock.m4a",
+  "hash": "27c775ee",
+  "seconds": 4.7
+ },
+ "hi/billing/saved": {
+  "file": "hi/billing/saved.m4a",
+  "hash": "492bed62",
+  "seconds": 11.2
+ },
+ "hi/billing/scan-buttons": {
+  "file": "hi/billing/scan-buttons.m4a",
+  "hash": "95bde554",
   "seconds": 10.6
+ },
+ "hi/billing/scan-list": {
+  "file": "hi/billing/scan-list.m4a",
+  "hash": "f25feb15",
+  "seconds": 7.4
+ },
+ "hi/billing/search": {
+  "file": "hi/billing/search.m4a",
+  "hash": "9fbd0ee3",
+  "seconds": 11.4
+ },
+ "hi/billing/second": {
+  "file": "hi/billing/second.m4a",
+  "hash": "307e2cdd",
+  "seconds": 2.9
+ },
+ "hi/billing/shortcuts": {
+  "file": "hi/billing/shortcuts.m4a",
+  "hash": "27c606a7",
+  "seconds": 8.7
+ },
+ "hi/billing/start": {
+  "file": "hi/billing/start.m4a",
+  "hash": "1e2eab69",
+  "seconds": 7.2
+ },
+ "hi/billing/subtotal": {
+  "file": "hi/billing/subtotal.m4a",
+  "hash": "b0a15e41",
+  "seconds": 4
+ },
+ "hi/billing/suggestions": {
+  "file": "hi/billing/suggestions.m4a",
+  "hash": "96fd23c7",
+  "seconds": 15.9
+ },
+ "hi/billing/summary": {
+  "file": "hi/billing/summary.m4a",
+  "hash": "4652671c",
+  "seconds": 6.1
+ },
+ "hi/billing/table": {
+  "file": "hi/billing/table.m4a",
+  "hash": "1adb71c1",
+  "seconds": 11.7
+ },
+ "hi/billing/udhar": {
+  "file": "hi/billing/udhar.m4a",
+  "hash": "8c243d8f",
+  "seconds": 10.9
+ },
+ "hi/billing/upi-qr": {
+  "file": "hi/billing/upi-qr.m4a",
+  "hash": "a06ee358",
+  "seconds": 9.6
+ },
+ "hi/billing/welcome": {
+  "file": "hi/billing/welcome.m4a",
+  "hash": "7bfdeb8f",
+  "seconds": 10.6
+ },
+ "hi/billing/whatsapp": {
+  "file": "hi/billing/whatsapp.m4a",
+  "hash": "33daa089",
+  "seconds": 7.2
  }
 }

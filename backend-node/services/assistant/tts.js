@@ -293,4 +293,6 @@ async function geminiSpeech(spoken, signal, onChunk) {
   throw lastErr || new Error("Speech unavailable");
 }
 
-module.exports = { streamSpeech, speakable };
+// cloudSpeech is exported for the guided-tour recorder, which must not fall
+// back to the Gemini voice
+module.exports = { streamSpeech, speakable, cloudSpeech };

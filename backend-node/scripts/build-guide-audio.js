@@ -11,6 +11,8 @@
 //   node scripts/build-guide-audio.js billing hi      one tour / one language
 //   GUIDE_ENV=/path/to/.env node scripts/...          take API keys from another .env
 //   --force                                           re-record everything selected
+//   --cloud                                           Google Cloud TTS only (needs
+//                                                     GOOGLE_TTS_API_KEY); never Gemini
 //
 // Needs GEMINI_API_KEY (or GOOGLE_TTS_API_KEY for Cloud TTS). AAC encoding
 // uses macOS `afconvert`, or `ffmpeg` when present; without either it saves WAV.
@@ -22,7 +24,8 @@ const os = require("os");
 const { execFileSync } = require("child_process");
 
 require("dotenv").config({ path: process.env.GUIDE_ENV || path.join(__dirname, "../.env") });
-const { streamSpeech } = require("../services/assistant/tts");
+const { streamSpeech, speakable, cloudSpeech } = require("../services/assistant/tts");
+const CLOUD_ONLY = process.argv.includes("--cloud");
 
 const ROOT = path.join(__dirname, "../../frontend");
 const TOURS_DIR = path.join(ROOT, "src/components/guide/tours");
@@ -113,7 +116,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function recordOnce(text, language) {
   const chunks = [];
-  await streamSpeech({ text, language, onChunk: (b) => chunks.push(Buffer.from(b)) });
+  const onChunk = (b) => chunks.push(Buffer.from(b));
+  if (CLOUD_ONLY) await cloudSpeech(speakable(text), language, undefined, onChunk);
+  else await streamSpeech({ text, language, onChunk });
   let pcm = Buffer.concat(chunks);
   if (pcm.length % 2) pcm = pcm.slice(0, pcm.length - 1);
   if (pcm.length < SAMPLE_RATE) throw new Error("no audio came back");
@@ -126,7 +131,7 @@ async function record(text, language) {
   for (let attempt = 1; ; attempt++) {
     try {
       const pcm = await recordOnce(text, language);
-      await sleep(Number(process.env.GUIDE_TTS_GAP_MS) || 6500);
+      await sleep(Number(process.env.GUIDE_TTS_GAP_MS) || (CLOUD_ONLY ? 300 : 6500));
       return pcm;
     } catch (err) {
       if (err.code === "VOICE_QUOTA" || attempt >= 5 || !/\((429|5\d\d)\)/.test(err.message)) throw err;
@@ -136,7 +141,22 @@ async function record(text, language) {
   }
 }
 
+// Cloud TTS must be on for the key before anything is recorded with it
+async function checkCloud() {
+  const key = process.env.GOOGLE_TTS_API_KEY;
+  if (!key) throw new Error("--cloud needs GOOGLE_TTS_API_KEY in backend-node/.env");
+  const res = await fetch(`https://texttospeech.googleapis.com/v1/voices?languageCode=hi-IN&key=${encodeURIComponent(key)}`);
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Cloud TTS refused the key (${res.status}). Enable "Cloud Text-to-Speech API" for its Google project. ${body.slice(0, 200)}`);
+  }
+  const { voices = [] } = await res.json();
+  if (!voices.some((v) => /Chirp3-HD-Kore/.test(v.name))) console.warn("Note: hi-IN Chirp3-HD-Kore not listed for this key");
+  console.log("Cloud TTS ok");
+}
+
 async function main() {
+  if (CLOUD_ONLY) await checkCloud();
   const args = process.argv.slice(2).filter((a) => !a.startsWith("--"));
   const force = process.argv.includes("--force");
   const only = args.find((a) => !LANGS.includes(a));
