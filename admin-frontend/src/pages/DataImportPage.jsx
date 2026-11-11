@@ -114,6 +114,7 @@ function NewImport({ pharmacy, meta, onCreated }) {
   const [source, setSource] = useState("marg");
   const [quantityIn, setQuantityIn] = useState("packs");
   const [includeExpired, setIncludeExpired] = useState(false);
+  const [purchaseDate, setPurchaseDate] = useState("");
   const [file, setFile] = useState(null);
   const [percent, setPercent] = useState(null);
   const inputRef = useRef(null);
@@ -126,6 +127,7 @@ function NewImport({ pharmacy, meta, onCreated }) {
     form.append("source", source);
     form.append("quantity_in", quantityIn);
     form.append("include_expired", includeExpired ? "true" : "false");
+    if (purchaseDate) form.append("purchase_date", purchaseDate);
     form.append("file", file);
     setPercent(0);
     try {
@@ -177,8 +179,15 @@ function NewImport({ pharmacy, meta, onCreated }) {
           </label>
         </div>
       )}
+      {entity === "purchases" && (
+        <label className="flex flex-wrap items-center gap-2 text-xs text-slate-700">
+          Date for bills the file doesn't date
+          <input type="date" className="h-8 px-2 rounded-lg border border-slate-200 bg-white" value={purchaseDate} onChange={(e) => setPurchaseDate(e.target.value)} />
+          <span className="text-slate-500">Optional. Leave blank to use the last day the report covers. Purchases are history: they don't add stock.</span>
+        </label>
+      )}
       <div className="flex flex-wrap items-center gap-2">
-        <input ref={inputRef} type="file" accept=".xlsx,.csv,.txt" className="hidden" onChange={(e) => setFile(e.target.files?.[0] || null)} />
+        <input ref={inputRef} type="file" accept=".xlsx,.xls,.csv,.txt" className="hidden" onChange={(e) => setFile(e.target.files?.[0] || null)} />
         <button className={btnGhost} onClick={() => inputRef.current?.click()} disabled={percent !== null}>
           <FileSpreadsheet className="w-4 h-4" /> {file ? "Change file" : "Choose Excel or CSV"}
         </button>
@@ -188,7 +197,7 @@ function NewImport({ pharmacy, meta, onCreated }) {
           {percent !== null ? (percent < 100 ? `Uploading ${percent}%` : "Reading the file…") : "Upload and read"}
         </button>
       </div>
-      <p className="text-[11px] text-slate-500">Excel (.xlsx) or CSV, up to {meta?.max_file_mb || 25} MB. Nothing is added to the pharmacy until you press Import at the end.</p>
+      <p className="text-[11px] text-slate-500">Excel (.xlsx or .xls) or CSV, up to {meta?.max_file_mb || 25} MB. Nothing is added to the pharmacy until you press Import at the end.</p>
     </div>
   );
 }
@@ -205,7 +214,7 @@ function Mapping({ view, onSave, busy }) {
       <div>
         <p className="text-sm font-bold text-slate-800">Match the file's columns</p>
         <p className="text-xs text-slate-500">
-          Read from sheet "{job.sheet}", headings on row {job.header_row}, {num(job.total_rows)} rows. Columns were guessed from their headings; check each one against the sample values.
+          {job.header_row ? `Read from sheet "${job.sheet}", headings on row ${job.header_row}` : `Read as a ${job.meta?.label || "report"}`}, {num(job.total_rows)} rows. Columns were guessed from their headings; check each one against the sample values.
         </p>
       </div>
       <div className="overflow-x-auto">
@@ -351,8 +360,35 @@ function Products({ pid, view, onChanged }) {
     }
   };
   const tabs = [["open", "Needs a decision"], ["match", "Matched"], ["new", "New"], ["skip", "Left out"], ["all", "All"]];
+  const prod = view.job.counts?.products || {};
+  const close = prod.check?.products || 0;
+  const bulk = async (body, ok) => {
+    setBusy(true);
+    try {
+      const r = await AdminAPI.decideAllImportProducts(pid, view.job.id, body);
+      onChanged(r.data);
+      load();
+      toast.success(ok);
+    } catch (e) {
+      toast.error(apiError(e, "Couldn't save that"));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const openCount = (prod.needs_details?.products || 0) + close;
   return (
     <div className="space-y-3">
+      {openCount > 0 && (
+        <div className="flex flex-wrap items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-700">
+          <span className="flex-1 min-w-[12rem]">
+            {prod.needs_details?.products ? `${prod.needs_details.products} new to this pharmacy` : ""}
+            {prod.needs_details?.products && close ? " · " : ""}
+            {close ? `${close} with a close name in the catalog (check these one by one, or add them as new)` : ""}
+          </span>
+          {prod.needs_details?.products > 0 && <button className={`${btnPrimary} h-8`} disabled={busy} onClick={() => bulk({ action: "new" }, "Added as new products")}>Add {prod.needs_details.products} new products</button>}
+          {close > 0 && <button className={`${btnGhost} h-8`} disabled={busy} onClick={() => bulk({ action: "new", include_close: true }, "All remaining added as new")}>Add all remaining as new</button>}
+        </div>
+      )}
       <div className="flex gap-1 overflow-x-auto">
         {tabs.map(([id, label]) => (
           <button key={id} onClick={() => { setFilter(id); setPage(1); }} className={`${btn} h-8 whitespace-nowrap ${filter === id ? "bg-slate-900 text-white" : "bg-white border border-slate-200 text-slate-600"}`}>{label}</button>
@@ -386,6 +422,7 @@ function Rows({ pid, job }) {
   const show = (r) => {
     const d = r.data || {};
     if (job.entity === "stock") return [d.product_name, d.batch_no, d.expiry_date, d.units !== undefined && `${num(d.units)} units`, d.mrp_pack && `MRP ${inr(d.mrp_pack)}`];
+    if (job.entity === "purchases") return [d.supplier_name, d.invoice_no && `Bill ${d.invoice_no}`, d.purchase_date, d.product_name, d.batch_no !== "NA" && d.batch_no, d.units !== undefined && `${num(d.units)} units`, d.net !== undefined && inr(d.net)];
     if (job.entity === "products") return [d.product_name, d.units_per_pack && `${d.units_per_pack}/pack`, d.manufacturer, d.mrp_pack && `MRP ${inr(d.mrp_pack)}`];
     return [d.name, d.contact || d.mobile, d.gst_no, d.address];
   };
@@ -426,6 +463,22 @@ function Rows({ pid, job }) {
           <span>Page {page} of {Math.ceil(data.total / 50)}</span>
           <button className={btnGhost} disabled={page * 50 >= data.total} onClick={() => setPage(page + 1)}>Next</button>
         </div>
+      )}
+    </div>
+  );
+}
+
+function DateFix({ job, busy, onApply }) {
+  const [d, setD] = useState(job.options?.purchase_date || "");
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-xs text-amber-800 bg-amber-50 rounded-lg px-3 py-2">
+      <AlertTriangle className="w-4 h-4 shrink-0" />
+      <span className="flex-1 min-w-[14rem]">The file has no bill dates, so {num(job.counts.purchases.undated_lines)} lines are dated {job.options?.purchase_date || "nothing yet"}. For exact dates, ask for Marg's purchase register, which has them.</span>
+      {job.status === "ready" && (
+        <>
+          <input type="date" className="h-8 px-2 rounded-lg border border-amber-200 bg-white" value={d} onChange={(e) => setD(e.target.value)} />
+          <button className={`${btnGhost} h-8`} disabled={busy || !d || d === job.options?.purchase_date} onClick={() => onApply(d)}>Use this date</button>
+        </>
       )}
     </div>
   );
@@ -489,7 +542,7 @@ function ImportView({ pid, jobId, onBack, onChanged }) {
   const rows = c.rows || {};
   const results = c.results || {};
   const prod = c.products || {};
-  const usesProducts = job.entity === "stock" || job.entity === "products";
+  const usesProducts = ["stock", "products", "purchases"].includes(job.entity);
   const open = (prod.check?.products || 0) + (prod.needs_details?.products || 0);
   const okRows = rows.ok || 0;
 
@@ -502,8 +555,10 @@ function ImportView({ pid, jobId, onBack, onChanged }) {
             <FileSpreadsheet className="w-4 h-4 text-brand-500" /> {job.file_name} <StatusPill status={job.status} />
           </p>
           <p className="text-xs text-slate-500 mt-0.5">
-            {view.fields && ({ stock: "Stock with batches", products: "Product list", suppliers: "Suppliers", customers: "Customers" })[job.entity]} · {job.source === "marg" ? "Marg ERP" : "Other software"} · {num(job.total_rows)} rows · uploaded by {job.created_by?.email || job.created_by?.name}
+            {view.fields && ({ stock: "Stock with batches", products: "Product list", suppliers: "Suppliers", customers: "Customers", purchases: "Purchase history" })[job.entity]} · {job.source === "marg" ? "Marg ERP" : "Other software"} · {num(job.total_rows)} rows · uploaded by {job.created_by?.email || job.created_by?.name}
           </p>
+          {job.meta?.label && <p className="text-xs text-slate-600 mt-1">Read as a {job.meta.label}{job.meta.period_from ? `, ${job.meta.period_from} to ${job.meta.period_to}` : ""}.</p>}
+          {(job.meta?.warnings || []).map((w) => <p key={w} className="text-xs text-amber-700 mt-1 flex gap-1"><AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-px" />{w}</p>)}
           {job.same_file_as && <p className="text-xs text-amber-700 mt-1">This exact file was imported before. Records already in DavaDesk will be skipped, not added twice.</p>}
           {job.error && <p className="text-xs text-rose-600 mt-1">{job.error}</p>}
         </div>
@@ -550,7 +605,11 @@ function ImportView({ pid, jobId, onBack, onChanged }) {
               <>
                 <Stat label="Rows to import" value={num(okRows)} tone="text-emerald-700" />
                 <Stat label="Problem rows" value={num(rows.error || 0)} tone={rows.error ? "text-rose-600" : undefined} />
-                <Stat label="Skipped" value={`${num(c.skipped?.expired || 0)} expired · ${num(c.skipped?.no_stock || 0)} no stock`} />
+                {job.entity === "purchases" && c.purchases ? (
+                  <Stat label="Bills" value={`${num(c.purchases.bills)} from ${num(c.purchases.suppliers)} suppliers`} />
+                ) : (
+                  <Stat label="Skipped" value={`${num(c.skipped?.expired || 0)} expired · ${num(c.skipped?.no_stock || 0)} no stock`} />
+                )}
                 {usesProducts ? <Stat label="Products" value={`${num(prod.match?.products || 0)} matched · ${num(prod.new?.products || 0)} new${open ? ` · ${num(open)} to decide` : ""}`} tone={open ? "text-amber-700" : undefined} /> : <Stat label="Total rows" value={num(job.total_rows)} />}
               </>
             ) : (
@@ -562,6 +621,17 @@ function ImportView({ pid, jobId, onBack, onChanged }) {
               </>
             )}
           </div>
+          {job.entity === "purchases" && c.purchases && (
+            <div className={`${card} px-4 py-3 text-sm text-slate-700 space-y-2`}>
+              <div className="flex flex-wrap gap-x-6 gap-y-1">
+                <span>Before GST <b className="tabular-nums">{inr(c.purchases.net)}</b></span>
+                <span>With GST <b className="tabular-nums">{inr(c.purchases.gross)}</b></span>
+                {job.meta?.file_net_total ? <span className={Math.abs(job.meta.file_net_total - c.purchases.net) < 0.5 ? "text-emerald-700" : "text-amber-700"}>Report's grand total <b className="tabular-nums">{inr(job.meta.file_net_total)}</b></span> : null}
+              </div>
+              <p className="text-xs text-slate-500">Imported as paid purchase records with their batches and expiry. They're history: stock isn't added (import the current stock separately).</p>
+              {c.purchases.undated_lines > 0 && <DateFix job={job} busy={busy} onApply={(d) => act(() => AdminAPI.mapImport(pid, jobId, { mapping: job.mapping, options: { purchase_date: d } }), "Date updated")} />}
+            </div>
+          )}
           {job.entity === "stock" && c.stock && (
             <div className={`${card} px-4 py-3 text-sm text-slate-700 flex flex-wrap gap-x-6 gap-y-1`}>
               <span><b className="tabular-nums">{num(c.stock.units)}</b> units</span>
@@ -608,7 +678,7 @@ function ImportView({ pid, jobId, onBack, onChanged }) {
       )}
 
       <Confirm open={confirm === "commit"} title="Import into the pharmacy?" action={`Import ${num(okRows)} rows`} busy={busy} onClose={() => setConfirm(null)} onConfirm={() => act(() => AdminAPI.commitImport(pid, jobId), "Import started")}>
-        <p>{num(okRows)} rows will be added to this pharmacy's {job.entity === "stock" ? "stock and catalog" : job.entity}. Anything already in DavaDesk is skipped.</p>
+        <p>{num(okRows)} rows will be added to this pharmacy's {job.entity === "stock" ? "stock and catalog" : job.entity === "purchases" ? `purchases (${num(c.purchases?.bills || 0)} bills, as paid history without adding stock)` : job.entity}. Anything already in DavaDesk is skipped.</p>
         <p>You can undo this import later, as long as the records haven't been used in bills or purchases.</p>
       </Confirm>
       <Confirm open={confirm === "undo"} title="Undo this import?" action="Undo import" danger busy={busy} onClose={() => setConfirm(null)} onConfirm={() => act(() => AdminAPI.undoImport(pid, jobId), "Import undone")}>
@@ -671,14 +741,14 @@ export default function DataImportPage({ activeEnv }) {
           <NewImport pharmacy={pharmacy} meta={meta} onCreated={(id) => { setJobId(id); loadJobs(); }} />
           <div className={`${card} p-4 space-y-2`}>
             <p className="text-sm font-bold text-slate-800">Imports for {pharmacy.name}</p>
-            {!jobs.length && <p className="text-xs text-slate-500">None yet. Suggested order: suppliers, customers, then stock with batches.</p>}
+            {!jobs.length && <p className="text-xs text-slate-500">None yet. Suggested order: suppliers, customers, current stock with batches, then purchase history.</p>}
             <div className="divide-y divide-slate-100">
               {jobs.map((j) => (
                 <button key={j.id} onClick={() => setJobId(j.id)} className="w-full text-left py-2.5 px-2 rounded-lg hover:bg-slate-50 flex items-center justify-between gap-3">
                   <span className="min-w-0">
                     <span className="block text-sm font-bold text-slate-900 truncate">{j.file_name}</span>
                     <span className="block text-xs text-slate-500">
-                      {({ stock: "Stock", products: "Products", suppliers: "Suppliers", customers: "Customers" })[j.entity]} · {num(j.total_rows)} rows · {new Date(j.created_at).toLocaleString("en-IN")}
+                      {({ stock: "Stock", products: "Products", suppliers: "Suppliers", customers: "Customers", purchases: "Purchase history" })[j.entity]} · {num(j.total_rows)} rows · {new Date(j.created_at).toLocaleString("en-IN")}
                       {j.counts?.results?.created ? ` · ${num(j.counts.results.created)} added` : ""}
                     </span>
                   </span>

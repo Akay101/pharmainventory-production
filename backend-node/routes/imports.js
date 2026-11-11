@@ -92,8 +92,10 @@ router.post(
       entity: String(req.body.entity || ""),
       source: String(req.body.source || ""),
       file: { buffer: req.file.buffer, name: req.file.originalname },
-      options: { include_expired: req.body.include_expired === "true", quantity_in: req.body.quantity_in },
+      options: { include_expired: req.body.include_expired === "true", quantity_in: req.body.quantity_in, purchase_date: req.body.purchase_date },
     });
+    // A known report layout needs no column choices: start checking at once
+    if (job.meta?.report) await jobs.applyMapping(db(), req.importer.pharmacyId, job.id, {});
     res.status(201).json(await jobs.jobView(db(), req.importer.pharmacyId, job.id));
   })
 );
@@ -114,6 +116,12 @@ router.get("/:id/products", handle(async (req, res) => res.json(await jobs.listP
 router.put("/:id/products/decide", handle(async (req, res) => {
   const product = await jobs.decideProduct(db(), req.importer.pharmacyId, req.params.id, req.body?.key, req.body || {});
   res.json({ product, ...(await jobs.jobView(db(), req.importer.pharmacyId, req.params.id)) });
+}));
+
+// PUT /api/imports/:id/products/decide-all {action: new|skip, include_close} - every product still waiting
+router.put("/:id/products/decide-all", handle(async (req, res) => {
+  await jobs.decideAll(db(), req.importer.pharmacyId, req.params.id, String(req.body?.action || ""), { includeClose: req.body?.include_close === true });
+  res.json(await jobs.jobView(db(), req.importer.pharmacyId, req.params.id));
 }));
 
 // GET /api/imports/:id/problems.csv - rows that weren't (or won't be) imported, with the reason

@@ -248,6 +248,7 @@ export const AdminAPI = {
   importRows: (pid, id, params) => api.get(`/imports/${id}/rows`, { params, headers: { "x-pharmacy-id": pid } }),
   importProducts: (pid, id, params) => api.get(`/imports/${id}/products`, { params, headers: { "x-pharmacy-id": pid } }),
   decideImportProduct: (pid, id, data) => api.put(`/imports/${id}/products/decide`, data, { headers: { "x-pharmacy-id": pid } }),
+  decideAllImportProducts: (pid, id, data) => api.put(`/imports/${id}/products/decide-all`, data, { headers: { "x-pharmacy-id": pid } }),
   commitImport: (pid, id) => api.post(`/imports/${id}/commit`, {}, { headers: { "x-pharmacy-id": pid } }),
   undoImport: (pid, id) => api.post(`/imports/${id}/undo`, {}, { headers: { "x-pharmacy-id": pid }, timeout: 120000 }),
   resumeImport: (pid, id) => api.post(`/imports/${id}/resume`, {}, { headers: { "x-pharmacy-id": pid } }),

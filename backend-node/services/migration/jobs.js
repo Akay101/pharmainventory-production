@@ -77,7 +77,7 @@ async function createJob(db, { pharmacyId, actor, entity, source, file, options 
   const pharmacy = await db.collection("pharmacies").findOne({ id: pharmacyId }, { projection: { _id: 0, id: 1, name: 1 } });
   if (!pharmacy) throw new JobError("Pharmacy not found", 404);
 
-  const read = await readImportFile(file.buffer, file.name, ENTITIES[entity].fields);
+  const read = await readImportFile(file.buffer, file.name, ENTITIES[entity].fields, entity);
   const job = {
     id: uuidv4(),
     pharmacy_id: pharmacyId,
@@ -91,7 +91,13 @@ async function createJob(db, { pharmacyId, actor, entity, source, file, options 
     header_row: read.header_row,
     headers: read.headers,
     mapping: read.mapping,
-    options: { include_expired: !!options.include_expired, quantity_in: options.quantity_in === "units" ? "units" : "packs" },
+    meta: read.meta || null,
+    options: {
+      include_expired: !!options.include_expired,
+      quantity_in: options.quantity_in === "units" ? "units" : "packs",
+      // Bills with no date of their own (Marg's purchase statement has none) are dated this day
+      purchase_date: isoDay(options.purchase_date) || read.meta?.period_to || null,
+    },
     status: "mapped",
     total_rows: read.rows.length,
     counts: {},
@@ -151,7 +157,8 @@ function cleanMapping(job, mapping) {
   return out;
 }
 
-const usesProducts = (entity) => entity === "stock" || entity === "products";
+const usesProducts = (entity) => entity === "stock" || entity === "products" || entity === "purchases";
+const isoDay = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(String(v || "")) && !isNaN(Date.parse(v)) ? String(v) : null);
 
 // Re-reads every staged row with the mapping, then matches products in the background
 async function applyMapping(db, pharmacyId, jobId, { mapping, options = {} }) {
@@ -161,6 +168,7 @@ async function applyMapping(db, pharmacyId, jobId, { mapping, options = {} }) {
   const opts = {
     include_expired: options.include_expired === undefined ? job.options.include_expired : !!options.include_expired,
     quantity_in: (options.quantity_in || job.options.quantity_in) === "units" ? "units" : "packs",
+    purchase_date: isoDay(options.purchase_date) || job.options.purchase_date || null,
   };
   const claimed = await db.collection("migration_jobs").findOneAndUpdate(
     { id: job.id, status: job.status },
@@ -197,7 +205,7 @@ async function checkAndMatch(db, job) {
     await setJob(db, job, { progress: { step: "checking", done, total: job.total_rows } });
   };
   for await (const row of cursor) {
-    const r = normalizeRow(job.entity, row.cells, job.mapping, { today: t, includeExpired: job.options.include_expired, quantityIn: job.options.quantity_in });
+    const r = normalizeRow(job.entity, row.cells, job.mapping, { today: t, includeExpired: job.options.include_expired, quantityIn: job.options.quantity_in, fallbackDate: job.options.purchase_date });
     let set;
     if (r.noise) set = { status: "ignored", data: null, errors: [], warnings: [], skip: null };
     else {
@@ -317,6 +325,35 @@ async function decideProduct(db, pharmacyId, jobId, key, body) {
   return updated;
 }
 
+// The same choice for every product still waiting: "new" adds them all (ones the
+// file and the medicine database couldn't complete are marked for finishing in
+// the catalog), "skip" leaves them all out.
+async function decideAll(db, pharmacyId, jobId, action, { includeClose = false } = {}) {
+  const job = await getJob(db, pharmacyId, jobId);
+  if (job.status !== "ready") throw new JobError("This import can't be changed now");
+  if (!["new", "skip"].includes(action)) throw new JobError("Unknown choice");
+  const col = db.collection("migration_products");
+  const open = { job_id: job.id, decision: null };
+  if (action === "skip") {
+    await col.updateMany(open, { $set: { decision: "skip", status: "skip", product_id: null, reason: "Left out", decided_by: true, decided_at: now() } });
+  } else {
+    // Products with a close name in the catalog need a person to pick, unless asked to add those too
+    await col.updateMany({ ...open, status: { $in: includeClose ? ["new", "needs_details", "check"] : ["new", "needs_details"] } }, [
+      {
+        $set: {
+          decision: "new",
+          catalog_incomplete: { $gt: [{ $size: { $filter: { input: [{ $ifNull: ["$details.manufacturer", ""] }, { $ifNull: ["$details.salt_composition", ""] }], cond: { $eq: ["$$this", ""] } } } }, 0] },
+          status: "new",
+          reason: { $cond: [{ $eq: ["$status", "new"] }, "$reason", "Added as new; finish any missing manufacturer or salt in the catalog"] },
+          decided_by: true,
+          decided_at: now(),
+        },
+      },
+    ]);
+  }
+  await setJob(db, job, { counts: await countJob(db, job) });
+}
+
 // ---- 3. Summary --------------------------------------------------------------------------------
 
 async function countJob(db, job) {
@@ -333,6 +370,23 @@ async function countJob(db, job) {
   if (usesProducts(job.entity)) {
     const prods = await db.collection("migration_products").aggregate([{ $match: { job_id: job.id } }, { $group: { _id: "$status", n: { $sum: 1 }, rows: { $sum: "$row_count" } } }]).toArray();
     for (const p of prods) counts.products[p._id] = { products: p.n, rows: p.rows };
+  }
+  if (job.entity === "purchases") {
+    const left = await db.collection("migration_products").distinct("key", { job_id: job.id, decision: "skip" });
+    const [t] = await db.collection("migration_rows").aggregate([
+      { $match: { job_id: job.id, status: "ok", product_key: { $nin: left }, result: { $nin: ["duplicate", "product_skipped"] } } },
+      {
+        $group: {
+          _id: null,
+          bills: { $addToSet: { s: "$data.supplier_name", b: "$data.invoice_no", d: "$data.purchase_date" } },
+          suppliers: { $addToSet: "$data.supplier_name" },
+          net: { $sum: "$data.net" },
+          gross: { $sum: { $multiply: ["$data.net", { $add: [1, { $divide: [{ $ifNull: ["$data.gst_rate", 0] }, 100] }] }] } },
+          undated: { $sum: { $cond: ["$data.date_from_file", 0, 1] } },
+        },
+      },
+    ]).toArray();
+    counts.purchases = { bills: t?.bills.length || 0, suppliers: t?.suppliers.length || 0, net: round2(t?.net || 0), gross: round2(t?.gross || 0), undated_lines: t?.undated || 0 };
   }
   if (job.entity === "stock") {
     // Totals of what will actually go in: rows of products left out don't count
@@ -495,6 +549,8 @@ function productDoc(job, p) {
     image_url: null,
     source: "catalog",
     is_custom_catalog: true,
+    // Added by an import without manufacturer or salt: the catalog asks for them before it's bought again
+    ...(p.catalog_incomplete ? { catalog_incomplete: true } : {}),
     ...stamp(job),
   };
 }
@@ -627,6 +683,130 @@ async function commitParties(db, job, tick) {
   }
 }
 
+// Supplier for a name: the pharmacy's own (same name, any spacing or case), else a new one
+async function supplierFor(db, job, name, cache) {
+  const k = normalizeText(name);
+  if (cache.has(k)) return cache.get(k);
+  const existing = await db.collection("suppliers").findOne({ pharmacy_id: job.pharmacy_id, name: looseNameRegex(name) }, { projection: { _id: 0, id: 1, name: 1 } });
+  let s = existing;
+  if (!s) {
+    const id = uuidv4();
+    const held = await claimKey(db, job, "suppliers", `name|${k}`, id, "suppliers");
+    if (held) s = await db.collection("suppliers").findOne({ id: held, pharmacy_id: job.pharmacy_id }, { projection: { _id: 0, id: 1, name: 1 } });
+    else {
+      s = { id, name };
+      await db.collection("suppliers").insertOne({ id, pharmacy_id: job.pharmacy_id, name, contact: null, email: null, address: null, gst_no: null, notes: null, default_margin_percent: null, ...stamp(job) });
+    }
+  }
+  cache.set(k, s);
+  return s;
+}
+
+// Past bills as purchase records. They are history: stock isn't added, and they're
+// marked paid because the report doesn't say what is still owed.
+async function commitPurchases(db, job, productIds, tick) {
+  const bills = new Map();
+  for await (const r of db.collection("migration_rows").find({ job_id: job.id, status: "ok" }).sort({ row_no: 1 })) {
+    const d = r.data;
+    if (!productIds.get(d.product_key)) {
+      await db.collection("migration_rows").updateOne({ _id: r._id }, { $set: { result: "product_skipped" } });
+      await tick(1);
+      continue;
+    }
+    const k = `${normalizeText(d.supplier_name)}|${d.invoice_no || "-"}|${d.purchase_date}`;
+    if (!bills.has(k)) bills.set(k, []);
+    bills.get(k).push(r);
+  }
+
+  const suppliers = new Map();
+  const products = new Map();
+  for (const [k, rows] of bills) {
+    const first = rows[0].data;
+    const supplier = await supplierFor(db, job, first.supplier_name, suppliers);
+    const ids = rows.map((r) => r._id);
+    const id = uuidv4();
+    const already = first.invoice_no
+      ? await db.collection("purchases").findOne({ pharmacy_id: job.pharmacy_id, supplier_id: supplier.id, invoice_no: looseNameRegex(first.invoice_no), purchase_date: first.purchase_date }, { projection: { _id: 0, id: 1 } })
+      : null;
+    const held = already ? already.id : await claimKey(db, job, "purchases", k, id, "purchases");
+    if (held) {
+      await db.collection("migration_rows").updateMany({ _id: { $in: ids } }, { $set: { result: "duplicate", result_id: held } });
+      await tick(ids.length);
+      continue;
+    }
+    let total = 0;
+    const items = [];
+    for (const r of rows) {
+      const d = r.data;
+      const productId = productIds.get(d.product_key);
+      let product = products.get(productId);
+      if (!product) {
+        product = await db.collection("products").findOne({ id: productId, pharmacy_id: job.pharmacy_id }, { projection: { _id: 0, id: 1, name: 1, manufacturer: 1, salt_composition: 1, hsn_no: 1 } });
+        products.set(productId, product);
+      }
+      const gst = d.gst_rate === null ? 0 : d.gst_rate;
+      const itemTotal = d.net * (1 + gst / 100);
+      total += itemTotal;
+      const perUnit = d.units ? Math.round((d.net / d.units) * 10000) / 10000 : 0;
+      const mrpUnit = d.mrp_pack ? round2(d.mrp_pack / d.units_per_pack) : null;
+      items.push({
+        product_id: productId,
+        product_name: product?.name || d.product_name,
+        batch_no: d.batch_no,
+        expiry_date: d.expiry_date,
+        manufacturer: product?.manufacturer || d.manufacturer || null,
+        salt_composition: product?.salt_composition || null,
+        pack_type: d.pack_type || "Strip",
+        quantity: d.units,
+        pack_quantity: d.pack_qty,
+        scheme: d.free_packs || 0,
+        units_per_pack: d.units_per_pack,
+        total_units: d.units,
+        purchase_price: perUnit,
+        pack_price: d.rate_pack || 0,
+        price_per_unit: perUnit,
+        cost_per_unit: perUnit,
+        mrp: mrpUnit,
+        mrp_per_unit: mrpUnit,
+        mrp_pack: d.mrp_pack || null,
+        hsn_no: d.hsn_no || product?.hsn_no || null,
+        item_total: round2(itemTotal),
+        cgst: gst / 2,
+        sgst: gst / 2,
+        discount: d.discount,
+        scheme_discount: 0,
+        scheme_discount_type: "percent",
+        scheme_discount_amount: 0,
+        margin_percent: null,
+        shortage_threshold: null,
+      });
+    }
+    total = round2(total);
+    await db.collection("purchases").insertOne({
+      id,
+      pharmacy_id: job.pharmacy_id,
+      supplier_id: supplier.id,
+      supplier_name: supplier.name,
+      invoice_no: first.invoice_no,
+      purchase_date: first.purchase_date,
+      items,
+      total_amount: total,
+      payment_status: "Paid",
+      amount_paid: total,
+      payments: [{ id: uuidv4(), amount: total, date: first.purchase_date, notes: "Imported as paid: the old software's report doesn't say what is still owed" }],
+      payment_mode: null,
+      created_by: "import",
+      notes: `Imported from ${SOURCES[job.source].label} (${job.file_name})${first.date_from_file ? "" : `. The report has no bill dates, so it's dated ${first.purchase_date}`}`,
+      imported: true,
+      stock_added: false,
+      date_from_file: !!first.date_from_file,
+      ...stamp(job),
+    });
+    await db.collection("migration_rows").updateMany({ _id: { $in: ids } }, { $set: { result: "created", result_id: id } });
+    await tick(ids.length);
+  }
+}
+
 async function commit(db, job, actor) {
   let done = 0;
   let last = 0;
@@ -641,6 +821,7 @@ async function commit(db, job, actor) {
   if (usesProducts(job.entity)) {
     const ids = await commitProducts(db, job, tick);
     if (job.entity === "stock") await commitStock(db, job, ids, tick);
+    else if (job.entity === "purchases") await commitPurchases(db, job, ids, tick);
     else {
       // A product list has no stock: each row is done once its product is
       for await (const r of db.collection("migration_rows").find({ job_id: job.id, status: "ok" })) {
@@ -685,6 +866,9 @@ async function undo(db, pharmacyId, jobId, actor) {
       return used;
     };
 
+    // Imported purchase records are history (no stock moved), so they always go
+    await remove("purchases", await idsOf("purchases"));
+
     // Stock: only batches nothing has been taken from
     const stock = await db.collection("inventory").find(mine, { projection: { _id: 0, id: 1, quantity: 1, available_quantity: 1 } }).toArray();
     const billed = await usedBy("bills", "items.inventory_id", stock.map((s) => s.id));
@@ -712,7 +896,7 @@ async function undo(db, pharmacyId, jobId, actor) {
     }
     // Keys of removed records go, so the same data can be imported again
     const left = new Set();
-    for (const coll of ["inventory", "products", "suppliers", "customers"]) (await idsOf(coll)).forEach((id) => left.add(id));
+    for (const coll of ["inventory", "products", "suppliers", "customers", "purchases"]) (await idsOf(coll)).forEach((id) => left.add(id));
     await db.collection("import_keys").deleteMany({ job_id: job.id, doc_id: { $nin: [...left] } });
 
     const keptTotal = Object.values(kept).reduce((a, b) => a + b, 0);
@@ -761,6 +945,7 @@ module.exports = {
   createJob,
   applyMapping,
   decideProduct,
+  decideAll,
   jobView,
   listRows,
   listProducts,

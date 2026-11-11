@@ -47,11 +47,32 @@ const CUSTOMER_FIELDS = [
   F("city", "City", ["city", "town", "area", "place"]),
 ];
 
+const PURCHASE_FIELDS = [
+  F("supplier_name", "Supplier", ["supplier", "supplier name", "party", "party name", "distributor", "distributor name", "vendor", "account name"], { required: true }),
+  F("invoice_no", "Bill / invoice no.", ["bill no", "bill", "invoice no", "invoice", "inv no", "invoice number", "bill number", "voucher no", "vch no"]),
+  F("invoice_date", "Bill date", ["bill date", "invoice date", "date", "inv date", "voucher date", "vch date", "purchase date"]),
+  F("product_name", "Product name", ["item name", "item", "product", "product name", "item description", "medicine", "medicine name", "particulars", "description"], { required: true }),
+  F("packing", "Packing", ["packing", "pack", "pack size", "unit", "uom"]),
+  F("batch_no", "Batch", ["batch no", "batch", "batchno", "b no", "batch number", "lot no"]),
+  F("expiry_date", "Expiry", ["expiry", "exp", "exp date", "expiry date", "expdt"]),
+  F("quantity", "Quantity (packs)", ["qty", "quantity", "pur qty", "billed qty"], { required: true }),
+  F("free", "Free (packs)", ["free", "free qty", "sch qty", "scheme qty", "bonus"]),
+  F("purchase_rate", "Rate (per pack)", ["rate", "purchase rate", "pur rate", "p rate", "ptr", "cost", "purchase price"], { required: true }),
+  F("discount", "Discount %", ["discount %", "discount", "dis", "disc", "dis%", "disc%", "disc %", "cd%"]),
+  F("amount", "Line amount (before GST)", ["amount", "net amount", "taxable amount", "taxable value", "value", "net value"]),
+  F("units", "Total units", ["units", "total units", "loose", "loos", "qty in units"]),
+  F("gst_rate", "GST %", ["gst %", "gst", "gst%", "tax", "tax%", "gst rate", "igst%"]),
+  F("mrp", "MRP (per pack)", ["mrp", "m r p", "mrp per pack"]),
+  F("manufacturer", "Manufacturer", ["company", "company name", "mfg", "mfr", "manufacturer"]),
+  F("hsn_no", "HSN code", ["hsn", "hsn code", "hsn sac", "hsnsac"]),
+];
+
 const ENTITIES = {
   stock: { label: "Stock with batches", fields: STOCK_FIELDS },
   products: { label: "Product list", fields: PRODUCT_FIELDS },
   suppliers: { label: "Suppliers", fields: SUPPLIER_FIELDS },
   customers: { label: "Customers", fields: CUSTOMER_FIELDS },
+  purchases: { label: "Purchase history", fields: PURCHASE_FIELDS },
 };
 
 // Where each source's export steps live. The headings themselves are covered by
@@ -64,6 +85,7 @@ const SOURCES = {
       products: "Marg: Reports › Management Report › Utilities › Data Import/Export › Product Export (Excel).",
       suppliers: "Marg: Reports › Management Report › Utilities › Data Import/Export › Ledger Export (Excel), suppliers only.",
       customers: "Marg: Reports › Management Report › Utilities › Data Import/Export › Ledger Export (Excel), customers only.",
+      purchases: "Marg: Purchase › Supplier/Item wise Purchase Statement (or the purchase register with bill dates), then Excel. Upload the .xls or .xlsx as it is.",
     },
   },
   other: { label: "Other software or a spreadsheet", guides: {} },

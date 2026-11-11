@@ -2,6 +2,8 @@
 // heading row, and guesses which column holds which field.
 const ExcelJS = require("exceljs");
 const { headerKey } = require("./fields");
+const { readXls } = require("./xls");
+const { margPurchaseStatement } = require("./margReports");
 
 const MAX_ROWS = 200000;
 const HEADER_SCAN_ROWS = 30;
@@ -74,9 +76,8 @@ async function readSheets(buffer, fileName) {
   const name = String(fileName || "").toLowerCase();
   const isZip = buffer[0] === 0x50 && buffer[1] === 0x4b;
   const isOldExcel = buffer.subarray(0, 4).toString("hex") === "d0cf11e0";
-  if (isOldExcel || name.endsWith(".xls")) {
-    throw new ImportFileError("This is an old .xls Excel file. Open it in Excel and save it as .xlsx (Excel Workbook) or CSV, then upload that.");
-  }
+  if (isOldExcel) return readXls(buffer);
+  if (name.endsWith(".xls") && !isZip) throw new ImportFileError("This .xls file isn't one we can read. Open it in Excel and save it as .xlsx or CSV, then upload that.");
   if (isZip) {
     const book = new ExcelJS.Workbook();
     try {
@@ -136,9 +137,17 @@ function guessMapping(headers, fields) {
   return mapping;
 }
 
-// Picks the sheet and heading row that best fit, and returns the data rows after it
-async function readImportFile(buffer, fileName, fields) {
+// Picks the sheet and heading row that best fit, and returns the data rows after it.
+// Known report layouts (Marg's purchase statement) are flattened first.
+async function readImportFile(buffer, fileName, fields, entity) {
   const sheets = await readSheets(buffer, fileName);
+  for (const sheet of sheets) {
+    const report = margPurchaseStatement(sheet.rows);
+    if (!report) continue;
+    if (entity !== "purchases") throw new ImportFileError(`This is a ${report.meta.label}. Choose "Purchase history" for it.`);
+    if (report.rows.length > MAX_ROWS) throw new ImportFileError(`This file has more than ${MAX_ROWS.toLocaleString("en-IN")} lines. Split it into smaller files.`);
+    return { sheet: sheet.name, header_row: null, headers: report.headers, mapping: guessMapping(report.headers, fields), rows: report.rows, meta: report.meta };
+  }
   let pick = null;
   for (const sheet of sheets) {
     const headerIndex = findHeader(sheet.rows, fields);
