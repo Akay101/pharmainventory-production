@@ -478,9 +478,10 @@ function ReviewTable({ pid, view, filter, setFilter, onView, readOnly }) {
       .catch((e) => toast.error(apiError(e, "Couldn't load rows")))
       .finally(() => setLoading(false));
   }, [pid, job.id, filter, page]);
+  // Reload when a fill or "leave empty" changes what the cells show
   useEffect(() => {
     load();
-  }, [load, job.counts?.rows?.ok, job.status]);
+  }, [load, job.counts?.rows?.ok, job.counts?.attention, job.status, (job.leave_empty || []).join(","), JSON.stringify(job.fills || {})]);
 
   // After a page change from "Next missing", land on that page's first missing cell
   useEffect(() => {
@@ -942,13 +943,16 @@ function ImportView({ pid, pharmacyName, jobId, onBack, onChanged }) {
             <div className={`${card} p-4 flex flex-wrap items-center gap-3 sticky bottom-2 z-20`}>
               <div className="text-sm text-slate-700 min-w-0 flex-1">
                 {view.blockers.length ? (
-                  <span className="text-amber-700 font-semibold">{view.blockers.join(". ")}. Open Products to decide them.</span>
+                  <span className="text-amber-700 font-semibold">{view.blockers.join(". ")}: choose whether each one matches an existing product, is new, or is left out.</span>
                 ) : rows.error ? (
                   <span><b className="text-rose-600">{num(rows.error)} rows</b> still have a problem and won't be imported unless you fix them.</span>
                 ) : (
                   <span>All {num(okRows)} rows are ready. Records already in DavaDesk are skipped, not added twice.</span>
                 )}
               </div>
+              {view.blockers.length > 0 && tab !== "products" && (
+                <button className={btnPrimary} onClick={() => { setTab("products"); window.scrollTo({ top: 0, behavior: "smooth" }); }}>Decide products</button>
+              )}
               <button className={btnGhost} onClick={() => setRemap(true)} disabled={busy}>Change columns</button>
               <button className={btnPrimary} disabled={busy || view.blockers.length > 0 || !okRows} onClick={() => setConfirm("commit")}>
                 <CheckCircle2 className="w-4 h-4" /> Import {num(okRows)} rows
