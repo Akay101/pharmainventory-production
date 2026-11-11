@@ -12,31 +12,42 @@ import Graphic from "./Graphics";
 
 const PAD = 10;
 
-// Live rect of the focused element(s), re-read every frame so it follows
-// scrolling, layout changes and animations
+// Rect of the focused element(s). It is read every frame (so it follows
+// scrolling and animations) but handed to React at most ~8 times a second:
+// the springs that draw the light smooth the steps, and the page never has
+// to re-render the whole stage per frame.
+const EMIT_MS = 120;
 export function useFocusRect(spec) {
   const [rect, setRect] = useState(null);
-  const cache = useRef({ spec: null, els: [], at: 0 });
   useEffect(() => {
     if (!spec) {
       setRect(null);
       return undefined;
     }
     let raf = 0;
+    let els = [];
+    let foundAt = -Infinity;
+    let shown = null; // last rect given to React
+    let lastEmit = -Infinity;
     const specs = Array.isArray(spec) && spec.some((s) => s?.union) ? spec.map((s) => s.union) : [spec];
+    const near = (a, b) => a && b && Math.abs(a.left - b.left) < 1 && Math.abs(a.top - b.top) < 1 && Math.abs(a.width - b.width) < 1 && Math.abs(a.height - b.height) < 1;
     const tick = (now) => {
-      const c = cache.current;
-      if (c.spec !== spec || now - c.at > 1000 || c.els.some((e) => !e?.isConnected)) {
-        c.spec = spec;
-        c.at = now;
-        c.els = specs.map((s) => find(s)).filter(Boolean);
+      if (now - foundAt > 1000 || els.some((e) => !e.isConnected)) {
+        foundAt = now;
+        els = specs.map((s) => find(s)).filter(Boolean);
       }
-      const r = union(c.els.map((e) => e.getBoundingClientRect()));
-      setRect((prev) => {
-        if (!r) return prev && null;
-        if (prev && Math.abs(prev.left - r.left) < 0.5 && Math.abs(prev.top - r.top) < 0.5 && Math.abs(prev.width - r.width) < 0.5 && Math.abs(prev.height - r.height) < 0.5) return prev;
-        return { left: r.left, top: r.top, width: r.width, height: r.height };
-      });
+      const u = union(els.map((e) => e.getBoundingClientRect()));
+      const r = u && { left: Math.round(u.left), top: Math.round(u.top), width: Math.round(u.width), height: Math.round(u.height) };
+      if (!r) {
+        if (shown) {
+          shown = null;
+          setRect(null);
+        }
+      } else if (!near(r, shown) && now - lastEmit >= EMIT_MS) {
+        shown = r;
+        lastEmit = now;
+        setRect(r);
+      }
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
@@ -60,7 +71,8 @@ const roundedRect = (x, y, w, h, r) => {
   return `M${x + r} ${y}H${x + w - r}A${r} ${r} 0 0 1 ${x + w} ${y + r}V${y + h - r}A${r} ${r} 0 0 1 ${x + w - r} ${y + h}H${x + r}A${r} ${r} 0 0 1 ${x} ${y + h - r}V${y + r}A${r} ${r} 0 0 1 ${x + r} ${y}Z`;
 };
 
-function Iris({ rect, look, vp }) {
+function Iris({ rect, look, vp, focusKey, quality }) {
+  const lite = quality === "lite";
   const reduce = useReducedMotion();
   const cfg = reduce ? { duration: 0 } : { stiffness: 170, damping: 26, mass: 0.9 };
   const hole = rect
@@ -75,7 +87,7 @@ function Iris({ rect, look, vp }) {
   // light every frame and costs little)
   const [settled, setSettled] = useState(hole);
   const [moving, setMoving] = useState(false);
-  const key = `${Math.round(hole.x)},${Math.round(hole.y)},${Math.round(hole.w)},${Math.round(hole.h)}`;
+  const key = `${Math.round(hole.x / 4)},${Math.round(hole.y / 4)},${Math.round(hole.w / 4)},${Math.round(hole.h / 4)}`;
   useEffect(() => {
     x.set(hole.x);
     y.set(hole.y);
@@ -95,8 +107,10 @@ function Iris({ rect, look, vp }) {
 
   const clip = useTransform([x, y, w, h], ([X, Y, W, H]) => `path(evenodd, "M0 0H${vp.w}V${vp.h}H0Z ${W > 1 ? roundedRect(X, Y, W, H, 14) : ""}")`);
   const blurClip = `path(evenodd, "M0 0H${vp.w}V${vp.h}H0Z ${settled.w > 1 ? roundedRect(settled.x, settled.y, settled.w, settled.h, 14) : ""}")`;
-  const dim = look === "stage" ? 0 : look === "wide" ? 0.38 : 0.6;
-  const blur = look === "stage" ? 0 : look === "wide" ? 1.5 : 3;
+  const blurred = quality === "full";
+  // Without the blur, a slightly deeper dim keeps the same focus contrast
+  const dim = look === "stage" ? 0 : look === "wide" ? (blurred ? 0.38 : 0.46) : blurred ? 0.6 : 0.68;
+  const blur = !blurred || look === "stage" ? 0 : look === "wide" ? 1.5 : 3;
   const tx = useMotionTemplate`translate3d(${x}px, ${y}px, 0)`;
   // The spinning gradient only needs to cover the frame's diagonal
   const ring = useTransform([w, h], ([W, H]) => Math.ceil(Math.hypot(W, H)) + 12);
@@ -121,10 +135,10 @@ function Iris({ rect, look, vp }) {
         <motion.div className="pointer-events-none fixed left-0 top-0" style={{ transform: tx, width: w, height: h, borderRadius: 14, willChange: "transform" }}>
           <div className="guide-halo absolute inset-0 rounded-[14px]">
             <div className="guide-halo-ring">
-              <motion.div className="guide-halo-spin" style={{ width: ring, height: ring }} />
+              <motion.div className={`guide-halo-spin ${lite ? "guide-halo-still" : ""}`} style={{ width: ring, height: ring }} />
             </div>
           </div>
-          {!reduce && <Sweep key={key} />}
+          {!reduce && !lite && <Sweep key={focusKey} />}
         </motion.div>
       )}
     </>
@@ -185,7 +199,7 @@ function Loupe({ spec, rect, vp }) {
 
 // The assistant itself: rests beside what it's talking about, glows with its
 // voice, flies to controls and presses them
-function Presenter({ rect, cursor, vp, speaking, compact }) {
+function Presenter({ rect, cursor, vp, speaking, compact, lite }) {
   const reduce = useReducedMotion();
   const size = compact ? 46 : 58;
   let target;
@@ -210,9 +224,16 @@ function Presenter({ rect, cursor, vp, speaking, compact }) {
   // Glow follows the voice
   const glowRef = useRef(null);
   useEffect(() => {
+    if (!speaking) {
+      if (glowRef.current) {
+        glowRef.current.style.transform = "scale(1)";
+        glowRef.current.style.opacity = "0.35";
+      }
+      return undefined;
+    }
     let raf = 0;
     const tick = () => {
-      const lvl = speaking ? Math.max(0.12, voiceLevel()) : 0;
+      const lvl = Math.max(0.12, voiceLevel());
       if (glowRef.current) {
         glowRef.current.style.transform = `scale(${1 + lvl * 0.9})`;
         glowRef.current.style.opacity = String(0.35 + lvl * 0.65);
@@ -230,7 +251,7 @@ function Presenter({ rect, cursor, vp, speaking, compact }) {
       <motion.div animate={{ scale: big ? 2.1 : cursor?.press ? 0.72 : 1 }} transition={{ type: "spring", stiffness: 380, damping: 18 }} className="relative" style={{ width: size, height: size }}>
         <div ref={glowRef} className="absolute inset-[-35%] rounded-full" style={{ background: "radial-gradient(circle, rgba(236,72,153,0.55), rgba(168,85,247,0.25) 45%, transparent 70%)", transition: "transform 80ms linear" }} />
         <div className="absolute inset-0 rounded-full bg-[radial-gradient(circle_at_35%_30%,rgba(255,255,255,0.9),rgba(255,237,213,0.55)_30%,rgba(249,115,22,0.25)_60%,transparent_72%)]" />
-        <Orb size={size} count={compact ? 34 : 46} className="relative" />
+        <Orb size={size} count={lite ? 22 : compact ? 34 : 46} className="relative" />
       </motion.div>
       <AnimatePresence>
         {cursor?.press && (
@@ -270,7 +291,7 @@ function TypingSparks() {
 function ChapterCard({ card }) {
   return (
     <motion.div className="pointer-events-none fixed inset-0 flex items-center justify-center" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.35 }}>
-      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(20,14,40,0.82),rgba(3,3,10,0.94))] backdrop-blur-md" />
+      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(20,14,40,0.86),rgba(3,3,10,0.95))]" />
       <motion.div className="absolute inset-x-0 top-0 bg-black" initial={{ height: 0 }} animate={{ height: "11vh" }} exit={{ height: 0 }} transition={{ duration: 0.5, ease: [0.7, 0, 0.3, 1] }} />
       <motion.div className="absolute inset-x-0 bottom-0 bg-black" initial={{ height: 0 }} animate={{ height: "11vh" }} exit={{ height: 0 }} transition={{ duration: 0.5, ease: [0.7, 0, 0.3, 1] }} />
       <div className="relative px-6 text-center text-white">
@@ -286,21 +307,22 @@ function ChapterCard({ card }) {
   );
 }
 
-function Stage({ state, speaking, compact, lang = "en" }) {
+function Stage({ state, rect, speaking, compact, quality = "full", lang = "en" }) {
+  const lite = quality === "lite";
   const vp = useViewport();
-  const rect = useFocusRect(state.card ? null : state.focus);
+  const focusKey = useMemo(() => JSON.stringify(state.focus ?? null), [state.focus]);
   const small = rect && (state.look === "loupe" || (rect.width < 44 && rect.height < 44));
   const fx = useMemo(() => (state.card ? [] : state.fx || []), [state.card, state.fx]);
   return (
     <div data-guide-layer className="pointer-events-none fixed inset-0 z-[2147483000]">
-      {!state.card && <Iris rect={rect} look={state.look} vp={vp} />}
-      <AnimatePresence>{small && <Loupe key={JSON.stringify(state.focus)} spec={state.focus} rect={rect} vp={vp} />}</AnimatePresence>
+      {!state.card && <Iris rect={rect} look={state.look} vp={vp} focusKey={focusKey} quality={quality} />}
+      <AnimatePresence>{small && <Loupe key={focusKey} spec={state.focus} rect={rect} vp={vp} />}</AnimatePresence>
       <AnimatePresence>
         {fx.map((f) => (
           <Graphic key={f.key} fx={f} focusRect={rect} vp={vp} compact={compact} lang={lang} />
         ))}
       </AnimatePresence>
-      {!state.card && !state.busy && <Presenter rect={rect} cursor={state.cursor} vp={vp} speaking={speaking} compact={compact} />}
+      {!state.card && !state.busy && <Presenter rect={rect} cursor={state.cursor} vp={vp} speaking={speaking} compact={compact} lite={lite} />}
       <AnimatePresence>{state.card && <ChapterCard key={state.card.n} card={state.card} />}</AnimatePresence>
     </div>
   );
@@ -308,6 +330,8 @@ function Stage({ state, speaking, compact, lang = "en" }) {
 
 // The stage ignores the caption's progress ticks; only what it draws re-renders it
 const same = (a, b) =>
+  a.rect === b.rect &&
+  a.quality === b.quality &&
   a.speaking === b.speaking &&
   a.compact === b.compact &&
   a.lang === b.lang &&

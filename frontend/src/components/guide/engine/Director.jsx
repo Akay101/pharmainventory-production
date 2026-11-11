@@ -106,10 +106,9 @@ function Caption({ text, progress }) {
   );
 }
 
-function Bar({ runner, state, tour, lang, setLang, onClose, onToggle, phone, captionsOn, setCaptionsOn }) {
+function Bar({ runner, state, focusRect, tour, lang, setLang, onClose, onToggle, phone, captionsOn, setCaptionsOn }) {
   const beats = runner.beats;
   const t = T[lang];
-  const focusRect = useFocusRect(state.focus);
   const atTop = focusRect && focusRect.top + focusRect.height > window.innerHeight * 0.58 && focusRect.top > 220;
   const [rate, setRate] = useState(1);
   const [mute, setMute] = useState(isMuted);
@@ -127,7 +126,7 @@ function Bar({ runner, state, tour, lang, setLang, onClose, onToggle, phone, cap
   const btn = "flex h-9 w-9 items-center justify-center rounded-full text-white/80 hover:bg-white/10 hover:text-white active:scale-95 transition";
   return (
     <div data-guide-layer className={`pointer-events-none fixed inset-x-0 z-[2147483002] flex justify-center px-2 ${atTop ? "top-3" : phone ? "bottom-[calc(8px+env(safe-area-inset-bottom))]" : "bottom-5"}`}>
-    <motion.div className="pointer-events-auto w-full max-w-[760px]" layout transition={{ type: "spring", stiffness: 220, damping: 28 }}>
+    <motion.div key={atTop ? "top" : "bottom"} className="pointer-events-auto w-full max-w-[760px]" initial={{ opacity: 0, y: atTop ? -10 : 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}>
       <div className="overflow-hidden rounded-[22px] bg-slate-950/95 text-white shadow-[0_24px_80px_rgba(0,0,0,0.55)] ring-1 ring-white/10">
         <div className="flex items-start gap-3 px-4 pb-2 pt-3">
           <div className="relative mt-0.5 shrink-0">
@@ -240,6 +239,95 @@ function Outro({ tour, lang, onReplay, onClose, next }) {
   );
 }
 
+// Quality adapts to the device. Frames are counted every second (with a timer,
+// so a page that stops producing frames is caught too):
+//   "full"   blur, spinning frame, shimmer, full orb
+//   "noblur" under ~45 fps for 3 s: the background blur goes (it is by far
+//            the costliest effect on large or high-density screens) and the dim
+//            deepens a little to keep the same contrast; everything else stays
+//   "lite"   under ~24 fps for 3 s: also a still frame ring, no shimmer and
+//            fewer orb particles
+// The level only steps down, and is kept for the browser session.
+const QUALITY_KEY = "dd_guide_quality";
+const LEVELS = ["full", "noblur", "lite"];
+function useQuality(active) {
+  const [quality, setQuality] = useState(() => {
+    try {
+      const v = sessionStorage.getItem(QUALITY_KEY);
+      return LEVELS.includes(v) ? v : "full";
+    } catch {
+      return "full";
+    }
+  });
+  useEffect(() => {
+    if (!active || quality === "lite") return undefined;
+    try {
+      if (sessionStorage.getItem(QUALITY_KEY + "_lock") === "1") return undefined; // testing a fixed level
+    } catch {}
+    let raf = 0;
+    let frames = 0;
+    let slowBlur = 0;
+    let slowLite = 0;
+    let last = performance.now();
+    const count = () => {
+      frames++;
+      raf = requestAnimationFrame(count);
+    };
+    raf = requestAnimationFrame(count);
+    const iv = setInterval(() => {
+      const now = performance.now();
+      const fps = (frames * 1000) / Math.max(1, now - last);
+      frames = 0;
+      last = now;
+      if (document.hidden) return;
+      slowBlur = fps < 45 ? slowBlur + 1 : 0;
+      slowLite = fps < 24 ? slowLite + 1 : 0;
+      const next = slowLite >= 3 ? "lite" : slowBlur >= 3 && quality === "full" ? "noblur" : null;
+      if (next) {
+        try {
+          sessionStorage.setItem(QUALITY_KEY, next);
+        } catch {}
+        setQuality(next);
+      }
+    }, 1000);
+    return () => {
+      cancelAnimationFrame(raf);
+      clearInterval(iv);
+    };
+  }, [active, quality]);
+  return quality;
+}
+
+// While a tour plays, the page's own endless decorative animations (pulsing
+// glows, drifting blobs, shimmer) hold still: under the tour's blur each of
+// their frames would mean re-blurring the whole screen. Entrance animations
+// still play, and everything resumes when the tour closes.
+function useStillPage(active) {
+  useEffect(() => {
+    if (!active || !document.getAnimations) return undefined;
+    const held = new Set();
+    const hold = () => {
+      document.getAnimations().forEach((a) => {
+        const el = a.effect?.target;
+        if (!el || held.has(a) || el.closest?.("[data-guide-layer]")) return;
+        if (a.effect.getComputedTiming?.().iterations !== Infinity || a.playState !== "running") return;
+        a.pause();
+        held.add(a);
+      });
+    };
+    hold();
+    const iv = setInterval(hold, 1000);
+    return () => {
+      clearInterval(iv);
+      held.forEach((a) => {
+        try {
+          a.play();
+        } catch {}
+      });
+    };
+  }, [active]);
+}
+
 export default function Director({ tour, env, initialLang, onLang, onClose, nextTour }) {
   const phone = usePhone();
   const [lang, setLangState] = useState(null);
@@ -328,6 +416,10 @@ export default function Director({ tour, env, initialLang, onLang, onClose, next
     };
   }, [state?.paused]);
   const speaking = !!state && !state.paused && !!state.caption && state.progress < 1;
+  // One tracker for the stage and the bar
+  const focusRect = useFocusRect(state && !state.card && !state.paused ? state.focus : null);
+  const quality = useQuality(!!lang && !!state && state.status === "playing" && !state.busy && !state.paused);
+  useStillPage(!!lang && !!state && state.status !== "done");
   const playing = state && state.status !== "done";
 
   return createPortal(
@@ -338,8 +430,8 @@ export default function Director({ tour, env, initialLang, onLang, onClose, next
           {/* Catches clicks on the page while playing: they pause the tour */}
           {!state.paused && !state.busy && <div data-guide-layer className="fixed inset-0 z-[2147482999] cursor-pointer" onClick={() => runnerRef.current?.pause()} />}
           {state.busy && <div data-guide-layer className="fixed inset-0 z-[2147482999] bg-slate-950/85" />}
-          {!state.paused && <Stage state={state} speaking={speaking} compact={phone} lang={lang} />}
-          <Bar runner={runnerRef.current} state={state} tour={tour} lang={lang} setLang={setLang} onClose={onClose} onToggle={toggle} phone={phone} captionsOn={captionsOn} setCaptionsOn={setCaptionsOn} />
+          {!state.paused && <Stage state={state} rect={focusRect} speaking={speaking} compact={phone} quality={quality} lang={lang} />}
+          <Bar runner={runnerRef.current} state={state} focusRect={focusRect} tour={tour} lang={lang} setLang={setLang} onClose={onClose} onToggle={toggle} phone={phone} captionsOn={captionsOn} setCaptionsOn={setCaptionsOn} />
         </>
       )}
       <AnimatePresence>

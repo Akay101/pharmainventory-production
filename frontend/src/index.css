@@ -2066,6 +2066,10 @@ html.kbd-hints [data-kbd]::after {
     transform: translate(-50%, -50%) rotate(360deg);
   }
 }
+.guide-halo-still {
+  animation: none;
+  transform: translate(-50%, -50%);
+}
 @media (prefers-reduced-motion: reduce) {
   .guide-halo-spin {
     animation: none;

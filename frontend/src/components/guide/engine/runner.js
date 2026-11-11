@@ -248,6 +248,8 @@ export class Runner {
           await this.playBeat(k, token);
         } catch (err) {
           if (err instanceof Cancelled) throw err;
+          // A newer jump owns the tour: an outdated loop must not recover
+          if (token !== this.token) throw new Cancelled();
           console.warn(`[guide] beat failed ${this.beats[k].id}: ${err?.message || err}`);
           // The page wasn't where the beat expected (e.g. the user clicked
           // around while paused): rebuild it once and carry on
@@ -268,6 +270,8 @@ export class Runner {
 
   start(i = 0) {
     const token = ++this.token;
+    this.fast = false;
+    this.skipping = false;
     this.set({ status: "playing", error: null });
     return this.playFrom(i, token);
   }
@@ -276,6 +280,7 @@ export class Runner {
   async jump(i) {
     const token = ++this.token;
     this.fast = false;
+    this.skipping = false;
     stopSpeaking();
     this.paused = false;
     this.set({ status: "playing", paused: false, focus: null, fx: [], cursor: null, caption: "", card: null, busy: true, index: i });

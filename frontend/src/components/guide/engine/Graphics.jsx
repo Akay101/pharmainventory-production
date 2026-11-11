@@ -62,9 +62,18 @@ function place(r, w, h, vp, side) {
 function Placed({ fx, focusRect, vp, children, className = "" }) {
   const ref = useRef(null);
   const [size, setSize] = useState({ w: 280, h: 60 });
+  // Measured once, then only when the box itself resizes
   useEffect(() => {
-    if (ref.current) setSize({ w: ref.current.offsetWidth, h: ref.current.offsetHeight });
-  }, [children]);
+    const el = ref.current;
+    if (!el) return undefined;
+    const measure = () =>
+      setSize((prev) => (prev.w === el.offsetWidth && prev.h === el.offsetHeight ? prev : { w: el.offsetWidth, h: el.offsetHeight }));
+    measure();
+    if (!window.ResizeObserver) return undefined;
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   const r = anchor(fx, focusRect);
   const pos = place(r, size.w, size.h, vp, fx.side);
   return (
