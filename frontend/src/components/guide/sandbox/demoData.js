@@ -216,6 +216,7 @@ export function createDemoStore() {
       paid_now: p.paidNow || 0,
       is_advance_paid: !!p.advance,
       advance_amount: p.advance || 0,
+      keepStock: true,
     });
   });
   // Past purchases: one paid, one partly paid, one still unpaid
@@ -390,8 +391,9 @@ export function insertBill(store, input) {
     store.customers.unshift(customer);
   }
 
-  // Stock goes down as the bill is made
-  items.forEach((it) => {
+  // Stock goes down as the bill is made (the demo's past bills are history:
+  // the stock figures the tours mention are what's left after them)
+  if (!input.keepStock) items.forEach((it) => {
     const inv = store.inventory.find((i) => i.id === it.inventory_id);
     if (inv) inv.available_quantity = Math.max(0, inv.available_quantity - it.quantity);
   });

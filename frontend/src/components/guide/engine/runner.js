@@ -204,6 +204,8 @@ export class Runner {
 
     if (b.focus !== undefined && !quick) {
       const el = b.focus && find(Array.isArray(b.focus) && b.focus[0]?.union ? b.focus[0].union : b.focus);
+      // Plays on without a light, but the line may describe something that isn't there
+      if (b.focus && !el) console.warn(`[guide] focus not found ${b.id}`);
       if (el && scrollIntoViewIfNeeded(el)) await this.wait(450, token);
       this.set({ focus: b.focus, look: b.look || "spot" });
     } else if (!quick && b.look) this.set({ look: b.look });
