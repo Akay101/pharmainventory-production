@@ -1,4 +1,119 @@
 {
+ "en/assistant/answer-tools": {
+  "file": "en/assistant/answer-tools.m4a",
+  "hash": "687c9422",
+  "seconds": 7.8
+ },
+ "en/assistant/attach": {
+  "file": "en/assistant/attach.m4a",
+  "hash": "1ca1852d",
+  "seconds": 8.3
+ },
+ "en/assistant/bills-too": {
+  "file": "en/assistant/bills-too.m4a",
+  "hash": "76531058",
+  "seconds": 10.1
+ },
+ "en/assistant/composer": {
+  "file": "en/assistant/composer.m4a",
+  "hash": "e25ec9c0",
+  "seconds": 4.8
+ },
+ "en/assistant/credits": {
+  "file": "en/assistant/credits.m4a",
+  "hash": "0be54214",
+  "seconds": 8.6
+ },
+ "en/assistant/draft": {
+  "file": "en/assistant/draft.m4a",
+  "hash": "b71a2e5d",
+  "seconds": 13.6
+ },
+ "en/assistant/draft-actions": {
+  "file": "en/assistant/draft-actions.m4a",
+  "hash": "ff860f53",
+  "seconds": 12.3
+ },
+ "en/assistant/draft-missing": {
+  "file": "en/assistant/draft-missing.m4a",
+  "hash": "2a1111b9",
+  "seconds": 10.3
+ },
+ "en/assistant/engine": {
+  "file": "en/assistant/engine.m4a",
+  "hash": "07451385",
+  "seconds": 8.5
+ },
+ "en/assistant/finale": {
+  "file": "en/assistant/finale.m4a",
+  "hash": "ea3ec64f",
+  "seconds": 9.7
+ },
+ "en/assistant/follow-up": {
+  "file": "en/assistant/follow-up.m4a",
+  "hash": "7ccabd31",
+  "seconds": 7.2
+ },
+ "en/assistant/hints": {
+  "file": "en/assistant/hints.m4a",
+  "hash": "6a40d3f1",
+  "seconds": 6.1
+ },
+ "en/assistant/history": {
+  "file": "en/assistant/history.m4a",
+  "hash": "ff04cf8f",
+  "seconds": 8.8
+ },
+ "en/assistant/medi-answer": {
+  "file": "en/assistant/medi-answer.m4a",
+  "hash": "6c41599b",
+  "seconds": 8.3
+ },
+ "en/assistant/medi-ask": {
+  "file": "en/assistant/medi-ask.m4a",
+  "hash": "4702a1a0",
+  "seconds": 6.2
+ },
+ "en/assistant/purchase-ask": {
+  "file": "en/assistant/purchase-ask.m4a",
+  "hash": "a806d8f0",
+  "seconds": 9.4
+ },
+ "en/assistant/sales-ask": {
+  "file": "en/assistant/sales-ask.m4a",
+  "hash": "7910ec47",
+  "seconds": 9.6
+ },
+ "en/assistant/sidebar": {
+  "file": "en/assistant/sidebar.m4a",
+  "hash": "159c0f04",
+  "seconds": 8.6
+ },
+ "en/assistant/stats": {
+  "file": "en/assistant/stats.m4a",
+  "hash": "a7ea8ba8",
+  "seconds": 8.1
+ },
+ "en/assistant/suggestions": {
+  "file": "en/assistant/suggestions.m4a",
+  "hash": "07cac38e",
+  "seconds": 12.7
+ },
+ "en/assistant/table": {
+  "file": "en/assistant/table.m4a",
+  "hash": "abbd1b7b",
+  "seconds": 6.6
+ },
+ "en/assistant/voice": {
+  "file": "en/assistant/voice.m4a",
+  "hash": "1c740751",
+  "seconds": 12.5
+ },
+ "en/assistant/welcome": {
+  "file": "en/assistant/welcome.m4a",
+  "hash": "74ba70e5",
+  "seconds": 15
+ },
  "en/billing/add-item": {
   "file": "en/billing/add-item.m4a",
   "hash": "4dc6cbf5",
@@ -309,6 +424,351 @@
   "hash": "9e244b51",
   "seconds": 6.8
  },
+ "en/purchases/add-item": {
+  "file": "en/purchases/add-item.m4a",
+  "hash": "edd98984",
+  "seconds": 6
+ },
+ "en/purchases/amount": {
+  "file": "en/purchases/amount.m4a",
+  "hash": "3815c812",
+  "seconds": 9.7
+ },
+ "en/purchases/autofill": {
+  "file": "en/purchases/autofill.m4a",
+  "hash": "0ab271b4",
+  "seconds": 6.6
+ },
+ "en/purchases/bar": {
+  "file": "en/purchases/bar.m4a",
+  "hash": "f316bb93",
+  "seconds": 9.5
+ },
+ "en/purchases/batch": {
+  "file": "en/purchases/batch.m4a",
+  "hash": "46c1cdac",
+  "seconds": 12.6
+ },
+ "en/purchases/count": {
+  "file": "en/purchases/count.m4a",
+  "hash": "91586b85",
+  "seconds": 11.6
+ },
+ "en/purchases/csv": {
+  "file": "en/purchases/csv.m4a",
+  "hash": "dffc8105",
+  "seconds": 7.2
+ },
+ "en/purchases/date": {
+  "file": "en/purchases/date.m4a",
+  "hash": "a436c6eb",
+  "seconds": 3.6
+ },
+ "en/purchases/delete": {
+  "file": "en/purchases/delete.m4a",
+  "hash": "a6fd925c",
+  "seconds": 11.4
+ },
+ "en/purchases/discounts": {
+  "file": "en/purchases/discounts.m4a",
+  "hash": "fb38088a",
+  "seconds": 8.2
+ },
+ "en/purchases/drafts": {
+  "file": "en/purchases/drafts.m4a",
+  "hash": "acaadea1",
+  "seconds": 9.7
+ },
+ "en/purchases/expiry": {
+  "file": "en/purchases/expiry.m4a",
+  "hash": "42ed61b2",
+  "seconds": 8.4
+ },
+ "en/purchases/filled": {
+  "file": "en/purchases/filled.m4a",
+  "hash": "7dee2c40",
+  "seconds": 12.7
+ },
+ "en/purchases/filters": {
+  "file": "en/purchases/filters.m4a",
+  "hash": "3150a936",
+  "seconds": 6.4
+ },
+ "en/purchases/finale": {
+  "file": "en/purchases/finale.m4a",
+  "hash": "745b8e09",
+  "seconds": 10.9
+ },
+ "en/purchases/free": {
+  "file": "en/purchases/free.m4a",
+  "hash": "0bfd5b85",
+  "seconds": 15
+ },
+ "en/purchases/gst": {
+  "file": "en/purchases/gst.m4a",
+  "hash": "f0340c7a",
+  "seconds": 6.7
+ },
+ "en/purchases/invoice": {
+  "file": "en/purchases/invoice.m4a",
+  "hash": "c287b6ce",
+  "seconds": 7.2
+ },
+ "en/purchases/labels": {
+  "file": "en/purchases/labels.m4a",
+  "hash": "dec19396",
+  "seconds": 9.5
+ },
+ "en/purchases/margin": {
+  "file": "en/purchases/margin.m4a",
+  "hash": "51c068a6",
+  "seconds": 11.5
+ },
+ "en/purchases/mark-paid": {
+  "file": "en/purchases/mark-paid.m4a",
+  "hash": "4b4c3fe9",
+  "seconds": 4.2
+ },
+ "en/purchases/mode": {
+  "file": "en/purchases/mode.m4a",
+  "hash": "10b5902c",
+  "seconds": 5.6
+ },
+ "en/purchases/mrp-rate": {
+  "file": "en/purchases/mrp-rate.m4a",
+  "hash": "513ea40f",
+  "seconds": 15.6
+ },
+ "en/purchases/new-btn": {
+  "file": "en/purchases/new-btn.m4a",
+  "hash": "35eb8b99",
+  "seconds": 7.1
+ },
+ "en/purchases/new-product": {
+  "file": "en/purchases/new-product.m4a",
+  "hash": "9974ee05",
+  "seconds": 11.6
+ },
+ "en/purchases/open": {
+  "file": "en/purchases/open.m4a",
+  "hash": "dd028b35",
+  "seconds": 6.2
+ },
+ "en/purchases/partial": {
+  "file": "en/purchases/partial.m4a",
+  "hash": "036135b2",
+  "seconds": 11.2
+ },
+ "en/purchases/pay-part": {
+  "file": "en/purchases/pay-part.m4a",
+  "hash": "a00ba814",
+  "seconds": 11
+ },
+ "en/purchases/pdf": {
+  "file": "en/purchases/pdf.m4a",
+  "hash": "f03a57ec",
+  "seconds": 7
+ },
+ "en/purchases/product": {
+  "file": "en/purchases/product.m4a",
+  "hash": "5d75ffe5",
+  "seconds": 5
+ },
+ "en/purchases/qty": {
+  "file": "en/purchases/qty.m4a",
+  "hash": "4ec8ff00",
+  "seconds": 8.4
+ },
+ "en/purchases/row-actions": {
+  "file": "en/purchases/row-actions.m4a",
+  "hash": "677b3534",
+  "seconds": 11.4
+ },
+ "en/purchases/rows": {
+  "file": "en/purchases/rows.m4a",
+  "hash": "6860c02f",
+  "seconds": 14.5
+ },
+ "en/purchases/save": {
+  "file": "en/purchases/save.m4a",
+  "hash": "05ca3642",
+  "seconds": 6
+ },
+ "en/purchases/saved": {
+  "file": "en/purchases/saved.m4a",
+  "hash": "ddf16cad",
+  "seconds": 9.6
+ },
+ "en/purchases/scan": {
+  "file": "en/purchases/scan.m4a",
+  "hash": "8605199c",
+  "seconds": 11
+ },
+ "en/purchases/search": {
+  "file": "en/purchases/search.m4a",
+  "hash": "17a9f830",
+  "seconds": 7.4
+ },
+ "en/purchases/shortcuts": {
+  "file": "en/purchases/shortcuts.m4a",
+  "hash": "bfcc8150",
+  "seconds": 6
+ },
+ "en/purchases/start": {
+  "file": "en/purchases/start.m4a",
+  "hash": "bce20f5e",
+  "seconds": 9.7
+ },
+ "en/purchases/status": {
+  "file": "en/purchases/status.m4a",
+  "hash": "ec6cadec",
+  "seconds": 7.8
+ },
+ "en/purchases/suggestions": {
+  "file": "en/purchases/suggestions.m4a",
+  "hash": "b16d34db",
+  "seconds": 17.8
+ },
+ "en/purchases/summary": {
+  "file": "en/purchases/summary.m4a",
+  "hash": "9055dfa9",
+  "seconds": 6.7
+ },
+ "en/purchases/supplier": {
+  "file": "en/purchases/supplier.m4a",
+  "hash": "a02e44de",
+  "seconds": 14.6
+ },
+ "en/purchases/table": {
+  "file": "en/purchases/table.m4a",
+  "hash": "2265ccce",
+  "seconds": 17.5
+ },
+ "en/purchases/tip": {
+  "file": "en/purchases/tip.m4a",
+  "hash": "95f7b2df",
+  "seconds": 9
+ },
+ "en/purchases/welcome": {
+  "file": "en/purchases/welcome.m4a",
+  "hash": "22e9d6fc",
+  "seconds": 11.3
+ },
+ "hi/assistant/answer-tools": {
+  "file": "hi/assistant/answer-tools.m4a",
+  "hash": "6d7c0924",
+  "seconds": 7.3
+ },
+ "hi/assistant/attach": {
+  "file": "hi/assistant/attach.m4a",
+  "hash": "204a6c00",
+  "seconds": 8.6
+ },
+ "hi/assistant/bills-too": {
+  "file": "hi/assistant/bills-too.m4a",
+  "hash": "b606d2d1",
+  "seconds": 10.6
+ },
+ "hi/assistant/composer": {
+  "file": "hi/assistant/composer.m4a",
+  "hash": "efcfb3a0",
+  "seconds": 5
+ },
+ "hi/assistant/credits": {
+  "file": "hi/assistant/credits.m4a",
+  "hash": "c667998a",
+  "seconds": 8.4
+ },
+ "hi/assistant/draft": {
+  "file": "hi/assistant/draft.m4a",
+  "hash": "7f0b5cfd",
+  "seconds": 13.3
+ },
+ "hi/assistant/draft-actions": {
+  "file": "hi/assistant/draft-actions.m4a",
+  "hash": "855aa3c6",
+  "seconds": 13.6
+ },
+ "hi/assistant/draft-missing": {
+  "file": "hi/assistant/draft-missing.m4a",
+  "hash": "3909f159",
+  "seconds": 10.6
+ },
+ "hi/assistant/engine": {
+  "file": "hi/assistant/engine.m4a",
+  "hash": "5347d31f",
+  "seconds": 9.4
+ },
+ "hi/assistant/finale": {
+  "file": "hi/assistant/finale.m4a",
+  "hash": "fe549ee8",
+  "seconds": 10.5
+ },
+ "hi/assistant/follow-up": {
+  "file": "hi/assistant/follow-up.m4a",
+  "hash": "62a51008",
+  "seconds": 7.9
+ },
+ "hi/assistant/hints": {
+  "file": "hi/assistant/hints.m4a",
+  "hash": "d357a7a3",
+  "seconds": 7.2
+ },
+ "hi/assistant/history": {
+  "file": "hi/assistant/history.m4a",
+  "hash": "90ba88d4",
+  "seconds": 9.5
+ },
+ "hi/assistant/medi-answer": {
+  "file": "hi/assistant/medi-answer.m4a",
+  "hash": "126d1dfc",
+  "seconds": 7.5
+ },
+ "hi/assistant/medi-ask": {
+  "file": "hi/assistant/medi-ask.m4a",
+  "hash": "eb67c769",
+  "seconds": 6
+ },
+ "hi/assistant/purchase-ask": {
+  "file": "hi/assistant/purchase-ask.m4a",
+  "hash": "fd5fbea8",
+  "seconds": 8.9
+ },
+ "hi/assistant/sales-ask": {
+  "file": "hi/assistant/sales-ask.m4a",
+  "hash": "cd457abe",
+  "seconds": 9.6
+ },
+ "hi/assistant/sidebar": {
+  "file": "hi/assistant/sidebar.m4a",
+  "hash": "1b02c199",
+  "seconds": 8.2
+ },
+ "hi/assistant/stats": {
+  "file": "hi/assistant/stats.m4a",
+  "hash": "4c93c63d",
+  "seconds": 7.9
+ },
+ "hi/assistant/suggestions": {
+  "file": "hi/assistant/suggestions.m4a",
+  "hash": "7246bc83",
+  "seconds": 12.8
+ },
+ "hi/assistant/table": {
+  "file": "hi/assistant/table.m4a",
+  "hash": "f3c3532e",
+  "seconds": 6.4
+ },
+ "hi/assistant/voice": {
+  "file": "hi/assistant/voice.m4a",
+  "hash": "ae1ebb8b",
+  "seconds": 12.8
+ },
+ "hi/assistant/welcome": {
+  "file": "hi/assistant/welcome.m4a",
+  "hash": "5bda2a4f",
+  "seconds": 15
+ },
  "hi/billing/add-item": {
   "file": "hi/billing/add-item.m4a",
   "hash": "8cc79927",
@@ -618,5 +1078,235 @@
   "file": "hi/billing/whatsapp.m4a",
   "hash": "33daa089",
   "seconds": 7.2
+ },
+ "hi/purchases/add-item": {
+  "file": "hi/purchases/add-item.m4a",
+  "hash": "8a3097a7",
+  "seconds": 4.7
+ },
+ "hi/purchases/amount": {
+  "file": "hi/purchases/amount.m4a",
+  "hash": "943cc88b",
+  "seconds": 8.6
+ },
+ "hi/purchases/autofill": {
+  "file": "hi/purchases/autofill.m4a",
+  "hash": "bbc8a71c",
+  "seconds": 7
+ },
+ "hi/purchases/bar": {
+  "file": "hi/purchases/bar.m4a",
+  "hash": "ebcb0710",
+  "seconds": 9.7
+ },
+ "hi/purchases/batch": {
+  "file": "hi/purchases/batch.m4a",
+  "hash": "8a9fae3b",
+  "seconds": 11
+ },
+ "hi/purchases/count": {
+  "file": "hi/purchases/count.m4a",
+  "hash": "08be898b",
+  "seconds": 11.7
+ },
+ "hi/purchases/csv": {
+  "file": "hi/purchases/csv.m4a",
+  "hash": "b371cfd8",
+  "seconds": 8.5
+ },
+ "hi/purchases/date": {
+  "file": "hi/purchases/date.m4a",
+  "hash": "d549ddbb",
+  "seconds": 4.4
+ },
+ "hi/purchases/delete": {
+  "file": "hi/purchases/delete.m4a",
+  "hash": "fd0fcf0d",
+  "seconds": 11.8
+ },
+ "hi/purchases/discounts": {
+  "file": "hi/purchases/discounts.m4a",
+  "hash": "fac0c4ab",
+  "seconds": 8.4
+ },
+ "hi/purchases/drafts": {
+  "file": "hi/purchases/drafts.m4a",
+  "hash": "8dea08de",
+  "seconds": 12.1
+ },
+ "hi/purchases/expiry": {
+  "file": "hi/purchases/expiry.m4a",
+  "hash": "f8a5b54b",
+  "seconds": 9.3
+ },
+ "hi/purchases/filled": {
+  "file": "hi/purchases/filled.m4a",
+  "hash": "701a5f56",
+  "seconds": 11.6
+ },
+ "hi/purchases/filters": {
+  "file": "hi/purchases/filters.m4a",
+  "hash": "330098f4",
+  "seconds": 6.2
+ },
+ "hi/purchases/finale": {
+  "file": "hi/purchases/finale.m4a",
+  "hash": "3e903b40",
+  "seconds": 10.9
+ },
+ "hi/purchases/free": {
+  "file": "hi/purchases/free.m4a",
+  "hash": "5ab2260f",
+  "seconds": 16.6
+ },
+ "hi/purchases/gst": {
+  "file": "hi/purchases/gst.m4a",
+  "hash": "2a912fcf",
+  "seconds": 6.6
+ },
+ "hi/purchases/invoice": {
+  "file": "hi/purchases/invoice.m4a",
+  "hash": "22c39a67",
+  "seconds": 7.7
+ },
+ "hi/purchases/labels": {
+  "file": "hi/purchases/labels.m4a",
+  "hash": "e690b3f8",
+  "seconds": 8.2
+ },
+ "hi/purchases/margin": {
+  "file": "hi/purchases/margin.m4a",
+  "hash": "51afe110",
+  "seconds": 12.7
+ },
+ "hi/purchases/mark-paid": {
+  "file": "hi/purchases/mark-paid.m4a",
+  "hash": "608e4c8c",
+  "seconds": 4.7
+ },
+ "hi/purchases/mode": {
+  "file": "hi/purchases/mode.m4a",
+  "hash": "45892ece",
+  "seconds": 5.8
+ },
+ "hi/purchases/mrp-rate": {
+  "file": "hi/purchases/mrp-rate.m4a",
+  "hash": "78641950",
+  "seconds": 17.2
+ },
+ "hi/purchases/new-btn": {
+  "file": "hi/purchases/new-btn.m4a",
+  "hash": "2fc711fe",
+  "seconds": 7.8
+ },
+ "hi/purchases/new-product": {
+  "file": "hi/purchases/new-product.m4a",
+  "hash": "e7817005",
+  "seconds": 12.3
+ },
+ "hi/purchases/open": {
+  "file": "hi/purchases/open.m4a",
+  "hash": "3f21e6d1",
+  "seconds": 7.6
+ },
+ "hi/purchases/partial": {
+  "file": "hi/purchases/partial.m4a",
+  "hash": "9ec79ccb",
+  "seconds": 11.4
+ },
+ "hi/purchases/pay-part": {
+  "file": "hi/purchases/pay-part.m4a",
+  "hash": "9e485441",
+  "seconds": 8.3
+ },
+ "hi/purchases/pdf": {
+  "file": "hi/purchases/pdf.m4a",
+  "hash": "f1ff62af",
+  "seconds": 7.6
+ },
+ "hi/purchases/product": {
+  "file": "hi/purchases/product.m4a",
+  "hash": "3c76857b",
+  "seconds": 3
+ },
+ "hi/purchases/qty": {
+  "file": "hi/purchases/qty.m4a",
+  "hash": "53425c86",
+  "seconds": 8.6
+ },
+ "hi/purchases/row-actions": {
+  "file": "hi/purchases/row-actions.m4a",
+  "hash": "e964436e",
+  "seconds": 11.1
+ },
+ "hi/purchases/rows": {
+  "file": "hi/purchases/rows.m4a",
+  "hash": "6e58ae80",
+  "seconds": 13.9
+ },
+ "hi/purchases/save": {
+  "file": "hi/purchases/save.m4a",
+  "hash": "7e291929",
+  "seconds": 6
+ },
+ "hi/purchases/saved": {
+  "file": "hi/purchases/saved.m4a",
+  "hash": "c8125f93",
+  "seconds": 10.1
+ },
+ "hi/purchases/scan": {
+  "file": "hi/purchases/scan.m4a",
+  "hash": "6e6436bc",
+  "seconds": 11.4
+ },
+ "hi/purchases/search": {
+  "file": "hi/purchases/search.m4a",
+  "hash": "b4ed746e",
+  "seconds": 8.5
+ },
+ "hi/purchases/shortcuts": {
+  "file": "hi/purchases/shortcuts.m4a",
+  "hash": "81163885",
+  "seconds": 6.1
+ },
+ "hi/purchases/start": {
+  "file": "hi/purchases/start.m4a",
+  "hash": "f76178c5",
+  "seconds": 10
+ },
+ "hi/purchases/status": {
+  "file": "hi/purchases/status.m4a",
+  "hash": "55c99860",
+  "seconds": 9.8
+ },
+ "hi/purchases/suggestions": {
+  "file": "hi/purchases/suggestions.m4a",
+  "hash": "0b56331c",
+  "seconds": 17.1
+ },
+ "hi/purchases/summary": {
+  "file": "hi/purchases/summary.m4a",
+  "hash": "391d164f",
+  "seconds": 5.4
+ },
+ "hi/purchases/supplier": {
+  "file": "hi/purchases/supplier.m4a",
+  "hash": "e8cec990",
+  "seconds": 15
+ },
+ "hi/purchases/table": {
+  "file": "hi/purchases/table.m4a",
+  "hash": "a08eb441",
+  "seconds": 15.2
+ },
+ "hi/purchases/tip": {
+  "file": "hi/purchases/tip.m4a",
+  "hash": "3eb12485",
+  "seconds": 10.1
+ },
+ "hi/purchases/welcome": {
+  "file": "hi/purchases/welcome.m4a",
+  "hash": "ff50f5a1",
+  "seconds": 11.3
  }
 }
