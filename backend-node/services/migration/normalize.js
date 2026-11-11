@@ -72,6 +72,26 @@ function mobile(v) {
   return m ? { value: m[1], ok: true } : { value: digits.slice(0, 20), ok: false };
 }
 
+// The row as the checks see it: a person's edits win, then the file's cell, then a
+// value filled in for every row where the cell is empty. Extra values become extra columns.
+function effective(cells, mapping, overrides = {}, fills = {}) {
+  const c = [...cells];
+  const m = { ...mapping };
+  for (const [k, v] of Object.entries(overrides || {})) {
+    m[k] = c.length;
+    c.push(v);
+  }
+  for (const [k, v] of Object.entries(fills || {})) {
+    if (overrides && overrides[k] !== undefined) continue;
+    const cur = m[k] === undefined || m[k] === null ? "" : c[m[k]];
+    if (String(cur ?? "").trim() === "" || (k === "batch_no" && /^n\/?a$/i.test(String(cur).trim()))) {
+      m[k] = c.length;
+      c.push(v);
+    }
+  }
+  return { cells: c, mapping: m };
+}
+
 const pick = (cells, mapping, key) => (mapping[key] === undefined || mapping[key] === null ? "" : cells[mapping[key]] ?? "");
 
 // Rows that repeat the heading, or carry report totals, aren't records
@@ -181,10 +201,10 @@ function purchaseRow(cells, mapping, errors, warnings, { fallbackDate }) {
     net = fileAmount;
   }
 
-  let date = billDate(pick(cells, mapping, "invoice_date"));
-  let dateFromFile = !!date;
-  if (!date && fallbackDate) date = fallbackDate;
-  if (!date) errors.push("Bill date is missing");
+  const rawDate = pick(cells, mapping, "invoice_date");
+  const date = billDate(rawDate);
+  if (!date) errors.push(text(rawDate) ? `Bill date "${text(rawDate)}" isn't a date we can read` : "Bill date is missing");
+  const dateFromFile = !!date && !fallbackDate;
 
   const rawExpiry = pick(cells, mapping, "expiry_date");
   const exp = expiry(rawExpiry);
@@ -269,4 +289,4 @@ function normalizeRow(entity, cells, mapping, { today, includeExpired = false, q
   return { data, errors, warnings };
 }
 
-module.exports = { normalizeRow, expiry, packing, num, mobile };
+module.exports = { normalizeRow, effective, expiry, packing, num, mobile, billDate };

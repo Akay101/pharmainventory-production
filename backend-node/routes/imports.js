@@ -92,7 +92,7 @@ router.post(
       entity: String(req.body.entity || ""),
       source: String(req.body.source || ""),
       file: { buffer: req.file.buffer, name: req.file.originalname },
-      options: { include_expired: req.body.include_expired === "true", quantity_in: req.body.quantity_in, purchase_date: req.body.purchase_date },
+      options: { include_expired: req.body.include_expired === "true", quantity_in: req.body.quantity_in, purchase_date: req.body.purchase_date, add_to_stock: req.body.add_to_stock === undefined ? undefined : req.body.add_to_stock === "true" },
     });
     // A known report layout needs no column choices: start checking at once
     if (job.meta?.report) await jobs.applyMapping(db(), req.importer.pharmacyId, job.id, {});
@@ -109,6 +109,21 @@ router.put("/:id/mapping", handle(async (req, res) => {
 }));
 
 router.get("/:id/rows", handle(async (req, res) => res.json(await jobs.listRows(db(), req.importer.pharmacyId, req.params.id, req.query))));
+
+// PUT /api/imports/:id/rows/:row_no {values: {field: text}} - a person's corrections to one row
+router.put("/:id/rows/:row_no", handle(async (req, res) => {
+  const row = await jobs.editRow(db(), req.importer.pharmacyId, req.params.id, req.params.row_no, req.body?.values || {});
+  res.json({ row, ...(await jobs.jobView(db(), req.importer.pharmacyId, req.params.id)) });
+}));
+
+// POST /api/imports/:id/fill {field, value} - the value for every row where that field is empty ("" removes it)
+router.post("/:id/fill", handle(async (req, res) => {
+  await jobs.fillField(db(), req.importer.pharmacyId, req.params.id, { field: String(req.body?.field || ""), value: req.body?.value });
+  res.json(await jobs.jobView(db(), req.importer.pharmacyId, req.params.id));
+}));
+
+// GET /api/imports/:id/undo-preview - what an undo would remove, keep and take back
+router.get("/:id/undo-preview", handle(async (req, res) => res.json(await jobs.undoPreview(db(), req.importer.pharmacyId, req.params.id))));
 
 router.get("/:id/products", handle(async (req, res) => res.json(await jobs.listProducts(db(), req.importer.pharmacyId, req.params.id, req.query))));
 

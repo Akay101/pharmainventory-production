@@ -30,6 +30,23 @@ const AUDITED = [
   [/^\/[^/]+$/, "import.discard", "DELETE"],
 ];
 
+// GET /api/imports/history - recent imports across every pharmacy, for the history list
+router.get("/history", async (req, res, next) => {
+  try {
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 50, 1), 200);
+    const q = req.query.pharmacy_id ? { pharmacy_id: String(req.query.pharmacy_id) } : {};
+    const jobs = await req.db
+      .collection("migration_jobs")
+      .find(q, { projection: { _id: 0, id: 1, pharmacy_id: 1, pharmacy_name: 1, entity: 1, source: 1, file_name: 1, status: 1, total_rows: 1, counts: 1, created_by: 1, committed_by: 1, created_at: 1, committed_at: 1, undo: 1 } })
+      .sort({ created_at: -1 })
+      .limit(limit)
+      .toArray();
+    res.json({ jobs });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.all("/*", (req, res) => {
   const t = target(req.dbEnv);
   if (!t) {
