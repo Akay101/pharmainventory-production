@@ -107,7 +107,28 @@ jobs:
   publish:
     needs: [build-mac, build-windows]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
     steps:
+      # Apps update themselves as soon as this publishes, so the cloud they talk to
+      # must already run the same code
+      - name: Wait for this commit's cloud deploy
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for i in $(seq 1 120); do
+            state=$(gh run list -R "$GITHUB_REPOSITORY" --workflow deploy.yml --commit "$GITHUB_SHA" --limit 1 --json status,conclusion --jq '.[0] | "\(.status) \(.conclusion)"' || true)
+            echo "Cloud deploy: ${state:-not started}"
+            case "$state" in
+              "completed success") exit 0 ;;
+              completed*) echo "The cloud deploy failed, so this version isn't published"; exit 1 ;;
+            esac
+            sleep 15
+          done
+          echo "The cloud deploy didn't finish within 30 minutes"; exit 1
+      - name: Cloud is answering
+        run: curl -fsS --retry 10 --retry-delay 6 --retry-all-errors https://api-dev.davadesk.in/health
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:

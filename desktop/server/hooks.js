@@ -22,6 +22,9 @@ const PACKAGES = {
   "@aws-sdk/client-ses": stub("onlineOnly.js"),
   "@aws-sdk/s3-request-presigner": stub("onlineOnly.js"),
   "node-cron": stub("noop.js"),
+  // Read import files, which are processed in the cloud
+  exceljs: stub("onlineOnly.js"),
+  cfb: stub("onlineOnly.js"),
 };
 
 // By file inside the backend

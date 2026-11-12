@@ -240,6 +240,9 @@ async function startServer({ dataDir, backendDir, webDir, dbKey, catalogKey, win
   for (const route of ["/api/credits", "/api/support", "/api/billing", "/api/plans", "/api/migrate"]) app.use(route, online);
   // The assistant reads the shop's data in the cloud, so waiting work goes up first
   app.use("/api/assistant", onlineAfterFlush);
+  // Data import runs as background jobs in the cloud, and its records sync down after.
+  // Matching reads the shop's stock there, so waiting work goes up first.
+  app.use("/api/imports", onlineAfterFlush);
   // Until the offline catalogue is complete, the cloud gives the full results
   const catalogPending = () => sync.online && sync.catalogState.state !== "ready";
   app.get(["/api/medicines/search", "/api/bills/doctors"], (req, res, next) => (catalogPending() ? online(req, res, next) : next()));

@@ -505,7 +505,7 @@ if (!app.requestSingleInstanceLock()) {
     buildMenu();
     registerIpc();
     createMainWindow();
-    updates.start({ cloudUrl: config.cloudUrl, autoUpdate: process.platform === "win32" || !!config.macSigned, onChange: () => checkAccess() });
+    updates.start({ cloudUrl: config.cloudUrl, onChange: () => checkAccess() });
     const savedConfig = readConfig();
     try {
       if (savedConfig.mode === "counter" && savedConfig.main) {
@@ -524,9 +524,14 @@ if (!app.requestSingleInstanceLock()) {
   app.on("window-all-closed", () => app.quit());
   app.on("before-quit", (event) => {
     if (quitting) return;
-    if (!server) return;
     event.preventDefault();
     quitting = true;
-    stopServerProcess().then(() => app.exit(0));
+    // A downloaded update installs once the shop's data is closed
+    const finish = () => {
+      if (!updates.onQuit()) return app.exit(0);
+      // The installer quits the app; if it can't start, the app still closes
+      setTimeout(() => app.exit(0), 15000).unref?.();
+    };
+    (server ? stopServerProcess() : Promise.resolve()).then(finish, finish);
   });
 }

@@ -209,7 +209,8 @@ const sell = (where, id, qty, mobile) => where("POST", "/api/bills", { customer_
 
 test("bills made here carry this computer's number", async () => {
   const bill = ok(await sell(local, "b-1", 1, "9000000010"), "bill");
-  assert.match(bill.bill_no, /^BILL-\d{14}-D\d+$/);
+  // A second bill in the same second on this computer gets -2 after it
+  assert.match(bill.bill_no, /^BILL-\d{14}-D\d+(-\d+)?$/);
   await until(async () => s.sync.pendingCount() === 0, "push");
 });
 

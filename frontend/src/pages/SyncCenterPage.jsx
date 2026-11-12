@@ -226,7 +226,7 @@ export default function SyncCenterPage() {
       {update && update.status !== "none" && (
         <Card title="Update available">
           <p className="text-sm text-muted-foreground">
-            {update.status === "ready" ? `Version ${update.latest} is ready. It installs when you close DavaDesk, or now if you restart.` : update.status === "downloading" ? `Downloading version ${update.latest}. You can keep working.` : `Version ${update.latest} is available. Download it and install it over this one; your data stays.`}
+            {update.status === "ready" ? `Version ${update.latest} is ready. It installs by itself when you close DavaDesk or leave the computer idle for 10 minutes, or now if you restart.` : update.status === "downloading" ? `Downloading version ${update.latest}. You can keep working.` : `Version ${update.latest} is available. This copy of DavaDesk can't update itself because it isn't in your Applications folder. Download it and drag it there once; after that it updates by itself. Your data stays.`}
           </p>
           {update.status !== "downloading" && <Button onClick={() => window.davadeskDesktop?.applyUpdate()}>{update.status === "ready" ? "Restart to update" : "Download update"}</Button>}
         </Card>
