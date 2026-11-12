@@ -24,6 +24,7 @@ import AnalyticsFunnelPage from "./pages/AnalyticsFunnelPage";
 import TeamManagementPage from "./pages/TeamManagementPage";
 import PricingPage from "./pages/PricingPage";
 import SubscriptionsPage from "./pages/SubscriptionsPage";
+import InvoicesPage from "./pages/InvoicesPage";
 import CreditsPage from "./pages/CreditsPage";
 import SupportPage from "./pages/SupportPage";
 import OfferLeadsPage from "./pages/OfferLeadsPage";
@@ -380,6 +381,8 @@ function MainDashboard() {
           {activeTab === "team" && <TeamManagementPage />}
 
           {activeTab === "subscriptions" && <SubscriptionsPage activeEnv={activeEnv} />}
+
+          {activeTab === "invoices" && <InvoicesPage activeEnv={activeEnv} />}
 
           {activeTab === "pricing" && <PricingPage activeEnv={activeEnv} />}
 

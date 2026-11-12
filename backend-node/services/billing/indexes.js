@@ -5,6 +5,7 @@ const CORE_INDEXES = {
   users: [{ key: { email: 1 }, options: { name: "email_unique", unique: true } }],
   pharmacies: [
     { key: { id: 1 }, options: { name: "id" } },
+    { key: { account_id: 1 }, options: { name: "account_id", sparse: true } },
     { key: { "subscription.status": 1, "subscription.ends_at": 1 }, options: { name: "subscription_due" } },
   ],
   subscriptions: [
@@ -48,6 +49,30 @@ const CORE_INDEXES = {
     { key: { pharmacy_id: 1, id: 1 }, options: { name: "pharmacy_id_id" } },
     { key: { pharmacy_id: 1, bill_id: 1 }, options: { name: "pharmacy_bill" } },
     { key: { unlinked_until: 1 }, options: { name: "unlinked_until", sparse: true } },
+  ],
+  account_addons: [
+    { key: { id: 1 }, options: { name: "id_unique", unique: true } },
+    { key: { source_ref: 1 }, options: { name: "source_ref_unique", unique: true, partialFilterExpression: { source_ref: { $type: "string" } } } },
+    { key: { account_id: 1, type: 1 }, options: { name: "account_type" } },
+    { key: { status: 1, ends_at: 1 }, options: { name: "status_ends" } },
+    { key: { assigned_user_id: 1 }, options: { name: "assigned_user" } },
+  ],
+  billing_invoices: [
+    { key: { order_id: 1 }, options: { name: "order_id_unique", unique: true } },
+    { key: { invoice_no: 1 }, options: { name: "invoice_no_unique", unique: true } },
+    { key: { id: 1 }, options: { name: "id_unique", unique: true } },
+    { key: { account_id: 1, issued_at: -1 }, options: { name: "account_issued" } },
+  ],
+  billing_notices: [{ key: { key: 1 }, options: { name: "key_unique", unique: true } }],
+  user_sessions: [
+    { key: { id: 1 }, options: { name: "id_unique", unique: true } },
+    { key: { family: 1 }, options: { name: "family" } },
+    { key: { user_id: 1, created_at: -1 }, options: { name: "user_created" } },
+    { key: { purge_at: 1 }, options: { name: "ttl", expireAfterSeconds: 0 } },
+  ],
+  login_tickets: [
+    { key: { hash: 1 }, options: { name: "hash_unique", unique: true } },
+    { key: { expires_at: 1 }, options: { name: "ttl", expireAfterSeconds: 600 } },
   ],
   auth_attempts: [
     { key: { key: 1 }, options: { name: "key_unique", unique: true } },

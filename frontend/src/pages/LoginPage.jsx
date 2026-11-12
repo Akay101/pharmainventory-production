@@ -1,11 +1,24 @@
 import { useState } from "react";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../components/ui/dialog";
+import { Monitor, Smartphone, Tablet, MapPin, Clock } from "lucide-react";
+import { SIGNED_OUT_REASON_KEY } from "../App";
 import { useNavigate, useLocation, Link, Navigate } from "react-router-dom";
 import axios from "axios";
 import { API, useAuth } from "../App";
 import { Button } from "../components/ui/button";
 import WaveInput from "../components/ui/WaveInput";
 import { toast } from "sonner";
-import { Eye, EyeOff, Loader2, Lock, Mail, ArrowRight } from "lucide-react";
+import { Eye, EyeOff, Loader2, Lock, Mail, ArrowRight, Info } from "lucide-react";
+
+const ago = (d) => {
+  const m = Math.round((Date.now() - new Date(d).getTime()) / 60000);
+  if (m < 1) return "just now";
+  if (m < 60) return `${m} min ago`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `${h} hour${h === 1 ? "" : "s"} ago`;
+  return new Date(d).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
+};
+const DeviceIcon = ({ type, className }) => (type === "mobile" ? <Smartphone className={className} /> : type === "tablet" ? <Tablet className={className} /> : <Monitor className={className} />);
 import ThemeToggle from "../components/ui/ThemeToggle";
 import FluidLinePattern from "../components/ui/FluidLinePattern";
 import AuthLeftPanel from "../components/ui/AuthLeftPanel";
@@ -13,7 +26,19 @@ import AuthLeftPanel from "../components/ui/AuthLeftPanel";
 export default function LoginPage() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { login, user } = useAuth();
+  const { login, continueLogin, user } = useAuth();
+  // Another device holds the session: { session, ticket }
+  const [conflict, setConflict] = useState(null);
+  const [takingOver, setTakingOver] = useState(false);
+  const [signedOutReason] = useState(() => {
+    try {
+      const r = sessionStorage.getItem(SIGNED_OUT_REASON_KEY);
+      sessionStorage.removeItem(SIGNED_OUT_REASON_KEY);
+      return r;
+    } catch {
+      return null;
+    }
+  });
   // Only same-app paths are allowed as a post-login destination
   const fromLocation = location.state?.from;
   const fromPath = fromLocation?.pathname ? `${fromLocation.pathname}${fromLocation.search || ""}` : undefined;
@@ -70,6 +95,10 @@ export default function LoginPage() {
       navigate(redirectTo, { replace: true });
     } catch (error) {
       const data = error.response?.data || {};
+      if (data.code === "SESSION_ACTIVE_ELSEWHERE") {
+        setConflict({ session: data.session, ticket: data.ticket });
+        return;
+      }
       if (data.code === "EMAIL_NOT_VERIFIED") {
         // Send a fresh code and continue on the verification step
         await axios.post(`${API}/auth/resend-otp`, { email: formData.email.trim() }).catch(() => {});
@@ -87,11 +116,61 @@ export default function LoginPage() {
     }
   };
 
+  const takeOver = async () => {
+    setTakingOver(true);
+    try {
+      await continueLogin(conflict.ticket);
+      toast.success("The other device was signed out. Welcome back!");
+      navigate(redirectTo, { replace: true });
+    } catch (error) {
+      toast.error(error.response?.data?.detail || "That sign-in has expired. Please sign in again.");
+      setConflict(null);
+    } finally {
+      setTakingOver(false);
+    }
+  };
+
   return (
     <div
       className="min-h-screen w-full grid grid-cols-1 md:grid-cols-12 bg-background select-none overflow-hidden relative"
       data-testid="login-page"
     >
+      <Dialog open={!!conflict} onOpenChange={(o) => !o && !takingOver && setConflict(null)}>
+        <DialogContent className="sm:max-w-md rounded-3xl" data-testid="session-conflict">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-extrabold">You're signed in on another device</DialogTitle>
+            <DialogDescription>Your account can be used on one device at a time. Sign that device out to continue here.</DialogDescription>
+          </DialogHeader>
+          {conflict?.session && (
+            <div className="flex items-start gap-3 rounded-2xl border border-border bg-muted/40 p-4">
+              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-orange-500/10 text-orange-600">
+                <DeviceIcon type={conflict.session.type} className="w-5 h-5" />
+              </span>
+              <div className="min-w-0 space-y-1 text-sm">
+                <p className="font-extrabold">{conflict.session.device}</p>
+                {conflict.session.location && (
+                  <p className="flex items-center gap-1.5 text-muted-foreground font-semibold">
+                    <MapPin className="w-3.5 h-3.5" /> {conflict.session.location}
+                    {conflict.session.ip ? ` · ${conflict.session.ip}` : ""}
+                  </p>
+                )}
+                <p className="flex items-center gap-1.5 text-muted-foreground font-semibold">
+                  <Clock className="w-3.5 h-3.5" /> Last active {ago(conflict.session.last_active_at)}
+                </p>
+              </div>
+            </div>
+          )}
+          <p className="text-xs font-semibold text-muted-foreground">Anything not saved on that device will be lost. The desktop app is not affected.</p>
+          <DialogFooter className="gap-2 sm:gap-2">
+            <Button variant="outline" className="rounded-xl" disabled={takingOver} onClick={() => setConflict(null)}>
+              Cancel
+            </Button>
+            <Button className="rounded-xl font-bold text-white bg-gradient-to-r from-orange-500 to-amber-500" disabled={takingOver} onClick={takeOver} data-testid="session-takeover-btn">
+              {takingOver ? <Loader2 className="w-4 h-4 animate-spin" /> : "Log out that device and continue"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       {/* Left Panel: Full Background Image Slideshow with Simple Copy */}
       <div className="hidden md:block md:col-span-6 lg:col-span-7 relative overflow-hidden">
         <AuthLeftPanel autoPlayInterval={4500} />
@@ -108,6 +187,12 @@ export default function LoginPage() {
         </div>
 
         <div className="w-full max-w-md space-y-8 relative z-10 my-auto">
+          {signedOutReason && (
+            <div className="flex items-start gap-2.5 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm font-semibold text-amber-800 dark:text-amber-300" data-testid="signed-out-reason">
+              <Info className="w-4 h-4 mt-0.5 shrink-0" />
+              <span>{signedOutReason}</span>
+            </div>
+          )}
           {/* Brand Logo & Header */}
           <div className="flex items-center gap-3 animate-stagger-1">
             <img

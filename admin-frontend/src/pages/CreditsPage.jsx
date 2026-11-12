@@ -5,7 +5,7 @@ import { AdminAPI, apiError } from "../api";
 import BottomDrawer from "../components/BottomDrawer";
 import { useAuth } from "../context/AuthContext";
 
-const PLAN_CODES = ["BASIC", "ADVANCED", "AGENTIC"];
+const PLAN_CODES = ["COMPLETE", "BASIC", "ADVANCED", "AGENTIC"];
 const rupees = (n, d = 2) => `₹${(Number(n) || 0).toLocaleString("en-IN", { maximumFractionDigits: d, minimumFractionDigits: d > 2 ? 0 : 0 })}`;
 const cr = (n) => (Number(n) || 0).toLocaleString("en-IN", { maximumFractionDigits: 1 });
 const fmtDateTime = (d) => (d ? new Date(d).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "—");
@@ -197,7 +197,7 @@ function Settings({ canEdit, activeEnv }) {
         gst_percent: Number(cfg.gst_percent),
         min_charge_credits: Number(cfg.min_charge_credits),
         trial_daily_credits: Number(cfg.trial_daily_credits),
-        plan_budget_inr: Object.fromEntries(PLAN_CODES.map((p) => [p, Number(cfg.plan_budget_inr[p]) || 0])),
+        plan_budget_inr: Object.fromEntries(PLAN_CODES.map((p) => [p, Number(cfg.plan_budget_inr?.[p]) || 0])),
         budget_daily_cap_factor: Number(cfg.budget_daily_cap_factor) || 2,
         daily_credits: Object.fromEntries(PLAN_CODES.map((p) => [p, Number(cfg.daily_credits?.[p]) || 0])),
         free_mode: { enabled: !!cfg.free_mode.enabled, messages_per_day: Number(cfg.free_mode.messages_per_day) || 0 },
@@ -298,8 +298,8 @@ function Settings({ canEdit, activeEnv }) {
           </p>
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
             {PLAN_CODES.map((p) => (
-              <Field key={p} label={`${p} plan`} hint={`≈ ${evenDaily(cfg, cfg.plan_budget_inr[p])} credits/day`}>
-                <input type="number" className={inputCls} disabled={dis} value={cfg.plan_budget_inr[p]} onChange={(e) => set(`plan_budget_inr.${p}`, num(e.target.value))} />
+              <Field key={p} label={`${p} plan`} hint={`≈ ${evenDaily(cfg, cfg.plan_budget_inr?.[p] || 0)} credits/day`}>
+                <input type="number" className={inputCls} disabled={dis} value={cfg.plan_budget_inr?.[p] ?? 0} onChange={(e) => set(`plan_budget_inr.${p}`, num(e.target.value))} />
               </Field>
             ))}
             <Field label="Catch-up limit" hint="× the even daily share">
@@ -308,6 +308,20 @@ function Settings({ canEdit, activeEnv }) {
             <Field label="Free trial" hint="Credits per day">
               <input type="number" className={inputCls} disabled={dis} value={cfg.trial_daily_credits} onChange={(e) => set("trial_daily_credits", num(e.target.value))} />
             </Field>
+          </div>
+        </div>
+
+        <div>
+          <h4 className="text-xs font-black text-slate-800 mb-1">Fixed daily credits per plan</h4>
+          <p className="text-[11px] text-slate-500 mb-2">
+            Used for a plan whose yearly budget above is 0. The launch plan (COMPLETE) gives 20 complimentary credits a day this way. Per-pharmacy extra credits you grant stay on top.
+          </p>
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+            {PLAN_CODES.map((p) => (
+              <Field key={p} label={`${p} plan`} hint={Number(cfg.plan_budget_inr?.[p]) > 0 ? "Budget above is used" : "Credits per day"}>
+                <input type="number" className={inputCls} disabled={dis} value={cfg.daily_credits?.[p] ?? 0} onChange={(e) => set(`daily_credits.${p}`, num(e.target.value))} data-testid={`daily-credits-${p}`} />
+              </Field>
+            ))}
           </div>
         </div>
 

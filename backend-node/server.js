@@ -6,7 +6,7 @@ const mongoose = require("mongoose");
 const startCronJobs = require("./services/cron");
 const { ensureTenantIndexes } = require("./services/search/indexes");
 const { ensureCoreIndexes } = require("./services/billing/indexes");
-const { getPublicPlans } = require("./services/billing/pricing");
+const { getPublicPlans, ensureLaunchCatalogue } = require("./services/billing/pricing");
 const helmet = require("helmet");
 
 // Import routes
@@ -124,6 +124,9 @@ connectMongo()
     ensureCoreIndexes(mongoose.connection.db).catch((err) =>
       console.warn("[Indexes] ensureCoreIndexes failed:", err.message)
     );
+    ensureLaunchCatalogue(mongoose.connection.db)
+      .then(() => require("./services/account").ensureSeatGrandfathering(mongoose.connection.db))
+      .catch((err) => console.warn("[Billing] launch migration failed:", err.message));
     require("./services/desktop/changeLog").start(mongoose.connection.db);
   })
   .catch((err) => {
@@ -175,6 +178,7 @@ app.get("/api/plans", async (req, res, next) => {
 });
 app.use("/api/billing", require("./routes/billing"));
 app.use("/api/credits", require("./routes/credits"));
+app.use("/api/account", require("./routes/account"));
 app.use("/api/webhook", require("./routes/webhook"));
 app.use("/api/assistant", require("./routes/assistant"));
 app.use("/api/public", require("./routes/public"));

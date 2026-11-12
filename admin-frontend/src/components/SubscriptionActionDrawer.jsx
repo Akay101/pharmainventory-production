@@ -27,7 +27,7 @@ export function StatusPill({ sub }) {
 
 const inputCls = "w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl focus:border-brand-500 focus:outline-none";
 const labelCls = "text-[11px] font-bold text-slate-500 uppercase tracking-wide";
-const PLANS = ["AGENTIC", "ADVANCED", "BASIC"];
+const PLANS = ["COMPLETE", "AGENTIC", "ADVANCED", "BASIC"];
 
 /**
  * Extend / end / change plan / grant for one pharmacy.
@@ -35,7 +35,7 @@ const PLANS = ["AGENTIC", "ADVANCED", "BASIC"];
  */
 export default function SubscriptionActionDrawer({ action, row, onClose, onDone }) {
   const [days, setDays] = useState(7);
-  const [plan, setPlan] = useState("AGENTIC");
+  const [plan, setPlan] = useState("COMPLETE");
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -43,7 +43,7 @@ export default function SubscriptionActionDrawer({ action, row, onClose, onDone 
     setDays(action === "grant" ? 30 : 7);
     setReason("");
     const current = row?.subscription?.plan;
-    setPlan(action === "change" ? PLANS.find((p) => p !== current) || "AGENTIC" : "AGENTIC");
+    setPlan(action === "change" ? PLANS.find((p) => p !== current) || "COMPLETE" : "COMPLETE");
   }, [action, row]);
 
   if (!action || !row) return null;

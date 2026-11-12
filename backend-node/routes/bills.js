@@ -1,4 +1,5 @@
 const express = require("express");
+const { checkBill } = require("../services/access/billRules");
 const router = express.Router();
 const mongoose = require("mongoose");
 const { queueGlobalCheck } = require("../services/globalReview");
@@ -572,6 +573,8 @@ router.get("/prescriptions/:id", auth, requireSubscription(), async (req, res, n
 // POST /api/bills
 router.post("/", auth, requireSubscription(), async (req, res, next) => {
   try {
+    const rule = checkBill(req.access, req.body);
+    if (rule) return res.status(rule.status).json(rule.body);
     const {
       customer_id,
       customer_name,
@@ -930,6 +933,11 @@ router.get("/:bill_id", auth, requireSubscription(), async (req, res, next) => {
 // PUT /api/bills/:bill_id
 router.put("/:bill_id", auth, requireSubscription(), async (req, res, next) => {
   try {
+    if (req.access && !req.access.full) {
+      const stored = await mongoose.connection.db.collection("bills").findOne({ id: req.params.bill_id, pharmacy_id: req.user.pharmacy_id }, { projection: { created_at: 1, billing_date: 1 } });
+      const rule = checkBill(req.access, req.body, stored);
+      if (rule) return res.status(rule.status).json(rule.body);
+    }
     const {
       customer_id,
       customer_name,
@@ -1428,6 +1436,8 @@ router.delete(
       if (!bill) {
         return res.status(404).json({ detail: "Bill not found" });
       }
+      const rule = checkBill(req.access, null, bill);
+      if (rule) return res.status(rule.status).json(rule.body);
 
       // Restore inventory if requested
       if (restore_inventory === "true") {

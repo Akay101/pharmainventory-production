@@ -4,27 +4,32 @@ import { toast } from "sonner";
 import { AdminAPI, apiError } from "../api";
 import BottomDrawer from "../components/BottomDrawer";
 import SubscriptionActionDrawer, { StatusPill, STATUS_LABEL, fmtDate, fmtDateTime } from "../components/SubscriptionActionDrawer";
+import AddonsPanel from "../components/AddonsPanel";
 
 const inr = (paise) => `₹${((paise || 0) / 100).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
 
 function HistoryDrawer({ row, onClose }) {
   const [detail, setDetail] = useState(null);
-  useEffect(() => {
+  const reload = useCallback(() => {
     if (!row) return;
-    setDetail(null);
     AdminAPI.getSubscription(row.pharmacy_id)
       .then((r) => setDetail(r.data))
       .catch((err) => toast.error(apiError(err, "Couldn't load history")));
   }, [row]);
+  useEffect(() => {
+    setDetail(null);
+    reload();
+  }, [reload]);
   if (!row) return null;
   return (
-    <BottomDrawer isOpen onClose={onClose} title="Subscription history" subtitle={row.pharmacy_name} maxWidth="max-w-2xl">
+    <BottomDrawer isOpen onClose={onClose} title="Subscription, add-ons & invoices" subtitle={row.pharmacy_name} maxWidth="max-w-2xl">
       {!detail ? (
         <div className="py-10 flex justify-center">
           <Loader2 className="w-5 h-5 animate-spin text-slate-400" />
         </div>
       ) : (
         <div className="space-y-5 text-xs">
+          <AddonsPanel detail={detail} onChanged={reload} />
           <section>
             <h4 className="font-black text-slate-900 mb-2 flex items-center gap-1.5">
               <History className="w-3.5 h-3.5" /> Plan changes
@@ -60,7 +65,8 @@ function HistoryDrawer({ row, onClose }) {
                 <div key={o.order_id} className="p-3 flex items-start justify-between gap-3">
                   <div>
                     <div className="font-bold text-slate-800">
-                      {o.plan} · <span className="font-mono">{o.order_id}</span>
+                      {o.plan || (o.purpose === "ADDON" ? `Add-on: ${o.addon?.type === "PHARMACY" ? "linked pharmacy" : `${o.addon?.quantity || 1} user(s)`}${o.addon?.renew_addon_id ? " renewal" : ""}` : o.purpose === "CREDITS" ? "AI credits" : "—")} · <span className="font-mono">{o.order_id}</span>
+                      {o.invoice_no ? <span className="ml-1 text-slate-500">· {o.invoice_no}</span> : null}
                     </div>
                     <div className="text-slate-500">
                       {fmtDateTime(o.created_at)} · {o.status}
@@ -194,6 +200,13 @@ export default function SubscriptionsPage({ activeEnv }) {
                         {r.trial_claimed_at && s.status !== "TRIAL" && (
                           <div className="text-[10px] text-slate-400 mt-1">Trial used {fmtDate(r.trial_claimed_at)}</div>
                         )}
+                        {r.addons && (r.addons.users || r.addons.pharmacies || r.addons.expired) ? (
+                          <button onClick={() => setHistoryRow(r)} className="block text-[10px] font-bold text-slate-500 mt-1 hover:text-brand-600" data-testid="row-addons">
+                            +{r.addons.users} user{r.addons.users === 1 ? "" : "s"} · +{r.addons.pharmacies} pharmac{r.addons.pharmacies === 1 ? "y" : "ies"}
+                            {r.addons.next_end ? ` · next ends ${fmtDate(r.addons.next_end)}` : ""}
+                            {r.addons.expired ? ` · ${r.addons.expired} expired` : ""}
+                          </button>
+                        ) : null}
                       </td>
                       <td className="py-3.5 px-4">
                         <div className={`font-semibold ${soon ? "text-rose-600" : "text-slate-700"}`}>{fmtDate(s.ends_at)}</div>
@@ -234,7 +247,7 @@ export default function SubscriptionsPage({ activeEnv }) {
                           <button
                             onClick={() => setHistoryRow(r)}
                             className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100"
-                            title="History"
+                            title="Add-ons, invoices & history"
                           >
                             <History className="w-3.5 h-3.5" />
                           </button>

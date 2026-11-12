@@ -281,7 +281,8 @@ async function startServer({ dataDir, backendDir, webDir, dbKey, catalogKey, win
     try {
       const user = await db.collection("users").findOne({ id: db.getMeta("user_id") });
       if (!user) return res.status(401).json({ code: "NO_SESSION", detail: "Not signed in" });
-      res.json({ token: tokens.signAccess(user) });
+      // The pharmacy this computer is signed in to (an account can have several)
+      res.json({ token: tokens.signAccess(user, { pid: db.getMeta("pharmacy_id") || null }) });
     } catch (err) {
       next(err);
     }

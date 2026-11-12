@@ -37,6 +37,7 @@ import ReturnsPage from "./pages/ReturnsPage";
 import SupportPage from "./pages/SupportPage";
 import ShortBookPage from "./pages/ShortBookPage";
 import RestockPage from "./pages/RestockPage";
+import LimitedHome from "./components/access/LimitedHome";
 
 // Layout
 import DashboardLayout from "./components/DashboardLayout";
@@ -54,6 +55,49 @@ export const API = `${BACKEND_URL}/api`;
 // The refresh token lives in an httpOnly cookie scoped to /api/auth, so the
 // browser must send credentials on those calls.
 axios.defaults.withCredentials = true;
+
+// A random id for this browser, so signing in again here doesn't count as
+// "another device" (one live session per user), and the device manager can
+// tell browsers apart. Not a secret; the server only stores its hash.
+const DEVICE_KEY = "dd_device_id";
+export const getDeviceId = () => {
+  try {
+    let id = localStorage.getItem(DEVICE_KEY);
+    if (!id || !/^[A-Za-z0-9_-]{16,64}$/.test(id)) {
+      const bytes = new Uint8Array(18);
+      (window.crypto || {}).getRandomValues?.(bytes);
+      id = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("") || `d${Date.now()}${Math.random().toString(36).slice(2)}`;
+      localStorage.setItem(DEVICE_KEY, id);
+    }
+    return id;
+  } catch {
+    return null;
+  }
+};
+const clientTimeZone = () => {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "";
+  } catch {
+    return "";
+  }
+};
+
+// Why the last session ended, shown once on the sign-in page
+export const SIGNED_OUT_REASON_KEY = "dd_signed_out_reason";
+const rememberSignOutReason = (text) => {
+  try {
+    if (text) sessionStorage.setItem(SIGNED_OUT_REASON_KEY, text);
+  } catch {
+    /* private mode */
+  }
+};
+const SESSION_END_TEXT = {
+  SIGNED_IN_ELSEWHERE: "You were signed out because your account was signed in on another device.",
+  SEAT_EXPIRED: "Your user licence has expired. Ask the pharmacy owner to renew it.",
+  SEAT_REQUIRED: "Your user account doesn't have a licence. Ask the pharmacy owner.",
+  USER_DISABLED: "Your user has been switched off by the pharmacy owner.",
+  NO_PHARMACY_ACCESS: "You don't have access to any pharmacy on this account. Ask the owner.",
+};
 
 // ---------------------------------------------------------------------------
 // Session tokens
@@ -103,6 +147,8 @@ const refreshSession = () => {
       })
       .catch((err) => {
         setAccessToken(null);
+        const code = err.response?.data?.code;
+        if (SESSION_END_TEXT[code]) rememberSignOutReason(err.response.data.detail || SESSION_END_TEXT[code]);
         throw err;
       })
       .finally(() => {
@@ -160,14 +206,23 @@ export const useAuth = () => useContext(AuthContext);
 const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [pharmacy, setPharmacy] = useState(null);
+  const [pharmacies, setPharmacies] = useState([]);
+  const [activePharmacyId, setActivePharmacyId] = useState(null);
   const [loading, setLoading] = useState(true);
   const [settings, setSettings] = useState({});
   const [settingsDefinitions, setSettingsDefinitions] = useState([]);
+
+  const applyPharmacies = (data) => {
+    if (Array.isArray(data?.pharmacies)) setPharmacies(data.pharmacies);
+    if (data?.active_pharmacy_id) setActivePharmacyId(data.active_pharmacy_id);
+  };
 
   const clearSession = () => {
     setAccessToken(null);
     setUser(null);
     setPharmacy(null);
+    setPharmacies([]);
+    setActivePharmacyId(null);
     setSettings({});
     setSettingsDefinitions([]);
   };
@@ -176,10 +231,12 @@ const AuthProvider = ({ children }) => {
     const handleLogoutEvent = () => clearSession();
     window.addEventListener("auth-logout", handleLogoutEvent);
 
-    // Sign-out in another tab signs this tab out too
+    // Sign-out in another tab signs this tab out too; a pharmacy switch
+    // reloads the other tabs so no page keeps another pharmacy's data
     const onMessage = (e) => {
       if (e.data === "logout") clearSession();
       if (e.data === "login") restoreSession();
+      if (e.data === "pharmacy-switched") window.location.reload();
     };
     authChannel?.addEventListener("message", onMessage);
 
@@ -251,7 +308,17 @@ const AuthProvider = ({ children }) => {
     const response = await axios.get(`${API}/auth/me`);
     setUser(response.data.user);
     setPharmacy(response.data.pharmacy);
+    applyPharmacies(response.data);
     return response.data.user;
+  };
+
+  // Work in another pharmacy of the account. The page reloads so nothing on
+  // screen belongs to the previous pharmacy.
+  const switchPharmacy = async (pharmacyId) => {
+    const res = await axios.post(`${API}/auth/switch-pharmacy`, { pharmacy_id: pharmacyId });
+    setAccessToken(res.data.token);
+    authChannel?.postMessage("pharmacy-switched");
+    window.location.assign("/dashboard");
   };
 
   const restoreSession = async () => {
@@ -275,14 +342,33 @@ const AuthProvider = ({ children }) => {
     setAccessToken(data.token);
     setUser(data.user);
     setPharmacy(data.pharmacy || null);
+    applyPharmacies(data);
+    try {
+      sessionStorage.removeItem(SIGNED_OUT_REASON_KEY);
+    } catch {
+      /* private mode */
+    }
     fetchSettings();
     authChannel?.postMessage("login");
     return data.user;
   };
 
+  // Throws with code SESSION_ACTIVE_ELSEWHERE (and a ticket) when another
+  // device holds the session; continueLogin(ticket) then takes it over.
   const login = async (email, password) => {
     const response = await axios.post(`${API}/auth/login`, { email, password });
     return completeLogin(response.data);
+  };
+  const continueLogin = async (ticket) => {
+    const response = await axios.post(`${API}/auth/login/continue`, { ticket });
+    return completeLogin(response.data);
+  };
+
+  // Permission check for showing/hiding UI (the server enforces the same)
+  const can = (module, action = "read") => {
+    const a = user?.access;
+    if (!a || a.full) return true;
+    return a.modules?.[module]?.[action] === true;
   };
 
   const logout = async (notifyBackend = true) => {
@@ -303,8 +389,14 @@ const AuthProvider = ({ children }) => {
     token: accessToken,
     loading,
     login,
+    continueLogin,
     completeLogin,
     logout,
+    pharmacies,
+    activePharmacyId,
+    switchPharmacy,
+    can,
+    isOwner: !!user?.is_primary_admin,
     fetchUser,
     setUser,
     setPharmacy,
@@ -343,6 +435,12 @@ const ProtectedRoute = ({ children, adminOnly = false }) => {
   return children;
 };
 
+// Pharmacists without access to the figures get a page of shortcuts instead
+const DashboardGate = () => {
+  const { can } = useAuth();
+  return can("dashboard", "read") ? <DashboardPage /> : <LimitedHome />;
+};
+
 let isRedirecting = false;
 
 const isApiUrl = (url = "") => url.startsWith(API) || url.startsWith("/api");
@@ -350,8 +448,12 @@ const isApiUrl = (url = "") => url.startsWith(API) || url.startsWith("/api");
 axios.interceptors.request.use(
   (config) => {
     // Only ever attach the token to our own API
-    if (accessToken && isApiUrl(config.url)) {
-      config.headers.Authorization = `Bearer ${accessToken}`;
+    if (isApiUrl(config.url)) {
+      if (accessToken) config.headers.Authorization = `Bearer ${accessToken}`;
+      const device = getDeviceId();
+      if (device) config.headers["X-Device-Id"] = device;
+      const tz = clientTimeZone();
+      if (tz) config.headers["X-Client-Timezone"] = tz;
     }
     return config;
   },
@@ -390,6 +492,21 @@ axios.interceptors.response.use(
       return Promise.reject(error);
     }
 
+    // This user can't use the app any more (licence ended, switched off)
+    if (status === 403 && ["SEAT_EXPIRED", "SEAT_REQUIRED", "USER_DISABLED", "NO_PHARMACY_ACCESS"].includes(code)) {
+      rememberSignOutReason(error.response.data.detail || SESSION_END_TEXT[code]);
+      toast.error(error.response.data.detail || SESSION_END_TEXT[code], { id: "session-ended" });
+      window.dispatchEvent(new Event("auth-logout"));
+      return Promise.reject(error);
+    }
+
+    // Access management: one clear message, whichever page asked
+    if (status === 403 && (code === "PERMISSION_DENIED" || code === "ACTION_BLOCKED")) {
+      toast.error(error.response.data.detail, { id: `perm-${code}` });
+      error.permissionToastShown = true;
+      return Promise.reject(error);
+    }
+
     // 🔐 Never retry the auth endpoints themselves
     if (originalRequest._skipAuthRetry || originalRequest.url?.includes("/auth/")) {
       return Promise.reject(error);
@@ -403,6 +520,8 @@ axios.interceptors.response.use(
         originalRequest.headers.Authorization = `Bearer ${newToken}`;
         return axios(originalRequest);
       } catch (refreshErr) {
+        const why = refreshErr.response?.data?.code;
+        if (SESSION_END_TEXT[why]) toast.error(SESSION_END_TEXT[why], { id: "session-ended", duration: 8000 });
         window.dispatchEvent(new Event("auth-logout"));
         return Promise.reject(error);
       }
@@ -511,7 +630,7 @@ function App() {
             }
           >
             <Route index element={<Navigate to="/dashboard" replace />} />
-            <Route path="dashboard" element={<DashboardPage />} />
+            <Route path="dashboard" element={<DashboardGate />} />
             <Route path="inventory" element={<InventoryPage />} />
             <Route path="purchases" element={<PurchasesPage />} />
             <Route path="billing" element={<BillingPage />} />

@@ -1,7 +1,8 @@
 // Checkout and payment finalisation.
 //
 // payment_orders.status: CREATED → PAID | EXPIRED | SUPERSEDED | AMOUNT_MISMATCH
-// payment_orders.purpose: (none) = plan subscription, "CREDITS" = AI credit pack
+// payment_orders.purpose: (none) = plan subscription, "CREDITS" = AI credit pack,
+// "ADDON" = pharmacist seats / linked pharmacy / renewals of those
 // finalizeOrder() is the only place that activates a paid plan. It always
 // re-reads the order from Cashfree, checks the amount against our snapshot,
 // and flips the status atomically, so webhook + return page + reconcile can
@@ -14,6 +15,8 @@ const subscriptions = require("./subscriptions");
 const cashfree = require("./cashfree");
 const creditConfig = require("../credits/config");
 const creditWallet = require("../credits/wallet");
+const invoices = require("./invoices");
+const gst = require("./gst");
 
 const ORDER_TTL_MS = 30 * 60 * 1000;
 
@@ -28,6 +31,30 @@ const customerPhone = (mobile) => {
   }
   return digits;
 };
+
+/**
+ * Buyer details for the GST invoice. `input` comes from the checkout request
+ * and is validated here; missing fields fall back to what the account saved
+ * last time. Returns the profile to snapshot on the order.
+ */
+async function billingProfile(db, pharmacy, input) {
+  const saved = pharmacy.billing_profile || {};
+  const merged = { ...saved, ...(input || {}) };
+  const gstin = merged.gstin ? gst.normalizeGstin(merged.gstin) : "";
+  if (gstin && !gst.isValidGstin(gstin)) throw new BillingError("INVALID_GSTIN", "That GSTIN doesn't look right. Check it, or leave it empty.");
+  let stateCode = gstin ? gstin.slice(0, 2) : String(merged.state_code || "");
+  if (!stateCode && pharmacy.gst_no && gst.isValidGstin(pharmacy.gst_no)) stateCode = gst.normalizeGstin(pharmacy.gst_no).slice(0, 2);
+  if (!gst.stateName(stateCode)) throw new BillingError("STATE_REQUIRED", "Choose your state for the GST invoice", 400);
+  const clean = (v, n) => String(v || "").replace(/[\u0000-\u001f]/g, " ").trim().slice(0, n);
+  const profile = {
+    legal_name: clean(merged.legal_name, 120) || pharmacy.name || "",
+    gstin: gstin || null,
+    state_code: stateCode,
+    address: clean(merged.address, 300) || pharmacy.location || "",
+  };
+  await db.collection("pharmacies").updateOne({ id: pharmacy.id }, { $set: { billing_profile: { ...profile, updated_at: new Date() } } });
+  return profile;
+}
 
 async function planContext(db, { pharmacy, planCode, promoCode, allowOwnReservation = false }) {
   const plan = await pricing.requireActivePlan(db, planCode);
@@ -50,7 +77,8 @@ async function planContext(db, { pharmacy, planCode, promoCode, allowOwnReservat
   }
 
   const offer = await pricing.getOffer(db);
-  const breakdown = pricing.priceBreakdown(plan, offer, promo);
+  const gstPercent = await pricing.getGstPercent(db);
+  const breakdown = pricing.priceBreakdown(plan, offer, promo, new Date(), gstPercent);
   const credit = subscriptions.creditDays(current, plan);
   return { plan, promo, breakdown, credit };
 }
@@ -69,7 +97,7 @@ async function quote(db, { pharmacy, planCode, promoCode }) {
 async function supersedeOpenOrders(db, pharmacyId, purpose = null) {
   const open = await db
     .collection("payment_orders")
-    .find({ pharmacy_id: pharmacyId, status: "CREATED", purpose: purpose ? purpose : { $ne: "CREDITS" } }, { projection: { order_id: 1 } })
+    .find({ pharmacy_id: pharmacyId, status: "CREATED", purpose: purpose ? purpose : { $nin: ["CREDITS", "ADDON"] } }, { projection: { order_id: 1 } })
     .toArray();
   for (const o of open) {
     const res = await db
@@ -79,7 +107,7 @@ async function supersedeOpenOrders(db, pharmacyId, purpose = null) {
   }
 }
 
-async function createCheckout(db, { user, pharmacy, planCode, promoCode }) {
+async function createCheckout(db, { user, pharmacy, planCode, promoCode, billing = null }) {
   if (user.role !== "ADMIN") {
     throw new BillingError("OWNER_ONLY", "Only the pharmacy admin can manage the subscription", 403);
   }
@@ -89,6 +117,7 @@ async function createCheckout(db, { user, pharmacy, planCode, promoCode }) {
   await supersedeOpenOrders(db, pharmacy.id);
   const { plan, promo, breakdown, credit } = await planContext(db, { pharmacy, planCode, promoCode });
   const phone = breakdown.amount_paise > 0 ? customerPhone(user.mobile) : null;
+  const profile = breakdown.amount_paise > 0 ? await billingProfile(db, pharmacy, billing) : null;
 
   const now = new Date();
   const orderId = newOrderId();
@@ -99,6 +128,9 @@ async function createCheckout(db, { user, pharmacy, planCode, promoCode }) {
     plan: plan.code,
     plan_snapshot: { code: plan.code, name: plan.name, price_paise: plan.price_paise, duration_days: plan.duration_days, rank: plan.rank },
     pricing: breakdown,
+    tax: { gst_percent: breakdown.gst_percent, gst_paise: breakdown.gst_paise, taxable_paise: breakdown.taxable_paise },
+    billing_profile: profile,
+    account_id: pharmacy.id,
     amount_paise: breakdown.amount_paise,
     credit_days_quoted: credit,
     promo_code: promo?.code || null,
@@ -155,6 +187,13 @@ async function createCheckout(db, { user, pharmacy, planCode, promoCode }) {
   }
 }
 
+// The account's saved invoice details, if any (credit packs don't ask again)
+async function savedProfile(db, pharmacy) {
+  const accountId = pharmacy.account_id || pharmacy.id;
+  const acc = accountId === pharmacy.id ? pharmacy : await db.collection("pharmacies").findOne({ id: accountId }, { projection: { billing_profile: 1 } });
+  return acc?.billing_profile || null;
+}
+
 // Checkout for an AI credit pack. The pack (price and credits) is snapshotted
 // on the order, so later price changes don't affect a payment in flight.
 async function createCreditCheckout(db, { user, pharmacy, packId }) {
@@ -176,6 +215,8 @@ async function createCreditCheckout(db, { user, pharmacy, packId }) {
     user_id: user.id,
     plan: null,
     pack_snapshot: { id: pack.id, label: pack.label, price_paise: pack.price_paise, credits: creditsGiven, bonus_credits: pack.bonus_credits || 0, gst_percent: cfg.gst_percent },
+    account_id: pharmacy.account_id || pharmacy.id,
+    billing_profile: await savedProfile(db, pharmacy),
     amount_paise: pack.price_paise,
     status: "CREATED",
     gateway: "CASHFREE",
@@ -209,6 +250,34 @@ async function createCreditCheckout(db, { user, pharmacy, packId }) {
   }
 }
 
+// Start a Cashfree order for an order row already inserted
+async function openGatewayOrder(db, order, user, tags) {
+  const phone = customerPhone(user.mobile);
+  try {
+    const cf = await cashfree.createOrder({
+      orderId: order.order_id,
+      amountPaise: order.amount_paise,
+      customer: { customer_id: user.id, customer_email: user.email, customer_phone: phone, customer_name: user.name || undefined },
+      returnUrl: `${trimUrl(process.env.FRONTEND_URL)}/payment-success?order_id={order_id}`,
+      notifyUrl: process.env.BACKEND_URL ? `${trimUrl(process.env.BACKEND_URL)}/api/webhook/cashfree` : undefined,
+      tags,
+      expiresAt: order.expires_at,
+    });
+    await db.collection("payment_orders").updateOne(
+      { order_id: order.order_id },
+      { $set: { cf_order_id: cf.cf_order_id, payment_session_id: cf.payment_session_id, updated_at: new Date() } }
+    );
+    return { order_id: order.order_id, free: false, payment_session_id: cf.payment_session_id, mode: cashfree.mode(), amount_paise: order.amount_paise };
+  } catch (err) {
+    console.error("[Billing] Cashfree create order failed:", err.response?.data || err.message);
+    await db.collection("payment_orders").updateOne(
+      { order_id: order.order_id },
+      { $set: { status: "GATEWAY_ERROR", gateway_error: err.response?.data?.message || err.message, updated_at: new Date() } }
+    );
+    throw new BillingError("GATEWAY_ERROR", "Could not start the payment. Please try again in a moment.", 502);
+  }
+}
+
 // Add a paid credit pack to the wallet (idempotent on the order)
 async function settleCredits(db, order, { source, paymentId }) {
   const snap = order.pack_snapshot;
@@ -229,7 +298,33 @@ async function settleCredits(db, order, { source, paymentId }) {
 
 // Activate the plan for a paid order (idempotent; safe to retry).
 async function settlePaid(db, order, { source, paymentId }) {
-  if (order.purpose === "CREDITS") return settleCredits(db, order, { source, paymentId });
+  let result;
+  if (order.purpose === "CREDITS") result = await settleCredits(db, order, { source, paymentId });
+  else if (order.purpose === "ADDON") result = await require("./addons").settle(db, order, { source, paymentId });
+  else result = await settlePlan(db, order, { source, paymentId });
+  await afterSettle(db, { ...order, payment_id: paymentId || order.payment_id || null, paid_at: order.paid_at || new Date() }, result);
+  return result;
+}
+
+// Invoice and receipt email. Never fails the settlement: the cron retries.
+async function afterSettle(db, order, result) {
+  if (!(order.amount_paise > 0)) {
+    if (!order.purpose) require("./receipts").sendPaymentEmail(db, order, null, result).catch((err) => console.warn("[Billing] receipt email failed:", err.message));
+    return;
+  }
+  let invoice = null;
+  try {
+    invoice = await invoices.createForOrder(db, order);
+  } catch (err) {
+    console.error(`[Billing] Invoice for ${order.order_id} failed:`, err);
+    return;
+  }
+  require("./receipts")
+    .sendPaymentEmail(db, order, invoice, result)
+    .catch((err) => console.warn(`[Billing] receipt email for ${order.order_id} failed:`, err.message));
+}
+
+async function settlePlan(db, order, { source, paymentId }) {
   const snap = order.plan_snapshot;
   const result = await subscriptions.activate(db, {
     pharmacyId: order.pharmacy_id,
@@ -344,4 +439,4 @@ async function reconcile(db) {
   return { checked: candidates.length, activated: changed };
 }
 
-module.exports = { quote, createCheckout, createCreditCheckout, finalizeOrder, reconcile, settlePaid };
+module.exports = { quote, createCheckout, createCreditCheckout, finalizeOrder, reconcile, settlePaid, billingProfile, openGatewayOrder, supersedeOpenOrders, newOrderId, ORDER_TTL_MS, customerPhone };

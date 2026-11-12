@@ -16,6 +16,8 @@ const CLOUD_ONLY = new Set([
   "plans", "pricing_config", "promo_codes", "promo_redemptions", "refresh_tokens", "settings_registry", "stt_sessions", "subscriptions", "support_tickets", "sync_applied", "sync_conflicts", "sync_log",
   // Data import jobs run in the cloud; what they create syncs down like any other change
   "migration_jobs", "migration_rows", "migration_products", "import_keys", "import_changes",
+  // Accounts and DavaDesk's own billing: sessions, add-ons, invoices, notices
+  "user_sessions", "login_tickets", "account_addons", "billing_invoices", "billing_notices",
 ]);
 const NODE_BUILTINS = new Set(require("module").builtinModules);
 

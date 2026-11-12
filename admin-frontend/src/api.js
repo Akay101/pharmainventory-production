@@ -303,6 +303,19 @@ export const AdminAPI = {
   updateOffer: (data) => api.put("/pricing/offer", data),
   updateTrial: (data) => api.put("/pricing/trial", data),
   updatePriceDisplay: (data) => api.put("/pricing/display", data),
+  updateGst: (data) => api.put("/pricing/gst", data),
+  updateAddonPricing: (data) => api.put("/pricing/addons", data),
+  updateInvoiceConfig: (data) => api.put("/pricing/invoice", data),
+
+  // Add-ons (extra users, linked pharmacies) of an account
+  extendAddon: (pharmacyId, addonId, data) => api.post(`/subscriptions/${pharmacyId}/addons/${addonId}/extend`, data),
+  endAddon: (pharmacyId, addonId, data) => api.post(`/subscriptions/${pharmacyId}/addons/${addonId}/end`, data),
+  grantSeats: (pharmacyId, data) => api.post(`/subscriptions/${pharmacyId}/addons/grant-seats`, data),
+
+  // DavaDesk's own GST invoices
+  getInvoices: (params) => api.get("/invoices", { params }),
+  getInvoicePdf: (id) => api.get(`/invoices/${id}/pdf`, { responseType: "blob" }),
+  resendInvoice: (id, data) => api.post(`/invoices/${id}/resend`, data),
 
   // Subscriptions
   getSubscriptions: (params) => api.get("/subscriptions", { params }),

@@ -1,5 +1,4 @@
 import { IS_DESKTOP, openCounters } from "../lib/desktop";
-import DesktopDevicesCard from "../components/DesktopDevicesCard";
 import { useState, useRef, useEffect } from "react";
 import axios from "axios";
 import { API, useAuth } from "../App";
@@ -28,11 +27,17 @@ import { toast } from "sonner";
 import { Switch } from "../components/ui/switch";
 import PharmacySettings from "../components/settings/PharmacySettings";
 import ProfileSettings from "../components/settings/ProfileSettings";
+import DeviceManager from "../components/settings/DeviceManager";
+import BillingPlanSettings from "../components/settings/BillingPlanSettings";
+import { useSearchParams } from "react-router-dom";
+import { Laptop, Receipt } from "lucide-react";
 
 export default function SettingsPage() {
   const { user, isAdmin, settings, settingsDefinitions, updateSetting, fetchSettings } = useAuth();
   const [numberDrafts, setNumberDrafts] = useState({}); // typed text, so a number field can be cleared
-  const [tab, setTab] = useState("pharmacy");
+  const [searchParams] = useSearchParams();
+  const TABS = ["pharmacy", "profile", "preferences", "devices", "billing", "data"];
+  const [tab, setTab] = useState(() => (TABS.includes(searchParams.get("tab")) ? searchParams.get("tab") : "pharmacy"));
   const [pharmacyDirty, setPharmacyDirty] = useState(false);
   const [profileDirty, setProfileDirty] = useState(false);
   const [importingMedicines, setImportingMedicines] = useState(false);
@@ -294,6 +299,16 @@ export default function SettingsPage() {
             <Sliders className="w-4 h-4 mr-2" />
             Preferences
           </TabsTrigger>
+          <TabsTrigger value="devices" data-testid="settings-tab-devices">
+            <Laptop className="w-4 h-4 mr-2" />
+            Devices
+          </TabsTrigger>
+          {isAdmin && !IS_DESKTOP && (
+            <TabsTrigger value="billing" data-testid="settings-tab-billing">
+              <Receipt className="w-4 h-4 mr-2" />
+              Billing &amp; plan
+            </TabsTrigger>
+          )}
           {isAdmin && !IS_DESKTOP && (
             <TabsTrigger value="data">
               <Database className="w-4 h-4 mr-2" />
@@ -310,9 +325,16 @@ export default function SettingsPage() {
         <TabsContent value="profile" forceMount className="data-[state=inactive]:hidden">
           <ProfileSettings active={tab === "profile"} onDirtyChange={setProfileDirty} />
         </TabsContent>
+        <TabsContent value="devices">
+          <DeviceManager active={tab === "devices"} />
+        </TabsContent>
+        {isAdmin && !IS_DESKTOP && (
+          <TabsContent value="billing">
+            <BillingPlanSettings active={tab === "billing"} />
+          </TabsContent>
+        )}
         {/* Preferences Tab */}
         <TabsContent value="preferences">
-          {!IS_DESKTOP && <DesktopDevicesCard />}
           {IS_DESKTOP && (
             <Card className="bg-card/50 backdrop-blur-sm border-white/5 mb-6" data-testid="desktop-counters-card">
               <CardHeader>

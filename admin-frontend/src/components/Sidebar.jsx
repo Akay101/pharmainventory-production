@@ -19,6 +19,7 @@ import {
   Database,
   Megaphone,
   Upload,
+  FileText,
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 
@@ -103,6 +104,12 @@ export default function Sidebar({
       id: "subscriptions",
       label: "Subscriptions",
       icon: CalendarClock,
+      section: "SALES & CRM",
+    },
+    {
+      id: "invoices",
+      label: "Invoices",
+      icon: FileText,
       section: "SALES & CRM",
     },
     {

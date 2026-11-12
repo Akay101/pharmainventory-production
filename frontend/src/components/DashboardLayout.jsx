@@ -65,50 +65,58 @@ import { AI_LOGO_SRC } from "./scan/ScanUI";
 import { TourProvider, useTour } from "./tour/ProductTour";
 import { GuideOutlet, useGuide } from "./guide/GuideProvider";
 import { CreditsPill, CreditsSheet, useCredits } from "./assistant/Credits";
+import PharmacySwitcher from "./billing/PharmacySwitcher";
+import { PLAN_NAMES } from "../lib/checkout";
 
 const navItems = [
   { path: "/dashboard", label: "Dashboard", icon: LayoutDashboard, shortcut: "alt+h" },
   {
     path: "/inventory",
+    module: "inventory",
     label: "Inventory",
     icon: Package,
     shortcut: "alt+i",
   },
   {
     path: "/purchases",
+    module: "purchases",
     label: "Purchases",
     icon: ShoppingCart,
     shortcut: "alt+p",
   },
-  { path: "/billing", label: "Billing", icon: Receipt, shortcut: "alt+b" },
+  { path: "/billing", label: "Billing", icon: Receipt, shortcut: "alt+b", module: "billing" },
   {
     path: "/suppliers",
+    module: "suppliers",
     label: "Suppliers",
     icon: Truck,
     shortcut: "alt+s",
   },
   {
     path: "/customers",
+    module: "customers",
     label: "Customers",
     icon: Users,
     shortcut: "alt+c",
   },
   {
     path: "/expiry",
+    module: "expiry",
     label: "Expiry",
     icon: CalendarX,
     shortcut: "alt+e",
   },
   {
     path: "/returns",
+    module: "returns",
     label: "Returns",
     icon: RotateCcw,
     shortcut: "alt+r",
   },
-  { path: "/short-book", label: "Short Book", icon: ClipboardList, shortcut: "alt+o" },
-  { path: "/restock", label: "Restock", icon: PackageCheck, shortcut: "alt+t" },
+  { path: "/short-book", label: "Short Book", icon: ClipboardList, shortcut: "alt+o", module: "short_book" },
+  { path: "/restock", label: "Restock", icon: PackageCheck, shortcut: "alt+t", module: "restock" },
   { path: "/users", label: "Users", icon: UserCog, adminOnly: true },
-  { path: "/reports", label: "Reports", icon: BarChart3, shortcut: "alt+y" },
+  { path: "/reports", label: "Reports", icon: BarChart3, shortcut: "alt+y", module: "dashboard" },
   { path: "/settings", label: "Settings", icon: Settings, shortcut: "alt+," },
   // In the user menu and the phone's More sheet, not the top bar
   { path: "/support", label: "Help & Support", icon: LifeBuoy, menuOnly: true },
@@ -183,18 +191,20 @@ function GuidedToursItem() {
   );
 }
 
-// "AGENTIC Plan", or "AGENTIC Trial · 3d left" while on the free trial
+// "DavaDesk Complete", or "… Trial · 3d left" while on the free trial
+const code_plan = (n) => (/^DavaDesk/.test(n) ? n : `${n} Plan`);
 const planLabel = (user) => {
   if (IS_DESKTOP) return "Desktop";
   const sub = user?.subscription;
-  if (sub?.status === "TRIAL") return `${sub.plan} Trial · ${sub.days_left}d left`;
-  if (user?.subscription_plan) return `${user.subscription_plan} Plan`;
+  const name = (code) => PLAN_NAMES[code] || code;
+  if (sub?.status === "TRIAL") return `${name(sub.plan)} Trial · ${sub.days_left}d left`;
+  if (user?.subscription_plan) return code_plan(name(user.subscription_plan));
   return "No active plan";
 };
 
 export default function DashboardLayout() {
   const onlineFeatures = useOnlineFeatures();
-  const { user, pharmacy, logout, updateSetting, isAdmin } = useAuth();
+  const { user, pharmacy, logout, updateSetting, isAdmin, can } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -207,8 +217,9 @@ export default function DashboardLayout() {
     return !document.documentElement.classList.contains("light");
   });
 
-  const filteredItems = navItems.filter((item) => (!item.adminOnly || isAdmin) && (onlineFeatures || item.path !== "/support"));
-  const topNavItems = useMemo(() => filteredItems.filter((item) => !item.menuOnly), [isAdmin, onlineFeatures]); // eslint-disable-line
+  const filteredItems = navItems.filter((item) => (!item.adminOnly || isAdmin) && (!item.module || can(item.module, "read")) && (onlineFeatures || item.path !== "/support"));
+  const accessKey = JSON.stringify(user?.access?.modules || null);
+  const topNavItems = useMemo(() => filteredItems.filter((item) => !item.menuOnly), [isAdmin, onlineFeatures, accessKey]); // eslint-disable-line
 
   // Support replies not seen yet (badge in the user menu)
   const [supportUnread, setSupportUnread] = useState(0);
@@ -480,6 +491,8 @@ export default function DashboardLayout() {
                     className="w-9 h-9 object-contain group-hover:scale-105 transition-transform"
                   />
                 )}
+                <div onClick={(e) => e.stopPropagation()} className="min-w-0">
+                <PharmacySwitcher>
                 <div className="flex flex-col min-w-0 max-w-[160px] max-md:max-w-[140px] 2xl:max-w-[220px]">
                   <span className="font-black text-sm tracking-tight text-foreground group-hover:text-orange-500 transition-colors leading-tight truncate">
                     {pharmacy?.name || "DavaDesk"}
@@ -488,6 +501,8 @@ export default function DashboardLayout() {
                     <Sparkles className="w-2.5 h-2.5 text-orange-500" />
                     {planLabel(user)}
                   </span>
+                </div>
+                </PharmacySwitcher>
                 </div>
               </div>
             </div>

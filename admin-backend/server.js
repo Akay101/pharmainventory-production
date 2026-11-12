@@ -78,6 +78,7 @@ app.use("/api/leads", requireAdminAuth, leadsRoutes);
 app.use("/api/promos", requireAdminAuth, promosRoutes);
 app.use("/api/pricing", requireAdminAuth, require("./routes/pricing"));
 app.use("/api/subscriptions", requireAdminAuth, require("./routes/subscriptions"));
+app.use("/api/invoices", requireAdminAuth, require("./routes/invoices"));
 app.use("/api/credits", requireAdminAuth, require("./routes/credits"));
 app.use("/api/support", requireAdminAuth, require("./routes/support"));
 app.use("/api/offer-leads", requireAdminAuth, require("./routes/offerLeads"));

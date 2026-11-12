@@ -11,6 +11,9 @@ const attempts = require("../services/auth/attempts");
 const schemas = require("../services/auth/schemas");
 const resetLinks = require("../services/auth/resetLinks");
 const subscriptions = require("../services/billing/subscriptions");
+const sessions = require("../services/auth/sessions");
+const account = require("../services/account");
+const permissions = require("../services/access/permissions");
 
 const BCRYPT_ROUNDS = 12;
 // Unverified signups are kept for 14 days: admin's lead CRM follows up on them
@@ -65,20 +68,64 @@ const publicUser = (user, pharmacy) => {
     tour: user.onboarding_tour
       ? { status: user.onboarding_tour.status, version: user.onboarding_tour.version || 1, at: user.onboarding_tour.at }
       : null,
+    // What this user may do (the server enforces the same rules)
+    access: accessView(user),
   };
 };
 
+function accessView(user) {
+  const eff = permissions.effective(user);
+  return {
+    full: eff.full,
+    is_owner: !!user.is_primary_admin,
+    modules: eff.modules,
+    restrictions: eff.full ? {} : eff.restrictions,
+    pharmacies: eff.pharmacies,
+  };
+}
+
+// The pharmacies a user can switch between, and which one is open
+async function pharmaciesView(user, activeId) {
+  const list = await account.accountPharmacies(db(), user.home_pharmacy_id || user.pharmacy_id);
+  const allowed = account.allowedPharmacyIds(user, list);
+  return {
+    active_pharmacy_id: activeId,
+    account_id: user.home_pharmacy_id || user.pharmacy_id,
+    pharmacies: list
+      .filter((p) => allowed.includes(p.id))
+      .map((p) => ({
+        id: p.id,
+        name: p.name || "Pharmacy",
+        location: p.location || "",
+        logo_url: p.logo_url || null,
+        primary: p.id === (user.home_pharmacy_id || user.pharmacy_id),
+        active: subscriptions.isActive(p.subscription),
+        ends_at: p.subscription?.ends_at || null,
+      })),
+  };
+}
+
 async function sessionResponse(req, res, user, extra = {}) {
-  const pharmacy = await db().collection("pharmacies").findOne({ id: user.pharmacy_id }, { projection: { _id: 0 } });
-  const { accessToken, refreshToken } = await tokens.startSession(db(), user, req);
+  const active = await account.resolveActivePharmacy(db(), user, user.last_pharmacy_id);
+  if (!active.pharmacyId) {
+    return res.status(403).json({ code: "NO_PHARMACY_ACCESS", detail: "You don't have access to any pharmacy on this account. Ask the owner." });
+  }
+  const pharmacy = await db().collection("pharmacies").findOne({ id: active.pharmacyId }, { projection: { _id: 0 } });
+  const { accessToken, refreshToken } = await tokens.startSession(db(), user, req, { pharmacyId: active.pharmacyId });
   tokens.setRefreshCookie(req, res, refreshToken);
   return res.json({
     ...extra,
     token: accessToken,
     user: publicUser(user, pharmacy),
     pharmacy: normalizePharmacy(pharmacy),
+    ...(await pharmaciesView(user, active.pharmacyId)),
   });
 }
+
+const SEAT_TEXT = {
+  SEAT_EXPIRED: "Your user licence has expired. Ask the pharmacy owner to renew it from Users.",
+  SEAT_REQUIRED: "Your user account doesn't have a licence yet. Ask the pharmacy owner to add one from Users.",
+};
 
 const sendCode = async (email, name, purpose, scenario, data = null) => {
   const otp = await issueOtp(db(), { purpose, subject: email, data });
@@ -275,9 +322,43 @@ router.post("/login", async (req, res, next) => {
         .then((h) => db().collection("users").updateOne({ id: user.id }, { $set: { password_hash: h }, $unset: { password: "" } }))
         .catch(() => {});
     }
-    await db().collection("users").updateOne({ id: user.id }, { $set: { last_login_at: new Date().toISOString() } });
+    if (user.disabled_at) {
+      return res.status(403).json({ code: "USER_DISABLED", detail: "This user has been switched off by the pharmacy owner." });
+    }
+    const seat = await account.seatProblem(db(), user);
+    if (seat) return res.status(403).json({ code: seat, detail: SEAT_TEXT[seat] });
+
+    // One live session: another device holds it, so ask before taking over
+    const decision = await sessions.loginDecision(db(), user, req);
+    if (decision.conflict) {
+      const ticket = await sessions.issueTicket(db(), user, req);
+      return res.status(409).json({
+        code: "SESSION_ACTIVE_ELSEWHERE",
+        detail: "Your account is signed in on another device.",
+        session: sessions.publicSession(decision.session),
+        ticket,
+      });
+    }
 
     return sessionResponse(req, res, user);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// POST /api/auth/login/continue { ticket } — sign the other device out and
+// this one in. The ticket is single use, five minutes, this browser only.
+router.post("/login/continue", async (req, res, next) => {
+  try {
+    const t = await sessions.consumeTicket(db(), req.body?.ticket, req);
+    if (!t) return res.status(401).json({ code: "TICKET_INVALID", detail: "That sign-in has expired. Please sign in again." });
+    const user = await db().collection("users").findOne({ id: t.user_id });
+    if (!user || user.verified === false || user.disabled_at || (user.token_version || 0) !== (t.token_version || 0)) {
+      return res.status(401).json({ code: "TICKET_INVALID", detail: "That sign-in has expired. Please sign in again." });
+    }
+    const seat = await account.seatProblem(db(), user);
+    if (seat) return res.status(403).json({ code: seat, detail: SEAT_TEXT[seat] });
+    return sessionResponse(req, res, user, { signed_out_other: true });
   } catch (error) {
     next(error);
   }
@@ -287,7 +368,31 @@ router.post("/login", async (req, res, next) => {
 router.get("/me", auth, async (req, res, next) => {
   try {
     const pharmacy = await db().collection("pharmacies").findOne({ id: req.user.pharmacy_id }, { projection: { _id: 0 } });
-    res.json({ user: publicUser(req.user, pharmacy), pharmacy: normalizePharmacy(pharmacy) });
+    res.json({ user: publicUser(req.user, pharmacy), pharmacy: normalizePharmacy(pharmacy), ...(await pharmaciesView(req.user, req.user.pharmacy_id)) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// POST /api/auth/switch-pharmacy { pharmacy_id } — work in another pharmacy
+// of the account. Returns a new access token for it.
+router.post("/switch-pharmacy", auth, async (req, res, next) => {
+  try {
+    const target = typeof req.body?.pharmacy_id === "string" ? req.body.pharmacy_id : "";
+    if (!req.sessionId) return res.status(400).json({ detail: "Switch pharmacies from the web app" });
+    const list = await account.accountPharmacies(db(), req.account_id);
+    if (!account.allowedPharmacyIds(req.user, list).includes(target)) {
+      return res.status(403).json({ code: "PHARMACY_ACCESS_DENIED", detail: "You don't have access to that pharmacy" });
+    }
+    await sessions.setActivePharmacy(db(), req.sessionId, target, req.user.id);
+    const user = { ...req.user, pharmacy_id: target };
+    const pharmacy = await db().collection("pharmacies").findOne({ id: target }, { projection: { _id: 0 } });
+    res.json({
+      token: tokens.signAccess(user, { sid: req.sessionId, pid: target }),
+      user: publicUser(user, pharmacy),
+      pharmacy: normalizePharmacy(pharmacy),
+      ...(await pharmaciesView(user, target)),
+    });
   } catch (error) {
     next(error);
   }
@@ -439,3 +544,5 @@ router.post("/reset-link/complete", async (req, res, next) => {
 
 module.exports = router;
 module.exports.publicUser = publicUser;
+module.exports.normalizePharmacy = normalizePharmacy;
+module.exports.pharmaciesView = pharmaciesView;

@@ -102,7 +102,7 @@ export function MobileBottomNav({ items, isActive, onLogout, onOpenActivity, pha
       >
         <MotionConfig reducedMotion="user">
           <div className="grid grid-cols-5 h-[3.75rem]">
-            {TABS.map((tab) => {
+            {TABS.filter((t) => !t.path || t.path === "/dashboard" || items.some((i) => i.path === t.path)).map((tab) => {
               const cls = "relative flex flex-col items-center justify-center gap-1 touch-manipulation";
               if (tab.scan) {
                 // Sits inside the bar like the other tabs, so it never covers the page

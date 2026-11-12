@@ -4,7 +4,10 @@
 // paise. The client never sends an amount: every checkout is re-quoted here.
 const { BillingError } = require("./errors");
 
-const PLAN_CODES = ["BASIC", "ADVANCED", "AGENTIC"];
+// COMPLETE is the single launch plan; the older three stay for existing
+// subscribers and are switched off for new purchases (see ensureLaunchCatalogue).
+const PLAN_CODES = ["COMPLETE", "BASIC", "ADVANCED", "AGENTIC"];
+const LAUNCH_PLAN = "COMPLETE";
 const CONFIG_ID = "global";
 const PLANS_CACHE_MS = 30 * 1000;
 
@@ -14,7 +17,29 @@ const rupeesFromEnv = (key, fallback) => {
 };
 
 // Seed values, used only when the collection is empty (see migration script).
+const launchPlan = () => ({
+  code: LAUNCH_PLAN,
+  name: "DavaDesk Complete",
+  rank: 10,
+  price_paise: rupeesFromEnv("PLAN_COMPLETE_PRICE", 3999) * 100,
+  duration_days: 365,
+  description: "Everything DavaDesk does, for one pharmacy, for a year.",
+  features: [
+    "One login session across the platform",
+    "Desktop app for offline billing, with free automatic cloud sync",
+    "1 pharmacist user login with access management",
+    "20 complimentary AI credits every day",
+    "Billing, purchases, inventory, expiry and returns",
+    "Customers, suppliers, credit ledgers and reports",
+    "AI bill scanning, assistant and WhatsApp sharing",
+    "Every other feature, with free updates",
+  ],
+  highlight: true,
+  is_active: true,
+});
+
 const defaultPlans = () => [
+  launchPlan(),
   {
     code: "BASIC",
     name: "Basic",
@@ -29,7 +54,7 @@ const defaultPlans = () => [
       "Email Support",
     ],
     highlight: false,
-    is_active: true,
+    is_active: false,
   },
   {
     code: "ADVANCED",
@@ -45,8 +70,8 @@ const defaultPlans = () => [
       "Priority 24/7 Support",
       "Multi-user Access",
     ],
-    highlight: true,
-    is_active: true,
+    highlight: false,
+    is_active: false,
   },
   {
     code: "AGENTIC",
@@ -63,9 +88,30 @@ const defaultPlans = () => [
       "Dedicated Account Manager",
     ],
     highlight: false,
-    is_active: true,
+    is_active: false,
   },
 ];
+
+// Add-ons, priced before GST. A seat lets one more pharmacist user sign in; a
+// pharmacy add-on links one more pharmacy to the account.
+const defaultAddons = () => ({
+  included_users: 1,
+  user_seat: { enabled: true, monthly_paise: 7900, yearly_paise: 79000, max_per_order: 20 },
+  pharmacy: { enabled: true, yearly_paise: 200000, max_linked: 20 },
+});
+
+// Seller details printed on GST invoices (editable from the admin panel)
+const defaultInvoiceConfig = () => ({
+  prefix: "DD",
+  seller_name: process.env.INVOICE_SELLER_NAME || "DavaDesk",
+  seller_address: process.env.INVOICE_SELLER_ADDRESS || "Uttar Pradesh, India",
+  seller_gstin: process.env.INVOICE_SELLER_GSTIN || "09AAMCD7026N1Z2",
+  seller_email: process.env.INVOICE_SELLER_EMAIL || "support@davadesk.in",
+  seller_phone: process.env.INVOICE_SELLER_PHONE || "",
+  // SAC 998314: IT design and development services (software as a service)
+  sac: "998314",
+  sac_description: "Software as a service (SaaS) subscription",
+});
 
 const defaultPricingConfig = () => ({
   _id: CONFIG_ID,
@@ -82,6 +128,10 @@ const defaultPricingConfig = () => ({
   // Before prices are announced (early access): plans show without prices and
   // can't be bought; access codes still work. Toggled from the admin panel.
   display: { hide_prices: true, label: "Launching soon" },
+  // Prices above are before GST; GST is added on the amount after discounts
+  gst_percent: 18,
+  addons: defaultAddons(),
+  invoice: defaultInvoiceConfig(),
   updated_at: new Date(),
 });
 
@@ -140,7 +190,13 @@ async function getTrialConfig(db) {
  * Price breakdown for one plan with the live global offer and an optional
  * discount promo applied (promo validation happens in promos.js).
  */
-function priceBreakdown(plan, offer, promo, now = new Date()) {
+const clampGst = (v) => {
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 0 && n <= 28 ? n : 18;
+};
+const gstOn = (taxablePaise, gstPercent) => Math.round((taxablePaise * clampGst(gstPercent)) / 100);
+
+function priceBreakdown(plan, offer, promo, now = new Date(), gstPercent = 18) {
   const base = plan.price_paise;
   let offerDiscount = 0;
   let appliedOffer = null;
@@ -157,11 +213,17 @@ function priceBreakdown(plan, offer, promo, now = new Date()) {
     appliedPromo = { code: promo.code, type: promo.discount.type, value: promo.discount.value, discount_paise: promoDiscount };
   }
 
+  const taxable = afterOffer - promoDiscount;
+  const gst = gstOn(taxable, gstPercent);
   return {
     base_paise: base,
     offer: appliedOffer,
     promo: appliedPromo,
-    amount_paise: afterOffer - promoDiscount,
+    taxable_paise: taxable,
+    gst_percent: clampGst(gstPercent),
+    gst_paise: gst,
+    // What is charged: the taxable value plus GST
+    amount_paise: taxable + gst,
   };
 }
 
@@ -202,8 +264,10 @@ async function getPublicPlans(db) {
         features: p.features || [],
         highlight: !!p.highlight,
         duration_days: p.duration_days,
-        ...priceBreakdown(p, config.offer, null, now),
+        ...priceBreakdown(p, config.offer, null, now, config.gst_percent ?? 18),
       })),
+    gst_percent: clampGst(config.gst_percent ?? 18),
+    addons: publicAddons(config),
     offer: isOfferLive(config.offer, now)
       ? { label: config.offer.label, type: config.offer.type, value: config.offer.value, plans: config.offer.plans || [], ends_at: config.offer.ends_at || null }
       : null,
@@ -221,6 +285,70 @@ async function requireActivePlan(db, code) {
   return plan;
 }
 
+async function getGstPercent(db) {
+  const { config } = await loadCatalogue(db);
+  return clampGst(config.gst_percent ?? 18);
+}
+
+const mergeAddons = (config) => {
+  const d = defaultAddons();
+  const a = config?.addons || {};
+  return {
+    included_users: Number.isInteger(a.included_users) ? a.included_users : d.included_users,
+    user_seat: { ...d.user_seat, ...(a.user_seat || {}) },
+    pharmacy: { ...d.pharmacy, ...(a.pharmacy || {}) },
+  };
+};
+
+function publicAddons(config) {
+  const a = mergeAddons(config);
+  return {
+    included_users: a.included_users,
+    user_seat: a.user_seat.enabled ? { monthly_paise: a.user_seat.monthly_paise, yearly_paise: a.user_seat.yearly_paise } : null,
+    pharmacy: a.pharmacy.enabled ? { yearly_paise: a.pharmacy.yearly_paise } : null,
+  };
+}
+
+async function getAddonConfig(db) {
+  const { config } = await loadCatalogue(db);
+  return mergeAddons(config);
+}
+
+async function getInvoiceConfig(db) {
+  const { config } = await loadCatalogue(db);
+  return { ...defaultInvoiceConfig(), ...(config.invoice || {}) };
+}
+
+// One-time switch to the launch catalogue: adds the COMPLETE plan and, the
+// first time it is added, stops new purchases of the older plans. Existing
+// subscriptions on those plans run on unchanged. Safe to call on every start.
+async function ensureLaunchCatalogue(db) {
+  const count = await db.collection("plans").countDocuments({});
+  if (!count) {
+    await db.collection("plans").insertMany(defaultPlans().map((p) => ({ ...p, created_at: new Date(), updated_at: new Date() }))).catch((err) => {
+      if (err.code !== 11000) throw err;
+    });
+    invalidatePricingCache();
+    return { created: true };
+  }
+  const res = await db.collection("plans").updateOne(
+    { code: LAUNCH_PLAN },
+    { $setOnInsert: { ...launchPlan(), created_at: new Date(), updated_at: new Date() } },
+    { upsert: true }
+  );
+  if (res.upsertedCount) {
+    await db.collection("plans").updateMany({ code: { $ne: LAUNCH_PLAN } }, { $set: { is_active: false, highlight: false, updated_at: new Date() } });
+    await db.collection("pricing_config").updateOne(
+      { _id: CONFIG_ID },
+      { $set: { "trial.plan": "BEST" }, $setOnInsert: { display: defaultPricingConfig().display } },
+      { upsert: true }
+    );
+    console.log("[Billing] Launch plan added; older plans closed to new purchases");
+  }
+  invalidatePricingCache();
+  return { created: !!res.upsertedCount };
+}
+
 async function getOffer(db) {
   const { config } = await loadCatalogue(db);
   return config.offer;
@@ -228,6 +356,16 @@ async function getOffer(db) {
 
 module.exports = {
   PLAN_CODES,
+  LAUNCH_PLAN,
+  defaultAddons,
+  defaultInvoiceConfig,
+  getGstPercent,
+  getAddonConfig,
+  getInvoiceConfig,
+  mergeAddons,
+  gstOn,
+  clampGst,
+  ensureLaunchCatalogue,
   CONFIG_ID,
   defaultPlans,
   defaultPricingConfig,

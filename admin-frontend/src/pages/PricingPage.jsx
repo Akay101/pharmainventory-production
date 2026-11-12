@@ -3,8 +3,9 @@ import { BadgePercent, Gift, IndianRupee, Loader2, Plus, Save, Star, Tag, Trash2
 import { toast } from "sonner";
 import { AdminAPI, apiError } from "../api";
 import { useAuth } from "../context/AuthContext";
+import BillingConfigCards from "../components/BillingConfigCards";
 
-const PLAN_CODES = ["BASIC", "ADVANCED", "AGENTIC"];
+const PLAN_CODES = ["COMPLETE", "BASIC", "ADVANCED", "AGENTIC"];
 
 // <input type="datetime-local"> works in local time; the API wants ISO/UTC
 const toLocalInput = (iso) => {
@@ -337,7 +338,7 @@ export default function PricingPage({ activeEnv }) {
       )}
 
       {data.initialized && (
-        <Card title="Plans" icon={Tag} subtitle="Yearly prices, in rupees. Offers and promo codes are applied on top.">
+        <Card title="Plans" icon={Tag} subtitle="Yearly prices in rupees, before GST. Offers and promo codes are applied on top. Only COMPLETE is on sale at launch; older plans stay for existing subscribers.">
           <div className="grid gap-4 md:grid-cols-2 2xl:grid-cols-3">
             {data.plans.map((p) => (
               <PlanEditor key={p.code} plan={p} offer={data.offer} canEdit={canEdit} onSaved={load} />
@@ -345,6 +346,8 @@ export default function PricingPage({ activeEnv }) {
           </div>
         </Card>
       )}
+
+      {data.initialized && <BillingConfigCards data={data} canEdit={canEdit} onSaved={load} />}
 
       <div className="grid gap-5 lg:grid-cols-2">
         <Card

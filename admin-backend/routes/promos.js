@@ -9,7 +9,7 @@ const { audit, parseBody } = require("../services/audit");
 
 router.use(resolveDbEnv);
 
-const PLAN_CODES = ["BASIC", "ADVANCED", "AGENTIC"];
+const PLAN_CODES = ["COMPLETE", "BASIC", "ADVANCED", "AGENTIC"];
 const CODE_RE = /^[A-Z0-9][A-Z0-9_-]{3,31}$/;
 
 function generateRandomCode(length = 8) {

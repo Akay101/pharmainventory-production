@@ -7,6 +7,7 @@ const orders = require("./billing/orders");
 const { sendSubscriptionEmail } = require("./email");
 const { deletePrefixFromR2 } = require("./r2");
 const prescriptions = require("./prescriptions");
+const billingExpiry = require("./billing/expiry");
 
 // Every job takes a Mongo lease so it runs on one container only, including
 // while old and new containers overlap during a deploy.
@@ -91,6 +92,7 @@ const startCronJobs = () => {
   cron.schedule(
     "*/15 * * * *",
     job("expire-subscriptions", 10 * 60 * 1000, async (db) => {
+      await billingExpiry.expireAddons(db);
       const n = await subscriptions.expireDue(db);
       if (n) console.log(`[Cron] Expired ${n} subscription(s)`);
     })
@@ -102,6 +104,25 @@ const startCronJobs = () => {
     job("reconcile-payments", 9 * 60 * 1000, async (db) => {
       const r = await orders.reconcile(db);
       if (r.checked) console.log(`[Cron] Reconciled ${r.checked} order(s), activated ${r.activated}`);
+    })
+  );
+
+  // Add-ons past their end date, and reminders / expiry notices for the plan
+  // and add-ons (hourly, so each stage goes out on its day)
+  cron.schedule(
+    "20 * * * *",
+    job("billing-expiry", 30 * 60 * 1000, async (db) => {
+      const expired = await billingExpiry.expireAddons(db);
+      const sent = await billingExpiry.sendNotices(db);
+      if (expired || sent) console.log(`[Cron] Add-ons expired: ${expired}, billing notices sent: ${sent}`);
+    })
+  );
+  // Invoices or receipt emails that didn't go out
+  cron.schedule(
+    "*/15 * * * *",
+    job("billing-invoice-retry", 10 * 60 * 1000, async (db) => {
+      const n = await billingExpiry.retryInvoices(db);
+      if (n) console.log(`[Cron] Retried ${n} invoice(s)`);
     })
   );
 

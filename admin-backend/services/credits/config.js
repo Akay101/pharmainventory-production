@@ -57,10 +57,11 @@ const DEFAULTS = {
   // includes (daily credits + light mode). Daily credits are worked out from it:
   // what's left / days left, at our cost per credit, at most cap_factor × the
   // even share, so a pharmacy can't spend the year in a few chats
-  plan_budget_inr: { BASIC: 200, ADVANCED: 350, AGENTIC: 500 },
+  // COMPLETE (the launch plan) has no budget: it gets fixed daily credits below
+  plan_budget_inr: { COMPLETE: 0, BASIC: 200, ADVANCED: 350, AGENTIC: 500 },
   budget_daily_cap_factor: 2,
   // Plans without a budget fall back to these fixed daily credits
-  daily_credits: { BASIC: 0, ADVANCED: 0, AGENTIC: 0 },
+  daily_credits: { COMPLETE: 20, BASIC: 0, ADVANCED: 0, AGENTIC: 0 },
   trial_daily_credits: 10,
   // With no daily credits left: light questions/lookups/reports still work, on
   // the economy engine, up to a daily count (its cost comes out of the budget)

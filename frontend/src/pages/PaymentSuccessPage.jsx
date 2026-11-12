@@ -39,9 +39,10 @@ export default function PaymentSuccessPage() {
           const res = await axios.post(`${API}/billing/orders/${orderId}/confirm`);
           const { status, reason } = res.data;
           const isCredits = res.data.purpose === "CREDITS";
+          const isAddon = res.data.purpose === "ADDON";
           if (status === "PAID") {
             if (!isCredits) await fetchUser().catch(() => {});
-            setState({ status: "success", subscription: res.data.subscription, credits: isCredits ? res.data.credits : null, wallet: res.data.credit_wallet, isCredits });
+            setState({ status: "success", subscription: res.data.subscription, credits: isCredits ? res.data.credits : null, wallet: res.data.credit_wallet, isCredits, isAddon });
             return;
           }
           if (status === "FAILED") {
@@ -78,12 +79,12 @@ export default function PaymentSuccessPage() {
   useEffect(() => {
     if (state.status !== "success") return undefined;
     const timer = setInterval(() => setCountdown((c) => (c > 0 ? c - 1 : 0)), 1000);
-    const redirect = setTimeout(() => navigate(state.isCredits ? "/assistant" : "/dashboard", { replace: true }), 5000);
+    const redirect = setTimeout(() => navigate(state.isCredits ? "/assistant" : state.isAddon ? "/settings?tab=billing" : "/dashboard", { replace: true }), 5000);
     return () => {
       clearInterval(timer);
       clearTimeout(redirect);
     };
-  }, [state.status, state.isCredits, navigate]);
+  }, [state.status, state.isCredits, state.isAddon, navigate]);
 
   if (authLoading) return <Loader fullScreen text="Confirming your payment..." />;
   if (!user) return <Navigate to="/login" state={{ from: location }} replace />;
@@ -99,8 +100,10 @@ export default function PaymentSuccessPage() {
       title: "Payment successful",
       body: state.isCredits
         ? `${Number(state.credits || 0).toLocaleString("en-IN")} AI credits were added${state.wallet ? `; you now have ${Number(state.wallet.available).toLocaleString("en-IN", { maximumFractionDigits: 1 })}` : ""}. Taking you back to DavaDesk AI in ${countdown}s.`
+        : state.isAddon
+        ? `Your add-on is active, and the GST invoice is on its way to your email. Taking you to Billing & plan in ${countdown}s.`
         : state.subscription?.plan
-        ? `Your ${state.subscription.plan} plan is active until ${new Date(state.subscription.ends_at).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}. Taking you to your dashboard in ${countdown}s.`
+        ? `Your ${state.subscription.plan === "COMPLETE" ? "DavaDesk Complete" : state.subscription.plan} plan is active until ${new Date(state.subscription.ends_at).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}. Taking you to your dashboard in ${countdown}s.`
         : `Your plan is active. Taking you to your dashboard in ${countdown}s.`,
     },
     pending: {
@@ -132,7 +135,7 @@ export default function PaymentSuccessPage() {
           {(state.status === "success" || state.status === "pending") && (
             <Button
               className="h-11 rounded-xl font-bold text-white bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600"
-              onClick={() => navigate(state.isCredits ? "/assistant" : "/dashboard", { replace: true })}
+              onClick={() => navigate(state.isCredits ? "/assistant" : state.isAddon ? "/settings?tab=billing" : "/dashboard", { replace: true })}
             >
               {state.isCredits ? "Back to DavaDesk AI" : "Go to dashboard"} <ArrowRight className="w-4 h-4 ml-2" />
             </Button>

@@ -15,6 +15,7 @@ import { Skeleton } from "../components/ui/skeleton";
 import Loader from "../components/Loader";
 import ThemeToggle from "../components/ui/ThemeToggle";
 import { toast } from "sonner";
+import BillingDetailsFields, { billingError, initialBilling } from "../components/billing/BillingDetailsFields";
 import {
   ArrowLeft,
   BadgePercent,
@@ -33,7 +34,7 @@ import {
   Shield,
 } from "lucide-react";
 
-const PLAN_ICONS = { BASIC: Shield, ADVANCED: Zap, AGENTIC: Sparkles };
+const PLAN_ICONS = { BASIC: Shield, ADVANCED: Zap, AGENTIC: Sparkles, COMPLETE: Sparkles };
 
 const formatINR = (paise) => {
   const rupees = (paise || 0) / 100;
@@ -98,7 +99,8 @@ function StatusCard({ subscription, plansByCode }) {
 }
 
 export default function UpgradePage() {
-  const { user, loading: authLoading, logout, fetchUser } = useAuth();
+  const { user, pharmacy, loading: authLoading, logout, fetchUser } = useAuth();
+  const [billing, setBilling] = useState(null);
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -125,6 +127,7 @@ export default function UpgradePage() {
       ]);
       setCatalogue(plansRes.data);
       setStatus(statusRes.data);
+      setBilling((b) => b || initialBilling(statusRes.data.billing_profile, { ...pharmacy, gst_no: statusRes.data.pharmacy_gstin || pharmacy?.gst_no }));
     } catch (err) {
       setLoadError(true);
     }
@@ -245,11 +248,17 @@ export default function UpgradePage() {
   };
 
   const pay = async () => {
+    const problem = summary.amount_paise > 0 && billing ? billingError(billing) : null;
+    if (problem) {
+      toast.error(problem);
+      return;
+    }
     setPaying(true);
     try {
       const res = await axios.post(`${API}/billing/checkout`, {
         plan: summary.plan.code,
         code: summary.code || undefined,
+        ...(summary.amount_paise > 0 && billing ? { billing: { ...billing, gstin: billing.gstin || null } } : {}),
       });
       if (res.data.free) {
         await fetchUser();
@@ -269,8 +278,9 @@ export default function UpgradePage() {
 
   const displayPrice = (plan) => {
     const q = appliedCode ? codeQuotes[plan.code] : null;
-    if (q && !q.error) return { amount: q.amount_paise, base: q.base_paise, promo: q.promo, offer: q.offer };
-    return { amount: plan.amount_paise, base: plan.base_paise, offer: plan.offer, promo: null };
+    // The headline is the price before GST; the total with GST shows below it
+    if (q && !q.error) return { amount: q.taxable_paise ?? q.amount_paise, total: q.amount_paise, gst: q.gst_paise, base: q.base_paise, promo: q.promo, offer: q.offer };
+    return { amount: plan.taxable_paise ?? plan.amount_paise, total: plan.amount_paise, gst: plan.gst_paise, base: plan.base_paise, offer: plan.offer, promo: null };
   };
 
   const codeBox = canManage && catalogue ? (
@@ -435,9 +445,9 @@ export default function UpgradePage() {
         {hidden && codeBox}
 
         {/* Plans */}
-        <div className="grid gap-6 md:grid-cols-3 items-stretch">
+        <div className={`grid gap-6 items-stretch ${catalogue?.plans?.length === 1 ? "max-w-xl mx-auto" : catalogue?.plans?.length === 2 ? "md:grid-cols-2 max-w-4xl mx-auto" : "md:grid-cols-3"}`}>
           {!catalogue && !loadError
-            ? [0, 1, 2].map((i) => <Skeleton key={i} className="h-[520px] rounded-3xl" />)
+            ? [0].map((i) => <Skeleton key={i} className="h-[520px] rounded-3xl max-w-xl mx-auto w-full" />)
             : catalogue?.plans.map((plan) => {
                 const Icon = PLAN_ICONS[plan.code] || Shield;
                 const price = displayPrice(plan);
@@ -480,8 +490,13 @@ export default function UpgradePage() {
                       ) : (
                         <span className="text-4xl font-black tracking-tight">{formatINR(price.amount)}</span>
                       )}
-                      <span className="text-sm font-semibold text-muted-foreground mb-1">/year</span>
+                      <span className="text-sm font-semibold text-muted-foreground mb-1">/year{!hidden && price.gst ? " + GST" : ""}</span>
                     </div>
+                    {!hidden && price.gst > 0 && (
+                      <p className="-mt-0.5 mb-1 text-xs font-semibold text-muted-foreground" data-testid="price-incl-gst">
+                        {formatINR(price.total)} including {catalogue.gst_percent ?? 18}% GST
+                      </p>
+                    )}
                     <div className="min-h-[22px] mb-4 text-sm font-semibold">
                       {hidden ? (
                         <span className="inline-flex items-center gap-1.5 rounded-full border border-orange-500/30 bg-orange-500/10 px-2.5 py-0.5 text-xs font-extrabold text-orange-600 dark:text-orange-400" data-testid="launch-badge">
@@ -531,6 +546,30 @@ export default function UpgradePage() {
               })}
         </div>
 
+        {!hidden && catalogue?.addons && (catalogue.addons.user_seat || catalogue.addons.pharmacy) && (
+          <div className="mx-auto mt-8 max-w-xl rounded-3xl border border-border bg-card/70 p-5 text-sm" data-testid="addon-prices">
+            <p className="mb-3 font-extrabold">Grow when you need to</p>
+            <ul className="space-y-2.5 font-medium">
+              {catalogue.addons.user_seat && (
+                <li className="flex items-start gap-2.5">
+                  <Check className="w-4 h-4 mt-0.5 text-emerald-500 shrink-0" strokeWidth={3} />
+                  <span>
+                    Extra pharmacist user: {formatINR(catalogue.addons.user_seat.monthly_paise)}/month, or {formatINR(catalogue.addons.user_seat.yearly_paise)}/year
+                    {catalogue.addons.user_seat.monthly_paise * 12 > catalogue.addons.user_seat.yearly_paise ? ` (save ${formatINR(catalogue.addons.user_seat.monthly_paise * 12 - catalogue.addons.user_seat.yearly_paise)})` : ""} + GST
+                  </span>
+                </li>
+              )}
+              {catalogue.addons.pharmacy && (
+                <li className="flex items-start gap-2.5">
+                  <Check className="w-4 h-4 mt-0.5 text-emerald-500 shrink-0" strokeWidth={3} />
+                  <span>Link another pharmacy, with separate records: {formatINR(catalogue.addons.pharmacy.yearly_paise)}/year + GST</span>
+                </li>
+              )}
+            </ul>
+            <p className="mt-3 text-xs font-semibold text-muted-foreground">Add these any time after your plan is active, from Settings, Billing &amp; plan.</p>
+          </div>
+        )}
+
         {/* Codes (below the plans; above them during early access) */}
         {!hidden && codeBox}
 
@@ -549,11 +588,11 @@ export default function UpgradePage() {
 
       {/* Order summary */}
       <Dialog open={!!summary} onOpenChange={(open) => !open && !paying && setSummary(null)}>
-        <DialogContent className="sm:max-w-md rounded-3xl" data-testid="order-summary">
+        <DialogContent className="sm:max-w-md rounded-3xl max-h-[92dvh] overflow-y-auto" data-testid="order-summary">
           {summary && (
             <>
               <DialogHeader>
-                <DialogTitle className="text-xl font-extrabold">{summary.plan.name} plan · 1 year</DialogTitle>
+                <DialogTitle className="text-xl font-extrabold">{summary.plan.name}{/plan/i.test(summary.plan.name) || /^DavaDesk/.test(summary.plan.name) ? "" : " plan"} · 1 year</DialogTitle>
                 <DialogDescription>Review your order before paying.</DialogDescription>
               </DialogHeader>
               <div className="space-y-2.5 text-sm font-semibold">
@@ -573,10 +612,23 @@ export default function UpgradePage() {
                     <span>− {formatINR(summary.promo.discount_paise)}</span>
                   </div>
                 )}
+                {summary.gst_paise > 0 && (
+                  <>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Taxable value</span>
+                      <span>{formatINR(summary.taxable_paise)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">GST ({summary.gst_percent}%)</span>
+                      <span>{formatINR(summary.gst_paise)}</span>
+                    </div>
+                  </>
+                )}
                 <div className="border-t border-border pt-3 flex justify-between text-base font-extrabold">
                   <span>Total</span>
-                  <span>{formatINR(summary.amount_paise)}</span>
+                  <span data-testid="summary-total">{formatINR(summary.amount_paise)}</span>
                 </div>
+                {summary.amount_paise > 0 && billing && <BillingDetailsFields value={billing} onChange={setBilling} />}
                 <div className="rounded-xl bg-muted/60 px-3 py-2.5 text-xs text-muted-foreground space-y-1">
                   <p>
                     Access for <strong className="text-foreground">{summary.total_days} days</strong>

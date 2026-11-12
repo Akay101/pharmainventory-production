@@ -17,6 +17,8 @@ const licence = require("../services/desktop/licence");
 const { STATE_ID } = require("../services/desktop/changeLog");
 const { toId, fromId, outgoing, incoming } = require("../services/desktop/codec");
 const { TWO_WAY, ALL, OWNER_FIELD, SECRET_FIELDS, COUNTERS, QUIET, NOT_COMPARED } = require("../services/desktop/collections");
+const account = require("../services/account");
+const permissions = require("../services/access/permissions");
 
 const router = express.Router();
 const db = () => mongoose.connection.db;
@@ -69,11 +71,20 @@ const deviceAuth = async (req, res, next) => {
     if (!presented) return res.status(401).json({ code: "DEVICE_REVOKED", detail: "This computer isn't signed in." });
     const device = await db().collection("desktop_devices").findOne({ token_hash: sha256(presented) });
     if (!device || device.revoked_at) return res.status(401).json({ code: "DEVICE_REVOKED", detail: "This computer was removed from the account. Please sign in again." });
-    const user = await db().collection("users").findOne({ id: device.user_id }, { projection: { _id: 0, id: 1, name: 1, email: 1, role: 1, pharmacy_id: 1, verified: 1, token_version: 1 } });
+    const user = await db().collection("users").findOne({ id: device.user_id }, { projection: { _id: 0, id: 1, name: 1, email: 1, role: 1, pharmacy_id: 1, verified: 1, token_version: 1, is_primary_admin: 1, permissions: 1, seat_id: 1, seat_exempt: 1, created_at: 1, disabled_at: 1 } });
     // Same rule as a browser session: a password change or removed user ends it
-    if (!user || user.verified === false || user.pharmacy_id !== device.pharmacy_id || (user.token_version || 0) !== (device.token_version || 0)) {
+    if (!user || user.verified === false || user.disabled_at || (user.token_version || 0) !== (device.token_version || 0)) {
       return res.status(401).json({ code: "DEVICE_REVOKED", detail: "Your sign-in has ended. Please sign in again." });
     }
+    // The device's pharmacy must still be one this user may open
+    const pharmacies = await account.accountPharmacies(db(), user.pharmacy_id);
+    if (!account.allowedPharmacyIds(user, pharmacies).includes(device.pharmacy_id)) {
+      return res.status(401).json({ code: "DEVICE_REVOKED", detail: "You no longer have access to this pharmacy. Please sign in again." });
+    }
+    const seat = await account.seatProblem(db(), user);
+    if (seat) return res.status(403).json({ code: "SUBSCRIPTION_EXPIRED", detail: "Your user licence has expired. Ask the pharmacy owner to renew it." });
+    req.accountId = user.pharmacy_id;
+    req.deviceAccess = permissions.effective(user);
     const pharmacy = await db().collection("pharmacies").findOne({ id: device.pharmacy_id }, { projection: { subscription: 1 } });
     req.device = device;
     req.deviceUser = user;
@@ -172,7 +183,7 @@ router.post("/session", deviceAuth, requireActive, async (req, res, next) => {
     }
     res.json({
       device_no: deviceNo,
-      token: signAccess(req.deviceUser),
+      token: signAccess(req.deviceUser, { kind: "desktop", did: req.device.id, pid: req.device.pharmacy_id }),
       licence: licence.issue({ device: req.device, user: req.deviceUser, subscription: req.subscription }),
       user_id: req.deviceUser.id,
       pharmacy_id: req.device.pharmacy_id,
@@ -214,10 +225,12 @@ router.delete("/devices/:id", auth, async (req, res, next) => {
 
 // ---- Sync: scope ----------------------------------------------------------------------
 async function scopeFilter(req, coll) {
+  // Users live under the account's main pharmacy
   if (coll === "user_settings") {
-    const users = await db().collection("users").find({ pharmacy_id: req.device.pharmacy_id }, { projection: { id: 1 } }).toArray();
+    const users = await db().collection("users").find({ pharmacy_id: req.accountId }, { projection: { id: 1 } }).toArray();
     return { user_id: { $in: users.map((u) => u.id) } };
   }
+  if (coll === "users") return { pharmacy_id: req.accountId };
   return { [OWNER_FIELD[coll] || "pharmacy_id"]: req.device.pharmacy_id };
 }
 
@@ -299,6 +312,31 @@ function changedSince(current, was) {
 // A field is written only if the cloud still holds that value, so nothing someone
 // else changed meanwhile is overwritten. What can't be written goes back to the
 // device as something for the shop to decide; the rest of the change still applies.
+// Pharmacist access applies to what a desktop app sends too, so a changed
+// copy of the app can't do more than the user may on the web.
+const COLL_MODULE = { inventory: "inventory", products: "inventory", suppliers: "suppliers", customers: "customers", bills: "billing", bill_drafts: "billing", bill_prescriptions: "billing", doctors: "billing", purchases: "purchases", purchase_drafts: "purchases", reminders: "restock", short_book: "short_book", return_bundles: "returns", expiry_bundles: "expiry" };
+const MAKERS = {
+  inventory: [["purchases", "create"], ["purchases", "update"], ["billing", "create"], ["billing", "update"], ["returns", "create"], ["expiry", "create"]],
+  products: [["purchases", "create"]],
+  customers: [["billing", "create"], ["billing", "update"]],
+  suppliers: [["purchases", "create"], ["purchases", "update"], ["returns", "create"], ["expiry", "create"]],
+  doctors: [["billing", "create"]],
+  bill_drafts: [["billing", "create"]],
+  purchase_drafts: [["purchases", "create"]],
+  bill_prescriptions: [["billing", "create"]],
+  reminders: [["billing", "create"]],
+};
+function deviceMayChange(eff, coll, op, current, change) {
+  if (!eff || eff.full) return true;
+  const mod = COLL_MODULE[coll];
+  if (!mod) return true; // activities, notifications, own settings
+  const action = op === "delete" ? "delete" : current ? "update" : "create";
+  if (permissions.can(eff, mod, action)) return true;
+  // Stock and dues move as a side effect of bills, purchases and returns
+  if (op !== "delete" && (MAKERS[coll] || []).some(([m, a]) => permissions.can(eff, m, a))) return true;
+  return false;
+}
+
 async function applyChange(req, change, session, ctx) {
   const { coll, key, op } = change;
   if (!TWO_WAY.includes(coll)) throw Object.assign(new Error(`${coll} can't be changed from a device`), { status: 400 });
@@ -309,6 +347,9 @@ async function applyChange(req, change, session, ctx) {
   const quiet = QUIET.includes(coll);
   const was = change.was && typeof change.was === "object" ? change.was : null;
   const current = await col.findOne(filter, { session });
+  if (!deviceMayChange(req.deviceAccess, coll, op, current, change)) {
+    throw Object.assign(new Error(`You don't have permission to change ${coll.replace(/_/g, " ")}`), { status: 403 });
+  }
 
   if (op === "delete") {
     if (!current) return;
@@ -507,7 +548,9 @@ router.get("/sync/pull", deviceAuth, requireActive, syncLimiter, async (req, res
       const oldest = await log.find({}).sort({ seq: 1 }).limit(1).next();
       if (oldest && oldest.seq > cursor + 1) return res.json({ reset: true, changes: [], cursor: 0, more: false });
     }
-    const rows = await log.find({ seq: { $gt: cursor }, $or: [{ pharmacy_id: req.device.pharmacy_id }, { pharmacy_id: null, op: "delete" }] }).sort({ seq: 1 }).limit(MAX_PAGE).toArray();
+    const scopes = [{ pharmacy_id: req.device.pharmacy_id }, { pharmacy_id: null, op: "delete" }];
+    if (req.accountId !== req.device.pharmacy_id) scopes.push({ pharmacy_id: req.accountId, coll: { $in: ["users", "user_settings"] } });
+    const rows = await log.find({ seq: { $gt: cursor }, $or: scopes }).sort({ seq: 1 }).limit(MAX_PAGE).toArray();
     // Only the newest state of each document matters
     const latest = new Map();
     for (const row of rows) latest.set(`${row.coll}:${String(row.key)}`, row);
