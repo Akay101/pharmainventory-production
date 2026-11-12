@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import axios from "axios";
 import { toast } from "sonner";
 import { AlertTriangle, Bell, CheckCircle2, Loader2, MessageCircle, Package, PackageCheck, RefreshCw, RotateCcw, Search, ShoppingCart } from "lucide-react";
-import { API } from "../App";
+import { API, useAuth } from "../App";
 import { Button } from "../components/ui/button";
 import {
   AlertDialog,
@@ -52,6 +52,10 @@ function StatusBadge({ r, today }) {
 }
 
 export default function RestockPage() {
+  // Hide what this user's access doesn't allow (the server enforces it too)
+  const { can } = useAuth();
+  const canEdit = can("restock", "update");
+  const canOrder = can("purchases", "create");
   const navigate = useNavigate();
   const location = useLocation();
   const [view, setView] = useState(location.state?.highlightId ? "all" : "open");
@@ -233,12 +237,12 @@ export default function RestockPage() {
                         <MessageCircle className="mr-1 h-3.5 w-3.5" /> WhatsApp
                       </Button>
                     )}
-                    {!done && (
+                    {!done && canOrder && (
                       <Button size="sm" variant="outline" disabled={busy === r.id} onClick={() => orderStock(r)} className="h-8 rounded-lg border-orange-500/30 text-xs font-bold text-orange-600" data-testid="restock-order">
                         <Package className="mr-1 h-3.5 w-3.5" /> {r.purchase_draft_id ? "Open purchase draft" : "Order stock"}
                       </Button>
                     )}
-                    {!done ? (
+                    {!canEdit ? null : !done ? (
                       <Button size="sm" disabled={busy === r.id} onClick={() => markDone(r)} className="h-8 rounded-lg text-xs font-bold" data-testid="restock-done">
                         {busy === r.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="mr-1 h-3.5 w-3.5" />} Mark done
                       </Button>

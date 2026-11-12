@@ -4,6 +4,12 @@
 @tailwind components;
 @tailwind utilities;
 
+/* The hidden attribute always wins over display utilities (used to hide
+   actions a user's access doesn't allow) */
+[hidden]:not([hidden="until-found"]) {
+  display: none !important;
+}
+
 /* Hide Emergent watermark badge */
 #emergent-badge,
 a[href*="emergent.sh"],

@@ -70,6 +70,9 @@ const CORE_INDEXES = {
     { key: { user_id: 1, created_at: -1 }, options: { name: "user_created" } },
     { key: { purge_at: 1 }, options: { name: "ttl", expireAfterSeconds: 0 } },
   ],
+  access_requests: [{ key: { expires_at: 1 }, options: { name: "ttl", expireAfterSeconds: 0 } }],
+  auth_devices: [{ key: { kid: 1 }, options: { name: "kid_unique", unique: true } }],
+  device_proofs: [{ key: { expires_at: 1 }, options: { name: "ttl", expireAfterSeconds: 0 } }],
   login_tickets: [
     { key: { hash: 1 }, options: { name: "hash_unique", unique: true } },
     { key: { expires_at: 1 }, options: { name: "ttl", expireAfterSeconds: 600 } },

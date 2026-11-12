@@ -91,6 +91,7 @@ async function sendNotices(db, now = new Date()) {
         pharmacy_id: pid,
         user_id: owner?.id || null,
         type: "SUBSCRIPTION",
+        admins_only: true,
         title,
         message,
         priority: expired || stage === "D1" ? "HIGH" : "MEDIUM",

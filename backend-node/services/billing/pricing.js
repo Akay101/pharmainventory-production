@@ -25,7 +25,7 @@ const launchPlan = () => ({
   duration_days: 365,
   description: "Everything DavaDesk does, for one pharmacy, for a year.",
   features: [
-    "One login session across the platform",
+    "2 logins: one on a computer browser, one on a phone",
     "Desktop app for offline billing, with free automatic cloud sync",
     "1 pharmacist user login with access management",
     "20 complimentary AI credits every day",
@@ -96,9 +96,16 @@ const defaultPlans = () => [
 // pharmacy add-on links one more pharmacy to the account.
 const defaultAddons = () => ({
   included_users: 1,
-  user_seat: { enabled: true, monthly_paise: 7900, yearly_paise: 79000, max_per_order: 20 },
-  pharmacy: { enabled: true, yearly_paise: 200000, max_linked: 20 },
+  user_seat: { enabled: true, monthly_paise: 19900, yearly_paise: 199000, max_per_order: 20 },
+  pharmacy: { enabled: true, yearly_paise: 349900, max_linked: 20 },
 });
+
+// Launch prices that were replaced before launch; a stored value still equal
+// to one of these is moved to the current default once (see ensureLaunchCatalogue)
+const SUPERSEDED = {
+  addons: { user_seat: { monthly_paise: 7900, yearly_paise: 79000 }, pharmacy: { yearly_paise: 200000 } },
+  feature: { from: "One login session across the platform", to: "2 logins: one on a computer browser, one on a phone" },
+};
 
 // Seller details printed on GST invoices (editable from the admin panel)
 const defaultInvoiceConfig = () => ({
@@ -345,8 +352,37 @@ async function ensureLaunchCatalogue(db) {
     );
     console.log("[Billing] Launch plan added; older plans closed to new purchases");
   }
+  await applyPriceRevision(db);
   invalidatePricingCache();
   return { created: !!res.upsertedCount };
+}
+
+// Pre-launch revision: extra users ₹199/month (₹1,990/year), linked pharmacy
+// ₹3,499/year, two logins per user. Runs once per environment and only
+// replaces values nobody has changed from the old defaults.
+async function applyPriceRevision(db) {
+  const claim = await db.collection("pricing_config").updateOne(
+    { _id: CONFIG_ID, "launch_migrations.prices_v2_at": { $exists: false } },
+    { $set: { "launch_migrations.prices_v2_at": new Date() } }
+  );
+  if (!claim.modifiedCount) {
+    const exists = await db.collection("pricing_config").countDocuments({ _id: CONFIG_ID });
+    if (exists) return;
+    await db.collection("pricing_config").updateOne({ _id: CONFIG_ID }, { $setOnInsert: { launch_migrations: { prices_v2_at: new Date() } } }, { upsert: true });
+  }
+  const cfg = (await db.collection("pricing_config").findOne({ _id: CONFIG_ID })) || {};
+  const d = defaultAddons();
+  const set = {};
+  const old = SUPERSEDED.addons;
+  if (cfg.addons?.user_seat?.monthly_paise === old.user_seat.monthly_paise) set["addons.user_seat.monthly_paise"] = d.user_seat.monthly_paise;
+  if (cfg.addons?.user_seat?.yearly_paise === old.user_seat.yearly_paise) set["addons.user_seat.yearly_paise"] = d.user_seat.yearly_paise;
+  if (cfg.addons?.pharmacy?.yearly_paise === old.pharmacy.yearly_paise) set["addons.pharmacy.yearly_paise"] = d.pharmacy.yearly_paise;
+  if (Object.keys(set).length) await db.collection("pricing_config").updateOne({ _id: CONFIG_ID }, { $set: set });
+  await db.collection("plans").updateOne(
+    { code: LAUNCH_PLAN, features: SUPERSEDED.feature.from },
+    { $set: { "features.$": SUPERSEDED.feature.to, updated_at: new Date() } }
+  );
+  console.log("[Billing] Launch prices revised (extra user ₹199/month, linked pharmacy ₹3,499/year, 2 logins)");
 }
 
 async function getOffer(db) {

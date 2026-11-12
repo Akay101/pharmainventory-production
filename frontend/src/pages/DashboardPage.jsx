@@ -296,7 +296,7 @@ function EmptyState({ icon: Icon = CheckCircle2, text }) {
 export default function DashboardPage() {
   const onlineFeatures = useOnlineFeatures();
   const navigate = useNavigate();
-  const { pharmacy, user } = useAuth();
+  const { pharmacy, user, can } = useAuth();
   const isDark = useIsDark();
 
   const [data, setData] = useState(null);
@@ -506,13 +506,14 @@ export default function DashboardPage() {
           >
             <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />
           </Button>
-          <Button variant="outline" onClick={() => navigate("/purchases")} className="h-10 rounded-xl font-bold max-md:flex-1 max-md:h-11">
+          <Button variant="outline" hidden={!can("purchases", "create")} onClick={() => navigate("/purchases")} className="h-10 rounded-xl font-bold max-md:flex-1 max-md:h-11">
             <ShoppingCart className="w-4 h-4 mr-1.5 text-orange-500" /> Add purchase
           </Button>
-          <Button variant="outline" onClick={() => window.open("/scan", "_blank")} style={onlineFeatures ? undefined : { display: "none" }} className="h-10 rounded-xl font-bold hidden sm:inline-flex">
+          <Button variant="outline" hidden={!can("purchases", "create")} onClick={() => window.open("/scan", "_blank")} style={onlineFeatures ? undefined : { display: "none" }} className="h-10 rounded-xl font-bold hidden sm:inline-flex">
             <ScanLine className="w-4 h-4 mr-1.5 text-orange-500" /> Scan bill
           </Button>
           <Button
+            hidden={!can("billing", "create")}
             onClick={() => navigate("/billing")}
             className="h-10 rounded-xl font-bold text-white bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 shadow-lg shadow-orange-500/25 max-md:flex-1 max-md:h-11"
           >

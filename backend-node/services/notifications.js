@@ -17,6 +17,7 @@ async function createNotification(db, {
   priority = "MEDIUM",
   data = {},
   expires_at = null,
+  admins_only = false,
 }) {
   if (!pharmacy_id || !title) return null;
 
@@ -30,6 +31,7 @@ async function createNotification(db, {
     message,
     priority, // "HIGH", "MEDIUM", "LOW"
     data,
+    ...(admins_only ? { admins_only: true } : {}),
     is_read: false,
     read_at: null,
     created_at: new Date().toISOString(),

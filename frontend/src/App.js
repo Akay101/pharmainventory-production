@@ -2,7 +2,7 @@ import { IS_DESKTOP, useOnlineFeatures } from "./lib/desktop";
 import DesktopAuthorizePage from "./pages/DesktopAuthorizePage";
 import DownloadPage from "./pages/DownloadPage";
 import SyncCenterPage from "./pages/SyncCenterPage";
-import { useState, useEffect, createContext, useContext } from "react";
+import { useState, useEffect, useRef, createContext, useContext } from "react";
 import {
   BrowserRouter,
   Routes,
@@ -48,6 +48,8 @@ import Loader from "./components/Loader";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { GuideProvider, GuideStage } from "./components/guide/GuideProvider";
 import { getPageTitle } from "./hooks/useDocumentTitle";
+import { deviceProof, proofActionFor, setServerTime } from "./lib/deviceIdentity";
+import { RequireAccess } from "./components/access/Can";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 export const API = `${BACKEND_URL}/api`;
@@ -56,9 +58,8 @@ export const API = `${BACKEND_URL}/api`;
 // browser must send credentials on those calls.
 axios.defaults.withCredentials = true;
 
-// A random id for this browser, so signing in again here doesn't count as
-// "another device" (one live session per user), and the device manager can
-// tell browsers apart. Not a secret; the server only stores its hash.
+// A random id for this browser, used only when it can't hold a device key
+// (lib/deviceIdentity.js). Not a secret; the server only stores its hash.
 const DEVICE_KEY = "dd_device_id";
 export const getDeviceId = () => {
   try {
@@ -92,7 +93,8 @@ const rememberSignOutReason = (text) => {
   }
 };
 const SESSION_END_TEXT = {
-  SIGNED_IN_ELSEWHERE: "You were signed out because your account was signed in on another device.",
+  SIGNED_IN_ELSEWHERE: "You were signed out because your account was signed in on another device of the same kind.",
+  DEVICE_MISMATCH: "This sign-in belongs to another device. Please sign in again.",
   SEAT_EXPIRED: "Your user licence has expired. Ask the pharmacy owner to renew it.",
   SEAT_REQUIRED: "Your user account doesn't have a licence. Ask the pharmacy owner.",
   USER_DISABLED: "Your user has been switched off by the pharmacy owner.",
@@ -312,6 +314,28 @@ const AuthProvider = ({ children }) => {
     return response.data.user;
   };
 
+  // Access changes made by the owner reach an open app: when the server says
+  // no, and when the tab comes back after a while, re-read this user's access
+  const lastAccessCheck = useRef(Date.now());
+  useEffect(() => {
+    if (!user || user.access?.full) return undefined;
+    const recheck = (force) => {
+      if (!force && Date.now() - lastAccessCheck.current < 60 * 1000) return;
+      lastAccessCheck.current = Date.now();
+      fetchUser().catch(() => {});
+    };
+    const onDenied = () => recheck(true);
+    const onVisible = () => document.visibilityState === "visible" && recheck(false);
+    window.addEventListener("access-changed", onDenied);
+    document.addEventListener("visibilitychange", onVisible);
+    const t = setInterval(() => recheck(false), 2 * 60 * 1000);
+    return () => {
+      window.removeEventListener("access-changed", onDenied);
+      document.removeEventListener("visibilitychange", onVisible);
+      clearInterval(t);
+    };
+  }, [user?.id, user?.access?.full]); // eslint-disable-line
+
   // Work in another pharmacy of the account. The page reloads so nothing on
   // screen belongs to the previous pharmacy.
   const switchPharmacy = async (pharmacyId) => {
@@ -370,6 +394,12 @@ const AuthProvider = ({ children }) => {
     if (!a || a.full) return true;
     return a.modules?.[module]?.[action] === true;
   };
+  // A behaviour rule on this user (no_credit_billing, max_discount_percent, ...), or null
+  const rule = (key) => {
+    const a = user?.access;
+    if (!a || a.full) return null;
+    return a.restrictions?.[key] ?? null;
+  };
 
   const logout = async (notifyBackend = true) => {
     if (notifyBackend) {
@@ -396,6 +426,7 @@ const AuthProvider = ({ children }) => {
     activePharmacyId,
     switchPharmacy,
     can,
+    rule,
     isOwner: !!user?.is_primary_admin,
     fetchUser,
     setUser,
@@ -446,7 +477,7 @@ let isRedirecting = false;
 const isApiUrl = (url = "") => url.startsWith(API) || url.startsWith("/api");
 
 axios.interceptors.request.use(
-  (config) => {
+  async (config) => {
     // Only ever attach the token to our own API
     if (isApiUrl(config.url)) {
       if (accessToken) config.headers.Authorization = `Bearer ${accessToken}`;
@@ -454,6 +485,12 @@ axios.interceptors.request.use(
       if (device) config.headers["X-Device-Id"] = device;
       const tz = clientTimeZone();
       if (tz) config.headers["X-Client-Timezone"] = tz;
+      // Sign-in and refresh prove they come from this device's key
+      const action = proofActionFor(config.url);
+      if (action) {
+        const proof = await deviceProof(action);
+        if (proof) config.headers["X-Device-Proof"] = proof;
+      }
     }
     return config;
   },
@@ -483,6 +520,13 @@ axios.interceptors.response.use(
       return Promise.reject(error);
     }
 
+    // This device's clock is off: learn the server time and sign again once
+    if (code === "DEVICE_CLOCK" && !originalRequest._clockRetry) {
+      setServerTime(Number(error.response.data.server_time));
+      originalRequest._clockRetry = true;
+      return axios(originalRequest);
+    }
+
     // Rate limited (by the API or nginx, whose 429 has no JSON detail):
     // one clear toast, and the message pages show uses it too
     if (status === 429) {
@@ -504,6 +548,7 @@ axios.interceptors.response.use(
     if (status === 403 && (code === "PERMISSION_DENIED" || code === "ACTION_BLOCKED")) {
       toast.error(error.response.data.detail, { id: `perm-${code}` });
       error.permissionToastShown = true;
+      if (code === "PERMISSION_DENIED") window.dispatchEvent(new Event("access-changed"));
       return Promise.reject(error);
     }
 
@@ -597,7 +642,9 @@ function App() {
             path="/scan"
             element={
               <ProtectedRoute>
-                <ScannerPage />
+                <RequireAccess module="purchases" action="create">
+                  <ScannerPage />
+                </RequireAccess>
               </ProtectedRoute>
             }
           />
@@ -605,9 +652,11 @@ function App() {
             path="/assistant"
             element={
               <ProtectedRoute>
-                <GuideStage>
-                  <AssistantPage />
-                </GuideStage>
+                <RequireAccess module="assistant">
+                  <GuideStage>
+                    <AssistantPage />
+                  </GuideStage>
+                </RequireAccess>
               </ProtectedRoute>
             }
           />
@@ -615,7 +664,9 @@ function App() {
             path="/scan-bill"
             element={
               <ProtectedRoute>
-                <BillingScannerPage />
+                <RequireAccess module="billing" action="create">
+                  <BillingScannerPage />
+                </RequireAccess>
               </ProtectedRoute>
             }
           />
@@ -631,26 +682,26 @@ function App() {
           >
             <Route index element={<Navigate to="/dashboard" replace />} />
             <Route path="dashboard" element={<DashboardGate />} />
-            <Route path="inventory" element={<InventoryPage />} />
-            <Route path="purchases" element={<PurchasesPage />} />
-            <Route path="billing" element={<BillingPage />} />
-            <Route path="suppliers" element={<SuppliersPage />} />
-            <Route path="customers" element={<CustomersPage />} />
-            <Route path="expiry" element={<ExpiryPage />} />
-            <Route path="returns" element={<ReturnsPage />} />
+            <Route path="inventory" element={<RequireAccess module="inventory"><InventoryPage /></RequireAccess>} />
+            <Route path="purchases" element={<RequireAccess module="purchases"><PurchasesPage /></RequireAccess>} />
+            <Route path="billing" element={<RequireAccess module="billing"><BillingPage /></RequireAccess>} />
+            <Route path="suppliers" element={<RequireAccess module="suppliers"><SuppliersPage /></RequireAccess>} />
+            <Route path="customers" element={<RequireAccess module="customers"><CustomersPage /></RequireAccess>} />
+            <Route path="expiry" element={<RequireAccess module="expiry"><ExpiryPage /></RequireAccess>} />
+            <Route path="returns" element={<RequireAccess module="returns"><ReturnsPage /></RequireAccess>} />
             <Route
               path="users"
               element={
-                <ProtectedRoute adminOnly>
+                <RequireAccess adminOnly>
                   <UsersPage />
-                </ProtectedRoute>
+                </RequireAccess>
               }
             />
             <Route path="settings" element={<SettingsPage />} />
-            <Route path="reports" element={<ReportsPage />} />
+            <Route path="reports" element={<RequireAccess module="dashboard"><ReportsPage /></RequireAccess>} />
             <Route path="support" element={<SupportPage />} />
-            <Route path="short-book" element={<ShortBookPage />} />
-            <Route path="restock" element={<RestockPage />} />
+            <Route path="short-book" element={<RequireAccess module="short_book"><ShortBookPage /></RequireAccess>} />
+            <Route path="restock" element={<RequireAccess module="restock"><RestockPage /></RequireAccess>} />
             {IS_DESKTOP && <Route path="sync" element={<SyncCenterPage />} />}
           </Route>
 

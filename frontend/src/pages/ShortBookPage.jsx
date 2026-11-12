@@ -3,6 +3,7 @@ import axios from "axios";
 import { toast } from "sonner";
 import { CheckCircle2, ClipboardList, Copy, Loader2, PackageCheck, Plus, RefreshCw, RotateCcw, Search, Trash2, Truck } from "lucide-react";
 import { API } from "../App";
+import { useAccess } from "../components/access/Can";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
@@ -39,6 +40,8 @@ const day = (iso) => (iso ? new Date(iso).toLocaleDateString("en-IN", { day: "nu
 const qtyText = (e) => `${e.quantity} ${e.unit === "packs" ? (e.quantity === 1 ? "pack" : "packs") : e.quantity === 1 ? "unit" : "units"}`;
 
 export default function ShortBookPage() {
+  // Hide what this user's access doesn't allow (the server enforces it too)
+  const acc = useAccess("short_book");
   const [tab, setTab] = useState("pending");
   const [search, setSearch] = useState("");
   const [data, setData] = useState({ entries: [], counts: {} });
@@ -159,9 +162,11 @@ export default function ShortBookPage() {
               <Copy className="mr-1.5 h-3.5 w-3.5" /> Copy order list
             </Button>
           )}
-          <Button size="sm" onClick={() => setAddOpen(true)} className="h-9 rounded-xl bg-orange-600 text-xs font-bold text-white hover:bg-orange-700" data-shortcut="new" data-kbd={formatCombo("alt+n")}>
-            <Plus className="mr-1.5 h-4 w-4" /> Add item
-          </Button>
+          {acc.create && (
+            <Button size="sm" onClick={() => setAddOpen(true)} className="h-9 rounded-xl bg-orange-600 text-xs font-bold text-white hover:bg-orange-700" data-shortcut="new" data-kbd={formatCombo("alt+n")}>
+              <Plus className="mr-1.5 h-4 w-4" /> Add item
+            </Button>
+          )}
         </div>
       </div>
 
@@ -264,24 +269,26 @@ export default function ShortBookPage() {
                   </TableCell>
                   <TableCell className="text-right">
                     <div className="flex flex-wrap items-center justify-end gap-1">
-                      {e.status === "pending" && (
+                      {acc.update && e.status === "pending" && (
                         <Button variant="outline" size="sm" onClick={() => update(e, { status: "ordered" }, `${e.product_name} marked ordered`)} className="h-8 rounded-lg px-2 text-[11px] font-bold" data-row-key="o" title="Mark ordered (O)">
                           <Truck className="mr-1 h-3.5 w-3.5" /> Ordered
                         </Button>
                       )}
-                      {(e.status === "pending" || e.status === "ordered") && (
+                      {acc.update && (e.status === "pending" || e.status === "ordered") && (
                         <Button variant="outline" size="sm" onClick={() => update(e, { status: "received" }, `${e.product_name} received`)} className="h-8 rounded-lg px-2 text-[11px] font-bold text-emerald-600" data-row-key="r" title="Mark received (R)">
                           <PackageCheck className="mr-1 h-3.5 w-3.5" /> Received
                         </Button>
                       )}
-                      {e.status !== "pending" && (
+                      {acc.update && e.status !== "pending" && (
                         <Button variant="ghost" size="sm" onClick={() => update(e, { status: "pending" }, `${e.product_name} is back on the list`)} className="h-8 rounded-lg px-2 text-[11px] font-bold" title="Back to the list">
                           <RotateCcw className="mr-1 h-3.5 w-3.5" /> Reopen
                         </Button>
                       )}
-                      <Button variant="ghost" size="icon" onClick={() => setToDelete(e)} className="h-8 w-8 rounded-lg text-rose-500 hover:bg-rose-500/10" data-row-key="delete" aria-label={`Remove ${e.product_name}`} title="Remove (Del)">
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
+                      {acc.delete && (
+                        <Button variant="ghost" size="icon" onClick={() => setToDelete(e)} className="h-8 w-8 rounded-lg text-rose-500 hover:bg-rose-500/10" data-row-key="delete" aria-label={`Remove ${e.product_name}`} title="Remove (Del)">
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      )}
                     </div>
                   </TableCell>
                 </TableRow>

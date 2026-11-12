@@ -22,7 +22,8 @@ const ago = (d) => {
 };
 const END_TEXT = {
   LOGOUT: "Signed out",
-  REPLACED: "Signed in on another device",
+  REPLACED: "Replaced by a newer sign-in",
+  DEVICE_MISMATCH: "Used from another device",
   REMOTE_LOGOUT: "Signed out from Devices",
   ADMIN_LOGOUT: "Signed out by an admin",
   PASSWORD_RESET: "Password changed",
@@ -31,6 +32,10 @@ const END_TEXT = {
   USER_DISABLED: "User switched off",
   NO_PHARMACY_ACCESS: "Pharmacy access removed",
 };
+const SLOTS = [
+  { slot: "pc", title: "Computer", hint: "A browser on a laptop or desktop", type: "desktop" },
+  { slot: "mobile", title: "Phone", hint: "A browser on a phone or tablet", type: "mobile" },
+];
 const Icon = ({ type, className }) => (type === "mobile" ? <Smartphone className={className} /> : type === "tablet" ? <Tablet className={className} /> : <Monitor className={className} />);
 
 function SessionRow({ s, onEnd, ending, label }) {
@@ -44,6 +49,7 @@ function SessionRow({ s, onEnd, ending, label }) {
           {label ? `${label} · ` : ""}
           {s.device}
           {s.current && <span className="ml-2 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-extrabold text-emerald-700 dark:text-emerald-400">This device</span>}
+          {s.active && s.verified_device && <span className="ml-2 rounded-full bg-sky-500/10 px-2 py-0.5 text-[10px] font-extrabold text-sky-700 dark:text-sky-400" title="Bound to this device's security key">Verified device</span>}
         </p>
         <p className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs font-semibold text-muted-foreground">
           {s.location && (
@@ -102,7 +108,7 @@ export default function DeviceManager({ active }) {
 
   const current = data?.sessions?.filter((s) => s.active) || [];
   const past = data?.sessions?.filter((s) => !s.active) || [];
-  const teamLive = data?.team?.filter((t) => t.session) || [];
+  const teamLive = (data?.team || []).flatMap((t) => (t.sessions || (t.session ? [t.session] : [])).map((s) => ({ ...t, session: s })));
 
   return (
     <div className="space-y-6" data-testid="device-manager">
@@ -110,9 +116,9 @@ export default function DeviceManager({ active }) {
         <CardHeader className="flex flex-row items-start justify-between gap-3 space-y-0">
           <div>
             <CardTitle className="flex items-center gap-2">
-              <Laptop className="w-5 h-5 text-primary" /> Signed-in device
+              <Laptop className="w-5 h-5 text-primary" /> Signed-in devices
             </CardTitle>
-            <CardDescription>Your account can be signed in on one device at a time. Signing in somewhere else signs this one out, after asking.</CardDescription>
+            <CardDescription>Your login works on one computer and one phone at the same time. Signing in on another computer (or phone) signs the old one out, after asking.</CardDescription>
           </div>
           <Button variant="ghost" size="icon" className="rounded-xl shrink-0" onClick={load} aria-label="Refresh">
             <RefreshCw className="w-4 h-4" />
@@ -123,10 +129,25 @@ export default function DeviceManager({ active }) {
             <div className="flex justify-center py-6">
               <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
             </div>
-          ) : current.length ? (
-            current.map((s) => <SessionRow key={s.id} s={s} onEnd={end} ending={ending === s.id} />)
+          ) : IS_DESKTOP && !current.length ? (
+            <p className="text-sm text-muted-foreground font-semibold">The desktop app signs in through the browser; see Desktop apps below.</p>
           ) : (
-            <p className="text-sm text-muted-foreground font-semibold">{IS_DESKTOP ? "The desktop app signs in through the browser; see Desktop apps below." : "No live session."}</p>
+            SLOTS.map((slot) => {
+              const s = current.find((x) => (x.slot || "pc") === slot.slot);
+              return s ? (
+                <SessionRow key={slot.slot} s={s} label={slot.title} onEnd={end} ending={ending === s.id} />
+              ) : (
+                <div key={slot.slot} className="flex items-center gap-3 rounded-2xl border border-dashed border-border/70 p-3.5 text-sm" data-testid="session-slot-empty">
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-muted text-muted-foreground">
+                    <Icon type={slot.type} className="w-5 h-5" />
+                  </span>
+                  <div>
+                    <p className="font-bold">{slot.title} · free</p>
+                    <p className="text-xs font-semibold text-muted-foreground">{slot.hint} can sign in here.</p>
+                  </div>
+                </div>
+              );
+            })
           )}
         </CardContent>
       </Card>
@@ -141,7 +162,7 @@ export default function DeviceManager({ active }) {
           </CardHeader>
           <CardContent className="space-y-2.5">
             {teamLive.length ? (
-              teamLive.map((t) => <SessionRow key={t.user_id} s={t.session} label={t.name} onEnd={t.is_owner ? null : end} ending={ending === t.session.id} />)
+              teamLive.map((t) => <SessionRow key={t.session.id} s={t.session} label={`${t.name} · ${t.session.slot === "mobile" ? "Phone" : "Computer"}`} onEnd={t.is_owner ? null : end} ending={ending === t.session.id} />)
             ) : (
               <p className="text-sm text-muted-foreground font-semibold">Nobody else is signed in.</p>
             )}

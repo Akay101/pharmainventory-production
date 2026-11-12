@@ -75,7 +75,7 @@ const invoiceSchema = z.object({
   sac_description: z.string().trim().min(3).max(120),
 });
 
-const DEFAULT_ADDONS = { included_users: 1, user_seat: { enabled: true, monthly_paise: 7900, yearly_paise: 79000, max_per_order: 20 }, pharmacy: { enabled: true, yearly_paise: 200000, max_linked: 20 } };
+const DEFAULT_ADDONS = { included_users: 1, user_seat: { enabled: true, monthly_paise: 19900, yearly_paise: 199000, max_per_order: 20 }, pharmacy: { enabled: true, yearly_paise: 349900, max_linked: 20 } };
 const DEFAULT_INVOICE = {
   prefix: "DD",
   seller_name: "DavaDesk",

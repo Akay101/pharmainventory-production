@@ -12,6 +12,7 @@ const schemas = require("../services/auth/schemas");
 const resetLinks = require("../services/auth/resetLinks");
 const subscriptions = require("../services/billing/subscriptions");
 const sessions = require("../services/auth/sessions");
+const deviceProof = require("../services/auth/deviceProof");
 const account = require("../services/account");
 const permissions = require("../services/access/permissions");
 
@@ -105,16 +106,17 @@ async function pharmaciesView(user, activeId) {
   };
 }
 
-async function sessionResponse(req, res, user, extra = {}) {
+async function sessionResponse(req, res, user, extra = {}, ident = null) {
   const active = await account.resolveActivePharmacy(db(), user, user.last_pharmacy_id);
   if (!active.pharmacyId) {
     return res.status(403).json({ code: "NO_PHARMACY_ACCESS", detail: "You don't have access to any pharmacy on this account. Ask the owner." });
   }
   const pharmacy = await db().collection("pharmacies").findOne({ id: active.pharmacyId }, { projection: { _id: 0 } });
-  const { accessToken, refreshToken } = await tokens.startSession(db(), user, req, { pharmacyId: active.pharmacyId });
+  const { accessToken, refreshToken, session } = await tokens.startSession(db(), user, req, { pharmacyId: active.pharmacyId, ident });
   tokens.setRefreshCookie(req, res, refreshToken);
   return res.json({
     ...extra,
+    session_slot: session.slot,
     token: accessToken,
     user: publicUser(user, pharmacy),
     pharmacy: normalizePharmacy(pharmacy),
@@ -328,19 +330,24 @@ router.post("/login", async (req, res, next) => {
     const seat = await account.seatProblem(db(), user);
     if (seat) return res.status(403).json({ code: seat, detail: SEAT_TEXT[seat] });
 
-    // One live session: another device holds it, so ask before taking over
-    const decision = await sessions.loginDecision(db(), user, req);
+    // One computer and one phone: if another device holds this device's
+    // slot, ask before taking over
+    const ident = await deviceProof.identify(db(), req, "login");
+    if (ident.proof_code === "DEVICE_PROOF_STALE") return res.status(400).json({ code: "DEVICE_CLOCK", detail: "Your device clock is off.", server_time: Date.now() });
+    const decision = await sessions.loginDecision(db(), user, ident);
     if (decision.conflict) {
-      const ticket = await sessions.issueTicket(db(), user, req);
+      const ticket = await sessions.issueTicket(db(), user, req, ident);
+      const what = deviceProof.SLOT_LABEL[ident.slot];
       return res.status(409).json({
         code: "SESSION_ACTIVE_ELSEWHERE",
-        detail: "Your account is signed in on another device.",
+        detail: `Your account is already signed in on another ${what}.`,
+        slot: ident.slot,
         session: sessions.publicSession(decision.session),
         ticket,
       });
     }
 
-    return sessionResponse(req, res, user);
+    return sessionResponse(req, res, user, {}, ident);
   } catch (error) {
     next(error);
   }
@@ -350,7 +357,9 @@ router.post("/login", async (req, res, next) => {
 // this one in. The ticket is single use, five minutes, this browser only.
 router.post("/login/continue", async (req, res, next) => {
   try {
-    const t = await sessions.consumeTicket(db(), req.body?.ticket, req);
+    const ident = await deviceProof.identify(db(), req, "continue");
+    if (ident.proof_code === "DEVICE_PROOF_STALE") return res.status(400).json({ code: "DEVICE_CLOCK", detail: "Your device clock is off.", server_time: Date.now() });
+    const t = await sessions.consumeTicket(db(), req.body?.ticket, req, ident);
     if (!t) return res.status(401).json({ code: "TICKET_INVALID", detail: "That sign-in has expired. Please sign in again." });
     const user = await db().collection("users").findOne({ id: t.user_id });
     if (!user || user.verified === false || user.disabled_at || (user.token_version || 0) !== (t.token_version || 0)) {
@@ -358,7 +367,7 @@ router.post("/login/continue", async (req, res, next) => {
     }
     const seat = await account.seatProblem(db(), user);
     if (seat) return res.status(403).json({ code: seat, detail: SEAT_TEXT[seat] });
-    return sessionResponse(req, res, user, { signed_out_other: true });
+    return sessionResponse(req, res, user, { signed_out_other: true }, ident);
   } catch (error) {
     next(error);
   }
@@ -410,6 +419,8 @@ router.post("/refresh", async (req, res, next) => {
     res.json({ token: result.accessToken });
   } catch (error) {
     if (error instanceof tokens.TokenError) {
+      // A wrong clock isn't a reason to sign out: the app retries with the server time
+      if (error.code === "DEVICE_CLOCK") return res.status(401).json({ code: error.code, detail: error.message, server_time: Date.now() });
       tokens.clearRefreshCookie(req, res);
       return res.status(401).json({ code: error.code, detail: error.message });
     }

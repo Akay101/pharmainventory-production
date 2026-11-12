@@ -68,7 +68,13 @@ export default function CustomersPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const isInitialMount = useRef(true);
-  const { isAdmin } = useAuth();
+  const { isAdmin, can, rule } = useAuth();
+  // Hide what this user's access doesn't allow (the server enforces it too)
+  const canAddReminder = can("restock", "create");
+  const canEditReminder = can("restock", "update");
+  const canDeleteReminder = can("restock", "delete");
+  const canTakePayment = can("billing", "update") && !rule("no_customer_debt_clear");
+  const canClearDebt = can("customers", "update") && !rule("no_customer_debt_clear");
   const [customers, setCustomers] = useState([]);
   // Tiers: filter, counts per tier, sort, rules dialog
   const [tierFilter, setTierFilter] = useState("");
@@ -597,7 +603,7 @@ export default function CustomersPage() {
             <DialogTitle className="text-lg font-bold flex items-center gap-2">
               <Users className="w-5 h-5 text-primary" /> Customer Profile & History
             </DialogTitle>
-            {selectedCustomer && (
+            {selectedCustomer && canAddReminder && (
               <Button
                 size="sm"
                 onClick={() => {
@@ -786,6 +792,7 @@ export default function CustomersPage() {
                       </div>
                       <Button
                         size="sm"
+                        className={canAddReminder ? undefined : "hidden"}
                         onClick={() => {
                           const dates = computeReminderDates(30, 5);
                           setAddReminderDialog({
@@ -894,7 +901,7 @@ export default function CustomersPage() {
                                   <button
                                     type="button"
                                     onClick={() => handleToggleReminder(rem.id)}
-                                    disabled={actionLoading[rem.id]}
+                                    disabled={actionLoading[rem.id] || !canEditReminder}
                                     className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden ${
                                       rem.is_active ? "bg-indigo-600" : "bg-muted-foreground/30"
                                     }`}
@@ -943,6 +950,7 @@ export default function CustomersPage() {
                                 <Button
                                   size="sm"
                                   variant="outline"
+                                  hidden={!can("purchases", "create")}
                                   onClick={() => {
                                     setDetailsOpen(false);
                                     navigate("/purchases", {
@@ -957,7 +965,7 @@ export default function CustomersPage() {
                                   <Package className="w-3 h-3" /> Purchase Now
                                 </Button>
 
-                                {!isCompleted && (
+                                {!isCompleted && canEditReminder && (
                                   <Button
                                     size="sm"
                                     variant="outline"
@@ -973,6 +981,7 @@ export default function CustomersPage() {
                               <Button
                                 size="sm"
                                 variant="ghost"
+                                hidden={!canDeleteReminder}
                                 onClick={() => handleDeleteReminder(rem.id)}
                                 disabled={actionLoading[rem.id]}
                                 className="h-7 w-7 p-0 text-destructive/70 hover:text-destructive hover:bg-destructive/10 rounded-lg"
@@ -1074,6 +1083,7 @@ export default function CustomersPage() {
                                   <Button
                                     size="sm"
                                     variant="outline"
+                                    hidden={!canTakePayment}
                                     className="border-primary/50 text-primary hover:bg-primary/5 h-8 font-bold text-xs"
                                     onClick={() => {
                                       setDetailsOpen(false);
@@ -1097,6 +1107,7 @@ export default function CustomersPage() {
                             </span>
                             <Button
                               size="sm"
+                              hidden={!canTakePayment}
                               className="btn-primary h-8 font-bold text-xs"
                               onClick={() => handlePayBill(bill)}
                             >
@@ -1426,13 +1437,14 @@ export default function CustomersPage() {
                         <Button
                           size="sm"
                           variant="outline"
+                          hidden={!can("billing", "read")}
                           className="border-primary/50 text-primary hover:bg-primary/5 h-8 font-semibold rounded-lg text-xs"
                           onClick={() => navigate(`/billing?customer_id=${customer.id}`)}
                         >
                           See Bills
                         </Button>
                         
-                        {customer.total_debt > 0 && (
+                        {customer.total_debt > 0 && canClearDebt && (
                           <Button
                             size="sm"
                             variant="outline"

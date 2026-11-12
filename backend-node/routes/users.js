@@ -235,20 +235,20 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
       .collection("users")
       .find(
         { pharmacy_id: req.account_id },
-        { projection: { _id: 0, id: 1, name: 1, email: 1, mobile: 1, role: 1, is_primary_admin: 1, verified: 1, image_url: 1, created_at: 1, last_login_at: 1, ...(full ? { permissions: 1, seat_id: 1, seat_exempt: 1, disabled_at: 1, active_session_id: 1 } : {}) } }
+        { projection: { _id: 0, id: 1, name: 1, email: 1, mobile: 1, role: 1, is_primary_admin: 1, verified: 1, image_url: 1, created_at: 1, last_login_at: 1, ...(full ? { permissions: 1, seat_id: 1, seat_exempt: 1, disabled_at: 1, active_session_id: 1, active_sessions: 1 } : {}) } }
       )
       .toArray();
     if (!full) return res.json({ users });
     const seatIds = users.map((u) => u.seat_id).filter(Boolean);
     const seats = seatIds.length ? await db().collection(account.ADDONS).find({ id: { $in: seatIds } }, { projection: { _id: 0 } }).toArray() : [];
     const seatOf = Object.fromEntries(seats.map((x) => [x.id, x]));
-    const live = await db().collection(sessions.SESSIONS).find({ id: { $in: users.map((u) => u.active_session_id).filter(Boolean) }, ended_at: null }, { projection: { _id: 0, family: 0, device_key: 0 } }).toArray();
+    const live = await db().collection(sessions.SESSIONS).find({ id: { $in: users.flatMap((u) => sessions.liveIds(u)) }, ended_at: null }, { projection: { _id: 0, family: 0, device_key: 0 } }).toArray();
     const sessionOf = Object.fromEntries(live.map((x) => [x.id, x]));
     res.json({
       users: users.map((u) => {
         const seat = u.seat_id ? seatOf[u.seat_id] : null;
-        const sess = u.active_session_id ? sessionOf[u.active_session_id] : null;
-        const { active_session_id, ...rest } = u;
+        const live = sessions.liveIds(u).map((id) => sessionOf[id]).filter((x) => x && sessions.isLive(x));
+        const { active_session_id, active_sessions, ...rest } = u;
         return {
           ...rest,
           access: u.role === "ADMIN" ? { full: true } : { full: false, ...(u.permissions || permissions.LEGACY_FULL) },
@@ -257,7 +257,8 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
             : seat
               ? { id: seat.id, kind: seat.kind, cycle: seat.cycle, ends_at: seat.ends_at, active: account.addonActive(seat) && seat.assigned_user_id === u.id }
               : { kind: u.seat_exempt === "LEGACY" ? "LEGACY" : "NONE", active: u.seat_exempt === "LEGACY" },
-          session: sess && sessions.isLive(sess) ? sessions.publicSession(sess) : null,
+          session: live[0] ? sessions.publicSession(live[0]) : null,
+          sessions: live.map((x) => sessions.publicSession(x)),
         };
       }),
     });

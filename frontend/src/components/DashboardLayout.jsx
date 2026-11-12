@@ -246,14 +246,14 @@ export default function DashboardLayout() {
     ...filteredItems
       .filter((item) => item.shortcut)
       .map((item) => ({ combo: item.shortcut, label: item.label, group: "Go to", run: () => navigate(item.path) })),
-    { combo: "alt+j", label: "DavaDesk AI", group: "Go to", run: () => navigate("/assistant") },
+    ...(can("assistant", "read") ? [{ combo: "alt+j", label: "DavaDesk AI", group: "Go to", run: () => navigate("/assistant") }] : []),
     {
       combo: "alt+n",
       label: "New (bill, purchase, note… on this page; else a new bill)",
       run: () => {
         const btn = visible('[data-shortcut="new"]');
         if (btn) return btn.click();
-        navigate("/billing", { state: { newBill: true } });
+        if (can("billing", "create")) navigate("/billing", { state: { newBill: true } });
       },
     },
     {
@@ -513,7 +513,7 @@ export default function DashboardLayout() {
             {/* Right Controls Panel */}
             <div className="flex items-center gap-2.5 max-md:gap-1.5 shrink-0">
               {/* Phone: DavaDesk AI lives in the header instead of a floating bubble */}
-              {onlineFeatures && <button
+              {onlineFeatures && can("assistant", "read") && <button
                 type="button"
                 onClick={() => navigate("/assistant")}
                 aria-label="Open DavaDesk AI"
@@ -705,7 +705,7 @@ export default function DashboardLayout() {
         />
 
         {/* DavaDesk AI launcher (phones use the header button) */}
-        {onlineFeatures && <div className="max-md:hidden">
+        {onlineFeatures && can("assistant", "read") && <div className="max-md:hidden">
           <AssistantLauncher />
         </div>}
         <DesktopChoiceDialog />

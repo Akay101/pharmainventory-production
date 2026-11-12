@@ -30,14 +30,20 @@ import ProfileSettings from "../components/settings/ProfileSettings";
 import DeviceManager from "../components/settings/DeviceManager";
 import BillingPlanSettings from "../components/settings/BillingPlanSettings";
 import { useSearchParams } from "react-router-dom";
-import { Laptop, Receipt } from "lucide-react";
+import { Laptop, Lock, Receipt } from "lucide-react";
 
 export default function SettingsPage() {
-  const { user, isAdmin, settings, settingsDefinitions, updateSetting, fetchSettings } = useAuth();
+  const { user, isAdmin, settings, settingsDefinitions, updateSetting, fetchSettings, can } = useAuth();
+  // Pharmacy details are shared by everyone: hidden without access, view-only without edit
+  const canSeePharmacy = can("settings", "read");
+  const canEditPharmacy = can("settings", "update");
   const [numberDrafts, setNumberDrafts] = useState({}); // typed text, so a number field can be cleared
   const [searchParams] = useSearchParams();
   const TABS = ["pharmacy", "profile", "preferences", "devices", "billing", "data"];
-  const [tab, setTab] = useState(() => (TABS.includes(searchParams.get("tab")) ? searchParams.get("tab") : "pharmacy"));
+  const [tab, setTab] = useState(() => {
+    const asked = TABS.includes(searchParams.get("tab")) ? searchParams.get("tab") : "pharmacy";
+    return asked === "pharmacy" && !can("settings", "read") ? "profile" : asked;
+  });
   const [pharmacyDirty, setPharmacyDirty] = useState(false);
   const [profileDirty, setProfileDirty] = useState(false);
   const [importingMedicines, setImportingMedicines] = useState(false);
@@ -285,11 +291,13 @@ export default function SettingsPage() {
 
       <Tabs value={tab} onValueChange={setTab} className="space-y-6">
         <TabsList className="max-md:flex max-md:w-full max-md:justify-start max-md:overflow-x-auto [scrollbar-width:none]">
-          <TabsTrigger value="pharmacy" data-testid="settings-tab-pharmacy">
-            <Building2 className="w-4 h-4 mr-2" />
-            Pharmacy
-            {pharmacyDirty && <span className="ml-2 w-1.5 h-1.5 rounded-full bg-amber-500" title="Unsaved changes" />}
-          </TabsTrigger>
+          {canSeePharmacy && (
+            <TabsTrigger value="pharmacy" data-testid="settings-tab-pharmacy">
+              <Building2 className="w-4 h-4 mr-2" />
+              Pharmacy
+              {pharmacyDirty && <span className="ml-2 w-1.5 h-1.5 rounded-full bg-amber-500" title="Unsaved changes" />}
+            </TabsTrigger>
+          )}
           <TabsTrigger value="profile" data-testid="settings-tab-profile">
             <User className="w-4 h-4 mr-2" />
             Profile
@@ -318,9 +326,19 @@ export default function SettingsPage() {
         </TabsList>
 
         {/* Kept mounted so edits survive switching tabs */}
-        <TabsContent value="pharmacy" forceMount className="data-[state=inactive]:hidden">
-          <PharmacySettings active={tab === "pharmacy"} onDirtyChange={setPharmacyDirty} />
-        </TabsContent>
+        {canSeePharmacy && (
+          <TabsContent value="pharmacy" forceMount className="data-[state=inactive]:hidden">
+            {!canEditPharmacy && (
+              <p className="mb-4 flex items-center gap-2 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm font-semibold text-amber-800 dark:text-amber-300" data-testid="settings-view-only">
+                <Lock className="w-4 h-4 shrink-0" /> View only. Ask the pharmacy owner if you need to change these details.
+              </p>
+            )}
+            {/* A disabled fieldset turns off every field and button inside */}
+            <fieldset disabled={!canEditPharmacy} className="min-w-0 disabled:opacity-90">
+              <PharmacySettings active={tab === "pharmacy"} onDirtyChange={setPharmacyDirty} />
+            </fieldset>
+          </TabsContent>
+        )}
 
         <TabsContent value="profile" forceMount className="data-[state=inactive]:hidden">
           <ProfileSettings active={tab === "profile"} onDirtyChange={setProfileDirty} />

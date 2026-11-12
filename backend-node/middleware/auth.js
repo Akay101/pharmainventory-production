@@ -3,6 +3,7 @@ const { verifyAccess } = require("../services/auth/tokens");
 const account = require("../services/account");
 const permissions = require("../services/access/permissions");
 const policy = require("../services/access/policy");
+const sessions = require("../services/auth/sessions");
 
 if (!process.env.JWT_SECRET) {
   throw new Error("JWT_SECRET environment variable is required");
@@ -74,13 +75,13 @@ const auth = async (req, res, next) => {
     }
 
     if (!DESKTOP_RUNTIME) {
-      // One live session per user; desktop apps hold their own device sign-in
+      // Two live sessions per user (computer + phone); desktop apps hold their own device sign-in
       if (decoded.kind === "desktop") {
         const live = await cached(`dev:${decoded.did}`, () =>
           db.collection("desktop_devices").findOne({ id: decoded.did, user_id: user.id, revoked_at: null }, { projection: { _id: 0, id: 1 } })
         );
         if (!live) return res.status(401).json({ code: "DEVICE_REVOKED", detail: "This computer was removed from the account." });
-      } else if (!decoded.sid || decoded.sid !== user.active_session_id) {
+      } else if (!decoded.sid || !sessions.liveIds(user).includes(decoded.sid)) {
         return res.status(401).json({ code: "SESSION_ENDED", detail: "Your session has ended. Please sign in again." });
       }
 

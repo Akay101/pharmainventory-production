@@ -96,7 +96,7 @@ export default function LoginPage() {
     } catch (error) {
       const data = error.response?.data || {};
       if (data.code === "SESSION_ACTIVE_ELSEWHERE") {
-        setConflict({ session: data.session, ticket: data.ticket });
+        setConflict({ session: data.session, ticket: data.ticket, slot: data.slot });
         return;
       }
       if (data.code === "EMAIL_NOT_VERIFIED") {
@@ -138,8 +138,11 @@ export default function LoginPage() {
       <Dialog open={!!conflict} onOpenChange={(o) => !o && !takingOver && setConflict(null)}>
         <DialogContent className="sm:max-w-md rounded-3xl" data-testid="session-conflict">
           <DialogHeader>
-            <DialogTitle className="text-xl font-extrabold">You're signed in on another device</DialogTitle>
-            <DialogDescription>Your account can be used on one device at a time. Sign that device out to continue here.</DialogDescription>
+            <DialogTitle className="text-xl font-extrabold">You're signed in on another {conflict?.slot === "mobile" ? "phone" : "computer"}</DialogTitle>
+            <DialogDescription>
+              Each login works on one computer and one phone at a time. Sign that {conflict?.slot === "mobile" ? "phone" : "computer"} out to continue here
+              {conflict?.slot === "mobile" ? "; your computer stays signed in." : "; your phone stays signed in."}
+            </DialogDescription>
           </DialogHeader>
           {conflict?.session && (
             <div className="flex items-start gap-3 rounded-2xl border border-border bg-muted/40 p-4">

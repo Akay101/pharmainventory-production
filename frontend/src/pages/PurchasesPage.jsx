@@ -6,6 +6,7 @@ import { createPortal } from "react-dom";
 import axios from "axios";
 import RecordDates from "../components/RecordDates";
 import { API, useAuth } from "../App";
+import { useAccess } from "../components/access/Can";
 import {
   Card,
   CardContent,
@@ -1025,7 +1026,10 @@ export default function PurchasesPage() {
   const [medicineSuggestions, setMedicineSuggestions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
-  const { user, settings } = useAuth();
+  const { user, settings, can, rule } = useAuth();
+  // Hide what this user's access doesn't allow (the server enforces it too)
+  const purAcc = useAccess("purchases");
+  const canPaySuppliers = purAcc.update && can("suppliers", "update") && !rule("no_supplier_payments");
   const [tabs, setTabs] = useState([]);
   const [activeTabId, setActiveTabId] = useState(null);
 
@@ -2400,7 +2404,7 @@ export default function PurchasesPage() {
   const purchaseFormOpen = () => showNewPurchase || !!editingPurchaseId;
   useShortcuts(
     [
-      { combo: "alt+n", label: "New purchase", run: () => handleStartNewPurchase() },
+      { combo: "alt+n", label: "New purchase", when: () => purAcc.create, run: () => handleStartNewPurchase() },
       { combo: "alt+a", label: "Add an item line", when: () => showNewPurchase, run: () => handleAddNewRow() },
       { combo: "mod+enter", label: "Save the purchase", when: purchaseFormOpen, run: () => (showNewPurchase ? handleSubmitPurchase() : handleSaveEditPurchase()) },
       { combo: "alt+s", label: "Save the purchase (while one is open)", when: purchaseFormOpen, run: () => (showNewPurchase ? handleSubmitPurchase() : handleSaveEditPurchase()) },
@@ -2659,6 +2663,7 @@ export default function PurchasesPage() {
   // ============ NEW PURCHASE - INLINE TABLE ============
 
   const handleStartNewPurchase = () => {
+    if (!purAcc.create) return;
     if (!showNewPurchase && tabs.length === 0) {
       createNewTab();
     } else {
@@ -3894,6 +3899,7 @@ export default function PurchasesPage() {
   // };
 
   const handleStartEditPurchase = (purchase) => {
+    if (!purAcc.update) return;
     setShowNewPurchase(true);
     setEditingPurchaseId(purchase.id);
 
@@ -7184,6 +7190,7 @@ export default function PurchasesPage() {
                   size="sm"
                   className="h-8 text-xs font-bold rounded-xl bg-gradient-to-r from-orange-500/10 to-amber-500/10 border-orange-500/30 text-orange-600 dark:text-orange-400 hover:border-orange-500/50 max-md:order-3 max-md:h-10"
                   onClick={() => openScanner("/scan")}
+                  hidden={!purAcc.create}
                   data-testid="scan-products-btn"
                   style={onlineFeatures ? undefined : { display: "none" }}
                 >
@@ -7196,6 +7203,7 @@ export default function PurchasesPage() {
                   size="sm"
                   className="h-8 text-xs font-bold rounded-xl border-border/70 cursor-pointer max-md:order-3 max-md:h-10 max-md:px-2"
                   onClick={() => setCsvDialog(true)}
+                  hidden={!purAcc.create}
                   data-testid="csv-import-btn"
                 >
                   <FileSpreadsheet className="w-3.5 h-3.5 mr-1.5 text-orange-500" />
@@ -7207,6 +7215,7 @@ export default function PurchasesPage() {
                   size="sm"
                   className={`h-8 text-xs font-bold rounded-xl cursor-pointer max-md:order-3 max-md:h-10 ${showPurchaseDrafts ? "border-orange-500/50 bg-orange-500/10 text-orange-600 dark:text-orange-400" : "border-border/70"}`}
                   onClick={() => setShowPurchaseDrafts((v) => !v)}
+                  hidden={!purAcc.create}
                   data-testid="purchase-drafts-btn"
                 >
                   <FileText className="w-3.5 h-3.5 mr-1.5 text-orange-500" />
@@ -7220,6 +7229,7 @@ export default function PurchasesPage() {
                   size="sm"
                   className="h-8 px-3.5 text-xs font-extrabold bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white rounded-xl shadow-xs border-none max-md:order-2 max-md:h-10 max-md:shadow-md max-md:shadow-orange-500/25"
                   onClick={handleStartNewPurchase}
+                  hidden={!purAcc.create}
                   data-testid="add-purchase-btn"
                   data-shortcut="new"
                   data-kbd={formatCombo("alt+n")}
@@ -7280,7 +7290,7 @@ export default function PurchasesPage() {
                               <Button size="sm" className="h-8 rounded-xl btn-primary text-xs font-bold" onClick={() => handleOpenPurchaseDraft(d)}>
                                 Review &amp; save
                               </Button>
-                              <Button variant="ghost" size="icon" className="h-8 w-8 rounded-xl text-muted-foreground hover:text-destructive hover:bg-destructive/10" onClick={() => handleDeletePurchaseDraft(d)} title="Delete draft">
+                              <Button variant="ghost" size="icon" hidden={!purAcc.delete} className="h-8 w-8 rounded-xl text-muted-foreground hover:text-destructive hover:bg-destructive/10" onClick={() => handleDeletePurchaseDraft(d)} title="Delete draft">
                                 <Trash2 className="h-4 w-4" />
                               </Button>
                             </div>
@@ -7522,6 +7532,7 @@ export default function PurchasesPage() {
                             variant="ghost"
                             className="h-7 w-7"
                             onClick={() => handleStartEditPurchase(purchase)}
+                            hidden={!purAcc.update}
                             data-testid={`edit-purchase-${purchase.id}`}
                             data-row-key="e"
                           >
@@ -7534,6 +7545,7 @@ export default function PurchasesPage() {
                             onClick={() =>
                               setDeleteDialog({ open: true, purchase })
                             }
+                            hidden={!purAcc.delete}
                             data-testid={`delete-purchase-${purchase.id}`}
                             data-row-key="delete"
                           >
@@ -7787,7 +7799,7 @@ export default function PurchasesPage() {
                               </div>
 
                               <div className="flex gap-2">
-                                {purchase.payment_status !== "Paid" && (
+                                {purchase.payment_status !== "Paid" && canPaySuppliers && (
                                   <>
                                     <Button
                                       size="sm"

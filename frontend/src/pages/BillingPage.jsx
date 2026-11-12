@@ -6,6 +6,7 @@ import { createPortal } from "react-dom";
 import axios from "axios";
 import RecordDates from "../components/RecordDates";
 import { API, useAuth } from "../App";
+import { useAccess } from "../components/access/Can";
 import {
   Card,
   CardContent,
@@ -236,7 +237,10 @@ export default function BillingPage() {
   const [bills, setBills] = useState([]);
   const [totalBills, setTotalBills] = useState(0);
   const [loading, setLoading] = useState(true);
-  const { user, settings } = useAuth();
+  const { user, settings, rule } = useAuth();
+  // Hide what this user's access doesn't allow (the server enforces it too)
+  const billAcc = useAccess("billing");
+  const canTakePayments = billAcc.update && !rule("no_customer_debt_clear");
   const [tabs, setTabs] = useState([]);
   const [activeTabId, setActiveTabId] = useState(null);
   const [submitting, setSubmitting] = useState(false);
@@ -1097,7 +1101,7 @@ export default function BillingPage() {
     (showDoctorSuggestions && doctorSuggestions.length > 0);
   useShortcuts(
     [
-      { combo: "alt+n", label: "New bill", run: () => handleStartNewBill() },
+      { combo: "alt+n", label: "New bill", when: () => billAcc.create, run: () => handleStartNewBill() },
       { combo: "alt+a", label: "Add an item line", when: () => showNewBill, run: () => handleAddNewRow() },
       { combo: "mod+enter", label: "Save the bill", when: billFormOpen, run: () => saveOpenBill() },
       { combo: "alt+s", label: "Save the bill (while one is open)", when: billFormOpen, run: () => saveOpenBill() },
@@ -1648,6 +1652,7 @@ export default function BillingPage() {
   // ============ NEW BILL - INLINE TABLE ============
 
   const handleStartNewBill = () => {
+    if (!billAcc.create) return;
     if (!showNewBill && tabs.length === 0) {
       createNewTab();
     } else {
@@ -2366,6 +2371,7 @@ export default function BillingPage() {
   // ============ EDIT BILL - FULL INLINE TABLE EDITING ============
 
   const handleStartEditBill = async (bill) => {
+    if (!billAcc.update) return;
     setEditingBillId(bill.id);
     setEditingBillData({
       ...bill,
@@ -3138,6 +3144,7 @@ export default function BillingPage() {
               </Button>
               <Button
                 size="sm"
+                hidden={!billAcc.create}
                 className="h-8 px-3.5 text-xs font-extrabold bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white rounded-xl shadow-xs border-none max-md:h-10 max-md:shadow-md max-md:shadow-orange-500/25"
                 onClick={handleStartNewBill}
                 data-testid="new-bill-btn"
@@ -5770,6 +5777,7 @@ export default function BillingPage() {
                 size="sm"
                 className="h-9 text-xs font-bold rounded-xl bg-gradient-to-r from-amber-500/10 to-orange-500/10 border-amber-500/30 text-amber-600 dark:text-amber-400 hover:border-amber-500/50 cursor-pointer shadow-2xs"
                 onClick={() => openScanner("/scan-bill")}
+                hidden={!billAcc.create}
                 data-testid="scan-bill-list-btn"
                 style={onlineFeatures ? undefined : { display: "none" }}
               >
@@ -6201,6 +6209,7 @@ export default function BillingPage() {
                           <div className="flex items-center justify-end gap-2">
                             <Button
                               size="sm"
+                              hidden={!billAcc.create}
                               onClick={() => handleLoadDraftToBill(d)}
                               className="h-8 px-3 text-xs font-black bg-orange-600 hover:bg-orange-700 text-white rounded-xl shadow-xs cursor-pointer"
                             >
@@ -6209,6 +6218,7 @@ export default function BillingPage() {
                             <Button
                               size="icon"
                               variant="ghost"
+                              hidden={!billAcc.delete}
                               onClick={() => handleDeleteDraft(d.id)}
                               className="h-8 w-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-xl"
                               title="Delete Draft"
@@ -6366,6 +6376,7 @@ export default function BillingPage() {
                                 variant="ghost"
                                 size="icon"
                                 onClick={() => handleStartEditBill(bill)}
+                                hidden={!billAcc.update}
                                 title="Edit Bill (E)"
                                 data-row-key="e"
                                 className="h-8 w-8 rounded-xl hover:bg-amber-500/10 text-muted-foreground hover:text-amber-600 transition-all duration-200"
@@ -6415,7 +6426,7 @@ export default function BillingPage() {
                                   </Button>
                                 ) : null;
                               })()}
-                              {!bill.is_paid && (
+                              {!bill.is_paid && canTakePayments && (
                                 <Button
                                   variant="ghost"
                                   size="icon"
@@ -6434,6 +6445,7 @@ export default function BillingPage() {
                                 onClick={() =>
                                   setDeleteDialog({ open: true, bill })
                                 }
+                                hidden={!billAcc.delete}
                                 title="Delete Bill (Del)"
                                 data-row-key="delete"
                                 className="h-8 w-8 rounded-xl hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-all duration-200"
@@ -6700,7 +6712,7 @@ export default function BillingPage() {
                                             ₹{remainingUnpaid.toFixed(2)}
                                           </p>
                                         </div>
-                                        {remainingUnpaid > 0 && (
+                                        {remainingUnpaid > 0 && canTakePayments && (
                                           <Button
                                             size="sm"
                                             onClick={() => setRecordPaymentDialog({

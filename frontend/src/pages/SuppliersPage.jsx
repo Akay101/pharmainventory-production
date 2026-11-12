@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import axios from "axios";
-import { API } from "../App";
+import { API, useAuth } from "../App";
+import { useAccess } from "../components/access/Can";
 import { Card, CardContent } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -55,6 +56,10 @@ import { formatDate } from "./utils";
 import Loader from "../components/Loader";
 
 export default function SuppliersPage() {
+  // Hide what this user's access doesn't allow (the server enforces it too)
+  const acc = useAccess("suppliers");
+  const { can, rule } = useAuth();
+  const canPaySuppliers = can("suppliers", "update") && !rule("no_supplier_payments");
   const navigate = useNavigate();
   const location = useLocation();
   const isInitialMount = useRef(true);
@@ -662,6 +667,7 @@ export default function SuppliersPage() {
           <Dialog open={mergeDialogOpen} onOpenChange={setMergeDialogOpen}>
             <Button 
               variant="outline" 
+              hidden={!acc.update}
               className="h-10 text-sm font-semibold border-border/80 hover:bg-muted rounded-xl transition-all flex items-center gap-2" 
               onClick={openMergeDialog}
             >
@@ -785,7 +791,7 @@ export default function SuppliersPage() {
             }}
           >
             <DialogTrigger asChild>
-              <Button className="btn-primary flex items-center gap-2 rounded-xl h-10" data-testid="add-supplier-btn" data-shortcut="new">
+              <Button hidden={!acc.create} className="btn-primary flex items-center gap-2 rounded-xl h-10" data-testid="add-supplier-btn" data-shortcut={acc.create ? "new" : undefined}>
                 <Plus className="w-4 h-4" />
                 Add Supplier
               </Button>
@@ -1079,7 +1085,7 @@ export default function SuppliersPage() {
                       ₹{(detailsDialog.data.total_amount_owed || 0).toFixed(2)}
                     </p>
                   </div>
-                  {detailsDialog.data.total_amount_owed > 0 && (
+                  {detailsDialog.data.total_amount_owed > 0 && canPaySuppliers && (
                     <Button 
                       onClick={() => handleClearAllDues(detailsDialog.data.supplier.id)} 
                       size="sm" 
@@ -1186,7 +1192,7 @@ export default function SuppliersPage() {
                               <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Remaining</span>
                               <span className={`text-base font-mono font-extrabold ${remaining > 0 ? "text-red-500" : "text-green-500"}`}>₹{Math.max(0, remaining).toFixed(2)}</span>
                             </div>
-                            {!isPaid && (
+                            {!isPaid && canPaySuppliers && (
                               <div className="flex gap-2">
                                 <Button 
                                   size="sm" 
@@ -1440,10 +1446,11 @@ export default function SuppliersPage() {
                           </div>
                         </div>
 
-                        <div className="flex gap-0.5 bg-muted/20 p-0.5 rounded-lg border border-border/50 shrink-0">
+                        <div className="flex gap-0.5 bg-muted/20 p-0.5 rounded-lg border border-border/50 shrink-0" hidden={!acc.update && !acc.delete}>
                           <Button
                             variant="ghost"
                             size="icon"
+                            hidden={!acc.update}
                             onClick={() => openCsvTemplateModal(supplier)}
                             className={`w-8 h-8 rounded-md transition-all ${
                               supplier.csv_template
@@ -1457,6 +1464,7 @@ export default function SuppliersPage() {
                           <Button
                             variant="ghost"
                             size="icon"
+                            hidden={!acc.update}
                             onClick={() => handleEdit(supplier)}
                             className="w-8 h-8 rounded-md text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all"
                             data-testid={`edit-supplier-${supplier.id}`}
@@ -1467,6 +1475,7 @@ export default function SuppliersPage() {
                           <Button
                             variant="ghost"
                             size="icon"
+                            hidden={!acc.delete}
                             onClick={() => handleDelete(supplier.id)}
                             className="w-8 h-8 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-all"
                             data-testid={`delete-supplier-${supplier.id}`}
@@ -1701,6 +1710,7 @@ export default function SuppliersPage() {
                         ) : (
                           <Button
                             size="sm"
+                            hidden={!acc.create}
                             onClick={() => handleAddGlobalSupplier(dist)}
                             disabled={isAdding}
                             className="btn-primary h-8 px-3 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm"
