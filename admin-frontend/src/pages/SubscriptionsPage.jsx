@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { CalendarClock, CalendarPlus, Gift, Loader2, Search, ShieldOff, Receipt, History, ArrowUpDown } from "lucide-react";
+import { CalendarClock, CalendarPlus, Gift, Loader2, Search, ShieldOff, Receipt, History, ArrowUpDown, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { AdminAPI, apiError } from "../api";
 import BottomDrawer from "../components/BottomDrawer";
@@ -88,18 +88,19 @@ function HistoryDrawer({ row, onClose }) {
 export default function SubscriptionsPage({ activeEnv }) {
   const [data, setData] = useState(null);
   const [status, setStatus] = useState("ALL");
+  const [earlyOnly, setEarlyOnly] = useState(false);
   const [search, setSearch] = useState("");
   const [action, setAction] = useState(null); // { type, row }
   const [historyRow, setHistoryRow] = useState(null);
 
   const load = useCallback(async () => {
     try {
-      const res = await AdminAPI.getSubscriptions({ status });
+      const res = await AdminAPI.getSubscriptions({ status, ...(earlyOnly ? { early_access: "1" } : {}) });
       setData(res.data);
     } catch (err) {
       toast.error(apiError(err, "Couldn't load subscriptions"));
     }
-  }, [status]);
+  }, [status, earlyOnly]);
 
   useEffect(() => {
     load();
@@ -125,7 +126,7 @@ export default function SubscriptionsPage({ activeEnv }) {
         </p>
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
         {["TRIAL", "ACTIVE", "EXPIRED", "NONE"].map((s) => (
           <button
             key={s}
@@ -138,12 +139,23 @@ export default function SubscriptionsPage({ activeEnv }) {
             <div className="text-xl font-black text-slate-900 mt-0.5">{data?.summary?.[s] ?? "—"}</div>
           </button>
         ))}
+        <button
+          onClick={() => setEarlyOnly((v) => !v)}
+          data-testid="filter-early-access"
+          className={`p-3.5 text-left rounded-xl border shadow-2xs transition-all ${earlyOnly ? "bg-violet-50 border-violet-600 ring-1 ring-violet-600" : "bg-white border-violet-200 hover:border-violet-300"}`}
+        >
+          <span className="text-[10px] font-bold text-violet-500 uppercase flex items-center gap-1">
+            <Sparkles className="w-3 h-3" /> Early access
+          </span>
+          <div className="text-xl font-black text-violet-900 mt-0.5">{data?.summary?.EARLY_ACCESS ?? "—"}</div>
+        </button>
       </div>
 
       <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs overflow-hidden">
         <div className="p-4 bg-slate-50/70 border-b border-slate-200 flex items-center justify-between gap-3">
           <span className="text-xs font-bold text-slate-500">
-            {status === "ALL" ? "All pharmacies" : STATUS_LABEL[status]} · {rows.length}
+            {status === "ALL" ? "All pharmacies" : STATUS_LABEL[status]}
+            {earlyOnly ? " · early access only" : ""} · {rows.length}
           </span>
           <div className="relative flex-1 max-w-sm">
             <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -188,7 +200,14 @@ export default function SubscriptionsPage({ activeEnv }) {
                   return (
                     <tr key={r.pharmacy_id} className="hover:bg-slate-50/80">
                       <td className="py-3.5 px-4">
-                        <div className="font-bold text-slate-900">{r.pharmacy_name}</div>
+                        <div className="font-bold text-slate-900 flex flex-wrap items-center gap-1.5">
+                          {r.pharmacy_name}
+                          {r.early_access && (
+                            <span title={`Early access with ${r.early_access.code} on ${fmtDate(r.early_access.at)}`} className="inline-flex items-center gap-0.5 rounded-md border border-violet-200 bg-violet-50 px-1.5 py-0.5 text-[9px] font-black uppercase text-violet-700" data-testid="early-access-badge">
+                              <Sparkles className="w-2.5 h-2.5" /> Early access
+                            </span>
+                          )}
+                        </div>
                         <div className="text-[10px] text-slate-400">{r.location || "—"}</div>
                       </td>
                       <td className="py-3.5 px-4">

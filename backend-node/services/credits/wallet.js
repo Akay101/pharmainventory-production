@@ -117,7 +117,25 @@ async function getWallet(db, config, pharmacy) {
   const today = todayIst();
   for (let i = 0; i < 5; i++) {
     const w = await ensureWallet(db, pharmacy.id);
-    if (w.daily?.date === today) return w;
+    if (w.daily?.date === today) {
+      // A plan bought (or upgraded) during the day: today's allowance goes up
+      // to the new plan's at once instead of waiting for midnight. Never down.
+      const now = toMilli(allowanceCredits(config, pharmacy, w));
+      const had = w.daily.allowance_milli || 0;
+      if (now <= had) return w;
+      const res = await db.collection(WALLETS).updateOne(
+        { pharmacy_id: pharmacy.id, version: w.version, "daily.date": today, "daily.allowance_milli": had },
+        { $set: { "daily.allowance_milli": now, updated_at: new Date() }, $inc: { "daily.remaining_milli": now - had, version: 1, "totals.daily_granted_milli": now - had } }
+      );
+      if (!res.modifiedCount) continue;
+      await db
+        .collection(LEDGER)
+        .insertOne({ id: crypto.randomUUID(), ref: `daily-top:${pharmacy.id}:${today}:${now}`, pharmacy_id: pharmacy.id, type: "DAILY", amount_milli: now - had, bucket: "daily", status: "DONE", note: `Daily credits for ${today} (plan started today)`, created_at: new Date() })
+        .catch((err) => {
+          if (!isDuplicate(err)) throw err;
+        });
+      return db.collection(WALLETS).findOne({ pharmacy_id: pharmacy.id });
+    }
     const allowance = toMilli(allowanceCredits(config, pharmacy, w));
     const year = planYear(pharmacy.subscription).key;
     const res = await db.collection(WALLETS).updateOne(

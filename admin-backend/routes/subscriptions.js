@@ -25,6 +25,7 @@ const grantSchema = z.object({
 router.get("/", async (req, res, next) => {
   try {
     const { status = "ALL", search } = req.query;
+    const earlyOnly = req.query.early_access === "1";
     const [pharmacies, owners] = await Promise.all([
       // Linked pharmacies (add-on) follow their account and are listed under it
       req.db.collection("pharmacies").find({ $or: [{ account_id: { $exists: false } }, { account_id: null }, { $expr: { $eq: ["$account_id", "$id"] } }] }, { projection: { _id: 0, id: 1, name: 1, location: 1, subscription: 1, created_at: 1, trial_claimed_at: 1 } }).toArray(),
@@ -51,6 +52,18 @@ router.get("/", async (req, res, next) => {
       } else x.expired++;
       addonsBy.set(a.account_id, x);
     }
+    // Early access: activated with an access code (not the free trial).
+    // Kept visible after prices launch, for the production follow-up.
+    const accessCodes = await req.db.collection("promo_codes").find({ type: "ACCESS", source: { $ne: "TRIAL" } }, { projection: { _id: 0, code: 1 } }).toArray();
+    const earlyBy = new Map();
+    if (accessCodes.length) {
+      const reds = await req.db
+        .collection("promo_redemptions")
+        .find({ code: { $in: accessCodes.map((c) => c.code) }, status: "REDEEMED" }, { projection: { _id: 0, code: 1, pharmacy_id: 1, created_at: 1 } })
+        .sort({ created_at: 1 })
+        .toArray();
+      for (const r of reds) if (!earlyBy.has(r.pharmacy_id)) earlyBy.set(r.pharmacy_id, { code: r.code, at: r.created_at });
+    }
     let rows = pharmacies.map((p) => ({
       pharmacy_id: p.id,
       pharmacy_name: p.name || "Unnamed",
@@ -60,12 +73,15 @@ router.get("/", async (req, res, next) => {
       trial_claimed_at: p.trial_claimed_at || null,
       subscription: subs.describe(p.subscription),
       addons: addonsBy.get(p.id) || null,
+      early_access: earlyBy.get(p.id) || null,
     }));
 
     const summary = rows.reduce(
       (acc, r) => ({ ...acc, [r.subscription.status]: (acc[r.subscription.status] || 0) + 1 }),
       { TRIAL: 0, ACTIVE: 0, EXPIRED: 0, NONE: 0 }
     );
+    summary.EARLY_ACCESS = rows.filter((r) => r.early_access).length;
+    if (earlyOnly) rows = rows.filter((r) => r.early_access);
 
     if (status !== "ALL") rows = rows.filter((r) => r.subscription.status === status);
     if (search) {
