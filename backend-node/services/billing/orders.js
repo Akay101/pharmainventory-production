@@ -24,11 +24,17 @@ const newOrderId = () => `dd_${Date.now().toString(36)}_${crypto.randomBytes(6).
 
 const trimUrl = (u) => (u || "").replace(/\/+$/, "");
 
+// A 10-digit Indian mobile (Cashfree needs one), from "+91 98765 43210",
+// "098765...", etc. Returns null when it isn't one.
+const normalizePhone = (v) => {
+  let d = String(v || "").replace(/\D/g, "");
+  if (d.length === 12 && d.startsWith("91")) d = d.slice(2);
+  else if (d.length === 11 && d.startsWith("0")) d = d.slice(1);
+  return /^[6-9]\d{9}$/.test(d) ? d : null;
+};
 const customerPhone = (mobile) => {
-  const digits = String(mobile || "").replace(/\D/g, "").slice(-10);
-  if (!/^[6-9]\d{9}$/.test(digits)) {
-    throw new BillingError("PHONE_REQUIRED", "Add a valid 10-digit mobile number to your profile before paying");
-  }
+  const digits = normalizePhone(mobile);
+  if (!digits) throw new BillingError("PHONE_REQUIRED", "Enter a 10-digit mobile number for this payment", 400);
   return digits;
 };
 
@@ -37,9 +43,12 @@ const customerPhone = (mobile) => {
  * and is validated here; missing fields fall back to what the account saved
  * last time. Returns the profile to snapshot on the order.
  */
-async function billingProfile(db, pharmacy, input) {
+async function billingProfile(db, pharmacy, input, user = null) {
   const saved = pharmacy.billing_profile || {};
   const merged = { ...saved, ...(input || {}) };
+  // Payment contact: what was typed at checkout, else last time's, else the profile's
+  const phone = normalizePhone(input?.phone) || (input?.phone ? null : normalizePhone(saved.phone) || normalizePhone(user?.mobile));
+  if (!phone) throw new BillingError("PHONE_REQUIRED", "Enter a 10-digit mobile number for this payment", 400);
   const gstin = merged.gstin ? gst.normalizeGstin(merged.gstin) : "";
   if (gstin && !gst.isValidGstin(gstin)) throw new BillingError("INVALID_GSTIN", "That GSTIN doesn't look right. Check it, or leave it empty.");
   let stateCode = gstin ? gstin.slice(0, 2) : String(merged.state_code || "");
@@ -51,6 +60,7 @@ async function billingProfile(db, pharmacy, input) {
     gstin: gstin || null,
     state_code: stateCode,
     address: clean(merged.address, 300) || pharmacy.location || "",
+    phone,
   };
   await db.collection("pharmacies").updateOne({ id: pharmacy.id }, { $set: { billing_profile: { ...profile, updated_at: new Date() } } });
   return profile;
@@ -116,8 +126,8 @@ async function createCheckout(db, { user, pharmacy, planCode, promoCode, billing
   await planContext(db, { pharmacy, planCode, promoCode, allowOwnReservation: true });
   await supersedeOpenOrders(db, pharmacy.id);
   const { plan, promo, breakdown, credit } = await planContext(db, { pharmacy, planCode, promoCode });
-  const phone = breakdown.amount_paise > 0 ? customerPhone(user.mobile) : null;
-  const profile = breakdown.amount_paise > 0 ? await billingProfile(db, pharmacy, billing) : null;
+  const profile = breakdown.amount_paise > 0 ? await billingProfile(db, pharmacy, billing, user) : null;
+  const phone = profile?.phone || null;
 
   const now = new Date();
   const orderId = newOrderId();
@@ -196,13 +206,17 @@ async function savedProfile(db, pharmacy) {
 
 // Checkout for an AI credit pack. The pack (price and credits) is snapshotted
 // on the order, so later price changes don't affect a payment in flight.
-async function createCreditCheckout(db, { user, pharmacy, packId }) {
+async function createCreditCheckout(db, { user, pharmacy, packId, billing = null }) {
   if (user.role !== "ADMIN") throw new BillingError("OWNER_ONLY", "Only the pharmacy admin can buy credits. Ask your admin to top up.", 403);
   const cfg = await creditConfig.getConfig(db);
   const pack = (cfg.packs || []).find((p) => p.id === packId && p.active !== false);
   if (!pack) throw new BillingError("PACK_NOT_FOUND", "That credit pack isn't available any more. Refresh and pick another.", 404);
   if (!(pack.price_paise >= 100)) throw new BillingError("PACK_NOT_FOUND", "That credit pack isn't available", 404);
-  const phone = customerPhone(user.mobile);
+  // Credits are invoiced to the account (linked pharmacies use the main one's details)
+  const accountId = pharmacy.account_id || pharmacy.id;
+  const account = accountId === pharmacy.id ? pharmacy : await db.collection("pharmacies").findOne({ id: accountId });
+  const profile = await billingProfile(db, account, billing, user);
+  const phone = profile.phone;
   await supersedeOpenOrders(db, pharmacy.id, "CREDITS");
 
   const now = new Date();
@@ -216,7 +230,7 @@ async function createCreditCheckout(db, { user, pharmacy, packId }) {
     plan: null,
     pack_snapshot: { id: pack.id, label: pack.label, price_paise: pack.price_paise, credits: creditsGiven, bonus_credits: pack.bonus_credits || 0, gst_percent: cfg.gst_percent },
     account_id: pharmacy.account_id || pharmacy.id,
-    billing_profile: await savedProfile(db, pharmacy),
+    billing_profile: profile,
     amount_paise: pack.price_paise,
     status: "CREATED",
     gateway: "CASHFREE",
@@ -252,7 +266,7 @@ async function createCreditCheckout(db, { user, pharmacy, packId }) {
 
 // Start a Cashfree order for an order row already inserted
 async function openGatewayOrder(db, order, user, tags) {
-  const phone = customerPhone(user.mobile);
+  const phone = order.billing_profile?.phone || customerPhone(user.mobile);
   try {
     const cf = await cashfree.createOrder({
       orderId: order.order_id,

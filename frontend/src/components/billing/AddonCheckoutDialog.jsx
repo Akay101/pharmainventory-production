@@ -8,11 +8,12 @@ import { Loader2, Lock } from "lucide-react";
 import { API, useAuth } from "../../App";
 import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../ui/dialog";
-import BillingDetailsFields, { billingError, initialBilling } from "./BillingDetailsFields";
+import BillingDetailsFields, { billingError, billingPayload, initialBilling } from "./BillingDetailsFields";
 import { formatINR, openGateway } from "../../lib/checkout";
 
 export default function AddonCheckoutDialog({ open, onOpenChange, request, title, description, children }) {
-  const { pharmacy } = useAuth();
+  const { pharmacy, user } = useAuth();
+  const [showErrors, setShowErrors] = useState(false);
   const [quote, setQuote] = useState(null);
   const [error, setError] = useState(null);
   const [billing, setBilling] = useState(null);
@@ -37,16 +38,19 @@ export default function AddonCheckoutDialog({ open, onOpenChange, request, title
     if (!open || billing) return;
     axios
       .get(`${API}/billing/status`)
-      .then((r) => setBilling(initialBilling(r.data.billing_profile, { ...pharmacy, gst_no: r.data.pharmacy_gstin })))
-      .catch(() => setBilling(initialBilling(null, pharmacy)));
+      .then((r) => setBilling(initialBilling(r.data.billing_profile, { ...pharmacy, gst_no: r.data.pharmacy_gstin }, user)))
+      .catch(() => setBilling(initialBilling(null, pharmacy, user)));
   }, [open]); // eslint-disable-line
 
   const pay = async () => {
     const problem = billing && billingError(billing);
-    if (problem) return toast.error(problem);
+    if (problem) {
+      setShowErrors(true);
+      return toast.error(problem);
+    }
     setPaying(true);
     try {
-      const res = await axios.post(`${API}/billing/addons/checkout`, { ...request, billing: { ...billing, gstin: billing.gstin || null } });
+      const res = await axios.post(`${API}/billing/addons/checkout`, { ...request, billing: billingPayload(billing) });
       await openGateway(res.data);
     } catch (e) {
       toast.error(e.response?.data?.detail || e.message || "Couldn't start the payment");
@@ -89,7 +93,7 @@ export default function AddonCheckoutDialog({ open, onOpenChange, request, title
             </div>
           </div>
         )}
-        {billing && quote && <BillingDetailsFields value={billing} onChange={setBilling} />}
+        {billing && quote && <BillingDetailsFields value={billing} onChange={setBilling} showErrors={showErrors} />}
         <DialogFooter>
           <Button
             onClick={pay}

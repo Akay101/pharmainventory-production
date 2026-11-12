@@ -70,7 +70,16 @@ router.get("/history", auth, async (req, res, next) => {
   }
 });
 
-const packSchema = z.object({ pack_id: z.string().trim().min(1).max(40) });
+const packSchema = z
+  .object({
+    pack_id: z.string().trim().min(1).max(40),
+    billing: z
+      .object({ legal_name: z.string().trim().max(120).optional(), gstin: z.string().trim().max(20).optional().or(z.literal("")).nullable(), state_code: z.string().trim().regex(/^\d{2}$/).optional(), address: z.string().trim().max(300).optional(), phone: z.string().trim().max(20).optional() })
+      .strict()
+      .optional()
+      .nullable(),
+  })
+  .strict();
 router.post("/checkout", auth, perUser(10), async (req, res, next) => {
   try {
     const parsed = packSchema.safeParse(req.body);
@@ -79,7 +88,7 @@ router.post("/checkout", auth, perUser(10), async (req, res, next) => {
       throw new BillingError("PRICES_NOT_LAUNCHED", "Credit packs aren't on sale yet. They'll be available when DavaDesk launches.", 403);
     }
     const pharmacy = await loadPharmacy(req);
-    res.json(await orders.createCreditCheckout(db(), { user: req.user, pharmacy, packId: parsed.data.pack_id }));
+    res.json(await orders.createCreditCheckout(db(), { user: req.user, pharmacy, packId: parsed.data.pack_id, billing: parsed.data.billing || null }));
   } catch (err) {
     sendBillingError(res, err, next);
   }

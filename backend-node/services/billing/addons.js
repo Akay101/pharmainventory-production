@@ -129,8 +129,7 @@ async function quote(db, { user, pharmacy, req }) {
 async function createCheckout(db, { user, pharmacy, req, billing }) {
   const orders = require("./orders");
   const built = await buildOrder(db, { user, pharmacy, req });
-  orders.customerPhone(user.mobile);
-  const profile = await orders.billingProfile(db, pharmacy, billing);
+  const profile = await orders.billingProfile(db, pharmacy, billing, user);
   await orders.supersedeOpenOrders(db, pharmacy.id, "ADDON");
   const now = new Date();
   const orderId = orders.newOrderId();

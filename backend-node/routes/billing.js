@@ -27,6 +27,7 @@ const billingSchema = z
     gstin: z.string().trim().max(20).optional().or(z.literal("")).nullable(),
     state_code: z.string().trim().regex(/^\d{2}$/).optional(),
     address: z.string().trim().max(300).optional(),
+    phone: z.string().trim().max(20).optional(),
   })
   .strict()
   .optional()

@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { Coins, Loader2, Zap, Target, History, ShoppingBag, Info, Sparkles, Mic, ImageIcon, Check, Clock, ArrowLeftRight } from "lucide-react";
-import { API } from "../../App";
+import { ArrowLeft, Lock, Coins, Loader2, Zap, Target, History, ShoppingBag, Info, Sparkles, Mic, ImageIcon, Check, Clock, ArrowLeftRight } from "lucide-react";
+import { API, useAuth } from "../../App";
+import BillingDetailsFields, { billingError, billingPayload, initialBilling } from "../billing/BillingDetailsFields";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "../ui/dialog";
 
 export const creditsApi = {
   get: () => axios.get(`${API}/credits`).then((r) => r.data),
   history: (before) => axios.get(`${API}/credits/history`, { params: { before, limit: 40 } }).then((r) => r.data.items || []),
-  checkout: (packId) => axios.post(`${API}/credits/checkout`, { pack_id: packId }).then((r) => r.data),
+  checkout: (packId, billing) => axios.post(`${API}/credits/checkout`, { pack_id: packId, billing }).then((r) => r.data),
 };
 
 const fmt = (n) => (Number(n) || 0).toLocaleString("en-IN", { maximumFractionDigits: 1 });
@@ -244,10 +245,34 @@ export function CreditsSheet({ open, onClose, data, refresh }) {
       .catch(() => setItems([]));
   }, [open, tab]);
 
+  // Picking a pack opens a short pay step: the pack, the total and the payment details
+  const { user, pharmacy } = useAuth();
+  const [payPack, setPayPack] = useState(null);
+  const [billing, setBilling] = useState(null);
+  const [showErrors, setShowErrors] = useState(false);
+  useEffect(() => {
+    if (!open) setPayPack(null);
+  }, [open]);
+  const choose = (pack) => {
+    setPayPack(pack);
+    setShowErrors(false);
+    if (billing) return;
+    axios
+      .get(`${API}/billing/status`)
+      .then((r) => setBilling(initialBilling(r.data.billing_profile, { ...pharmacy, gst_no: r.data.pharmacy_gstin }, user)))
+      .catch(() => setBilling(initialBilling(null, pharmacy, user)));
+  };
+
   const buy = async (pack) => {
+    const problem = billing && billingError(billing);
+    if (!billing || problem) {
+      setShowErrors(true);
+      if (problem) toast.error(problem);
+      return;
+    }
     setBuying(pack.id);
     try {
-      const order = await creditsApi.checkout(pack.id);
+      const order = await creditsApi.checkout(pack.id, billingPayload(billing));
       const Cashfree = await loadCashfree();
       const cashfree = Cashfree({ mode: order.mode });
       await cashfree.checkout({ paymentSessionId: order.payment_session_id, redirectTarget: "_self" });
@@ -309,7 +334,42 @@ export function CreditsSheet({ open, onClose, data, refresh }) {
               ))}
             </div>
 
-            {tab === "balance" && (
+            {tab === "balance" && payPack && (
+              <div className="space-y-3" data-testid="credits-pay-step">
+                <button type="button" onClick={() => setPayPack(null)} disabled={!!buying} className="flex items-center gap-1 text-xs font-bold text-muted-foreground hover:text-foreground">
+                  <ArrowLeft className="h-3.5 w-3.5" /> Other packs
+                </button>
+                <div className="flex items-center justify-between rounded-2xl border border-orange-500/30 bg-orange-500/5 p-3.5">
+                  <div>
+                    <p className="text-xs font-semibold text-muted-foreground">{payPack.label} pack</p>
+                    <p className="text-lg font-black tabular-nums">{fmt(payPack.credits)} credits</p>
+                    {payPack.bonus_credits ? <p className="text-[11px] text-muted-foreground">incl. {fmt(payPack.bonus_credits)} bonus · never expire</p> : <p className="text-[11px] text-muted-foreground">Never expire</p>}
+                  </div>
+                  <div className="text-right">
+                    <p className="text-xl font-black tabular-nums">{inr(payPack.price_paise)}</p>
+                    <p className="text-[10px] text-muted-foreground">incl. {data.gst_percent}% GST</p>
+                  </div>
+                </div>
+                {billing ? (
+                  <BillingDetailsFields value={billing} onChange={setBilling} showErrors={showErrors} />
+                ) : (
+                  <div className="flex justify-center py-4">
+                    <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={() => buy(payPack)}
+                  disabled={!billing || !!buying}
+                  className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 text-sm font-bold text-white hover:from-orange-600 hover:to-amber-600 disabled:opacity-60"
+                  data-testid="credits-pay-btn"
+                >
+                  {buying ? <Loader2 className="h-4 w-4 animate-spin" /> : <><Lock className="h-4 w-4" /> Pay {inr(payPack.price_paise)} securely</>}
+                </button>
+              </div>
+            )}
+
+            {tab === "balance" && !payPack && (
               <div className="space-y-3">
                 {data.prices_hidden && (
                   <div className="flex items-start gap-3 rounded-2xl border border-orange-500/30 bg-gradient-to-r from-orange-500/10 to-amber-500/10 p-3.5" data-testid="early-access-ai-note">
@@ -328,7 +388,7 @@ export function CreditsSheet({ open, onClose, data, refresh }) {
                       key={p.id}
                       type="button"
                       disabled={data.prices_hidden || !data.can_buy || !!buying}
-                      onClick={() => buy(p)}
+                      onClick={() => choose(p)}
                       className="rounded-2xl border border-border p-3 text-left transition hover:border-orange-500/50 hover:bg-orange-500/5 disabled:opacity-60"
                     >
                       <p className="text-xs font-semibold text-muted-foreground">{p.label}</p>

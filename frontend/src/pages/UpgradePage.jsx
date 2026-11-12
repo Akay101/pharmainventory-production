@@ -15,7 +15,7 @@ import { Skeleton } from "../components/ui/skeleton";
 import Loader from "../components/Loader";
 import ThemeToggle from "../components/ui/ThemeToggle";
 import { toast } from "sonner";
-import BillingDetailsFields, { billingError, initialBilling } from "../components/billing/BillingDetailsFields";
+import BillingDetailsFields, { billingError, billingPayload, initialBilling } from "../components/billing/BillingDetailsFields";
 import {
   ArrowLeft,
   BadgePercent,
@@ -100,6 +100,7 @@ function StatusCard({ subscription, plansByCode }) {
 
 export default function UpgradePage() {
   const { user, pharmacy, loading: authLoading, logout, fetchUser } = useAuth();
+  const [showBillingErrors, setShowBillingErrors] = useState(false);
   const [billing, setBilling] = useState(null);
   const navigate = useNavigate();
   const location = useLocation();
@@ -127,7 +128,7 @@ export default function UpgradePage() {
       ]);
       setCatalogue(plansRes.data);
       setStatus(statusRes.data);
-      setBilling((b) => b || initialBilling(statusRes.data.billing_profile, { ...pharmacy, gst_no: statusRes.data.pharmacy_gstin || pharmacy?.gst_no }));
+      setBilling((b) => b || initialBilling(statusRes.data.billing_profile, { ...pharmacy, gst_no: statusRes.data.pharmacy_gstin || pharmacy?.gst_no }, user));
     } catch (err) {
       setLoadError(true);
     }
@@ -250,6 +251,7 @@ export default function UpgradePage() {
   const pay = async () => {
     const problem = summary.amount_paise > 0 && billing ? billingError(billing) : null;
     if (problem) {
+      setShowBillingErrors(true);
       toast.error(problem);
       return;
     }
@@ -258,7 +260,7 @@ export default function UpgradePage() {
       const res = await axios.post(`${API}/billing/checkout`, {
         plan: summary.plan.code,
         code: summary.code || undefined,
-        ...(summary.amount_paise > 0 && billing ? { billing: { ...billing, gstin: billing.gstin || null } } : {}),
+        ...(summary.amount_paise > 0 && billing ? { billing: billingPayload(billing) } : {}),
       });
       if (res.data.free) {
         await fetchUser();
@@ -628,7 +630,7 @@ export default function UpgradePage() {
                   <span>Total</span>
                   <span data-testid="summary-total">{formatINR(summary.amount_paise)}</span>
                 </div>
-                {summary.amount_paise > 0 && billing && <BillingDetailsFields value={billing} onChange={setBilling} />}
+                {summary.amount_paise > 0 && billing && <BillingDetailsFields value={billing} onChange={setBilling} showErrors={showBillingErrors} />}
                 <div className="rounded-xl bg-muted/60 px-3 py-2.5 text-xs text-muted-foreground space-y-1">
                   <p>
                     Access for <strong className="text-foreground">{summary.total_days} days</strong>
