@@ -66,6 +66,14 @@ const lineAmounts = (item) => {
   return { quantity, unitPrice, discountPercent, purchasePrice, itemTotal, itemProfit: itemTotal - purchasePrice * quantity };
 };
 
+// Rounding to the nearest rupee when the user's setting asks for it:
+// returns the +/- amount to add (₹0.49 or less either way), 0 when off
+const roundOffOf = (total, preferences = {}) => {
+  if (preferences.billing_round_off !== true) return 0;
+  const t = Math.round((Number(total) || 0) * 100) / 100;
+  return Math.round((Math.round(t) - t) * 100) / 100;
+};
+
 // Purchase margin that priced the line (the client drops it when the price is
 // typed by hand), shown on the bill
 const lineMargin = (item) => {
@@ -90,9 +98,20 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
       sort_by = "billing_date",
       sort_order = "desc",
       highlight_id,
+      overdue,
+      missing_rate,
     } = req.query;
 
     const query = { pharmacy_id: req.user.pharmacy_id };
+    // Bills with a line saved without a rate (MRP 0), to fill in later
+    if (missing_rate === "true") {
+      query.items = { $elemMatch: { $or: [{ unit_price: { $lte: 0 } }, { unit_price: null }, { unit_price: { $exists: false } }] } };
+    }
+    // Payment reminders: unpaid bills whose due date has passed
+    if (overdue === "true") {
+      const todayIst = new Date(Date.now() + 5.5 * 3600 * 1000).toISOString().slice(0, 10);
+      query.due_date = { $ne: null, $lte: todayIst };
+    }
 
     if (search) {
       const escapedSearch = escapeRegex(search);
@@ -115,7 +134,8 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
 
     // 💰 Paid filter
     if (is_paid !== undefined) {
-      query.is_paid = is_paid === "true";
+      // Unpaid also covers old bills that never had the flag
+      query.is_paid = is_paid === "true" ? true : { $ne: true };
     }
 
     if (is_advance_paid !== undefined) {
@@ -655,8 +675,12 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
     }
 
     const discountAmount = subtotal * (discount_percent / 100);
-    const totalAmount = subtotal - discountAmount;
+    let totalAmount = subtotal - discountAmount;
     totalProfit -= discountAmount;
+    // Setting "Round off bill total": the grand total to the nearest rupee
+    const roundOff = roundOffOf(totalAmount, preferences);
+    totalAmount += roundOff;
+    totalProfit += roundOff;
 
     // 💰 Distribute bill-level discount to individual items proportionally for consistency
     if (discountAmount > 0 && subtotal > 0) {
@@ -745,6 +769,7 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
       subtotal,
       discount_percent,
       discount_amount: discountAmount,
+      round_off: roundOff,
       grand_total: totalAmount, // Use grand_total for consistency with existing data
       total_amount: totalAmount, // Keep for backward compatibility
       total_cost: processedItems.reduce(
@@ -1059,8 +1084,11 @@ router.put("/:bill_id", auth, requireSubscription(), async (req, res, next) => {
     /* ---------------- Calculate totals ---------------- */
 
     const discountAmount = subtotal * (discount_percent / 100);
-    const totalAmount = subtotal - discountAmount;
+    let totalAmount = subtotal - discountAmount;
     totalProfit -= discountAmount;
+    const roundOff = roundOffOf(totalAmount, preferences);
+    totalAmount += roundOff;
+    totalProfit += roundOff;
 
     // 💰 Distribute bill-level discount to individual items proportionally for consistency
     if (discountAmount > 0 && subtotal > 0) {
@@ -1226,6 +1254,7 @@ router.put("/:bill_id", auth, requireSubscription(), async (req, res, next) => {
       subtotal,
       discount_percent,
       discount_amount: discountAmount,
+      round_off: roundOff,
       grand_total: totalAmount,
       total_amount: totalAmount,
       total_cost: totalCost,
@@ -1345,11 +1374,15 @@ router.put("/:bill_id", auth, requireSubscription(), async (req, res, next) => {
       }
     });
 
+    // Lines taken off the bill are kept in its history, so they can be put back
+    const removedItems = [];
     (bill.items || []).forEach(item => {
       const pId = item.inventory_id || item.product_name;
       const key = `${pId}_${oldCounts[pId] || 1}`;
       if (!newItemsMap[key]) {
-        itemChanges.push(`Removed item ${item.product_name}`);
+        itemChanges.push(`Removed item ${item.product_name} (Qty: ${item.quantity})`);
+        const { short_book, ...kept } = item;
+        removedItems.push(kept);
       }
     });
 
@@ -1366,7 +1399,8 @@ router.put("/:bill_id", auth, requireSubscription(), async (req, res, next) => {
         updated_by_id: req.user.id,
         updated_by_name: req.user.name,
         updated_by_avatar: req.user.image_url || null,
-        changes: changes
+        changes: changes,
+        ...(removedItems.length ? { removed_items: removedItems } : {}),
       };
       updates.history = [...(bill.history || []), historyEntry];
     }
@@ -1515,6 +1549,7 @@ router.post(
       // Fully paid updates
       const newPaid = grandTotal;
       const newDebt = 0;
+      const settled = Math.round((grandTotal - oldPaid) * 100) / 100;
       const newAdvance = Math.max(0, newPaid - oldDeliveredValue);
 
       const deltaDebt = newDebt - oldDebt;
@@ -1527,11 +1562,21 @@ router.post(
         );
       }
 
+      // Keep the payment history complete: the amount that settled the bill
+      // is a payment too (earlier money paid becomes the first entry)
+      const paidAt = new Date().toISOString();
+      const mode = ["Cash", "UPI", "Card"].includes(req.body?.payment_mode) ? req.body.payment_mode : bill.payment_mode && bill.payment_mode !== "none" ? bill.payment_mode : "Cash";
+      let paymentsList = bill.payments || [];
+      if (paymentsList.length === 0 && oldPaid > 0) {
+        paymentsList = [{ amount: oldPaid, payment_mode: bill.payment_mode || "Cash", paid_at: bill.created_at || bill.billing_date || paidAt }];
+      }
+      if (settled > 0) paymentsList = [...paymentsList, { amount: settled, payment_mode: mode, paid_at: paidAt, by: req.user.name || null }];
+
       await db
         .collection("bills")
         .updateOne(
           { id: req.params.bill_id },
-          { $set: { is_paid: true, total_paid: newPaid, paid_at: new Date().toISOString() } }
+          { $set: { is_paid: true, total_paid: newPaid, paid_at: paidAt, payment_date: paidAt, payments: paymentsList, ...(settled > 0 ? { payment_mode: mode } : {}) } }
         );
       
       await logActivity(db, req.user.pharmacy_id, req.user.id, req.user.name, "UPDATE", "BILLING", req.params.bill_id, `Marked Bill ${bill.bill_no} as Paid`, `/billing`);
@@ -1770,9 +1815,13 @@ router.post(
   async (req, res, next) => {
     try {
       const db = mongoose.connection.db;
-      const { amount, payment_mode } = req.body;
+      const { amount } = req.body;
+      // "Advance": paid from the customer's advance credit.
+      // keep_extra: more than the due was paid; the rest becomes advance credit.
+      const payment_mode = ["Cash", "UPI", "Card", "Advance"].includes(req.body.payment_mode) ? req.body.payment_mode : "Cash";
+      const keepExtra = req.body.keep_extra === true || req.body.keep_extra === "true";
 
-      const paymentAmount = Number(amount);
+      let paymentAmount = Number(amount);
       if (isNaN(paymentAmount) || paymentAmount <= 0) {
         return res.status(400).json({ detail: "Invalid payment amount" });
       }
@@ -1794,6 +1843,20 @@ router.post(
       if (remainingUnpaid <= 0) {
         return res.status(400).json({ detail: "This bill is already fully paid" });
       }
+      let extra = 0;
+      if (keepExtra && r2(paymentAmount) > remainingUnpaid) {
+        if (!bill.customer_id) return res.status(400).json({ detail: "Pick a customer on the bill to keep the extra as advance" });
+        if (payment_mode === "Advance") return res.status(400).json({ detail: "Pay from advance up to the amount due" });
+        extra = r2(paymentAmount - remainingUnpaid);
+        paymentAmount = remainingUnpaid;
+      }
+      let customerDoc = null;
+      if (payment_mode === "Advance") {
+        customerDoc = bill.customer_id ? await db.collection("customers").findOne({ id: bill.customer_id, pharmacy_id: req.user.pharmacy_id }, { projection: { advance_credit: 1 } }) : null;
+        const credit = r2(customerDoc?.advance_credit || 0);
+        if (credit <= 0) return res.status(400).json({ detail: "This customer has no advance to use" });
+        if (r2(paymentAmount) > credit) return res.status(400).json({ detail: `Only ₹${credit.toFixed(2)} advance is left. Enter ₹${credit.toFixed(2)} or less.`, advance_left: credit });
+      }
       if (r2(paymentAmount) > remainingUnpaid) {
         return res.status(400).json({
           detail: `Only ₹${remainingUnpaid.toFixed(2)} is due on this bill (₹${r2(grandTotal).toFixed(2)} total, ₹${r2(currentPaid).toFixed(2)} paid). Enter ₹${remainingUnpaid.toFixed(2)} or less.`,
@@ -1811,9 +1874,10 @@ router.post(
       const oldDebt = Math.max(0, oldDeliveredValue - currentPaid);
       const oldAdvance = Math.max(0, currentPaid - oldDeliveredValue);
 
-      // New paid amount
-      const newPaid = currentPaid + paymentAmount;
-      const isPaid = newPaid >= grandTotal;
+      // New paid amount. In rupees and paise: a last instalment that clears
+      // the balance marks the bill paid even after float rounding
+      const newPaid = r2(currentPaid + paymentAmount);
+      const isPaid = newPaid >= r2(grandTotal);
 
       // New debt/advance
       const newDebt = Math.max(0, oldDeliveredValue - newPaid);
@@ -1839,11 +1903,31 @@ router.post(
           }
         ];
       }
+      const paidAt = new Date().toISOString();
       paymentsList.push({
-        amount: paymentAmount,
+        amount: r2(paymentAmount),
         payment_mode: payment_mode || "Cash",
-        paid_at: new Date().toISOString()
+        paid_at: paidAt,
+        by: req.user.name || null,
+        ...(extra > 0 ? { extra_to_advance: extra } : {}),
       });
+
+      // Advance credit moves: used for this bill, or the extra kept
+      if (bill.customer_id && (payment_mode === "Advance" || extra > 0)) {
+        const delta = payment_mode === "Advance" ? -r2(paymentAmount) : extra;
+        await db.collection("customers").updateOne(
+          { id: bill.customer_id, pharmacy_id: req.user.pharmacy_id },
+          {
+            $inc: { advance_credit: delta },
+            $push: {
+              advance_ledger: {
+                $each: [{ id: uuidv4(), type: delta < 0 ? "used" : "extra", amount: Math.abs(delta), payment_mode: payment_mode === "Advance" ? "Advance" : payment_mode, bill_id: bill.id, bill_no: bill.bill_no, at: paidAt, by: req.user.name || null }],
+                $slice: -500,
+              },
+            },
+          }
+        );
+      }
 
       await db.collection("bills").updateOne(
         { id: req.params.bill_id },
@@ -1860,7 +1944,7 @@ router.post(
 
       await logActivity(db, req.user.pharmacy_id, req.user.id, req.user.name, "UPDATE", "BILLING", req.params.bill_id, `Recorded payment of ₹${paymentAmount} for Bill ${bill.bill_no}`, `/billing`);
 
-      res.json({ message: "Payment recorded successfully", total_paid: newPaid, is_paid: isPaid });
+      res.json({ message: extra > 0 ? `Payment recorded; ₹${extra.toFixed(2)} kept as advance` : "Payment recorded successfully", total_paid: newPaid, is_paid: isPaid, kept_as_advance: extra });
     } catch (error) {
       next(error);
     }

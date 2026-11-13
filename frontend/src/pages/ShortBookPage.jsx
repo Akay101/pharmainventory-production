@@ -20,6 +20,7 @@ import {
   AlertDialogTitle,
 } from "../components/ui/alert-dialog";
 import Loader from "../components/Loader";
+import { Popover, PopoverContent, PopoverTrigger } from "../components/ui/popover";
 import { formatCombo } from "../lib/shortcuts";
 
 const TABS = [
@@ -36,6 +37,13 @@ const STATUS_TONE = {
 };
 const STATUS_LABEL = { pending: "To order", ordered: "Ordered", received: "Received", cancelled: "Cancelled" };
 const err = (e, f) => e?.response?.data?.detail || f;
+const SECTIONS = [
+  ["all", "All"],
+  ["medicine", "Medicines"],
+  ["cosmetic", "Cosmetics"],
+  ["other", "Other"],
+];
+const rs = (n) => (Number(n) > 0 ? `₹${Number(n).toFixed(2)}` : "—");
 const day = (iso) => (iso ? new Date(iso).toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : "");
 const qtyText = (e) => `${e.quantity} ${e.unit === "packs" ? (e.quantity === 1 ? "pack" : "packs") : e.quantity === 1 ? "unit" : "units"}`;
 
@@ -43,6 +51,7 @@ export default function ShortBookPage() {
   // Hide what this user's access doesn't allow (the server enforces it too)
   const acc = useAccess("short_book");
   const [tab, setTab] = useState("pending");
+  const [section, setSection] = useState("all"); // medicines / cosmetics / other
   const [search, setSearch] = useState("");
   const [data, setData] = useState({ entries: [], counts: {} });
   const [loading, setLoading] = useState(true);
@@ -55,14 +64,14 @@ export default function ShortBookPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await axios.get(`${API}/shortbook`, { params: { status: tab, search: search.trim() || undefined } });
+      const res = await axios.get(`${API}/shortbook`, { params: { status: tab, search: search.trim() || undefined, section: section === "all" ? undefined : section } });
       setData(res.data);
     } catch (e) {
       toast.error(err(e, "Couldn't load the short book"));
     } finally {
       setLoading(false);
     }
-  }, [tab, search]);
+  }, [tab, search, section]);
 
   useEffect(() => {
     const t = setTimeout(load, search ? 250 : 0);
@@ -186,6 +195,20 @@ export default function ShortBookPage() {
             </button>
           ))}
         </div>
+        <div className="flex h-8 shrink-0 rounded-lg border border-border/70 bg-muted/30 p-0.5" role="group" aria-label="Section">
+          {SECTIONS.map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              aria-pressed={section === id}
+              onClick={() => setSection(id)}
+              className={`px-2.5 text-[11px] font-bold rounded-md ${section === id ? "bg-orange-600 text-white" : "text-muted-foreground hover:text-foreground"}`}
+            >
+              {label}
+              {id !== "all" && data.sections?.[id] && section === "all" ? ` (${data.sections[id]})` : ""}
+            </button>
+          ))}
+        </div>
         <div className="relative sm:w-72">
           <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
           <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search medicine, bill no, supplier…" className="h-9 rounded-xl pl-9 text-xs" data-shortcut="search" />
@@ -224,7 +247,15 @@ export default function ShortBookPage() {
               data.entries.map((e) => (
                 <TableRow key={e.id} data-row tabIndex={0} className="hover:bg-muted/40">
                   <TableCell>
-                    <p className="text-sm font-bold text-foreground">{e.product_name}</p>
+                    <p className="text-sm font-bold text-foreground">
+                      {e.product_name}
+                      {e.section === "cosmetic" && <span className="ml-1.5 rounded border border-pink-500/30 bg-pink-500/10 px-1 text-[9px] font-black text-pink-600 dark:text-pink-400 align-middle">COSMETIC</span>}
+                    </p>
+                    <p className="text-[11px] text-muted-foreground" data-testid="shortbook-prices">
+                      {[e.pack_size || (e.units_per_pack ? `${e.units_per_pack} per ${String(e.pack_type || "pack").toLowerCase()}` : null), `MRP ${rs(e.mrp_pack)}`, `Rate ${rs(e.rate_pack)}`, e.net_pack ? `Net ${rs(e.net_pack)}` : null]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </p>
                     {e.notes && <p className="text-[11px] text-muted-foreground">{e.notes}</p>}
                   </TableCell>
                   <TableCell>
@@ -251,12 +282,53 @@ export default function ShortBookPage() {
                   <TableCell className="text-right font-mono text-xs">
                     <span className={e.on_hand <= 0 ? "font-bold text-rose-500" : "text-foreground"}>{e.on_hand} units</span>
                   </TableCell>
-                  <TableCell className="text-xs text-muted-foreground">{e.last_supplier?.name || "—"}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground">
+                    <p>{e.last_supplier?.name || "—"}</p>
+                    {e.cheapest && (
+                      <p className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400" title="Lowest net cost per pack you have paid (GST, discounts and free packs counted)">
+                        Cheapest: {e.cheapest.supplier_name} {rs(e.cheapest.net_pack)}
+                      </p>
+                    )}
+                    {e.purchase_history?.length > 0 && (
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <button type="button" className="text-[10px] font-bold text-primary hover:underline" data-testid="shortbook-history">
+                            Purchase history ({e.times_purchased})
+                          </button>
+                        </PopoverTrigger>
+                        <PopoverContent align="start" className="w-80 p-3">
+                          <p className="mb-2 text-xs font-black">{e.product_name}: last purchases</p>
+                          <div className="space-y-1">
+                            {e.purchase_history.map((h, i) => (
+                              <div key={i} className="flex justify-between gap-2 border-b border-border/40 pb-1 text-[11px] last:border-0">
+                                <span className="min-w-0 truncate">
+                                  {h.purchase_date ? new Date(h.purchase_date).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "2-digit" }) : "—"} · {h.supplier_name}
+                                  {h.invoice_no ? ` · ${h.invoice_no}` : ""}
+                                </span>
+                                <span className="shrink-0 font-mono">
+                                  {rs(h.rate_pack)} <span className="text-muted-foreground">net {rs(h.net_pack)}</span>
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </PopoverContent>
+                      </Popover>
+                    )}
+                  </TableCell>
                   <TableCell>
                     <div className="flex flex-wrap gap-1">
+                      {e.need_by && e.status === "pending" && (
+                        <span
+                          className={`w-full text-[10px] font-black ${e.need_by <= new Date().toISOString().slice(0, 10) ? "text-rose-600 dark:text-rose-400" : "text-amber-600 dark:text-amber-400"}`}
+                          data-testid="shortbook-need-by"
+                        >
+                          Order by {new Date(`${e.need_by}T00:00:00`).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
+                        </span>
+                      )}
                       {(e.sources || []).slice(-3).map((s, i) => (
-                        <span key={i} className="rounded-md border border-border bg-muted/50 px-1.5 py-0.5 font-mono text-[10px]" title={`${s.customer_name || ""} · sold ${s.sold_units} · +${s.quantity} ${s.unit}`}>
+                        <span key={i} className="rounded-md border border-border bg-muted/50 px-1.5 py-0.5 font-mono text-[10px]" title={`${s.customer_name || ""} · sold ${s.sold_units} · +${s.quantity} ${s.unit}${s.need_by ? ` · needed by ${s.need_by}` : ""}`}>
                           {s.bill_no}
+                          {s.customer_name ? <span className="font-sans text-muted-foreground"> · {s.customer_name}{s.need_by ? ` (by ${new Date(`${s.need_by}T00:00:00`).toLocaleDateString("en-IN", { day: "numeric", month: "short" })})` : ""}</span> : null}
                         </span>
                       ))}
                       {(e.sources || []).length > 3 && <span className="text-[10px] text-muted-foreground">+{e.sources.length - 3}</span>}

@@ -21,6 +21,7 @@ export const SUGGESTION_FILTERS = [
   { id: "all", label: "All", key: "1" },
   { id: "stock", label: "In stock", key: "2" },
   { id: "expiring", label: "Near expiry", key: "3" },
+  { id: "cosmetic", label: "Cosmetics", key: "4" },
 ];
 
 // "2027-09-30", "09/27", "09/2027" -> Date (first of the month for MM/YY)
@@ -50,6 +51,7 @@ export const nearExpiryOf = (it, warningDays = 90) => {
 };
 
 export function filterSuggestions(list, filter, warningDays) {
+  if (filter === "cosmetic") return list.filter((it) => it.category === "cosmetic");
   if (filter === "stock") return list.filter((it) => it.source !== "global" && stockOf(it) > 0);
   if (filter === "expiring") {
     return list
@@ -65,6 +67,7 @@ export const suggestionCounts = (list, warningDays) => ({
   all: list.length,
   stock: filterSuggestions(list, "stock", warningDays).length,
   expiring: filterSuggestions(list, "expiring", warningDays).length,
+  cosmetic: filterSuggestions(list, "cosmetic", warningDays).length,
 });
 
 const monthLabel = (d) => d.toLocaleDateString("en-IN", { month: "short", year: "2-digit" });
@@ -183,6 +186,11 @@ export function SuggestionList({
                   <div className="font-bold text-sm text-foreground flex items-center gap-2 flex-wrap min-w-0">
                     <span>{invItem.product_name}</span>
                     <StockBadge item={invItem} />
+                    {invItem.category && invItem.category !== "medicine" && (
+                      <span className={`text-[9px] px-1.5 py-0.5 rounded border font-black uppercase ${invItem.category === "cosmetic" ? "border-pink-500/30 bg-pink-500/10 text-pink-600" : "border-border bg-muted text-muted-foreground"}`}>
+                        {invItem.category}
+                      </span>
+                    )}
                     {isScheduleH1(invItem) && (
                       <ScheduleH1Badge testId="suggestion-h1" title="Schedule H1: sell only on prescription; attach it to the bill" />
                     )}
@@ -252,12 +260,22 @@ export function SuggestionList({
                       <div className="mt-1.5 flex items-center justify-between text-xs text-muted-foreground/90 flex-wrap pt-1 border-t border-border/40 font-mono">
                         <div className="flex items-center gap-3">
                           {invItem.purchase_price !== undefined && <span className="text-blue-500 font-bold">Rate: ₹{Number(invItem.purchase_price || 0).toFixed(2)}</span>}
-                          <span>MRP: ₹{Number(invItem.mrp_per_unit || invItem.mrp || 0).toFixed(2)}</span>
+                          <span>
+                            MRP: ₹{Number(invItem.mrp_per_unit || invItem.mrp || 0).toFixed(2)}
+                            {Number(invItem.units_per_pack) > 1 && Number(invItem.mrp_per_unit || invItem.mrp) > 0 && (
+                              <span className="text-foreground/80" title="MRP of the full strip / pack">
+                                {" "}· ₹{(Number(invItem.mrp_per_unit || invItem.mrp) * Number(invItem.units_per_pack)).toFixed(2)}/{String(invItem.pack_type || "pack").toLowerCase()}
+                              </span>
+                            )}
+                          </span>
                         </div>
                         <div className="flex items-center gap-2">
                           {exp.isMultiple ? (
                             <>
                               <span className="px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 font-bold text-[10px] border border-amber-500/30">{exp.batchCount} Batches</span>
+                              <span className="max-w-[220px] truncate" title={(invItem.batches || []).map((b) => b.batch_no).filter(Boolean).join(", ")} data-testid="suggestion-batches">
+                                Batch: <span className="font-bold text-foreground">{(invItem.batches || []).map((b) => b.batch_no).filter(Boolean).slice(0, 3).join(", ")}{(invItem.batches || []).length > 3 ? "…" : ""}</span>
+                              </span>
                               <span>
                                 Nearest Exp: <span className="font-bold text-foreground">{exp.expiryLabel}</span>
                               </span>
@@ -312,7 +330,10 @@ export function SuggestionList({
 
 // Side panel: everything about one medicine, its batches, and alternates in
 // stock with the same salt. "Use this" puts it into the bill row.
-export function ProductDetailsSheet({ item, open, onOpenChange, onUse, warningDays = 90 }) {
+// nearExpiryMonths: Settings "Suggest near-expiry alternates" (null = off).
+// When on, alternates load by themselves and the ones with the same salt
+// expiring within that many months are listed first, to sell before expiry.
+export function ProductDetailsSheet({ item, open, onOpenChange, onUse, warningDays = 90, nearExpiryMonths = null }) {
   const [alts, setAlts] = useState(null);
   const [altsLoading, setAltsLoading] = useState(false);
   const [altsError, setAltsError] = useState("");
@@ -355,7 +376,30 @@ export function ProductDetailsSheet({ item, open, onOpenChange, onUse, warningDa
     }
   };
 
+  // Settings on: load alternates as soon as the details open
+  useEffect(() => {
+    if (open && nearExpiryMonths && item?.salt_composition && alts === null && !altsLoading) loadAlternates();
+    // eslint-disable-next-line
+  }, [open, nearExpiryMonths, item?.product_name]);
+
   if (!item) return null;
+  const sellFirst = (() => {
+    if (!nearExpiryMonths || !alts?.length) return [];
+    const limit = new Date();
+    limit.setMonth(limit.getMonth() + Number(nearExpiryMonths));
+    return alts
+      .filter((a) => a.match !== "related")
+      .map((a) => {
+        const b = (a.batches || []).find((x) => {
+          const d = expiryDate(x.expiry_date);
+          return d && d >= new Date() && d <= limit && (Number(x.available_quantity) || 0) > 0;
+        });
+        return b ? { a, b } : null;
+      })
+      .filter(Boolean)
+      .sort((x, y) => (expiryDate(x.b.expiry_date) || 0) - (expiryDate(y.b.expiry_date) || 0));
+  })();
+  const cheapest = alts?.length ? [...alts].filter((a) => Number(a.mrp_per_unit) > 0).sort((x, y) => x.mrp_per_unit - y.mrp_per_unit)[0] : null;
   const batches = [...(item.batches || [])].sort((a, b) => (expiryDate(a.expiry_date)?.getTime() || Infinity) - (expiryDate(b.expiry_date)?.getTime() || Infinity));
   const now = new Date();
   const warnLimit = Date.now() + warningDays * 864e5;
@@ -434,7 +478,8 @@ export function ProductDetailsSheet({ item, open, onOpenChange, onUse, warningDa
                       <th className="px-3 py-2 text-left">Batch</th>
                       <th className="px-3 py-2 text-left">Expiry</th>
                       <th className="px-3 py-2 text-right">Stock</th>
-                      <th className="px-3 py-2 text-right">MRP</th>
+                      <th className="px-3 py-2 text-right">MRP / unit</th>
+                      <th className="px-3 py-2 text-right">MRP / pack</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -451,6 +496,9 @@ export function ProductDetailsSheet({ item, open, onOpenChange, onUse, warningDa
                           </td>
                           <td className="px-3 py-2 text-right font-mono">{Number(b.available_quantity) || 0}</td>
                           <td className="px-3 py-2 text-right font-mono">₹{Number(b.mrp || 0).toFixed(2)}</td>
+                          <td className="px-3 py-2 text-right font-mono">
+                            {Number(b.units_per_pack) > 1 ? `₹${(Number(b.mrp_pack) || Number(b.mrp || 0) * Number(b.units_per_pack)).toFixed(2)} (${b.units_per_pack})` : "-"}
+                          </td>
                         </tr>
                       );
                     })}
@@ -496,6 +544,26 @@ export function ProductDetailsSheet({ item, open, onOpenChange, onUse, warningDa
           {alts && alts.length === 0 && (
             <p className="mt-3 rounded-xl border border-dashed border-border p-4 text-center text-xs font-semibold text-muted-foreground">No other medicine with this salt is in stock</p>
           )}
+          {sellFirst.length > 0 && (
+            <div className="mt-3 rounded-xl border border-amber-500/40 bg-amber-500/5 p-3" data-testid="near-expiry-alternates">
+              <p className="text-xs font-black text-amber-700 dark:text-amber-400">
+                Sell these first: same salt, expiring within {nearExpiryMonths} month{Number(nearExpiryMonths) === 1 ? "" : "s"}
+              </p>
+              <div className="mt-2 space-y-1.5">
+                {sellFirst.map(({ a, b }) => (
+                  <div key={a.product_name} className="flex items-center justify-between gap-2 text-xs">
+                    <span className="min-w-0 truncate">
+                      <b>{a.product_name}</b> · batch {b.batch_no || "-"} · expires {monthLabel(expiryDate(b.expiry_date))} · {b.available_quantity} in stock
+                    </span>
+                    <button type="button" onClick={() => onUse(a)} className="shrink-0 rounded-lg border border-amber-500/50 px-2 py-1 text-[11px] font-bold text-amber-700 dark:text-amber-400 hover:bg-amber-500/10">
+                      Use
+                    </button>
+                  </div>
+                ))}
+              </div>
+              <p className="mt-1.5 text-[10px] text-muted-foreground">Turn this off or change the months in Settings → Preferences.</p>
+            </div>
+          )}
           {alts && alts.length > 0 && (
             <div className="mt-3 space-y-2" data-testid="alternates-list">
               {alts.map((a) => {
@@ -538,6 +606,9 @@ export function ProductDetailsSheet({ item, open, onOpenChange, onUse, warningDa
                             )}
                           </span>
                           {near && <span className="text-amber-600">Expires {monthLabel(near.date)}</span>}
+                          {cheapest && cheapest.product_name === a.product_name && diff < 0 && (
+                            <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-1.5 text-[10px] font-black text-emerald-600">Lowest price</span>
+                          )}
                         </p>
                       </div>
                       <button

@@ -15,6 +15,9 @@ function identityGaps(p = {}) {
 // Everything the catalog form requires
 function catalogGaps(p = {}) {
   const gaps = identityGaps(p);
+  // Medicine type (tablet, syrup...) is required only for medicines, and only
+  // when the request carries it (older clients default it)
+  if (needsSalt(p) && p.dosage_form !== undefined && !filled(p.dosage_form)) gaps.push("medicine type");
   if (!(parseInt(p.units_per_pack) >= 1)) gaps.push("units per pack");
   if (!(parseFloat(p.mrp) > 0)) gaps.push("MRP");
   return gaps;

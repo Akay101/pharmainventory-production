@@ -75,6 +75,7 @@ const MOUNTS = {
     rules: [
       R("GET", ALL, STOCK_LOOKUP),
       R("PATCH", /^\/[^/]+\/add-quantity\/?$/, [["inventory", "update"]], ["no_stock_edit"]),
+      R("PATCH", /^\/[^/]+\/set-quantity\/?$/, [["inventory", "update"]], ["no_stock_edit"]),
       R("POST", /^\/merge\/?$/, [["inventory", "update"]], ["no_stock_edit"]),
       R("PUT", /^\/threshold\/?$/, [["inventory", "update"]]),
       R("PUT", /^\/[^/]+\/?$/, [["inventory", "update"]], ["no_stock_edit"], touchesStock),
@@ -95,6 +96,8 @@ const MOUNTS = {
       R("GET", ALL, CUSTOMER_LOOKUP),
       R("POST", /^\/?$/, [["customers", "create"], ["billing", "create"]]),
       R("POST", /^\/[^/]+\/clear-debt\/?$/, [["customers", "update"]], ["no_customer_debt_clear"]),
+      // Taking an advance is taking a payment
+      R("POST", /^\/[^/]+\/advance\/?$/, [["billing", "update"], ["customers", "update"]], ["no_customer_debt_clear"]),
       R("PUT", /^\/tiers\/config\/?$/, [["customers", "update"]]),
     ],
   },
@@ -127,7 +130,11 @@ const MOUNTS = {
   },
   "/api/reminders": {
     module: "restock",
-    rules: [R("POST", /^\/[^/]+\/purchase-draft\/?$/, [["purchases", "create"]]), R("POST", /^\/check-due\/?$/, [["restock", "read"]])],
+    rules: [
+      R("POST", /^\/[^/]+\/purchase-draft\/?$/, [["purchases", "create"]]),
+      R("POST", /^\/bulk-purchase-draft\/?$/, [["purchases", "create"]]),
+      R("POST", /^\/check-due\/?$/, [["restock", "read"]]),
+    ],
   },
   "/api/shortbook": { module: "short_book", rules: [] },
   "/api/imports": { module: "imports", rules: [R("GET", ALL, [["imports", "read"]]), R("*", ALL, [["imports", "create"]])] },

@@ -490,6 +490,7 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
       status: { $nin: ["Returned", "Expired & Returned"] },
       ...tenantTokenMatch(q, ["product_name", "salt_composition"], {
         wholeQueryFields: ["batch_no"],
+        mrpFields: ["mrp_pack", "mrp"],
       }),
     };
 
@@ -540,6 +541,7 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
                 quantity: "$quantity",
                 purchase_price: "$purchase_price",
                 mrp: "$mrp",
+                mrp_pack: "$mrp_pack",
                 margin_percent: "$margin_percent",
                 units_per_pack: "$units_per_pack",
                 pack_type: "$pack_type",
@@ -711,6 +713,17 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
     );
 
     await flagScheduleH1(db, req.user.pharmacy_id, paginatedInventory);
+    // Category from the catalog (medicine, cosmetic, ...) for billing's filters
+    const catNames = [...new Set(paginatedInventory.map((i) => i.product_name).filter(Boolean))];
+    if (catNames.length) {
+      const cats = await db
+        .collection("products")
+        .find({ pharmacy_id: req.user.pharmacy_id, $or: [{ name: { $in: catNames } }, { product_name: { $in: catNames } }] }, { projection: { _id: 0, name: 1, product_name: 1, category: 1 } })
+        .toArray();
+      const byName = new Map();
+      for (const c of cats) for (const n of [c.name, c.product_name]) if (n && c.category) byName.set(n, c.category);
+      for (const i of paginatedInventory) i.category = byName.get(i.product_name) || i.category || "medicine";
+    }
     const responsePayload = {
       inventory: paginatedInventory,
       count: total,
@@ -884,6 +897,32 @@ router.patch(
   }
 );
 
+// PATCH /api/inventory/:id/set-quantity { quantity, reason? }
+// Set a batch's stock to an exact count, below zero allowed: units already
+// sold that haven't been entered from a purchase yet show as negative stock.
+router.patch("/:id/set-quantity", auth, requireSubscription(), async (req, res, next) => {
+  try {
+    const db = mongoose.connection.db;
+    const raw = req.body?.quantity;
+    const quantity = Number(raw);
+    if (raw === "" || raw === null || raw === undefined || !Number.isFinite(quantity) || !Number.isInteger(quantity) || Math.abs(quantity) > 1000000) {
+      return res.status(400).json({ detail: "Enter the stock in whole units (it can be below zero)" });
+    }
+    const item = await db.collection("inventory").findOne({ id: req.params.id, pharmacy_id: req.user.pharmacy_id });
+    if (!item) return res.status(404).json({ detail: "Inventory item not found" });
+    const before = Number(item.available_quantity) || 0;
+    const reason = String(req.body?.reason || "").trim().slice(0, 200);
+    await db.collection("inventory").updateOne(
+      { id: item.id, pharmacy_id: req.user.pharmacy_id },
+      { $set: { available_quantity: quantity, updated_at: new Date().toISOString() } }
+    );
+    await logActivity(db, req.user.pharmacy_id, req.user.id, req.user.name, "UPDATE", "INVENTORY", item.id, `Set stock of ${item.product_name} (${item.batch_no || "no batch"}) from ${before} to ${quantity} units${reason ? `: ${reason}` : ""}`, `/inventory`);
+    res.json({ message: `Stock set to ${quantity} units`, before, quantity });
+  } catch (error) {
+    next(error);
+  }
+});
+
 // DELETE /api/inventory/:id
 router.delete("/:id", auth, requireSubscription(), async (req, res, next) => {
   try {
@@ -919,6 +958,52 @@ router.delete("/:id", auth, requireSubscription(), async (req, res, next) => {
     );
 
     res.json({ message: "Inventory item deleted successfully" });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// GET /api/inventory/duplicates
+// Medicines that look like the same product under different names: same
+// name once spacing, punctuation, case and pack words are ignored
+// ("Dolo-650 Tab" / "DOLO 650 tablet"). Each group lists the names, their
+// batches and stock, ready for /inventory/merge.
+router.get("/duplicates", auth, requireSubscription(), async (req, res, next) => {
+  try {
+    const db = mongoose.connection.db;
+    const { medicineKey } = require("../services/search/normalize");
+    const rows = await db
+      .collection("inventory")
+      .find(
+        { pharmacy_id: req.user.pharmacy_id, status: { $nin: ["Returned", "Expired & Returned"] } },
+        { projection: { _id: 0, id: 1, product_name: 1, product_id: 1, available_quantity: 1, batch_no: 1, manufacturer: 1, salt_composition: 1, hsn_no: 1 } }
+      )
+      .limit(20000)
+      .toArray();
+    const only = String(req.query.name || "").trim();
+    const onlyKey = only ? medicineKey(only) : null;
+    const groups = new Map();
+    for (const r of rows) {
+      const k = medicineKey(r.product_name);
+      if (!k || (onlyKey && k !== onlyKey)) continue;
+      const g = groups.get(k) || { key: k, names: new Map(), inventory_ids: [], stock: 0 };
+      const n = String(r.product_name || "").trim();
+      const cur = g.names.get(n) || { name: n, batches: 0, stock: 0, manufacturer: r.manufacturer || null, salt_composition: r.salt_composition || null, hsn_no: r.hsn_no || null };
+      cur.batches += 1;
+      cur.stock += Number(r.available_quantity) || 0;
+      g.names.set(n, cur);
+      g.inventory_ids.push(r.id);
+      g.stock += Number(r.available_quantity) || 0;
+      groups.set(k, g);
+    }
+    const out = [...groups.values()]
+      .filter((g) => g.names.size > 1)
+      .map((g) => {
+        const names = [...g.names.values()].sort((a, b) => b.batches - a.batches || b.stock - a.stock);
+        return { key: g.key, suggested_name: names[0].name, names, inventory_ids: g.inventory_ids, stock: g.stock };
+      })
+      .sort((a, b) => b.names.length - a.names.length || a.suggested_name.localeCompare(b.suggested_name));
+    res.json({ groups: out.slice(0, 300), count: out.length });
   } catch (error) {
     next(error);
   }

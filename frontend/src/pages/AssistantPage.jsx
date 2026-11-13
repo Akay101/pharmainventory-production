@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { toast } from "sonner";
@@ -328,7 +328,10 @@ export default function AssistantPage() {
   const [streaming, setStreaming] = useState(false);
   const [busyKey, setBusyKey] = useState(null);
   const [settled, setSettled] = useState({});
-  const [input, setInput] = useState("");
+  // A question handed over from another page (e.g. Inventory → missing
+  // details → Ask AI) waits in the box for the user to send
+  const location = useLocation();
+  const [input, setInput] = useState(() => (typeof location.state?.prompt === "string" ? location.state.prompt.slice(0, 500) : ""));
   // Voice typing script: auto (English and Hinglish in Roman letters) or hi (Devanagari)
   const [sttLang, setSttLang] = useState(() => {
     try {

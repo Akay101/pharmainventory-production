@@ -17,6 +17,7 @@ export function catalogFormErrors(form = {}) {
   if (!filled(form.name)) errors.name = "Enter the product name";
   if (!filled(form.manufacturer)) errors.manufacturer = "Enter the manufacturer";
   if (needsSalt(form) && !filled(form.salt_composition)) errors.salt_composition = "Enter the salt";
+  if (needsSalt(form) && !filled(form.dosage_form)) errors.dosage_form = "Choose the medicine type";
   if (!(parseInt(form.units_per_pack) >= 1)) errors.units_per_pack = "At least 1";
   if (!(parseFloat(form.mrp) > 0)) errors.mrp = "Enter the MRP";
   return errors;

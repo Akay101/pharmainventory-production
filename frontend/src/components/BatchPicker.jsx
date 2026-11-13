@@ -142,10 +142,15 @@ export default function BatchPicker({
                   ? "bg-amber-500 text-white border-amber-600 shadow-xs"
                   : "bg-background hover:bg-muted text-muted-foreground border-border"
               }`}
-              title="Sort batches by earliest expiry date first"
+              title={
+                nearExpiry
+                  ? "Near Expiry first is ON: the batch that expires soonest is on top and picked first, so old stock sells before it expires. Click to list batches in their normal order."
+                  : "Near Expiry first is OFF: batches in their normal order. Click to put the soonest-expiring batch on top and pick it first, so old stock sells before it expires."
+              }
+              aria-pressed={!!nearExpiry}
             >
               <Clock className="w-3 h-3" />
-              <span>Near Expiry {nearExpiry ? "ON" : ""}</span>
+              <span>Near Expiry first: {nearExpiry ? "ON" : "OFF"}</span>
             </button>
           )}
         </div>
@@ -203,6 +208,14 @@ export default function BatchPicker({
                     <span>
                       Exp: <strong className="text-foreground font-bold">{b.expiry_date ? formatExpiry(b.expiry_date) : "N/A"}</strong>
                     </span>
+                    {Number(b.mrp) > 0 && (
+                      <span title="MRP per unit, and for the full strip / pack">
+                        MRP <strong className="text-foreground">₹{Number(b.mrp).toFixed(2)}</strong>
+                        {Number(b.units_per_pack) > 1 && (
+                          <> · <strong className="text-foreground">₹{(Number(b.mrp_pack) || Number(b.mrp) * Number(b.units_per_pack)).toFixed(2)}</strong>/{String(b.pack_type || "pack").toLowerCase()} of {b.units_per_pack}</>
+                        )}
+                      </span>
+                    )}
                     <span className="font-semibold truncate max-w-[210px]" title={b.supplier_name || ""}>
                       Supp: <strong className="text-foreground/90">{b.supplier_name || "-"}</strong>
                     </span>

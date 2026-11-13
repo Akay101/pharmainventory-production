@@ -75,6 +75,7 @@ export default function SuppliersPage() {
     email: "",
     address: "",
     gst_no: "",
+    dl_no: "",
     default_margin_percent: "",
   });
 
@@ -98,6 +99,8 @@ export default function SuppliersPage() {
 
   // Details Dialog State
   const [detailsDialog, setDetailsDialog] = useState({ open: false, data: null, loading: false });
+  // Supplier ledger: all bills, or only the ones still to be paid
+  const [ledgerFilter, setLedgerFilter] = useState("all");
   // Payment Dialog
   const [paymentDialog, setPaymentDialog] = useState({ open: false, purchase: null });
   const [newPaymentAmount, setNewPaymentAmount] = useState("");
@@ -449,6 +452,7 @@ export default function SuppliersPage() {
       email: supplier.email || "",
       address: supplier.address || "",
       gst_no: supplier.gst_no || "",
+      dl_no: supplier.dl_no || "",
       default_margin_percent:
         supplier.default_margin_percent !== undefined && supplier.default_margin_percent !== null
           ? String(supplier.default_margin_percent)
@@ -482,6 +486,7 @@ export default function SuppliersPage() {
       email: "",
       address: "",
       gst_no: "",
+      dl_no: "",
       default_margin_percent: "",
     });
     setEditingSupplier(null);
@@ -929,6 +934,20 @@ export default function SuppliersPage() {
                     className="h-10 border-border/80 focus-visible:ring-primary focus-visible:ring-offset-0 rounded-xl"
                     data-testid="supplier-gst-input"
                   />
+                  {!String(formData.gst_no || "").trim() && (
+                    <p className="text-[10px] text-muted-foreground">Leave empty if the supplier has no GST registration.</p>
+                  )}
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="text-xs font-bold text-muted-foreground uppercase">Drug Licence (DL) Number</Label>
+                  <Input
+                    placeholder="E.g. UP-LKO-20B-123456, UP-LKO-21B-123457"
+                    value={formData.dl_no}
+                    onChange={(e) => setFormData({ ...formData, dl_no: e.target.value })}
+                    className="h-10 border-border/80 focus-visible:ring-primary focus-visible:ring-offset-0 rounded-xl"
+                    data-testid="supplier-dl-input"
+                  />
                 </div>
 
                 <div className="space-y-2">
@@ -1070,6 +1089,12 @@ export default function SuppliersPage() {
                         GST: {detailsDialog.data.supplier.gst_no}
                       </span>
                     )}
+                    {detailsDialog.data.supplier.dl_no && (
+                      <span className="flex items-center gap-1 font-mono text-foreground/80">
+                        <FileText className="w-3.5 h-3.5 shrink-0" />
+                        DL: {detailsDialog.data.supplier.dl_no}
+                      </span>
+                    )}
                     {detailsDialog.data.supplier.default_margin_percent !== undefined && detailsDialog.data.supplier.default_margin_percent !== null && (
                       <span className="flex items-center gap-1 font-semibold text-sky-700 dark:text-sky-300">
                         Default margin {detailsDialog.data.supplier.default_margin_percent}%
@@ -1123,9 +1148,24 @@ export default function SuppliersPage() {
                 )}
 
                 <div className="flex justify-between items-center">
-                  <h3 className="text-lg font-bold flex items-center gap-2 text-foreground">
-                    <CreditCard className="w-4.5 h-4.5 text-primary" /> Purchase Ledger
-                  </h3>
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <h3 className="text-lg font-bold flex items-center gap-2 text-foreground">
+                      <CreditCard className="w-4.5 h-4.5 text-primary" /> Purchase Ledger
+                    </h3>
+                    <div className="flex h-8 rounded-lg border border-border/70 bg-muted/30 p-0.5" role="group" aria-label="Ledger filter">
+                      {[["all", "All bills"], ["pending", "Pending"], ["paid", "Paid"]].map(([v, label]) => (
+                        <button
+                          key={v}
+                          type="button"
+                          aria-pressed={ledgerFilter === v}
+                          onClick={() => setLedgerFilter(v)}
+                          className={`px-2.5 text-[11px] font-bold rounded-md ${ledgerFilter === v ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                   <Button 
                     variant="outline" 
                     size="sm" 
@@ -1143,9 +1183,13 @@ export default function SuppliersPage() {
                   </div>
                 ) : (
                   <div className="space-y-4">
-                    {detailsDialog.data.purchases.map(purchase => {
+                    {detailsDialog.data.purchases
+                      .filter((p) => ledgerFilter === "all" || (ledgerFilter === "paid") === (p.payment_status === "Paid"))
+                      .map(purchase => {
                       const isPaid = purchase.payment_status === "Paid";
                       const remaining = (purchase.total_amount || 0) - (purchase.amount_paid || 0);
+                      const payments = [...(purchase.payments || [])].sort((a, b) => new Date(b.date) - new Date(a.date));
+                      const lastPayment = payments[0];
                       return (
                         <div 
                           key={purchase.id} 
@@ -1184,6 +1228,26 @@ export default function SuppliersPage() {
                                 {purchase.items?.length || 0} product lines purchased.
                               </p>
                             </div>
+                            {payments.length > 0 && (
+                              <div className="rounded-xl border border-border/50 bg-muted/20 p-2.5 space-y-1.5" data-testid="supplier-bill-payments">
+                                <p className="text-[11px] font-bold text-foreground">
+                                  Last paid ₹{Number(lastPayment.amount || 0).toFixed(2)} on {formatDate(lastPayment.date)}
+                                  {lastPayment.payment_mode ? ` (${lastPayment.payment_mode})` : ""}
+                                  <span className="text-muted-foreground font-semibold"> · paid ₹{Number(purchase.amount_paid || 0).toFixed(2)} in {payments.length} payment{payments.length === 1 ? "" : "s"}</span>
+                                </p>
+                                <details className="text-[11px]">
+                                  <summary className="cursor-pointer text-primary font-semibold select-none">Payment history</summary>
+                                  <div className="mt-1.5 space-y-1">
+                                    {payments.map((pm, i) => (
+                                      <div key={pm.id || i} className="flex justify-between gap-2 text-muted-foreground">
+                                        <span>{formatDate(pm.date)} · {pm.payment_mode || "—"}{pm.notes ? ` · ${pm.notes}` : ""}</span>
+                                        <span className="font-mono font-bold text-foreground">₹{Number(pm.amount || 0).toFixed(2)}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </details>
+                              </div>
+                            )}
                           </div>
                           
                           {/* Action Info */}

@@ -102,6 +102,70 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
   }
 });
 
+const DRUG_SCHEDULES = ["NONE", "G", "H", "H1", "X", "C", "NDPS"];
+const drugSchedule = (v) => (DRUG_SCHEDULES.includes(String(v || "").toUpperCase()) ? String(v).toUpperCase() : null);
+
+// GET /api/products/missing?fields=salt,manufacturer,hsn,gst,mrp,pack&category=medicine|all
+// Catalog products missing any of the chosen details, to fix them from one
+// list (by hand, with AI fill, or by asking DavaDesk AI).
+const MISSING_FIELDS = {
+  salt: { salt_composition: { $in: [null, ""] } },
+  manufacturer: { manufacturer: { $in: [null, ""] } },
+  hsn: { $and: [{ hsn_no: { $in: [null, ""] } }, { hsn_code: { $in: [null, ""] } }] },
+  gst: { $and: [{ $or: [{ tax_rate: { $in: [null, 0] } }, { tax_rate: { $exists: false } }] }, { $or: [{ cgst: { $in: [null, 0] } }, { cgst: { $exists: false } }] }] },
+  mrp: { $or: [{ mrp: { $in: [null, 0] } }, { mrp: { $exists: false } }] },
+  pack: { $or: [{ units_per_pack: { $in: [null, 0, 1] } }, { units_per_pack: { $exists: false } }] },
+};
+router.get("/missing", auth, requireSubscription(), async (req, res, next) => {
+  try {
+    const db = mongoose.connection.db;
+    const fields = String(req.query.fields || "salt").split(",").map((f) => f.trim()).filter((f) => MISSING_FIELDS[f]);
+    if (!fields.length) return res.status(400).json({ detail: "Choose at least one detail" });
+    const query = { pharmacy_id: req.user.pharmacy_id, $or: fields.map((f) => MISSING_FIELDS[f]) };
+    // Salt matters for medicines; cosmetics and devices usually have none
+    if (req.query.category !== "all") query.category = { $in: [null, "", "medicine", "ayurvedic", "otc"] };
+    const limit = Math.min(parseInt(req.query.limit) || 200, 1000);
+    const [products, total] = await Promise.all([
+      db.collection("products").find(query, { projection: { _id: 0 } }).sort({ name: 1 }).limit(limit).toArray(),
+      db.collection("products").countDocuments(query),
+    ]);
+    function isMissing(p, f) {
+      if (f === "salt") return !String(p.salt_composition || "").trim();
+      if (f === "manufacturer") return !String(p.manufacturer || "").trim();
+      if (f === "hsn") return !String(p.hsn_no || p.hsn_code || "").trim();
+      if (f === "gst") return !(Number(p.tax_rate) > 0 || Number(p.cgst) > 0);
+      if (f === "mrp") return !(Number(p.mrp) > 0);
+      if (f === "pack") return !(Number(p.units_per_pack) > 1);
+      return false;
+    }
+    res.json({
+      total,
+      fields,
+      products: products.map((p) => ({ ...p, missing: fields.filter((f) => isMissing(p, f)) })),
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// GET /api/products/one?id=&name= : one catalog product (to edit it)
+router.get("/one", auth, requireSubscription(), async (req, res, next) => {
+  try {
+    const db = mongoose.connection.db;
+    const id = String(req.query.id || "").trim();
+    const name = String(req.query.name || "").trim();
+    if (!id && !name) return res.status(400).json({ detail: "id or name is required" });
+    const or = [];
+    if (id) or.push({ id }, { product_id: id });
+    if (name) or.push({ name: { $regex: `^${escapeRegex(name)}$`, $options: "i" } }, { product_name: { $regex: `^${escapeRegex(name)}$`, $options: "i" } });
+    const product = await db.collection("products").findOne({ pharmacy_id: req.user.pharmacy_id, $or: or }, { projection: { _id: 0 } });
+    if (!product) return res.status(404).json({ detail: "This product isn't in your catalog yet" });
+    res.json({ product });
+  } catch (error) {
+    next(error);
+  }
+});
+
 // POST /api/products
 router.post("/", auth, requireSubscription(), async (req, res, next) => {
   try {
@@ -136,7 +200,7 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
     if (!finalName) {
       return res.status(400).json({ detail: "Product name is required" });
     }
-    const gaps = catalogGaps({ category, manufacturer, salt_composition, units_per_pack, mrp });
+    const gaps = catalogGaps({ category, manufacturer, salt_composition, units_per_pack, mrp, dosage_form: req.body.dosage_form });
     if (gaps.length) {
       return res.status(400).json({ code: "CATALOG_DETAILS_REQUIRED", detail: `Add the product's ${gaps.join(", ")}`, missing: gaps });
     }
@@ -196,6 +260,7 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
       rack_location: (rack_location || "").trim(),
       // true / false: the pharmacy's own Schedule H1 mark; null: detect from the salt
       schedule_h1: h1Mark(req.body.schedule_h1),
+      drug_schedule: drugSchedule(req.body.drug_schedule),
       description: description || null,
       image_url: image_url || null,
       source: "catalog",
@@ -299,6 +364,7 @@ router.put(
       if (description !== undefined) updateDoc.description = description;
       if (image_url !== undefined) updateDoc.image_url = image_url;
       if (req.body.schedule_h1 !== undefined) updateDoc.schedule_h1 = h1Mark(req.body.schedule_h1);
+      if (req.body.drug_schedule !== undefined) updateDoc.drug_schedule = drugSchedule(req.body.drug_schedule);
 
       const result = await db
         .collection("products")

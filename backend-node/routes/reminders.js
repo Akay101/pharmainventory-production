@@ -452,6 +452,65 @@ router.delete("/:id", auth, requireSubscription(), async (req, res, next) => {
 // will buy again: last supplier, pack size, rates and GST from the last
 // purchase of each medicine; quantity from the reminder. Batch and expiry are
 // left for the user. Calling it again returns the same draft while it exists.
+// Purchase-draft lines for reminder medicines: pack, price, GST and MRP
+// from the last purchase of each (or its stock batch), and that purchase's
+// supplier.
+async function draftLinesFor(db, pharmacyId, items) {
+  const esc = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  let supplier = null;
+  const lines = [];
+  for (const it of items) {
+    const sameProduct = it.product_id
+      ? { $or: [{ "items.product_id": it.product_id }, { "items.product_name": it.product_name }] }
+      : { "items.product_name": { $regex: `^${esc(it.product_name)}$`, $options: "i" } };
+    const [lastPurchase] = await db
+      .collection("purchases")
+      .find({ pharmacy_id: pharmacyId, ...sameProduct }, { projection: { _id: 0, supplier_id: 1, supplier_name: 1, items: 1 } })
+      .sort({ purchase_date: -1, created_at: -1 })
+      .limit(1)
+      .toArray();
+    const line = lastPurchase?.items?.find(
+      (x) => (it.product_id && x.product_id === it.product_id) || String(x.product_name || "").toLowerCase() === it.product_name.toLowerCase()
+    );
+    const inv = it.inventory_id
+      ? await db.collection("inventory").findOne({ id: it.inventory_id, pharmacy_id: pharmacyId }, { projection: { _id: 0 } })
+      : null;
+    const src = line || inv || {};
+    const upp = Number(src.units_per_pack) || Number(it.units_per_pack) || 1;
+    const wantUnits = Number(it.reorder_units) || Number(it.quantity) || upp;
+    const mrpUnit = Number(src.mrp_per_unit || src.mrp) || Number(it.unit_price) || 0;
+    lines.push({
+      product_id: src.product_id || it.product_id || "",
+      product_name: it.product_name,
+      manufacturer: src.manufacturer || "",
+      salt_composition: src.salt_composition || "",
+      pack_type: src.pack_type || "Strip",
+      batch_no: "",
+      expiry_date: "",
+      hsn_no: src.hsn_no || "",
+      pack_quantity: Math.max(1, Math.ceil(wantUnits / upp)),
+      units_per_pack: upp,
+      pack_price: Number(src.pack_price) || (Number(src.purchase_price) ? Math.round(Number(src.purchase_price) * upp * 100) / 100 : 0),
+      mrp_per_unit: mrpUnit,
+      cgst: src.cgst ?? "",
+      sgst: src.sgst ?? "",
+      discount: src.discount ?? "",
+    });
+    if (!supplier && (lastPurchase?.supplier_id || lastPurchase?.supplier_name)) {
+      supplier = { id: lastPurchase.supplier_id || null, name: lastPurchase.supplier_name || "" };
+    }
+  }
+  // Purchases saved by supplier name only: link the matching supplier record if there is one
+  if (supplier && !supplier.id && supplier.name) {
+    const rec = await db
+      .collection("suppliers")
+      .findOne({ pharmacy_id: pharmacyId, name: { $regex: `^${esc(supplier.name)}$`, $options: "i" } }, { projection: { _id: 0, id: 1, name: 1 } });
+    if (rec) supplier = { id: rec.id, name: rec.name };
+  }
+
+  return { lines, supplier };
+}
+
 router.post("/:id/purchase-draft", auth, requireSubscription(), async (req, res, next) => {
   try {
     const db = mongoose.connection.db;
@@ -466,57 +525,7 @@ router.post("/:id/purchase-draft", auth, requireSubscription(), async (req, res,
     const items = (reminder.items || []).filter((i) => i.product_name).slice(0, 50);
     if (!items.length) return res.status(400).json({ detail: "This reminder has no medicines to order" });
 
-    const esc = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    let supplier = null;
-    const lines = [];
-    for (const it of items) {
-      const sameProduct = it.product_id
-        ? { $or: [{ "items.product_id": it.product_id }, { "items.product_name": it.product_name }] }
-        : { "items.product_name": { $regex: `^${esc(it.product_name)}$`, $options: "i" } };
-      const [lastPurchase] = await db
-        .collection("purchases")
-        .find({ pharmacy_id: pharmacyId, ...sameProduct }, { projection: { _id: 0, supplier_id: 1, supplier_name: 1, items: 1 } })
-        .sort({ purchase_date: -1, created_at: -1 })
-        .limit(1)
-        .toArray();
-      const line = lastPurchase?.items?.find(
-        (x) => (it.product_id && x.product_id === it.product_id) || String(x.product_name || "").toLowerCase() === it.product_name.toLowerCase()
-      );
-      const inv = it.inventory_id
-        ? await db.collection("inventory").findOne({ id: it.inventory_id, pharmacy_id: pharmacyId }, { projection: { _id: 0 } })
-        : null;
-      const src = line || inv || {};
-      const upp = Number(src.units_per_pack) || Number(it.units_per_pack) || 1;
-      const wantUnits = Number(it.reorder_units) || Number(it.quantity) || upp;
-      const mrpUnit = Number(src.mrp_per_unit || src.mrp) || Number(it.unit_price) || 0;
-      lines.push({
-        product_id: src.product_id || it.product_id || "",
-        product_name: it.product_name,
-        manufacturer: src.manufacturer || "",
-        salt_composition: src.salt_composition || "",
-        pack_type: src.pack_type || "Strip",
-        batch_no: "",
-        expiry_date: "",
-        hsn_no: src.hsn_no || "",
-        pack_quantity: Math.max(1, Math.ceil(wantUnits / upp)),
-        units_per_pack: upp,
-        pack_price: Number(src.pack_price) || (Number(src.purchase_price) ? Math.round(Number(src.purchase_price) * upp * 100) / 100 : 0),
-        mrp_per_unit: mrpUnit,
-        cgst: src.cgst ?? "",
-        sgst: src.sgst ?? "",
-        discount: src.discount ?? "",
-      });
-      if (!supplier && (lastPurchase?.supplier_id || lastPurchase?.supplier_name)) {
-        supplier = { id: lastPurchase.supplier_id || null, name: lastPurchase.supplier_name || "" };
-      }
-    }
-    // Purchases saved by supplier name only: link the matching supplier record if there is one
-    if (supplier && !supplier.id && supplier.name) {
-      const rec = await db
-        .collection("suppliers")
-        .findOne({ pharmacy_id: pharmacyId, name: { $regex: `^${esc(supplier.name)}$`, $options: "i" } }, { projection: { _id: 0, id: 1, name: 1 } });
-      if (rec) supplier = { id: rec.id, name: rec.name };
-    }
+    const { lines, supplier } = await draftLinesFor(db, pharmacyId, items);
 
     const now = new Date().toISOString();
     const total =
@@ -547,6 +556,72 @@ router.post("/:id/purchase-draft", auth, requireSubscription(), async (req, res,
     const restockNow = reminder.restock?.status === "DONE" ? reminder.restock : { ...(reminder.restock || {}), status: "ORDERED", ordered_at: now };
     await db.collection("reminders").updateOne({ id: reminder.id, pharmacy_id: pharmacyId }, { $set: { purchase_draft_id: draft.id, restock: restockNow, updated_at: now } });
     res.status(201).json({ draft });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// POST /api/reminders/bulk-purchase-draft { ids: [...] }
+// One purchase draft for several reminders: their medicines ordered together,
+// the same medicine added up. Each reminder is marked ordered.
+router.post("/bulk-purchase-draft", auth, requireSubscription(), async (req, res, next) => {
+  try {
+    const db = mongoose.connection.db;
+    const pharmacyId = req.user.pharmacy_id;
+    const ids = [...new Set((Array.isArray(req.body?.ids) ? req.body.ids : []).map(String))].slice(0, 50);
+    if (!ids.length) return res.status(400).json({ detail: "Choose the reminders to order" });
+    const reminders = await db.collection("reminders").find({ id: { $in: ids }, pharmacy_id: pharmacyId }).toArray();
+    if (!reminders.length) return res.status(404).json({ detail: "Reminders not found" });
+
+    // Same medicine across reminders: one line with the units added up
+    const byName = new Map();
+    for (const r of reminders) {
+      for (const it of r.items || []) {
+        if (!it.product_name) continue;
+        const k = String(it.product_name).trim().toLowerCase();
+        const units = Number(it.reorder_units) || Number(it.quantity) || 0;
+        const cur = byName.get(k);
+        if (cur) cur.reorder_units = (Number(cur.reorder_units) || 0) + units;
+        else byName.set(k, { ...it, reorder_units: units || undefined });
+      }
+    }
+    const items = [...byName.values()].slice(0, 100);
+    if (!items.length) return res.status(400).json({ detail: "These reminders have no medicines to order" });
+    const { lines, supplier } = await draftLinesFor(db, pharmacyId, items);
+
+    const now = new Date().toISOString();
+    const total =
+      Math.round(lines.reduce((s, l) => s + (l.pack_quantity || 0) * (l.pack_price || 0) * (1 + ((Number(l.cgst) || 0) + (Number(l.sgst) || 0)) / 100), 0) * 100) / 100;
+    const names = [...new Set(reminders.map((r) => r.customer_name).filter(Boolean))];
+    const draft = {
+      id: uuidv4(),
+      draft_no: `PD-${Date.now().toString().slice(-6)}`,
+      pharmacy_id: pharmacyId,
+      source: "reminder",
+      supplier_id: supplier?.id || null,
+      supplier_name: supplier?.name || "",
+      supplier_data: null,
+      invoice_no: "",
+      purchase_date: now.slice(0, 10),
+      payment_status: "Unpaid",
+      amount_paid: 0,
+      payment_mode: null,
+      items: lines,
+      note: `Restock for ${reminders.length} reminders${names.length ? `: ${names.join(", ")}` : ""}`.slice(0, 300),
+      reminder_ids: reminders.map((r) => r.id),
+      total,
+      created_by: req.user.id,
+      created_by_name: req.user.name || "",
+      created_at: now,
+      updated_at: now,
+    };
+    await db.collection("purchase_drafts").insertOne({ ...draft });
+    for (const r of reminders) {
+      const restockNow = r.restock?.status === "DONE" ? r.restock : { ...(r.restock || {}), status: "ORDERED", ordered_at: now };
+      await db.collection("reminders").updateOne({ id: r.id, pharmacy_id: pharmacyId }, { $set: { purchase_draft_id: draft.id, restock: restockNow, updated_at: now } });
+    }
+    delete draft.pharmacy_id;
+    res.status(201).json({ draft, reminders: reminders.length });
   } catch (error) {
     next(error);
   }

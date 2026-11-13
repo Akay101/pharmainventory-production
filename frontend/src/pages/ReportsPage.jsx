@@ -1,4 +1,6 @@
 import { useState, useEffect, useRef } from "react";
+import { useSearchParams } from "react-router-dom";
+import ProductPerformance from "../components/reports/ProductPerformance";
 import { createPortal } from "react-dom";
 import axios from "axios";
 import { API } from "../App";
@@ -60,7 +62,12 @@ import { formatExpiry } from "./utils";
 const COLORS = ["#10B981", "#8B5CF6", "#3B82F6", "#F59E0B", "#EF4444"];
 
 export default function ReportsPage() {
-  const [activeTab, setActiveTab] = useState("financial");
+  // ?tab=financial|inventory|sourcing|dues opens that report (links from Billing)
+  const [searchParams] = useSearchParams();
+  const [activeTab, setActiveTab] = useState(() => {
+    const t = searchParams.get("tab");
+    return ["financial", "products", "inventory", "sourcing", "dues"].includes(t) ? t : "financial";
+  });
 
   // Original states (strictly preserved)
   const [loading, setLoading] = useState(true);
@@ -302,9 +309,10 @@ export default function ReportsPage() {
       </div>
 
       {/* Modern Pill-Shaped Tab Switcher */}
-      <div className="flex overflow-x-auto space-x-1 p-1 bg-card/40 border border-white/5 rounded-xl max-w-2xl backdrop-blur-md">
+      <div className="flex overflow-x-auto space-x-1 p-1 bg-card/40 border border-white/5 rounded-xl max-w-3xl backdrop-blur-md">
         {[
           { id: "financial", label: "Financial Metrics", icon: BarChart3 },
+          { id: "products", label: "Product Performance", icon: TrendingUp },
           { id: "inventory", label: "Inventory Health", icon: ShieldAlert },
           { id: "sourcing", label: "Sourcing Price Auditor", icon: Sparkles },
           { id: "dues", label: "Debt & liabilities", icon: Users },
@@ -326,6 +334,8 @@ export default function ReportsPage() {
           );
         })}
       </div>
+
+      {activeTab === "products" && <ProductPerformance />}
 
       {/* TAB 1: FINANCIAL PERFORMANCE */}
       {activeTab === "financial" && (

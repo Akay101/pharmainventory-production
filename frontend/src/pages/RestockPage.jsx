@@ -65,6 +65,8 @@ export default function RestockPage() {
   const [busy, setBusy] = useState(null); // reminder id being worked on
   const [override, setOverride] = useState(null); // { reminder, short }
   const [highlight, setHighlight] = useState(location.state?.highlightId || null);
+  const [picked, setPicked] = useState(() => new Set()); // reminders ticked to order together
+  const [howOpen, setHowOpen] = useState(false);
   const seq = useRef(0);
 
   const load = useCallback(async () => {
@@ -112,6 +114,27 @@ export default function RestockPage() {
     }
   };
 
+  // One purchase draft for every ticked reminder (same medicine added up)
+  const orderPicked = async () => {
+    if (!picked.size) return;
+    setBusy("bulk");
+    try {
+      const res = await axios.post(`${API}/reminders/bulk-purchase-draft`, { ids: [...picked] });
+      toast.success(`One purchase draft for ${res.data.reminders} reminders`);
+      navigate("/purchases", { state: { openPurchaseDraft: res.data.draft.id } });
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Couldn't prepare the purchase");
+      setBusy(null);
+    }
+  };
+  const togglePick = (id) =>
+    setPicked((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
   const markDone = async (r, force = false) => {
     setBusy(r.id);
     try {
@@ -157,10 +180,28 @@ export default function RestockPage() {
             Medicines your customers will come back for. Each one closes by itself once the stock is back; you can also mark it done by hand.
           </p>
         </div>
-        <Button variant="outline" onClick={load} disabled={loading} className="h-10 rounded-xl font-bold">
-          <RefreshCw className={`mr-1.5 h-4 w-4 ${loading ? "animate-spin" : ""}`} /> Check stock
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="ghost" onClick={() => setHowOpen((v) => !v)} className="h-10 rounded-xl font-bold text-xs" aria-expanded={howOpen} data-testid="restock-how">
+            How Restock works
+          </Button>
+          <Button variant="outline" onClick={load} disabled={loading} className="h-10 rounded-xl font-bold">
+            <RefreshCw className={`mr-1.5 h-4 w-4 ${loading ? "animate-spin" : ""}`} /> Check stock
+          </Button>
+        </div>
       </div>
+
+      {howOpen && (
+        <div className="rounded-2xl border border-orange-500/30 bg-orange-500/5 p-4 text-sm space-y-1.5" data-testid="restock-how-panel">
+          <p className="font-black">How Restock works</p>
+          <ol className="list-decimal pl-5 space-y-1 text-xs font-semibold text-muted-foreground">
+            <li>While billing, turn on <b className="text-foreground">Refill reminder</b> for the medicines a customer takes regularly. DavaDesk works out when they will run out and when to remind them.</li>
+            <li>Each reminder shows here with what the customer will need against what is on the shelf now.</li>
+            <li>If stock is short, press <b className="text-foreground">Order stock</b> to make a purchase draft from the last purchase of each medicine, or tick several reminders and press <b className="text-foreground">Order selected</b> to order them all on one draft, even if each is only a little short.</li>
+            <li>When the purchase is saved and stock covers the need, the reminder closes by itself (Restocked). You can also <b className="text-foreground">Mark done</b> by hand.</li>
+            <li>On the reminder day, it moves to <b className="text-foreground">Due now</b> and you can send the customer a WhatsApp message that their medicines are ready.</li>
+          </ol>
+        </div>
+      )}
 
       <div className="flex flex-wrap items-center gap-2">
         {VIEWS.map(([id, label]) => (
@@ -186,6 +227,24 @@ export default function RestockPage() {
         </div>
       </div>
 
+      {list.some((r) => r.restock?.status !== "DONE") && canOrder && (
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border/60 bg-muted/20 px-3 py-2 text-xs font-semibold">
+          <label className="flex items-center gap-1.5 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={list.filter((r) => r.restock?.status !== "DONE").every((r) => picked.has(r.id)) && picked.size > 0}
+              onChange={(e) => setPicked(e.target.checked ? new Set(list.filter((r) => r.restock?.status !== "DONE").map((r) => r.id)) : new Set())}
+              data-testid="restock-pick-all"
+            />
+            Select all
+          </label>
+          <span className="text-muted-foreground">{picked.size ? `${picked.size} selected` : "Tick reminders to order them together on one purchase"}</span>
+          <Button size="sm" disabled={!picked.size || busy === "bulk"} onClick={orderPicked} className="ml-auto h-8 rounded-lg bg-orange-600 text-xs font-bold text-white hover:bg-orange-700" data-testid="restock-order-selected">
+            {busy === "bulk" ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Package className="mr-1 h-3.5 w-3.5" />} Order selected{picked.size ? ` (${picked.size})` : ""}
+          </Button>
+        </div>
+      )}
+
       {!data && loading ? (
         <Loader size="md" text="Checking stock..." />
       ) : list.length === 0 ? (
@@ -209,6 +268,16 @@ export default function RestockPage() {
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
+                      {!done && canOrder && (
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 cursor-pointer"
+                          checked={picked.has(r.id)}
+                          onChange={() => togglePick(r.id)}
+                          aria-label={`Select ${r.customer_name || "reminder"} to order`}
+                          data-testid="restock-pick"
+                        />
+                      )}
                       <p className="text-base font-black">{r.customer_name || "Customer"}</p>
                       <StatusBadge r={r} today={data.today} />
                     </div>

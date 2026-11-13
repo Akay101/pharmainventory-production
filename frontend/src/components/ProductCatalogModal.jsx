@@ -81,6 +81,7 @@ export default function ProductCatalogModal({
   onUseExisting = null, // pick a similar product instead of creating one
   onSuccess,
   title = "Create Product Catalog",
+  editProduct = null, // a catalog product to edit (PUT) instead of creating one
 }) {
   const [formData, setFormData] = useState({
     name: "",
@@ -134,9 +135,31 @@ export default function ProductCatalogModal({
         description: "",
         schedule_h1: "auto",
         ...(initialValues || {}),
+        ...(editProduct
+          ? {
+              name: editProduct.name || editProduct.product_name || "",
+              category: editProduct.category || "medicine",
+              dosage_form: editProduct.dosage_form || "tablet",
+              manufacturer: editProduct.manufacturer || "",
+              salt_composition: editProduct.salt_composition || "",
+              pack_type: editProduct.pack_type || "Strip",
+              units_per_pack: String(editProduct.units_per_pack || 1),
+              package_details: editProduct.package_details || "",
+              hsn_no: editProduct.hsn_no || editProduct.hsn_code || "",
+              tax_rate: String(editProduct.tax_rate ?? (Number(editProduct.cgst || 0) + Number(editProduct.sgst || 0) || 5)),
+              mrp: editProduct.mrp ? String(editProduct.mrp) : "",
+              trade_price: editProduct.trade_price ? String(editProduct.trade_price) : "",
+              low_stock_threshold: String(editProduct.low_stock_threshold ?? 10),
+              shortage_threshold: String(editProduct.shortage_threshold ?? 10),
+              rack_location: editProduct.rack_location || "",
+              description: editProduct.description || "",
+              schedule_h1: editProduct.schedule_h1 === true ? "yes" : editProduct.schedule_h1 === false ? "no" : "auto",
+              drug_schedule: editProduct.drug_schedule || "",
+            }
+          : {}),
       });
     }
-  }, [isOpen, initialName]); // eslint-disable-line
+  }, [isOpen, initialName, editProduct?.id]); // eslint-disable-line
 
   // Auto-generate suggested package details when pack_type or units change
   const handlePackChange = (field, val) => {
@@ -169,6 +192,26 @@ export default function ProductCatalogModal({
       return updated;
     });
   };
+
+  // Salt field: search every salt in the medicine database as you type
+  const [saltHits, setSaltHits] = useState([]);
+  const [saltOpen, setSaltOpen] = useState(false);
+  useEffect(() => {
+    const q = (formData.salt_composition || "").trim();
+    if (!isOpen || !saltOpen || q.length < 2) {
+      setSaltHits([]);
+      return undefined;
+    }
+    const t = setTimeout(async () => {
+      try {
+        const res = await axios.get(`${API}/medicines/salts`, { params: { q } });
+        setSaltHits((res.data.salts || []).filter((h) => h.salt.toLowerCase() !== q.toLowerCase()));
+      } catch {
+        setSaltHits([]);
+      }
+    }, 250);
+    return () => clearTimeout(t);
+  }, [formData.salt_composition, isOpen, saltOpen]);
 
   // Before a new entry is made: products that may already be this one
   const [similar, setSimilar] = useState([]);
@@ -252,6 +295,7 @@ export default function ProductCatalogModal({
         salt_composition: formData.salt_composition.trim(),
         // "auto": detected from the salt; yes / no: the pharmacy's own mark
         schedule_h1: formData.schedule_h1 === "auto" ? null : formData.schedule_h1,
+        drug_schedule: formData.drug_schedule || null,
         pack_type: formData.pack_type,
         units_per_pack: parseInt(formData.units_per_pack) || 1,
         package_details:
@@ -282,6 +326,13 @@ export default function ProductCatalogModal({
         description: formData.description.trim(),
       };
 
+      if (editProduct?.id) {
+        const res = await axios.put(`${API}/products/${editProduct.id}`, payload, { withCredentials: true });
+        toast.success(`"${payload.name}" updated`);
+        if (onSuccess) onSuccess(res.data.product || { ...editProduct, ...payload });
+        onClose();
+        return;
+      }
       const res = await axios.post(`${API}/products`, payload, {
         withCredentials: true,
       });
@@ -389,7 +440,7 @@ export default function ProductCatalogModal({
                     Official brand & medicine strength name
                   </p>
                 )}
-                {similar.length > 0 && (
+                {similar.length > 0 && !editProduct && (
                   <div data-testid="catalog-similar" className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-2">
                     <p className="text-[11px] font-semibold text-foreground">Already have it? Use it to avoid a duplicate.</p>
                     <div className="mt-1 space-y-1">
@@ -450,7 +501,7 @@ export default function ProductCatalogModal({
 
               <div className="space-y-1.5">
                 <Label className="block text-xs font-bold text-foreground">
-                  Dosage Form
+                  Medicine Type (Dosage Form) {needsSalt(formData) && req}
                 </Label>
                 <Select
                   value={formData.dosage_form}
@@ -458,7 +509,7 @@ export default function ProductCatalogModal({
                     handlePackChange("dosage_form", val)
                   }
                 >
-                  <SelectTrigger className="h-9 text-xs font-semibold rounded-xl border border-border bg-background capitalize px-3">
+                  <SelectTrigger data-catalog-field="dosage_form" className={`h-9 text-xs font-semibold rounded-xl border border-border bg-background capitalize px-3 ${invalidCls("dosage_form")}`}>
                     <SelectValue placeholder="Select Dosage Form" />
                   </SelectTrigger>
                   <SelectContent className="z-[999999]">
@@ -504,24 +555,73 @@ export default function ProductCatalogModal({
                 <Label className="block text-xs font-bold text-foreground">
                   Salt / Active Ingredients {needsSalt(formData) && req}
                 </Label>
+                <div className="relative">
                 <Input
                   data-catalog-field="salt_composition"
                   aria-invalid={!!errors.salt_composition}
-                  placeholder="e.g. Paracetamol (650mg)"
+                  placeholder="e.g. Paracetamol (650mg) · type to search all salts"
                   value={formData.salt_composition}
-                  onChange={(e) =>
+                  onChange={(e) => {
                     setFormData({
                       ...formData,
                       salt_composition: e.target.value,
-                    })
-                  }
+                    });
+                    setSaltOpen(true);
+                  }}
+                  onFocus={() => setSaltOpen(true)}
+                  onBlur={() => setTimeout(() => setSaltOpen(false), 150)}
+                  autoComplete="off"
                   className={`h-9 text-xs font-semibold rounded-xl border border-border bg-background px-3 ${invalidCls("salt_composition")}`}
                 />
+                {saltOpen && saltHits.length > 0 && (
+                  <div className="absolute z-50 mt-1 w-full max-h-56 overflow-y-auto rounded-xl border border-border bg-popover shadow-xl" data-testid="salt-suggestions">
+                    {saltHits.map((h) => (
+                      <button
+                        key={h.salt}
+                        type="button"
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          setFormData((f) => ({ ...f, salt_composition: h.salt }));
+                          setSaltOpen(false);
+                        }}
+                        className="flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-xs hover:bg-muted"
+                      >
+                        <span className="truncate">{h.salt}</span>
+                        <span className="shrink-0 text-[9px] font-bold uppercase text-muted-foreground">{h.source === "catalog" ? "yours" : "all medicines"}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                </div>
                 {fieldError("salt_composition") || (
                   <p className="text-[10px] text-muted-foreground">
                     Active therapeutic composition
                   </p>
                 )}
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="block text-xs font-bold text-foreground">Drug Schedule</Label>
+                <select
+                  value={formData.drug_schedule || ""}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    // H1 here is the same as the Schedule H1 mark below
+                    setFormData((f) => ({ ...f, drug_schedule: v, ...(v === "H1" ? { schedule_h1: "yes" } : f.schedule_h1 === "yes" && v ? { schedule_h1: "no" } : {}) }));
+                  }}
+                  className="h-9 w-full rounded-xl border border-border bg-background px-3 text-xs font-semibold"
+                  data-testid="catalog-drug-schedule"
+                >
+                  <option value="">Not set</option>
+                  <option value="NONE">None (OTC)</option>
+                  <option value="G">Schedule G (S-G)</option>
+                  <option value="H">Schedule H (S-H)</option>
+                  <option value="H1">Schedule H1 (S-H1)</option>
+                  <option value="X">Schedule X (S-X)</option>
+                  <option value="C">Schedule C / C1 (S-C)</option>
+                  <option value="NDPS">Narcotic / NDPS</option>
+                </select>
+                <p className="text-[10px] text-muted-foreground">Saved on the product. H1 also marks it Schedule H1 (prescription needed on bills).</p>
               </div>
 
               <div className="space-y-1.5">
@@ -838,7 +938,7 @@ export default function ProductCatalogModal({
             ) : (
               <Plus className="w-3.5 h-3.5 stroke-[3]" />
             )}
-            Save to Product Catalog
+            {editProduct ? "Save changes" : "Save to Product Catalog"}
           </Button>
         </DialogFooter>
       </DialogContent>

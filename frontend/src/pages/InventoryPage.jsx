@@ -40,12 +40,14 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "../components/ui/alert-dialog";
-import { Search, Plus, Package, AlertTriangle, ChevronLeft, ChevronRight, ArrowUpDown, Trash2, Loader2, BellOff, Info, X, CalendarX, RotateCcw, CheckCircle2, Clock, FileText } from "lucide-react";
+import { Search, Plus, Package, AlertTriangle, ChevronLeft, ChevronRight, ArrowUpDown, Trash2, Loader2, BellOff, Info, X, CalendarX, RotateCcw, CheckCircle2, Clock, FileText, Pencil } from "lucide-react";
 import { toast } from "sonner";
 import Loader from "../components/Loader";
 import RightSidebarDrawer from "../components/RightSidebarDrawer";
 import ProductSearchDropdown from "../components/ProductSearchDropdown";
 import ProductCatalogModal from "../components/ProductCatalogModal";
+import DuplicateProductsDialog, { useDuplicateCount } from "../components/DuplicateProducts";
+import MissingDetailsDialog from "../components/MissingDetails";
 import { formatExpiry } from "./utils";
 import ScheduleH1Badge, { H1_ROW_CLASS } from "../components/ScheduleH1Badge";
 
@@ -56,6 +58,10 @@ export default function InventoryPage() {
   // Hide what this user's access doesn't allow (the server enforces it too)
   const acc = useAccess("inventory");
   const canEditStock = acc.update && !rule("no_stock_edit");
+  // Same medicine under different names: shown as a prompt to merge
+  const [dupCount, refreshDupCount] = useDuplicateCount(canEditStock);
+  const [dupOpen, setDupOpen] = useState(false);
+  const [missingOpen, setMissingOpen] = useState(false); // products without salt / company / ...
   const isInitialMount = useRef(true);
   const [inventory, setInventory] = useState([]);
   const [products, setProducts] = useState([]);
@@ -79,6 +85,15 @@ export default function InventoryPage() {
   const [deleteDialog, setDeleteDialog] = useState({ open: false, item: null, type: null });
   const [removeShortageDialog, setRemoveShortageDialog] = useState({ open: false, item: null, newThreshold: "" });
   const [addStockDialog, setAddStockDialog] = useState({ open: false, item: null, quantityToAdd: "" });
+  const [editingProduct, setEditingProduct] = useState(null); // catalog product being edited
+  const openEditProduct = async (p) => {
+    try {
+      const res = await axios.get(`${API}/products/one`, { params: { id: p.product_id || p.id || undefined, name: p.name || p.product_name || undefined } });
+      setEditingProduct(res.data.product);
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Couldn't open this product");
+    }
+  };
   const [productDialog, setProductDialog] = useState(false);
   const [newProduct, setNewProduct] = useState({
     name: "",
@@ -464,15 +479,26 @@ export default function InventoryPage() {
   };
 
   const handleAddStock = async () => {
-    if (!addStockDialog.quantityToAdd || Number(addStockDialog.quantityToAdd) <= 0) {
+    const mode = addStockDialog.mode || "add";
+    const v = addStockDialog.quantityToAdd;
+    if (mode === "add" && (!v || Number(v) <= 0)) {
       toast.error("Please enter a valid quantity greater than 0");
       return;
     }
+    if (mode === "set" && (v === "" || !Number.isInteger(Number(v)))) {
+      toast.error("Enter the stock in whole units; it can be below zero, e.g. -5");
+      return;
+    }
     try {
-      await axios.patch(`${API}/inventory/${addStockDialog.item.id}/add-quantity`, {
-        add_quantity: Number(addStockDialog.quantityToAdd)
-      });
-      toast.success("Stock increased successfully");
+      if (mode === "set") {
+        await axios.patch(`${API}/inventory/${addStockDialog.item.id}/set-quantity`, { quantity: Number(v), reason: addStockDialog.reason || "" });
+        toast.success(`Stock set to ${Number(v)} units`);
+      } else {
+        await axios.patch(`${API}/inventory/${addStockDialog.item.id}/add-quantity`, {
+          add_quantity: Number(v)
+        });
+        toast.success("Stock increased successfully");
+      }
       setAddStockDialog({ open: false, item: null, quantityToAdd: "" });
       await fetchInventory(pagination.page);
       if (detailProduct?.name) {
@@ -588,6 +614,44 @@ export default function InventoryPage() {
             </Button>
           )}
 
+          {canEditStock && dupCount > 0 && (
+            <Button
+              variant="outline"
+              onClick={() => setDupOpen(true)}
+              className="h-9 px-3 text-xs font-bold rounded-xl border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400 hover:bg-amber-500/20"
+              title="Medicines saved under slightly different names. Review and merge them."
+              data-testid="duplicates-btn"
+            >
+              {dupCount} possible duplicate{dupCount === 1 ? "" : "s"}: merge
+            </Button>
+          )}
+          <Button
+            variant="outline"
+            onClick={() => setMissingOpen(true)}
+            className="h-9 px-3 text-xs font-bold rounded-xl"
+            title="Products with salt, company, HSN, GST, MRP or pack size missing"
+            data-testid="missing-details-btn"
+          >
+            Missing details
+          </Button>
+          <MissingDetailsDialog
+            open={missingOpen}
+            onOpenChange={setMissingOpen}
+            canEdit={acc.update}
+            onEdit={(p) => {
+              setMissingOpen(false);
+              setEditingProduct(p);
+            }}
+          />
+          <DuplicateProductsDialog
+            open={dupOpen}
+            onOpenChange={setDupOpen}
+            onMerged={() => {
+              refreshDupCount();
+              fetchData();
+            }}
+          />
+
           {acc.create && (
             <Button
               onClick={() => setProductDialog(true)}
@@ -605,6 +669,17 @@ export default function InventoryPage() {
             isOpen={productDialog}
             onClose={() => setProductDialog(false)}
             onSuccess={() => fetchData()}
+          />
+          {/* Edit a catalog product's details (name, salt, company, pack, GST, MRP...) */}
+          <ProductCatalogModal
+            isOpen={!!editingProduct}
+            editProduct={editingProduct}
+            title="Edit Product Details"
+            onClose={() => setEditingProduct(null)}
+            onSuccess={() => {
+              setDetailProduct(null);
+              fetchData();
+            }}
           />
         </div>
       </div>
@@ -1148,7 +1223,7 @@ export default function InventoryPage() {
           <DialogHeader className="border-b border-border/40 pb-4">
             <DialogTitle className="font-extrabold text-base tracking-tight text-foreground flex items-center gap-2">
               <Plus className="w-5 h-5 text-primary" />
-              Quick Add Stock
+              {addStockDialog.mode === "set" ? "Set Stock" : "Quick Add Stock"}
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4 pt-4">
@@ -1159,17 +1234,50 @@ export default function InventoryPage() {
                 <span>Current Stock: {addStockDialog.item?.available_quantity} units</span>
               </div>
             </div>
+            <div className="grid grid-cols-2 gap-1 rounded-xl border border-border p-1" role="radiogroup" aria-label="Stock change">
+              {[["add", "Add units"], ["set", "Set exact stock"]].map(([m, label]) => (
+                <button
+                  key={m}
+                  type="button"
+                  role="radio"
+                  aria-checked={(addStockDialog.mode || "add") === m}
+                  onClick={() => setAddStockDialog({ ...addStockDialog, mode: m, quantityToAdd: "" })}
+                  className={`h-8 rounded-lg text-xs font-bold ${(addStockDialog.mode || "add") === m ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}
+                  data-testid={`stock-mode-${m}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
             <div className="space-y-2">
-              <Label className="text-xs font-bold text-muted-foreground/80">Quantity to Add (Units) *</Label>
+              <Label className="text-xs font-bold text-muted-foreground/80">
+                {addStockDialog.mode === "set" ? "New stock (units, can be below zero) *" : "Quantity to Add (Units) *"}
+              </Label>
               <Input
                 type="number"
-                placeholder="e.g. 50"
+                placeholder={addStockDialog.mode === "set" ? "e.g. -5 or 20" : "e.g. 50"}
                 value={addStockDialog.quantityToAdd}
                 onChange={(e) => setAddStockDialog({ ...addStockDialog, quantityToAdd: e.target.value })}
-                min="1"
+                min={addStockDialog.mode === "set" ? undefined : "1"}
+                step="1"
                 autoFocus
                 className="h-10 text-sm font-bold border-border/80 focus:border-primary bg-card/25"
+                data-testid="stock-qty"
               />
+              {addStockDialog.mode === "set" && (
+                <>
+                  <Input
+                    placeholder="Reason (optional), e.g. sold before the purchase was entered"
+                    value={addStockDialog.reason || ""}
+                    maxLength={200}
+                    onChange={(e) => setAddStockDialog({ ...addStockDialog, reason: e.target.value })}
+                    className="h-9 text-xs"
+                  />
+                  <p className="text-[11px] text-muted-foreground">
+                    Below zero means units were sold that are not in stock yet; the next purchase of this batch brings it back up.
+                  </p>
+                </>
+              )}
             </div>
             <Button onClick={handleAddStock} className="w-full bg-primary hover:bg-primary/95 text-primary-foreground h-10 text-xs font-bold shadow-md shadow-primary/10 rounded-xl mt-2">
               Update Stock
@@ -1286,7 +1394,21 @@ export default function InventoryPage() {
         }
         icon={Package}
         headerAction={
-          detailProduct && acc.delete ? (
+          detailProduct && (acc.update || acc.delete) ? (
+            <div className="flex items-center gap-1.5">
+            {acc.update && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 px-2.5 text-xs font-bold rounded-lg flex items-center gap-1.5 cursor-pointer"
+                onClick={() => openEditProduct(detailProduct)}
+                title="Edit this product's catalog details"
+                data-testid="edit-product-btn"
+              >
+                <Pencil className="w-3.5 h-3.5" /> Edit details
+              </Button>
+            )}
+            {acc.delete && (
             <Button
               variant="outline"
               size="sm"
@@ -1297,6 +1419,8 @@ export default function InventoryPage() {
               <Trash2 className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">Delete Catalog</span>
             </Button>
+            )}
+            </div>
           ) : null
         }
         tabs={[
@@ -1476,10 +1600,22 @@ export default function InventoryPage() {
                                   variant="ghost"
                                   size="icon"
                                   className="text-orange-500 hover:text-orange-400 hover:bg-orange-500/15 rounded-lg h-6 w-6 cursor-pointer"
-                                  onClick={() => setAddStockDialog({ open: true, item: batch, quantityToAdd: "" })}
+                                  onClick={() => setAddStockDialog({ open: true, item: batch, quantityToAdd: "", mode: "add" })}
                                   title="Add Stock"
                                 >
                                   <Plus className="w-3.5 h-3.5" />
+                                </Button>
+                              )}
+                              {canEditStock && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="text-sky-500 hover:text-sky-400 hover:bg-sky-500/15 rounded-lg h-6 w-6 cursor-pointer"
+                                  onClick={() => setAddStockDialog({ open: true, item: batch, quantityToAdd: String(batch.available_quantity ?? ""), mode: "set" })}
+                                  title="Set stock (can be below zero)"
+                                  data-testid="set-stock-btn"
+                                >
+                                  <Pencil className="w-3.5 h-3.5" />
                                 </Button>
                               )}
                               {acc.delete && (

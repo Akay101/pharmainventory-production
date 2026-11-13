@@ -255,6 +255,8 @@ const generateBillPDF = async (bill, pharmacy, options = {}) => {
           const pct = bill.discount_percent ? ` (${rate(bill.discount_percent)}%)` : "";
           summary.push([`Bill discount${pct}`, `- ${money(billDiscount)}`, "good"]);
         }
+        const roundOff = Number(bill.round_off) || 0;
+        if (Math.abs(roundOff) > 0.004) summary.push(["Round off", `${roundOff > 0 ? "+" : "-"} ${money(Math.abs(roundOff))}`]);
         const after = [];
         if (paid > 0.004 && balance > 0.004) after.push(["Paid", money(paid)]);
         if (balance > 0.004) after.push([isUdhar && paid <= 0 ? "Unpaid" : "Balance", money(balance), "bad"]);

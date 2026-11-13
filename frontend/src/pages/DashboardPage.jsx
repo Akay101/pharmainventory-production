@@ -334,7 +334,17 @@ export default function DashboardPage() {
     load(true);
     // Keep the counter screen fresh without a manual refresh
     const t = setInterval(() => load(false), 2 * 60 * 1000);
-    return () => clearInterval(t);
+    // Back on this tab or window (e.g. after a bill in another tab): reload now
+    const onShow = () => {
+      if (document.visibilityState === "visible") load(false);
+    };
+    document.addEventListener("visibilitychange", onShow);
+    window.addEventListener("focus", onShow);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener("visibilitychange", onShow);
+      window.removeEventListener("focus", onShow);
+    };
   }, [load]);
 
   const trend = useMemo(() => (data?.trend || []).slice(-range), [data, range]);

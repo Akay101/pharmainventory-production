@@ -18,7 +18,9 @@ const { FORMATS, LEGACY_FORMAT } = require("../services/pdfFormats");
 const { uploadToR2 } = require("../services/r2");
 const { logActivity } = require("../utils/activityLogger");
 const { identityGaps } = require("../utils/catalogDetails");
-const { looseNameRegex } = require("../services/search/normalize");
+const { looseNameRegex, normalizeText } = require("../services/search/normalize");
+// Same name whatever the spacing, punctuation or case
+const sameLooseName = (a, b) => normalizeText(a).replace(/ /g, "") === normalizeText(b).replace(/ /g, "");
 const { requireSubscription } = require("../middleware/subscription");
 const {
   purchaseStockImpact,
@@ -232,6 +234,9 @@ router.get(
             req.query.current_mrp_pack ||
             req.query.mrp_pack
         ) || 0;
+      // Net cost of one pack received: after trade + scheme discount and
+      // free packs, GST included. Rates are compared on this, not on PTR.
+      const currentNetNum = parseFloat(req.query.current_net) || 0;
 
       // Find all purchases containing this product (case-insensitive match, with normalized name)
       const normalizedInput = normalizeName(product_name);
@@ -275,15 +280,26 @@ router.get(
             );
 
             if (packPrice > 0) {
+              // Stored landed cost per unit (GST in, discounts and free
+              // units spread); older lines without it are worked out
+              const gstPct = (parseFloat(item.cgst) || 0) + (parseFloat(item.sgst) || 0);
+              const landedUnit =
+                parseFloat(item.price_per_unit || item.cost_per_unit) ||
+                (packPrice * (1 - (parseFloat(item.discount) || 0) / 100) * (1 + gstPct / 100)) / unitsPerPack;
               historicalRecords.push({
                 purchase_id: purchase.id || purchase._id,
                 supplier_id: purchase.supplier_id,
                 supplier_name: purchase.supplier_name || "Unknown Supplier",
                 rate_pack: packPrice,
+                net_pack: Math.round(landedUnit * unitsPerPack * 100) / 100,
+                discount: parseFloat(item.discount) || 0,
+                scheme: item.scheme || 0,
+                gst_percent: gstPct,
                 mrp_pack: mrpPack,
                 units_per_pack: unitsPerPack,
                 price_per_unit: packPrice / unitsPerPack,
                 purchase_date: purchase.created_at || purchase.purchase_date,
+                bill_date: purchase.purchase_date || purchase.created_at,
                 invoice_no: purchase.invoice_no || "N/A",
                 batch_no: item.batch_no || "N/A",
                 expiry_date: item.expiry_date || "N/A",
@@ -298,25 +314,34 @@ router.get(
         (a, b) => new Date(a.purchase_date) - new Date(b.purchase_date)
       );
 
-      // Sort by rate (cheapest first)
+      // Compare on net cost when the caller sent it, else on PTR (old callers)
+      const byNet = currentNetNum > 0;
+      const costOf = (r) => (byNet ? r.net_pack : r.rate_pack);
+      const currentCost = byNet ? currentNetNum : currentRateNum;
+
+      // Sort by cost (cheapest first)
       const sortedByRate = [...historicalRecords].sort(
-        (a, b) => a.rate_pack - b.rate_pack
+        (a, b) => costOf(a) - costOf(b)
       );
 
       const latestRecord =
         sortedByDate.length > 0 ? sortedByDate[sortedByDate.length - 1] : null;
       const cheapestRecord = sortedByRate.length > 0 ? sortedByRate[0] : null;
 
-      const latestRate = latestRecord ? latestRecord.rate_pack : 0;
+      const latestRate = latestRecord ? costOf(latestRecord) : 0;
       const latestMrp = latestRecord ? latestRecord.mrp_pack : 0;
 
+      // A change under 1% (or 50 paise on PTR) is rounding, not a new rate
+      const minStep = byNet ? Math.max(0.05, latestRate * 0.01) : 0.5;
       const rate_increased =
-        currentRateNum > 0 &&
+        currentCost > 0 &&
         latestRate > 0 &&
-        currentRateNum - latestRate >= 0.5;
+        currentCost - latestRate >= minStep;
       const rate_difference = rate_increased
-        ? Number((currentRateNum - latestRate).toFixed(2))
+        ? Number((currentCost - latestRate).toFixed(2))
         : 0;
+      const rate_lowered =
+        currentCost > 0 && latestRate > 0 && latestRate - currentCost >= minStep;
 
       const mrp_increased =
         currentMrpNum > 0 && latestMrp > 0 && currentMrpNum - latestMrp >= 0.5;
@@ -347,16 +372,31 @@ router.get(
 
       // Filter cheaper supplier options
       const cheaperOptions =
-        currentRateNum > 0
-          ? sortedByRate.filter((r) => r.rate_pack < currentRateNum)
+        currentCost > 0
+          ? sortedByRate.filter((r) => costOf(r) < currentCost)
           : [];
 
       res.json({
         searched_product_name: product_name,
         matched_product_name: matchedProductName || product_name,
+        compared_on: byNet ? "net" : "rate",
         current_rate: currentRateNum,
+        current_net: currentNetNum || null,
         current_mrp: currentMrpNum,
         latest_rate: latestRate,
+        latest_ptr: latestRecord ? latestRecord.rate_pack : 0,
+        // Where and when it was last bought, for the comparison
+        last_purchase: latestRecord
+          ? {
+              supplier_name: latestRecord.supplier_name,
+              purchase_date: latestRecord.bill_date,
+              invoice_no: latestRecord.invoice_no,
+              rate_pack: latestRecord.rate_pack,
+              net_pack: latestRecord.net_pack,
+              mrp_pack: latestRecord.mrp_pack,
+            }
+          : null,
+        rate_lowered,
         latest_mrp: latestMrp,
         cheapest_rate: cheapestRecord ? cheapestRecord.rate_pack : null,
         rate_increased,
@@ -392,9 +432,14 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
       sort_by = "purchase_date",
       sort_order = "desc",
       highlight_id,
+      payment_status,
     } = req.query;
 
     const query = { pharmacy_id: req.user.pharmacy_id };
+    // Paid, or Unpaid (anything not fully paid, part-paid included)
+    if (payment_status === "Paid") query.payment_status = "Paid";
+    else if (payment_status === "Unpaid") query.payment_status = { $ne: "Paid" };
+    else if (payment_status === "Partial") query.payment_status = "Partial";
 
     if (search) {
       const escapedSearch = escapeRegex(search);
@@ -445,6 +490,29 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
       .toArray();
 
     const total = await db.collection("purchases").countDocuments(query);
+
+    // Lines whose stock batch was deleted in Inventory: flagged, so the
+    // purchase doesn't look like it still holds them (editing and saving the
+    // purchase adds the batch back)
+    const lineKeys = purchases.flatMap((p) => (p.items || []).map((it) => it.batch_no).filter(Boolean));
+    if (lineKeys.length) {
+      const inv = await db
+        .collection("inventory")
+        .find({ pharmacy_id: req.user.pharmacy_id, batch_no: { $in: [...new Set(lineKeys)] } }, { projection: { _id: 0, product_id: 1, product_name: 1, batch_no: 1 } })
+        .toArray();
+      const have = new Set();
+      for (const b of inv) {
+        if (b.product_id) have.add(`${b.product_id}::${b.batch_no}`);
+        have.add(`${String(b.product_name || "").trim().toLowerCase()}::${b.batch_no}`);
+      }
+      for (const p of purchases) {
+        for (const it of p.items || []) {
+          if (!it.batch_no || /Return/.test(it.status || "")) continue;
+          const found = (it.product_id && have.has(`${it.product_id}::${it.batch_no}`)) || have.has(`${String(it.product_name || "").trim().toLowerCase()}::${it.batch_no}`);
+          if (!found) it.stock_removed = true;
+        }
+      }
+    }
 
     // Schedule H1 lines, worked out from today's catalog (marks can change)
     await Promise.all(
@@ -782,6 +850,9 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
       let resolvedProductId;
       if (matchedProduct) {
         resolvedProductId = matchedProduct.id;
+        // Same product typed another way ("calpol 650"): keep the catalog's
+        // name so its stock and history stay under one product
+        if (matchedProduct.name && sameLooseName(matchedProduct.name, item.product_name)) item.product_name = matchedProduct.name;
       } else {
         resolvedProductId = pId && !isScanned ? pId : uuidv4();
         await db.collection("products").insertOne(
@@ -1318,6 +1389,7 @@ router.put(
         let resolvedProductId;
         if (matchedProduct) {
           resolvedProductId = matchedProduct.id;
+          if (matchedProduct.name && sameLooseName(matchedProduct.name, item.product_name)) item.product_name = matchedProduct.name;
         } else {
           resolvedProductId = uuidv4();
           await db.collection("products").insertOne(

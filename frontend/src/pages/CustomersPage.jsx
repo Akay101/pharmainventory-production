@@ -3,6 +3,8 @@ import { useNavigate, useLocation } from "react-router-dom";
 import axios from "axios";
 import { API, useAuth } from "../App";
 import { TierBadge, TierFilterBar, TierRulesDialog, CustomerTierCard, visitLine } from "../components/customers/CustomerTiers";
+import MonthlyAccount from "../components/customers/MonthlyAccount";
+import AdvanceCredit from "../components/customers/AdvanceCredit";
 import { Card, CardContent } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -723,8 +725,17 @@ export default function CustomersPage() {
                 </div>
               </div>
 
+              {/* Advance credit: take an advance, see what's left and its history */}
+              {selectedCustomer && (
+                <AdvanceCredit
+                  customer={selectedCustomer}
+                  canTake={canTakePayment}
+                  onChanged={(c) => setSelectedCustomer((prev) => (prev?.id === c.id ? { ...prev, ...c } : prev))}
+                />
+              )}
+
               {/* Tabs Navigation */}
-              <div className="flex items-center gap-2 border-b border-border/60 pb-2">
+              <div className="flex items-center gap-2 flex-wrap border-b border-border/60 pb-2">
                 <Button
                   type="button"
                   variant={activeDetailTab === "reminders" ? "default" : "ghost"}
@@ -752,6 +763,21 @@ export default function CustomersPage() {
                 >
                   <Receipt className="w-3.5 h-3.5 mr-1.5" />
                   Purchase Bills ({customerBills.length})
+                </Button>
+                <Button
+                  type="button"
+                  variant={activeDetailTab === "monthly" ? "default" : "ghost"}
+                  size="sm"
+                  onClick={() => setActiveDetailTab("monthly")}
+                  data-testid="customer-monthly-tab"
+                  className={`h-8 px-3.5 font-bold text-xs rounded-xl transition-all ${
+                    activeDetailTab === "monthly"
+                      ? "bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <Calendar className="w-3.5 h-3.5 mr-1.5" />
+                  Monthly Account
                 </Button>
                 {unpaidBills.length > 0 && (
                   <Button
@@ -1045,6 +1071,18 @@ export default function CustomersPage() {
                     </div>
                   )}
                 </div>
+              )}
+
+              {/* TAB: MONTHLY ACCOUNT (bills, paid / pending, statement PDFs) */}
+              {activeDetailTab === "monthly" && selectedCustomer && (
+                <MonthlyAccount
+                  customerId={selectedCustomer.id}
+                  customerName={selectedCustomer.name}
+                  onOpenBill={(b) => {
+                    setDetailsOpen(false);
+                    navigate("/billing", { state: { highlightId: b.id } });
+                  }}
+                />
               )}
 
               {/* TAB 3: UNPAID BILLS */}

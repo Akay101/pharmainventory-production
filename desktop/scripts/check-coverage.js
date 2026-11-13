@@ -11,7 +11,7 @@ const hooks = fs.readFileSync(path.join(__dirname, "..", "server", "hooks.js"), 
 
 // Kept in the cloud on purpose: accounts, payments, AI, platform settings
 const CLOUD_ONLY = new Set([
-  "assistant_conversations", "assistant_messages", "auth_attempts", "bill_shares", "broadcast_assets", "broadcast_receipts", "broadcasts", "credit_transactions", "credit_wallets", "global_review_queue", "password_reset_links", "counters", "credit_config", "desktop_auth_codes", "desktop_catalog_log", "desktop_devices", "desktop_sync_state",
+  "ai_answer_cache", "assistant_conversations", "assistant_messages", "auth_attempts", "bill_shares", "broadcast_assets", "broadcast_receipts", "broadcasts", "credit_transactions", "credit_wallets", "global_review_queue", "password_reset_links", "counters", "credit_config", "desktop_auth_codes", "desktop_catalog_log", "desktop_devices", "desktop_sync_state",
   "dev_outbox", "file_purge_requests", "global_distributors", "global_doctors", "global_medicines", "job_locks", "medicines", "otp_challenges", "payment_logs", "payment_orders", "pending_registrations",
   "plans", "pricing_config", "promo_codes", "promo_redemptions", "refresh_tokens", "settings_registry", "stt_sessions", "subscriptions", "support_tickets", "sync_applied", "sync_conflicts", "sync_log",
   // Data import jobs run in the cloud; what they create syncs down like any other change

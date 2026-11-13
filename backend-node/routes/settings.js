@@ -72,6 +72,14 @@ const DEFAULT_REGISTRY = [
     description: "Require payment mode to be selected when creating a bill.",
   },
   {
+    key: "billing_round_off",
+    label: "Round Off Bill Total",
+    type: "boolean",
+    default: false,
+    category: "Preferences",
+    description: "Round every new or edited bill's grand total to the nearest rupee (e.g. ₹305.16 → ₹305). The round-off shows on the bill.",
+  },
+  {
     key: "billing_payment_mode_default",
     label: "Billing Default Payment Mode",
     type: "select",
@@ -122,11 +130,27 @@ const DEFAULT_REGISTRY = [
     description: "A product not picked from the suggestions. Warning: save it as a new catalog product with the details entered, after showing the closest matches. Error: block the save until its full catalog details are filled.",
   },
   {
+    key: "alternates_near_expiry",
+    label: "Suggest Near-Expiry Alternates in Billing",
+    type: "boolean",
+    default: true,
+    category: "Expiry",
+    description: "In a medicine's Details while billing, list medicines with the same salt that expire soon, so they are sold first.",
+  },
+  {
+    key: "alternates_near_expiry_months",
+    label: "Near-Expiry Alternates: Months Ahead",
+    type: "number",
+    default: 3,
+    category: "Expiry",
+    description: "Suggest same-salt medicines that expire within this many months.",
+  },
+  {
     key: "expiry_warning_days",
     label: "Near Expiry Alert Threshold (Days)",
     type: "number",
     default: 90,
-    category: "Expiry & Returns Management",
+    category: "Expiry",
     description: "Days before product expiry to trigger near-expiry alerts across Inventory and Billing.",
   },
   {
@@ -134,7 +158,7 @@ const DEFAULT_REGISTRY = [
     label: "Critical Expiry Alert Threshold (Days)",
     type: "number",
     default: 30,
-    category: "Expiry & Returns Management",
+    category: "Expiry",
     description: "Days before product expiry to highlight products as critically expiring soon.",
   },
   {
@@ -142,7 +166,7 @@ const DEFAULT_REGISTRY = [
     label: "Allow Expired Items in Returns",
     type: "boolean",
     default: true,
-    category: "Expiry & Returns Management",
+    category: "Returns",
     description: "Allow expired medicine batches to be processed in return bills and credit notes.",
   },
   {
@@ -151,7 +175,7 @@ const DEFAULT_REGISTRY = [
     type: "select",
     options: ["none", "Cash", "UPI", "Credit Note"],
     default: "Cash",
-    category: "Expiry & Returns Management",
+    category: "Returns",
     description: "Default payment or refund method for customer and supplier return transactions.",
   },
 ];

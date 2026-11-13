@@ -382,6 +382,7 @@ router.post("/ensure-global", auth, requireSubscription(), catalogLimiter, async
 router.post("/", auth, requireSubscription(), async (req, res, next) => {
   try {
     const { name, contact, email, address, gst_no, notes } = req.body;
+    const dl_no = String(req.body.dl_no || "").trim().slice(0, 120) || null; // drug licence number(s)
     const db = mongoose.connection.db;
     const defaultMargin = req.body.default_margin_percent;
     if (defaultMargin !== undefined && defaultMargin !== null && defaultMargin !== "" && parseMargin(defaultMargin) === null) {
@@ -397,6 +398,7 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
       email: email || null,
       address: address || null,
       gst_no: gst_no || null,
+      dl_no,
       notes: notes || null,
       default_margin_percent: parseMargin(defaultMargin),
       created_at: new Date().toISOString(),
@@ -469,6 +471,7 @@ router.put(
       const { name, contact, email, address, gst_no, notes } = req.body;
       const db = mongoose.connection.db;
       const set = { name, contact, email, address, gst_no, notes };
+      if (req.body.dl_no !== undefined) set.dl_no = String(req.body.dl_no || "").trim().slice(0, 120) || null;
       // Only touched when sent, so older clients don't wipe it
       if (req.body.default_margin_percent !== undefined) {
         const m = req.body.default_margin_percent;
