@@ -331,7 +331,15 @@ const ERROR_FIELD = [
   [/^Name/, "name"], [/units, which|units don't match/, "units"], [/^Discount/, "discount"], [/^GST/, "gst_rate"],
 ];
 
-const display = (v) => (v instanceof Date ? v.toISOString().slice(0, 10) : String(v ?? "").trim());
+const display = (v) => {
+  if (v instanceof Date) return v.toISOString().slice(0, 10);
+  const s = String(v ?? "").trim();
+  return /^[-–—*.\s]+$/.test(s) ? "" : s; // "-", "  -   -" and "*" are empty cells
+};
+
+// Rows that go in: complete ones, and incomplete ones (gaps given safe values) unless the admin left those out
+const COMPLETE_OR_INCOMPLETE = ["ok", "incomplete"];
+const importable = (job) => (job.options?.import_incomplete === false ? ["ok"] : COMPLETE_OR_INCOMPLETE);
 
 // One staged row through the checks, with what the table shows: each field's
 // value, the empty fields worth filling, and the fields with a problem
@@ -345,15 +353,18 @@ function normalizeOne(job, row, t) {
     amountIncludesGst: job.options.amount_includes_gst === null ? undefined : job.options.amount_includes_gst,
     leaveEmpty: job.leave_empty || [],
     fallbackDate: fromFill("invoice_date"),
+    lenient: true,
   });
   const values = {};
   for (const f of ENTITIES[job.entity].fields) values[f.key] = eff.mapping[f.key] === undefined ? "" : display(eff.cells[eff.mapping[f.key]]);
   if (r.noise) return { status: "ignored", data: null, errors: [], warnings: [], skip: null, values, missing: [], bad: [], product_key: null, result: null };
-  const bad = [...new Set(r.errors.map((e) => ERROR_FIELD.find(([re]) => re.test(e))?.[1]).filter(Boolean))];
+  const gaps = r.gaps || [];
+  const bad = [...new Set([...r.errors, ...gaps].map((e) => ERROR_FIELD.find(([re]) => re.test(e))?.[1]).filter(Boolean))];
   const left = new Set(job.leave_empty || []);
   const missing = (ATTENTION[job.entity] || []).filter((k) => !left.has(k) && !bad.includes(k) && (values[k] === "" || (k === "batch_no" && /^n\/?a$/i.test(values[k]))));
-  const status = r.errors.length ? "error" : r.skip ? "skipped" : "ok";
-  return { status, data: r.data, errors: r.errors, warnings: r.warnings, skip: r.skip || null, values, missing, bad, product_key: r.data?.product_key || null, result: null };
+  // error: can't be imported (no product name, no quantity); incomplete: imports with its gaps empty
+  const status = r.errors.length ? "error" : r.skip ? "skipped" : gaps.length ? "incomplete" : "ok";
+  return { status, data: r.data, errors: r.errors, gaps: r.errors.length ? [] : gaps, warnings: r.warnings, skip: r.skip || null, values, missing, bad, product_key: r.data?.product_key || null, result: null };
 }
 
 async function checkAndMatch(db, job) {
@@ -371,7 +382,7 @@ async function checkAndMatch(db, job) {
   };
   for await (const row of cursor) {
     const set = normalizeOne(job, row, t);
-    if (set.status === "ok" && usesProducts(job.entity)) {
+    if (COMPLETE_OR_INCOMPLETE.includes(set.status) && usesProducts(job.entity)) {
       const g = groups.get(set.product_key);
       if (g) g.row_count++;
       else groups.set(set.product_key, { sample: set.data, row_count: 1 });
@@ -397,13 +408,13 @@ async function editRow(db, pharmacyId, jobId, rowNo, values) {
     if (!allowed.has(k)) continue;
     overrides[k] = String(v ?? "").slice(0, 200);
   }
-  const before = row.status === "ok" ? row.product_key : null;
+  const before = COMPLETE_OR_INCOMPLETE.includes(row.status) ? row.product_key : null;
   const set = { ...normalizeOne(job, { ...row, overrides }, today()), overrides };
   await db.collection("migration_rows").updateOne({ _id: row._id }, { $set: set });
 
   if (usesProducts(job.entity)) {
     const col = db.collection("migration_products");
-    const after = set.status === "ok" ? set.product_key : null;
+    const after = COMPLETE_OR_INCOMPLETE.includes(set.status) ? set.product_key : null;
     if (before !== after) {
       if (before) {
         await col.updateOne({ job_id: job.id, key: before }, { $inc: { row_count: -1 } });
@@ -445,12 +456,22 @@ async function leaveEmpty(db, pharmacyId, jobId, { field, leave }) {
   else set.delete(field);
   await db.collection("migration_jobs").updateOne({ id: job.id }, { $set: { leave_empty: [...set] } });
   // An empty supplier stops a row from importing; leaving it empty means re-checking the rows
-  if (leave && field !== "supplier_name") {
+  // (opening stock without an expiry is a gap until it's left empty, so those rows are checked again too)
+  if (leave && field !== "supplier_name" && !(job.entity === "stock" && field === "expiry_date")) {
     await db.collection("migration_rows").updateMany({ job_id: job.id, missing: field }, { $pull: { missing: field } });
     await setJob(db, job, { counts: await countJob(db, job) });
     return;
   }
   return applyMapping(db, pharmacyId, jobId, {});
+}
+
+// Whether rows with gaps go in too (default yes), or only complete rows
+async function setIncomplete(db, pharmacyId, jobId, { include }) {
+  const job = await getJob(db, pharmacyId, jobId);
+  if (job.status !== "ready") throw new JobError("This import can't be changed now");
+  const options = { ...job.options, import_incomplete: !!include };
+  await db.collection("migration_jobs").updateOne({ id: job.id }, { $set: { options } });
+  await setJob(db, { ...job, options }, { counts: await countJob(db, { ...job, options }) });
 }
 
 // One decision per distinct product. Earlier decisions (by key) are kept when the mapping changes.
@@ -605,12 +626,12 @@ async function countJob(db, job) {
     { $group: { _id: "$f", n: { $sum: 1 } } },
   ]).toArray();
   counts.missing = Object.fromEntries(missing.map((m) => [m._id, m.n]));
-  counts.attention = await db.collection("migration_rows").countDocuments({ job_id: job.id, $or: [{ status: "error" }, { "missing.0": { $exists: true } }] });
+  counts.attention = await db.collection("migration_rows").countDocuments({ job_id: job.id, $or: [{ status: { $in: ["error", "incomplete"] } }, { "missing.0": { $exists: true } }] });
   if (BILLS.includes(job.entity)) {
     const party = job.entity === "sales" ? "$data.customer_name" : "$data.supplier_name";
     const left = await db.collection("migration_products").distinct("key", { job_id: job.id, decision: "skip" });
     const [t] = await db.collection("migration_rows").aggregate([
-      { $match: { job_id: job.id, status: "ok", product_key: { $nin: left }, result: { $nin: ["duplicate", "product_skipped"] } } },
+      { $match: { job_id: job.id, status: { $in: importable(job) }, product_key: { $nin: left }, result: { $nin: ["duplicate", "product_skipped"] } } },
       {
         $group: {
           _id: null,
@@ -629,7 +650,7 @@ async function countJob(db, job) {
     // Totals of what will actually go in: rows of products left out don't count
     const left = await db.collection("migration_products").distinct("key", { job_id: job.id, decision: "skip" });
     const [t] = await db.collection("migration_rows").aggregate([
-      { $match: { job_id: job.id, status: "ok", product_key: { $nin: left }, result: { $nin: ["duplicate", "product_skipped"] } } },
+      { $match: { job_id: job.id, status: { $in: importable(job) }, product_key: { $nin: left }, result: { $nin: ["duplicate", "product_skipped"] } } },
       {
         $group: {
           _id: null,
@@ -667,7 +688,7 @@ async function jobView(db, pharmacyId, jobId) {
 async function listRows(db, pharmacyId, jobId, { status, page = 1, limit = 50 }) {
   const job = await getJob(db, pharmacyId, jobId);
   const q = { job_id: job.id, status: { $ne: "ignored" } };
-  if (status === "attention") q.$or = [{ status: "error" }, { "missing.0": { $exists: true } }];
+  if (status === "attention") q.$or = [{ status: { $in: ["error", "incomplete"] } }, { "missing.0": { $exists: true } }];
   else if (status && status.startsWith("missing:")) q.missing = status.slice(8);
   else if (status) q.status = String(status);
   const lim = Math.min(Math.max(+limit || 50, 1), 500);
@@ -696,10 +717,10 @@ async function problemsCsv(db, pharmacyId, jobId) {
   const job = await getJob(db, pharmacyId, jobId);
   const esc = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
   const lines = [["Row", "Status", "Problem", ...job.headers].map(esc).join(",")];
-  const cursor = db.collection("migration_rows").find({ job_id: job.id, $or: [{ status: { $in: ["error", "skipped"] } }, { result: { $in: ["duplicate", "product_skipped", "failed"] } }] }).sort({ row_no: 1 });
+  const cursor = db.collection("migration_rows").find({ job_id: job.id, $or: [{ status: { $in: ["error", "incomplete", "skipped"] } }, { result: { $in: ["duplicate", "product_skipped", "failed"] } }] }).sort({ row_no: 1 });
   const label = { return: "Return / credit note (negative quantity)", no_stock: "No stock", expired: "Expired", duplicate: "Already in DavaDesk", product_skipped: "Product left out", failed: "Couldn't save" };
   for await (const r of cursor) {
-    const problem = r.errors?.length ? r.errors.join("; ") : label[r.result] || label[r.skip] || r.status;
+    const problem = r.errors?.length ? r.errors.join("; ") : r.gaps?.length ? `Incomplete: ${r.gaps.join("; ")}` : label[r.result] || label[r.skip] || r.status;
     lines.push([r.row_no, r.result || r.status, problem, ...r.cells.map((c) => (c instanceof Date ? c.toISOString().slice(0, 10) : c))].map(esc).join(","));
   }
   return lines.join("\r\n");
@@ -715,7 +736,7 @@ async function startCommit(db, pharmacyId, jobId, actor) {
   if (blocking.length) throw new JobError(blocking.join(". "));
   const claimed = await db.collection("migration_jobs").findOneAndUpdate(
     { id: job.id, status: job.status, updated_at: job.updated_at },
-    { $set: { status: "committing", committed_by: actor, progress: { step: "saving", done: 0, total: job.counts?.rows?.ok || 0 }, error: null, updated_at: now(), heartbeat_at: now() } },
+    { $set: { status: "committing", committed_by: actor, progress: { step: "saving", done: 0, total: (job.counts?.rows?.ok || 0) + (job.options?.import_incomplete === false ? 0 : job.counts?.rows?.incomplete || 0) }, error: null, updated_at: now(), heartbeat_at: now() } },
     { returnDocument: "after" }
   );
   if (!claimed) throw new JobError("This import is already being saved", 409);
@@ -796,8 +817,14 @@ function productDoc(job, p) {
 
 async function commitProducts(db, job, tick) {
   const ids = new Map(); // product key -> product id
+  // A product only incomplete rows name isn't added when those rows are left out
+  const used = job.options?.import_incomplete === false ? new Set(await db.collection("migration_rows").distinct("product_key", { job_id: job.id, status: "ok" })) : null;
   const cursor = db.collection("migration_products").find({ job_id: job.id });
   for await (const p of cursor) {
+    if (used && !used.has(p.key)) {
+      await tick(0);
+      continue;
+    }
     if (p.decision === "use") ids.set(p.key, p.product_id);
     else if (p.decision === "new") {
       const doc = productDoc(job, p);
@@ -818,7 +845,7 @@ async function commitProducts(db, job, tick) {
 async function commitStock(db, job, productIds, tick) {
   // Rows naming the same product, batch and expiry become one stock record
   const merged = new Map();
-  for await (const r of db.collection("migration_rows").find({ job_id: job.id, status: "ok" }).sort({ row_no: 1 })) {
+  for await (const r of db.collection("migration_rows").find({ job_id: job.id, status: { $in: importable(job) } }).sort({ row_no: 1 })) {
     const d = r.data;
     const productId = productIds.get(d.product_key);
     if (!productId) {
@@ -844,7 +871,8 @@ async function commitStock(db, job, productIds, tick) {
     }
     const rows = [m.row._id, ...m.extra];
     const already = await db.collection("inventory").findOne(
-      { pharmacy_id: job.pharmacy_id, product_id: m.productId, batch_no: looseNameRegex(d.batch_no) },
+      // (a batch this import just added, with another expiry, is a separate record, not a duplicate)
+      { pharmacy_id: job.pharmacy_id, product_id: m.productId, batch_no: looseNameRegex(d.batch_no), import_job_id: { $ne: job.id } },
       { projection: { _id: 0, id: 1 } }
     );
     const id = uuidv4();
@@ -896,7 +924,7 @@ async function commitStock(db, job, productIds, tick) {
 async function commitParties(db, job, tick) {
   const coll = job.entity; // suppliers | customers
   const phoneField = coll === "suppliers" ? "contact" : "mobile";
-  for await (const r of db.collection("migration_rows").find({ job_id: job.id, status: "ok" }).sort({ row_no: 1 })) {
+  for await (const r of db.collection("migration_rows").find({ job_id: job.id, status: { $in: importable(job) } }).sort({ row_no: 1 })) {
     const d = r.data;
     const phone = d[phoneField] && /^\d{10}$/.test(d[phoneField]) ? d[phoneField] : null;
     const key = d.gst_no ? `gst|${d.gst_no}` : phone ? `mob|${phone}` : `name|${normalizeText(d.name)}`;
@@ -947,7 +975,7 @@ async function commitPurchases(db, job, productIds, tick) {
   const addStock = job.options?.add_to_stock !== false;
   const stock = new Map(); // product|batch|expiry -> units bought across all bills
   const bills = new Map();
-  for await (const r of db.collection("migration_rows").find({ job_id: job.id, status: "ok" }).sort({ row_no: 1 })) {
+  for await (const r of db.collection("migration_rows").find({ job_id: job.id, status: { $in: importable(job) } }).sort({ row_no: 1 })) {
     const d = r.data;
     if (!productIds.get(d.product_key)) {
       await db.collection("migration_rows").updateOne({ _id: r._id }, { $set: { result: "product_skipped" } });
@@ -1109,7 +1137,7 @@ async function addPurchasedStock(db, job, stock) {
 async function commitSales(db, job, productIds, tick) {
   const deduct = job.options?.deduct_stock !== false;
   const bills = new Map();
-  for await (const r of db.collection("migration_rows").find({ job_id: job.id, status: "ok" }).sort({ row_no: 1 })) {
+  for await (const r of db.collection("migration_rows").find({ job_id: job.id, status: { $in: importable(job) } }).sort({ row_no: 1 })) {
     const d = r.data;
     if (!productIds.get(d.product_key)) {
       await db.collection("migration_rows").updateOne({ _id: r._id }, { $set: { result: "product_skipped" } });
@@ -1250,7 +1278,7 @@ async function commit(db, job, actor) {
     else if (job.entity === "sales") await commitSales(db, job, ids, tick);
     else {
       // A product list has no stock: each row is done once its product is
-      for await (const r of db.collection("migration_rows").find({ job_id: job.id, status: "ok" })) {
+      for await (const r of db.collection("migration_rows").find({ job_id: job.id, status: { $in: importable(job) } })) {
         const id = ids.get(r.data.product_key);
         await db.collection("migration_rows").updateOne({ _id: r._id }, { $set: id ? { result: "created", result_id: id } : { result: "product_skipped" } });
       }
@@ -1435,6 +1463,9 @@ async function reportData(db, pharmacyId, jobId) {
       : r.status === "skipped" ? `Not imported: ${r.skip === "expired" ? "expired batch" : r.skip === "return" ? "a return / credit note (negative quantity)" : "no stock"}`
       : r.result === "duplicate" ? "Skipped: already in DavaDesk"
       : r.result === "product_skipped" ? "Not imported: product left out"
+      : r.status === "incomplete" && !r.result && job.options?.import_incomplete === false ? `Not imported (incomplete): ${(r.gaps || []).join("; ")}`
+      : r.status === "incomplete" && r.result === "merged" ? `Imported incomplete (added to the same batch): ${(r.gaps || []).join("; ")}`
+      : r.status === "incomplete" && r.result === "created" ? `Imported incomplete: ${(r.gaps || []).join("; ")}`
       : r.result === "merged" ? "Imported (added to the same batch)"
       : r.result === "created" ? "Imported"
       : job.status === "ready" ? "Ready to import" : "-";
@@ -1542,6 +1573,7 @@ module.exports = {
   decideAll,
   editRow,
   leaveEmpty,
+  setIncomplete,
   reportData,
   fillField,
   jobView,

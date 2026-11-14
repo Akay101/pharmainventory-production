@@ -451,8 +451,9 @@ function Cell({ row, field, readOnly, onSave, register, onNext }) {
   const initial = row.values?.[field] ?? "";
   const [v, setV] = useState(initial);
   useEffect(() => setV(initial), [initial]);
-  const bad = row.bad?.includes(field);
-  const missing = row.missing?.includes(field);
+  const gap = row.status === "incomplete" && row.bad?.includes(field);
+  const bad = !gap && row.bad?.includes(field);
+  const missing = gap || row.missing?.includes(field);
   const tone = bad ? "bg-rose-50 border-rose-300 text-rose-900" : missing ? "bg-amber-50 border-amber-300" : "bg-white border-transparent hover:border-slate-200";
   if (readOnly) return <span className={`block px-2 py-1 rounded-md text-xs whitespace-nowrap ${bad ? "text-rose-700" : ""}`}>{initial || <span className="text-slate-300">—</span>}</span>;
   const save = async () => {
@@ -541,9 +542,17 @@ function ReviewTable({ pid, view, filter, setFilter, onView, readOnly }) {
   };
 
   const c = job.counts || {};
+  const r0 = c.rows || {};
   const tabs = readOnly
-    ? [["", "All rows"], ["error", "Not imported"]]
-    : [["attention", `Needs attention (${num(c.attention || 0)})`], ["", `All rows (${num(job.total_rows)})`], ["error", `Problems (${num(c.rows?.error || 0)})`], ["skipped", `Skipped (${num(c.rows?.skipped || 0)})`]];
+    ? [["", "All rows"], ["incomplete", "Incomplete"], ["error", "Not imported"]]
+    : [
+        ["", `Everything (${num(job.total_rows - (r0.ignored || 0))})`],
+        ["ok", `Complete (${num(r0.ok || 0)})`],
+        ["incomplete", `Incomplete (${num(r0.incomplete || 0)})`],
+        ["attention", `Needs attention (${num(c.attention || 0)})`],
+        ["error", `Can't import (${num(r0.error || 0)})`],
+        ["skipped", `Skipped (${num(r0.skipped || 0)})`],
+      ].filter(([id], i) => i < 2 || id === "attention" || (id === "incomplete" ? r0.incomplete : id === "error" ? r0.error : r0.skipped));
   const from = data.total ? (page - 1) * PAGE + 1 : 0;
   const to = Math.min(page * PAGE, data.total);
 
@@ -561,7 +570,7 @@ function ReviewTable({ pid, view, filter, setFilter, onView, readOnly }) {
           </button>
         )}
       </div>
-      {!readOnly && <p className="text-[11px] text-slate-500">Amber cells are empty, red cells have a problem. Type a value and press Enter to save it and jump to the next one. Esc puts the cell back.</p>}
+      {!readOnly && <p className="text-[11px] text-slate-500">Every row as it will go into DavaDesk. Amber cells are empty (incomplete rows still import, with them left empty); red cells stop a row from importing. Type a value and press Enter to save it and jump to the next one. Esc puts the cell back.</p>}
       <div className="overflow-auto border border-slate-200 rounded-xl max-h-[65vh]">
         <table className="text-xs border-separate border-spacing-0">
           <thead className="bg-slate-50 text-left text-[11px] uppercase tracking-wide text-slate-500 sticky top-0 z-10">
@@ -586,9 +595,10 @@ function ReviewTable({ pid, view, filter, setFilter, onView, readOnly }) {
                   </td>
                 ))}
                 <td className="px-2 py-1.5 border-b border-slate-100">
-                  {r.errors?.length ? <span className="text-rose-600">{r.errors.join("; ")}</span>
+                  {r.errors?.length ? <span className="text-rose-600">Can't import: {r.errors.join("; ")}</span>
                     : r.skip ? <span className="text-slate-500">{r.skip === "expired" ? "Expired, skipped" : r.skip === "return" ? "Return / credit note, not imported" : "No stock, skipped"}</span>
-                    : r.result ? <span className={r.result === "created" ? "text-emerald-700" : "text-slate-600"}>{RESULT_LABEL[r.result] || r.result}</span>
+                    : r.result ? <span className={r.result === "created" ? "text-emerald-700" : "text-slate-600"}>{RESULT_LABEL[r.result] || r.result}{r.status === "incomplete" ? " (incomplete)" : ""}</span>
+                    : r.status === "incomplete" ? <span className={job.options?.import_incomplete === false ? "text-slate-500" : "text-amber-700"}>{job.options?.import_incomplete === false ? "Incomplete, left out" : "Incomplete, imports anyway"}: {(r.gaps || []).join("; ")}</span>
                     : <span className="text-emerald-700">Ready</span>}
                   {r.warnings?.length > 0 && <span className="block text-amber-700">{r.warnings.join("; ")}</span>}
                 </td>
@@ -656,7 +666,7 @@ function MissingPanel({ view, busy, onFill, onShow, onLeave }) {
   return (
     <div className={`${card} p-4`}>
       <p className="text-sm font-bold text-slate-800 flex items-center gap-2"><AlertTriangle className="w-4 h-4 text-amber-600" /> Missing in the file</p>
-      <p className="text-xs text-slate-500">Fill them one by one in the table below, give one value for every empty cell, or leave them empty and import the rows as they are. Rows with a red problem (like a missing bill date) aren't imported until it's fixed.</p>
+      <p className="text-xs text-slate-500">Fill them one by one in the table below, give one value for every empty cell, or leave them empty and import the rows as they are. Rows still missing something import as incomplete, unless you choose to leave them out at the bottom.</p>
       <div className="divide-y divide-slate-100 mt-1">
         {list.map((f) => (
           <FillRow
@@ -826,7 +836,7 @@ function ImportView({ pid, pharmacyName, jobId, onBack, onChanged }) {
   const [view, setView] = useState(null);
   const [busy, setBusy] = useState(false);
   const [tab, setTab] = useState("rows");
-  const [filter, setFilter] = useState("attention");
+  const [filter, setFilter] = useState("");
   const [confirm, setConfirm] = useState(null);
   const [remap, setRemap] = useState(false);
 
@@ -882,7 +892,11 @@ function ImportView({ pid, pharmacyName, jobId, onBack, onChanged }) {
   const prod = c.products || {};
   const usesProducts = ["stock", "products", "purchases"].includes(job.entity);
   const open = (prod.check?.products || 0) + (prod.needs_details?.products || 0);
-  const okRows = rows.ok || 0;
+  const incomplete = rows.incomplete || 0;
+  const withIncomplete = job.options?.import_incomplete !== false;
+  const okRows = (rows.ok || 0) + (withIncomplete ? incomplete : 0);
+  const productTotal = Object.values(prod).reduce((a, p) => a + (p?.products || 0), 0);
+  const productsIn = productTotal - (prod.skip?.products || 0);
   const done = ["committed", "partly_undone", "undone", "failed_commit"].includes(job.status);
 
   return (
@@ -936,21 +950,22 @@ function ImportView({ pid, pharmacyName, jobId, onBack, onChanged }) {
 
       {!remap && (job.status === "ready" || done) && (
         <>
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className={`grid grid-cols-2 ${job.status === "ready" ? "lg:grid-cols-3 xl:grid-cols-5" : "lg:grid-cols-4"} gap-3`}>
             {job.status === "ready" ? (
               <>
-                <Stat label="Ready to import" value={`${num(okRows)} of ${num(job.total_rows - (rows.ignored || 0))} rows`} tone="text-emerald-700" />
-                <Stat label="Need attention" value={num(c.attention || 0)} tone={c.attention ? "text-amber-700" : undefined} />
+                <Stat label="Will be imported" value={`${num(okRows)} of ${num(job.total_rows - (rows.ignored || 0))} rows`} tone="text-emerald-700" />
+                <Stat label="Complete · incomplete" value={`${num(rows.ok || 0)} · ${num(incomplete)}`} tone={incomplete ? "text-amber-700" : undefined} />
+                {rows.error ? <Stat label="Can't import" value={`${num(rows.error)} rows`} tone="text-rose-600" /> : null}
                 {["purchases", "sales"].includes(job.entity) && c.purchases ? <Stat label={job.entity === "sales" ? "Sales bills" : "Bills"} value={job.entity === "sales" ? `${num(c.purchases.bills)} bills` : `${num(c.purchases.bills)} from ${num(c.purchases.suppliers)} suppliers`} /> : <Stat label="Skipped" value={`${num(c.skipped?.expired || 0)} expired · ${num(c.skipped?.no_stock || 0)} no stock`} />}
                 {c.skipped?.return ? <Stat label="Returns (not imported)" value={num(c.skipped.return)} /> : null}
-                {usesProducts ? <Stat label="Products" value={`${num(prod.match?.products || 0)} matched · ${num(prod.new?.products || 0)} new${open ? ` · ${num(open)} to decide` : ""}`} tone={open ? "text-amber-700" : undefined} /> : <Stat label="Problems" value={num(rows.error || 0)} />}
+                {usesProducts ? <Stat label={`Products found: ${num(productTotal)}`} value={`${num(prod.match?.products || 0)} matched · ${num(prod.new?.products || 0)} new${open ? ` · ${num(open)} to decide` : ""}${prod.skip?.products ? ` · ${num(prod.skip.products)} left out` : ""}`} tone={open ? "text-amber-700" : undefined} /> : null}
               </>
             ) : (
               <>
-                <Stat label="Added" value={num(results.created || 0)} tone="text-emerald-700" />
+                <Stat label="Added" value={`${num(results.created || 0)}${rows.incomplete && job.options?.import_incomplete !== false ? ` (incl. ${num(rows.incomplete)} incomplete)` : ""}`} tone="text-emerald-700" />
                 <Stat label="Already in DavaDesk" value={num(results.duplicate || 0)} />
                 <Stat label="Same batch, added together" value={num(results.merged || 0)} />
-                <Stat label="Not imported" value={num((rows.error || 0) + (rows.skipped || 0) + (results.product_skipped || 0))} tone={(rows.error || 0) ? "text-rose-600" : undefined} />
+                <Stat label="Not imported" value={num((rows.error || 0) + (rows.skipped || 0) + (results.product_skipped || 0) + (job.options?.import_incomplete === false ? rows.incomplete || 0 : 0))} tone={(rows.error || 0) ? "text-rose-600" : undefined} />
               </>
             )}
           </div>
@@ -999,8 +1014,9 @@ function ImportView({ pid, pharmacyName, jobId, onBack, onChanged }) {
           )}
 
           <div className="flex gap-1">
-            <button onClick={() => setTab("rows")} className={`${btn} ${tab === "rows" || !usesProducts || done ? "bg-brand-500 text-white" : "bg-white border border-slate-200 text-slate-600"}`}>Rows</button>
-            {usesProducts && job.status === "ready" && <button onClick={() => setTab("products")} className={`${btn} ${tab === "products" ? "bg-brand-500 text-white" : "bg-white border border-slate-200 text-slate-600"}`}>Products{open ? ` (${num(open)} to decide)` : ""}</button>}
+            <button onClick={() => { setTab("rows"); setFilter(""); }} className={`${btn} ${(tab === "rows" || !usesProducts || done) && filter !== "attention" ? "bg-brand-500 text-white" : "bg-white border border-slate-200 text-slate-600"}`}>Overview · all rows</button>
+            {job.status === "ready" && <button onClick={() => { setTab("rows"); setFilter("attention"); }} className={`${btn} ${tab === "rows" && filter === "attention" ? "bg-brand-500 text-white" : "bg-white border border-slate-200 text-slate-600"}`}>Needs attention ({num(c.attention || 0)})</button>}
+            {usesProducts && job.status === "ready" && <button onClick={() => setTab("products")} className={`${btn} ${tab === "products" ? "bg-brand-500 text-white" : "bg-white border border-slate-200 text-slate-600"}`}>Products ({num(productTotal)}){open ? ` · ${num(open)} to decide` : ""}</button>}
           </div>
           <div className={`${card} p-4`}>
             {usesProducts && tab === "products" && job.status === "ready" ? (
@@ -1015,10 +1031,19 @@ function ImportView({ pid, pharmacyName, jobId, onBack, onChanged }) {
               <div className="text-sm text-slate-700 min-w-0 flex-1">
                 {view.blockers.length ? (
                   <span className="text-amber-700 font-semibold">{view.blockers.join(". ")}: choose whether each one matches an existing product, is new, or is left out.</span>
-                ) : rows.error ? (
-                  <span><b className="text-rose-600">{num(rows.error)} rows</b> still have a problem and won't be imported unless you fix them.</span>
                 ) : (
-                  <span>All {num(okRows)} rows are ready. Records already in DavaDesk are skipped, not added twice.</span>
+                  <span>
+                    <b>{num(okRows)} rows</b> will be imported{usesProducts ? <> with <b>{num(productsIn)} products</b></> : null}
+                    {incomplete ? (withIncomplete ? <>, including <b className="text-amber-700">{num(incomplete)} incomplete</b> (their gaps are left empty)</> : <>; <b className="text-slate-500">{num(incomplete)} incomplete</b> left out</>) : null}.
+                    {rows.error ? <> <b className="text-rose-600">{num(rows.error)}</b> can't be imported (no product name or quantity) unless you fix them.</> : null}
+                    {" "}Records already in DavaDesk are skipped, not added twice.
+                  </span>
+                )}
+                {incomplete > 0 && (
+                  <label className="mt-2 flex items-center gap-2 text-xs font-semibold text-slate-700 cursor-pointer w-fit">
+                    <input type="checkbox" className="w-4 h-4 accent-orange-500" checked={withIncomplete} disabled={busy} onChange={(e) => act(() => AdminAPI.setImportIncomplete(pid, jobId, e.target.checked), e.target.checked ? "Incomplete rows will be imported" : "Only complete rows will be imported")} />
+                    Also import the {num(incomplete)} incomplete rows
+                  </label>
                 )}
               </div>
               {view.blockers.length > 0 && tab !== "products" && (
@@ -1041,10 +1066,11 @@ function ImportView({ pid, pharmacyName, jobId, onBack, onChanged }) {
 
       <Confirm open={confirm === "commit"} title={`Import into ${pharmacyName}?`} action={`Import ${num(okRows)} rows`} busy={busy} onClose={() => setConfirm(null)} onConfirm={() => act(() => AdminAPI.commitImport(pid, jobId), "Import started")}>
         <p>
-          {num(okRows)} rows go into this pharmacy's{" "}
+          {num(okRows)} rows{withIncomplete && incomplete ? ` (${num(incomplete)} of them incomplete)` : ""} go into this pharmacy's{" "}
           {job.entity === "stock" ? "stock and catalog" : job.entity === "purchases" ? `purchases as ${num(c.purchases?.bills || 0)} paid bills${job.options?.add_to_stock !== false ? ", with their quantities added to stock" : ""}` : job.entity}.
         </p>
-        {rows.error > 0 && <p className="text-rose-600">{num(rows.error)} rows with a problem are left out.</p>}
+        {!withIncomplete && incomplete > 0 && <p className="text-slate-600">{num(incomplete)} incomplete rows are left out.</p>}
+        {rows.error > 0 && <p className="text-rose-600">{num(rows.error)} rows that can't be imported are left out.</p>}
         <p>It appears under Import history, where you can undo it.</p>
       </Confirm>
       <UndoDialog open={confirm === "undo"} pid={pid} job={{ ...job, pharmacy_name: pharmacyName }} onClose={() => setConfirm(null)} onDone={() => { setConfirm(null); load(); }} />

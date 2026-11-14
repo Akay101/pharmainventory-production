@@ -134,6 +134,12 @@ router.post("/:id/leave-empty", handle(async (req, res) => {
   res.json(await jobs.jobView(db(), req.importer.pharmacyId, req.params.id));
 }));
 
+// POST /api/imports/:id/incomplete {include} - import rows with gaps too, or only complete rows
+router.post("/:id/incomplete", handle(async (req, res) => {
+  await jobs.setIncomplete(db(), req.importer.pharmacyId, req.params.id, { include: req.body?.include !== false });
+  res.json(await jobs.jobView(db(), req.importer.pharmacyId, req.params.id));
+}));
+
 // GET /api/imports/:id/report.pdf - the branded import report
 router.get("/:id/report.pdf", handle(async (req, res) => {
   const data = await jobs.reportData(db(), req.importer.pharmacyId, req.params.id);

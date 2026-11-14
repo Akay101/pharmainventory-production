@@ -134,7 +134,7 @@ function renderReport(data) {
   // Key figures
   const sc = data.status_count;
   const res = job.counts?.results || {};
-  const notImported = (sc.error || 0) + (sc.skipped || 0) + (res.product_skipped || 0);
+  const notImported = (sc.error || 0) + (sc.skipped || 0) + (res.product_skipped || 0) + (job.options?.import_incomplete === false ? sc.incomplete || 0 : 0);
   const tiles = [
     ["Records in the file", num(Object.values(sc).reduce((a, b) => a + b, 0)), C.ink],
     ["Imported", num((res.created || 0) + (res.merged || 0)), C.green],
@@ -164,6 +164,7 @@ function renderReport(data) {
     ["Uploaded", `${when(job.created_at)} by ${who(job.created_by)}`],
     ["Imported", job.committed_at ? `${when(job.committed_at)} by ${who(job.committed_by)}` : "Not imported yet"],
     ...(job.undo ? [["Undone", `${when(job.undo.at)} by ${who(job.undo.by)}`]] : []),
+    ...(sc.incomplete ? [["Incomplete records", job.options?.import_incomplete === false ? `${num(sc.incomplete)} with gaps were left out` : `${num(sc.incomplete)} imported with gaps left empty (each is listed below)`]] : []),
     ...(job.ai ? [["Layout read by", job.ai.status === "failed" ? `AI couldn't read it (${job.ai.error}); columns were matched by their headings` : job.ai.source === "saved" ? "A layout saved from an earlier file (no AI cost)" : `AI (${job.ai.model || "Gemini"}): ${num(job.ai.calls)} call${job.ai.calls === 1 ? "" : "s"}, ${num(job.ai.input_tokens)} + ${num(job.ai.output_tokens)} tokens, cost Rs. ${Number(job.ai.cost_inr || 0).toFixed(2)}`]] : []),
     ["Import ID", job.id],
   ];

@@ -107,7 +107,7 @@ const isNoise = (name) => {
   return !n || /^(grand )?(sub )?total\b/.test(n) || /^(page|continued)\b/.test(n);
 };
 
-function product(cells, mapping, errors, warnings) {
+function product(cells, mapping, errors, warnings, soft = (m) => errors.push(m)) {
   const rawName = text(pick(cells, mapping, "product_name"));
   // A pack size printed after the name ("... 1X10TAB", "... 1X100 ML") is read for units, then dropped
   let bare = rawName;
@@ -126,7 +126,7 @@ function product(cells, mapping, errors, warnings) {
   const mrp = num(pick(cells, mapping, "mrp"));
   const rate = num(pick(cells, mapping, "purchase_rate"));
   const gst = num(pick(cells, mapping, "gst_rate"));
-  if (Number.isNaN(mrp)) errors.push("MRP isn't a number");
+  if (Number.isNaN(mrp)) soft("MRP isn't a number");
   if (Number.isNaN(rate)) warnings.push("Purchase rate isn't a number, so it's left blank");
   if (Number.isNaN(gst) || (gst !== null && (gst < 0 || gst > 28))) warnings.push("GST % isn't between 0 and 28, so it's left blank");
   if (mrp > 0 && rate > mrp) warnings.push("Purchase rate is above MRP");
@@ -169,11 +169,11 @@ function billDate(v) {
 // quantityIn "packs" | "units" (Marg's bill-wise analysis counts units),
 // amountIncludesGst (a sale's amount is at MRP, GST inside), and fields the
 // admin chose to leave empty (a missing supplier then becomes "Unknown supplier").
-function billLine(kind, cells, mapping, errors, warnings, { fallbackDate, quantityIn = "packs", amountIncludesGst, leaveEmpty = [] }) {
+function billLine(kind, cells, mapping, errors, warnings, { fallbackDate, quantityIn = "packs", amountIncludesGst, leaveEmpty = [], soft, today }) {
   if (isNoise(pick(cells, mapping, "product_name"))) return { noise: true };
   const sale = kind === "sales";
   const inclusive = amountIncludesGst === undefined ? sale : !!amountIncludesGst;
-  const data = product(cells, mapping, errors, warnings);
+  const data = product(cells, mapping, errors, warnings, soft);
   if (!data.product_name) errors.push("Product name is missing");
   const partyField = sale ? "customer_name" : "supplier_name";
   let party = text(pick(cells, mapping, partyField));
@@ -182,21 +182,30 @@ function billLine(kind, cells, mapping, errors, warnings, { fallbackDate, quanti
   if (!party) {
     if (sale) party = "Walk-in";
     else if (leaveEmpty.includes("supplier_name")) party = "Unknown supplier";
-    else errors.push("Supplier is missing");
+    else {
+      soft("Supplier is missing");
+      party = "Unknown supplier";
+    }
   }
   const qty = num(pick(cells, mapping, "quantity"));
-  const free = num(pick(cells, mapping, "free")) || 0;
+  let free = num(pick(cells, mapping, "free")) || 0;
   // A return or credit note (negative quantity) isn't a bill line: it's listed, not imported
   if (qty < 0) return { data: { ...data, [partyField]: party, invoice_no: text(pick(cells, mapping, "invoice_no")) || null }, errors: [], warnings: [], skip: "return" };
   if (!(qty >= 0) || qty === null) errors.push("Quantity is missing or not a number");
-  if (Number.isNaN(free) || free < 0) errors.push("Free quantity isn't a number");
+  if (Number.isNaN(free) || free < 0) {
+    soft("Free quantity isn't a number");
+    free = 0;
+  }
   const rateField = sale ? "sale_rate" : "purchase_rate";
   const fileAmountEarly = num(pick(cells, mapping, "amount"));
   let rate = num(pick(cells, mapping, rateField));
   if (sale && (rate === null || Number.isNaN(rate))) rate = data.mrp_pack;
   // A free item (a test kit at ₹0) has a rate of 0; a missing rate comes from the line amount
   if (rate === null || Number.isNaN(rate)) rate = qty > 0 && fileAmountEarly >= 0 ? fileAmountEarly / (quantityIn === "units" ? qty / data.units_per_pack : qty) : null;
-  if (rate === null || rate < 0) errors.push("Rate is missing");
+  if (rate === null || Number.isNaN(rate) || rate < 0) {
+    soft("Rate is missing");
+    rate = 0;
+  }
   data.rate_pack = rate >= 0 ? rate : null;
 
   // Units: an explicit total (Marg's LOOS), else the quantity in units or in packs
@@ -221,7 +230,10 @@ function billLine(kind, cells, mapping, errors, warnings, { fallbackDate, quanti
   } else {
     const packs = (qty || 0) + (free || 0);
     units = Math.round(packs * data.units_per_pack * 1000) / 1000;
-    if (!Number.isInteger(units)) errors.push(`${packs} packs of ${data.units_per_pack} come to ${units} units, which isn't a whole number`);
+    if (!Number.isInteger(units)) {
+      soft(`${packs} packs of ${data.units_per_pack} come to ${units} units, which isn't a whole number`);
+      units = Math.max(1, Math.round(units));
+    }
     billedPacks = qty || 0;
   }
 
@@ -257,9 +269,12 @@ function billLine(kind, cells, mapping, errors, warnings, { fallbackDate, quanti
   }
 
   const rawDate = pick(cells, mapping, "invoice_date");
-  const date = billDate(rawDate);
-  if (!date) errors.push(text(rawDate) ? `Bill date "${text(rawDate)}" isn't a date we can read` : "Bill date is missing");
+  let date = billDate(rawDate);
   const dateFromFile = !!date && !fallbackDate;
+  if (!date) {
+    soft(text(rawDate) ? `Bill date "${text(rawDate)}" isn't a date we can read` : "Bill date is missing");
+    date = today || null; // imported anyway: dated today
+  }
 
   const rawExpiry = pick(cells, mapping, "expiry_date");
   const exp = expiry(rawExpiry);
@@ -291,13 +306,22 @@ function billLine(kind, cells, mapping, errors, warnings, { fallbackDate, quanti
  * Normalise one row. Returns { data, errors, warnings, noise }.
  * `today` (YYYY-MM-DD) decides what counts as expired.
  */
-function normalizeRow(entity, cells, mapping, { today, includeExpired = false, quantityIn = "packs", fallbackDate = null, amountIncludesGst, leaveEmpty = [] } = {}) {
+function normalizeRow(entity, cells, mapping, { today, includeExpired = false, quantityIn = "packs", fallbackDate = null, amountIncludesGst, leaveEmpty = [], lenient = false } = {}) {
   const errors = [];
   const warnings = [];
+  // With lenient, a gap a row can still be imported with (no expiry, no MRP, no
+  // supplier...) is listed in gaps and given a safe value, instead of blocking the row
+  const gaps = [];
+  const soft = (m) => (lenient ? gaps : errors).push(m);
+  const out = normalizeEntity(entity, cells, mapping, { today, includeExpired, quantityIn, fallbackDate, amountIncludesGst, leaveEmpty, errors, warnings, soft });
+  return out.noise ? out : { ...out, gaps };
+}
+
+function normalizeEntity(entity, cells, mapping, { today, includeExpired, quantityIn, fallbackDate, amountIncludesGst, leaveEmpty, errors, warnings, soft }) {
 
   if (entity === "stock" || entity === "products") {
     if (isNoise(pick(cells, mapping, "product_name"))) return { noise: true };
-    const data = product(cells, mapping, errors, warnings);
+    const data = product(cells, mapping, errors, warnings, soft);
     if (!data.product_name) errors.push("Product name is missing");
     if (entity === "products") return { data, errors, warnings };
 
@@ -308,8 +332,8 @@ function normalizeRow(entity, cells, mapping, { today, includeExpired = false, q
     }
     const rawExpiry = pick(cells, mapping, "expiry_date");
     const exp = expiry(rawExpiry);
-    if (!exp) errors.push(text(rawExpiry) ? `Expiry "${text(rawExpiry)}" isn't a date we can read` : "Expiry is missing");
-    if (!(data.mrp_pack > 0)) errors.push("MRP is missing");
+    if (!exp && !(leaveEmpty.includes("expiry_date") && !text(rawExpiry))) soft(text(rawExpiry) ? `Expiry "${text(rawExpiry)}" isn't a date we can read` : "Expiry is missing");
+    if (!(data.mrp_pack > 0)) soft("MRP is missing");
 
     const qty = num(pick(cells, mapping, "quantity"));
     const loose = num(pick(cells, mapping, "loose_units"));
@@ -318,14 +342,16 @@ function normalizeRow(entity, cells, mapping, { today, includeExpired = false, q
     if (qty > 0 || loose > 0) {
       units = quantityIn === "units" ? qty || 0 : (qty || 0) * data.units_per_pack;
       if (loose > 0) units += loose;
-      if (Math.abs(units - Math.round(units)) > 0.001) errors.push(`Stock comes to ${+units.toFixed(3)} units, which isn't a whole number`);
-      units = Math.round(units);
+      if (Math.abs(units - Math.round(units)) > 0.001) {
+        soft(`Stock comes to ${+units.toFixed(3)} units, which isn't a whole number`);
+        units = Math.max(1, Math.round(units));
+      } else units = Math.round(units);
     }
     const skip = !errors.length && units <= 0 ? "no_stock" : !errors.length && exp && exp < today && !includeExpired ? "expired" : null;
     return { data: { ...data, batch_no: batch.slice(0, 40), expiry_date: exp, units }, errors, warnings, skip };
   }
 
-  if (entity === "purchases" || entity === "sales") return billLine(entity, cells, mapping, errors, warnings, { fallbackDate, quantityIn, amountIncludesGst, leaveEmpty });
+  if (entity === "purchases" || entity === "sales") return billLine(entity, cells, mapping, errors, warnings, { fallbackDate, quantityIn, amountIncludesGst, leaveEmpty, soft, today });
 
   const name = text(pick(cells, mapping, "name"));
   if (isNoise(name)) return { noise: true };

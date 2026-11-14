@@ -206,11 +206,56 @@ function applyLayout(rows, spec) {
   return { rows: out, headers, mapping, stats };
 }
 
+// Opening stock has no amount field, but a purchase or stock report often still
+// carries a value column (quantity × rate). If one is found, it settles whether
+// the quantities are loose units or packs.
+function verifyStockUnits(rows, spec) {
+  const c = spec.columns;
+  if (c.quantity === undefined || c.purchase_rate === undefined) return spec;
+  const used = new Set(Object.values(c));
+  const step = Math.max(1, Math.floor(rows.length / 800));
+  const lines = [];
+  for (let i = 0; i < rows.length; i += step) {
+    const r = rows[i].cells;
+    const qty = num(r[c.quantity]);
+    const rate = num(r[c.purchase_rate]);
+    if (!(qty > 0 && rate > 0)) continue;
+    const n = packing(c.packing !== undefined ? r[c.packing] : "", false).units || packing(r[c.product_name], true).units || 1;
+    lines.push({ r, qty, rate, n });
+  }
+  if (lines.length < 5) return spec;
+  const near = (a, b) => Math.abs(a - b) <= Math.max(0.6, Math.abs(a) * 0.02);
+  const width = Math.max(...lines.map((l) => l.r.length));
+  let best = null;
+  for (let col = 0; col < width; col++) {
+    if (used.has(col)) continue;
+    for (const unit of ["units", "packs"]) {
+      let hits = 0;
+      for (const l of lines) if (near(num(l.r[col]), (unit === "units" ? l.qty / l.n : l.qty) * l.rate)) hits++;
+      if (!best || hits > best.hits) best = { col, unit, hits };
+    }
+  }
+  // Only lines with more than one unit per pack can tell the two apart
+  const telling = lines.filter((l) => l.n > 1);
+  if (!best || telling.length < 5 || best.hits < lines.length * 0.6) return spec;
+  const other = best.unit === "units" ? "packs" : "units";
+  let otherHits = 0;
+  for (const l of lines) if (near(num(l.r[best.col]), (other === "units" ? l.qty / l.n : l.qty) * l.rate)) otherHits++;
+  if (otherHits >= best.hits) return spec;
+  const out = { ...spec, checked: { lines: lines.length, matched: best.hits, changes: [] } };
+  if (best.unit !== spec.quantity_unit) {
+    out.checked.changes.push(`quantities are ${best.unit}, not ${spec.quantity_unit}`);
+    out.quantity_unit = best.unit;
+  }
+  return out;
+}
+
 // Checks the layout's reading of the numbers against the file itself: are
 // quantities loose units or packs, does the line amount include GST, and is
 // the discount column a percent or rupees? Each guess is tried on the lines
 // and the one that reproduces the file's own amounts wins. Changes are noted.
 function verifyConventions(entity, rows, spec) {
+  if (entity === "stock") return verifyStockUnits(rows, spec);
   if (!["purchases", "sales"].includes(entity)) return spec;
   const c = spec.columns;
   const rateCol = c[entity === "sales" ? "sale_rate" : "purchase_rate"] ?? (entity === "sales" ? c.mrp : undefined);
