@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
-  AlertTriangle, ArrowLeft, Check, CheckCircle2, ChevronRight, Download, FileSpreadsheet, FileText, Loader2, PackagePlus, RefreshCw, Search, Trash2, Undo2, Upload, X,
+  AlertTriangle, ArrowLeft, Check, CheckCircle2, ChevronRight, Download, FileSpreadsheet, FileText, Loader2, PackagePlus, RefreshCw, Search, Sparkles, Trash2, Undo2, Upload, X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { AdminAPI, apiError } from "../api";
@@ -15,6 +15,8 @@ const inr = (n) => `₹${Number(n || 0).toLocaleString("en-IN", { maximumFractio
 const num = (n) => Number(n || 0).toLocaleString("en-IN");
 
 const STATUS = {
+  reading: ["Reading the file", "bg-sky-100 text-sky-800"],
+  analysing: ["Reading the layout", "bg-sky-100 text-sky-800"],
   mapped: ["Choose columns", "bg-amber-100 text-amber-800"],
   checking: ["Checking", "bg-sky-100 text-sky-800"],
   ready: ["Ready to import", "bg-amber-100 text-amber-800"],
@@ -26,7 +28,9 @@ const STATUS = {
   failed: ["Stopped", "bg-rose-100 text-rose-800"],
   failed_commit: ["Import stopped", "bg-rose-100 text-rose-800"],
 };
-const RUNNING = ["checking", "committing", "undoing"];
+const RUNNING = ["reading", "analysing", "checking", "committing", "undoing"];
+const PREPARING = ["reading", "analysing"];
+const rupees = (n) => `₹${Number(n || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const PRODUCT_STATUS = {
   match: ["Matched", "text-emerald-700"],
   check: ["Pick one", "text-amber-700"],
@@ -115,13 +119,16 @@ function NewImport({ pharmacy, meta, onCreated }) {
   const [includeExpired, setIncludeExpired] = useState(false);
   const [purchaseDate, setPurchaseDate] = useState("");
   const [addToStock, setAddToStock] = useState(true);
+  const [deductStock, setDeductStock] = useState(true);
+  const [freshAi, setFreshAi] = useState(false);
   const [file, setFile] = useState(null);
   const [percent, setPercent] = useState(null);
   const inputRef = useRef(null);
   const guide = meta?.sources?.find((s) => s.key === source)?.guides?.[entity];
 
   const submit = async () => {
-    if (!file) return toast.error("Choose the Excel or CSV file first");
+    if (!file) return toast.error("Choose the file first");
+    if (meta?.max_file_mb && file.size > meta.max_file_mb * 1024 * 1024) return toast.error(`This file is over ${meta.max_file_mb} MB. Split it into smaller files.`);
     const form = new FormData();
     form.append("entity", entity);
     form.append("source", source);
@@ -129,6 +136,8 @@ function NewImport({ pharmacy, meta, onCreated }) {
     form.append("include_expired", includeExpired ? "true" : "false");
     if (purchaseDate) form.append("purchase_date", purchaseDate);
     if (entity === "purchases") form.append("add_to_stock", addToStock ? "true" : "false");
+    if (entity === "sales") form.append("deduct_stock", deductStock ? "true" : "false");
+    if (freshAi) form.append("fresh_ai", "true");
     form.append("file", file);
     setPercent(0);
     try {
@@ -187,6 +196,16 @@ function NewImport({ pharmacy, meta, onCreated }) {
           <span className="text-slate-500">Optional. You can also fill dates after reading the file.</span>
         </label>
       )}
+      {entity === "sales" && (
+        <label className="flex items-center gap-2 text-xs text-slate-700">
+          <input type="checkbox" checked={deductStock} onChange={(e) => setDeductStock(e.target.checked)} />
+          Take the sold quantities out of stock (import purchase history first, so the batches are there)
+        </label>
+      )}
+      <label className="flex items-center gap-2 text-xs text-slate-500">
+        <input type="checkbox" checked={freshAi} onChange={(e) => setFreshAi(e.target.checked)} />
+        Read the layout with AI even if a saved layout matches (costs a little AI)
+      </label>
       {entity === "purchases" && (
         <label className="flex items-center gap-2 text-xs text-slate-700">
           <input type="checkbox" checked={addToStock} onChange={(e) => setAddToStock(e.target.checked)} />
@@ -195,17 +214,17 @@ function NewImport({ pharmacy, meta, onCreated }) {
         </label>
       )}
       <div className="flex flex-wrap items-center gap-2">
-        <input ref={inputRef} type="file" accept=".xlsx,.xls,.csv,.txt" className="hidden" onChange={(e) => setFile(e.target.files?.[0] || null)} />
+        <input ref={inputRef} type="file" accept=".xlsx,.xls,.csv,.txt,.json,.pdf" className="hidden" onChange={(e) => setFile(e.target.files?.[0] || null)} />
         <button className={btnGhost} onClick={() => inputRef.current?.click()} disabled={percent !== null}>
-          <FileSpreadsheet className="w-4 h-4" /> {file ? "Change file" : "Choose Excel or CSV"}
+          <FileSpreadsheet className="w-4 h-4" /> {file ? "Change file" : "Choose a file"}
         </button>
         {file && <span className="text-xs text-slate-600 truncate max-w-[16rem]">{file.name} · {(file.size / 1024).toFixed(0)} KB</span>}
         <button className={`${btnPrimary} ml-auto`} onClick={submit} disabled={!file || percent !== null}>
           {percent !== null ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
-          {percent !== null ? (percent < 100 ? `Uploading ${percent}%` : "Reading the file…") : "Upload and read"}
+          {percent !== null ? (percent < 100 ? `Uploading ${percent}%` : "Starting…") : "Upload and read"}
         </button>
       </div>
-      <p className="text-[11px] text-slate-500">Excel (.xlsx or .xls) or CSV, up to {meta?.max_file_mb || 25} MB. Nothing is added to the pharmacy until you press Import at the end.</p>
+      <p className="text-[11px] text-slate-500">Excel (.xlsx, .xls), CSV, JSON or a PDF report with text, up to {meta?.max_file_mb || 60} MB, from any software. AI reads the layout once (a few paise); every row is then converted by DavaDesk. Nothing is added to the pharmacy until you press Import at the end.</p>
     </div>
   );
 }
@@ -422,7 +441,7 @@ function Products({ pid, view, onChanged }) {
 const PAGE = 100;
 const DATE_FIELDS = new Set(["invoice_date"]);
 const FIELD_HINT = { expiry_date: "MM/YY", invoice_date: "dd-mm-yyyy", batch_no: "Batch", quantity: "0", free: "0" };
-const ENTITY_LABEL = { stock: "Stock with batches", products: "Product list", suppliers: "Suppliers", customers: "Customers", purchases: "Purchase history" };
+const ENTITY_LABEL = { stock: "Stock with batches", products: "Product list", suppliers: "Suppliers", customers: "Customers", purchases: "Purchase history", sales: "Sales history" };
 const RESULT_LABEL = { created: "Imported", merged: "Added to the same batch", duplicate: "Already in DavaDesk", product_skipped: "Product left out" };
 
 const cellKey = (rowNo, field) => `${rowNo}:${field}`;
@@ -568,7 +587,7 @@ function ReviewTable({ pid, view, filter, setFilter, onView, readOnly }) {
                 ))}
                 <td className="px-2 py-1.5 border-b border-slate-100">
                   {r.errors?.length ? <span className="text-rose-600">{r.errors.join("; ")}</span>
-                    : r.skip ? <span className="text-slate-500">{r.skip === "expired" ? "Expired, skipped" : "No stock, skipped"}</span>
+                    : r.skip ? <span className="text-slate-500">{r.skip === "expired" ? "Expired, skipped" : r.skip === "return" ? "Return / credit note, not imported" : "No stock, skipped"}</span>
                     : r.result ? <span className={r.result === "created" ? "text-emerald-700" : "text-slate-600"}>{RESULT_LABEL[r.result] || r.result}</span>
                     : <span className="text-emerald-700">Ready</span>}
                   {r.warnings?.length > 0 && <span className="block text-amber-700">{r.warnings.join("; ")}</span>}
@@ -625,7 +644,7 @@ function FillRow({ field, label, count, current, isDate, reportEnd, busy, onFill
 }
 
 // Fields a row can import without; a bill date or a required field can't be left empty
-const CAN_LEAVE_EMPTY = { purchases: ["invoice_no", "batch_no", "expiry_date"], stock: ["batch_no", "expiry_date", "purchase_rate"], products: ["mrp", "manufacturer"], suppliers: ["contact"], customers: ["mobile"] };
+const CAN_LEAVE_EMPTY = { purchases: ["supplier_name", "invoice_no", "batch_no", "expiry_date"], sales: ["invoice_no", "batch_no", "expiry_date"], stock: ["batch_no", "expiry_date", "purchase_rate"], products: ["mrp", "manufacturer"], suppliers: ["contact"], customers: ["mobile"] };
 
 function MissingPanel({ view, busy, onFill, onShow, onLeave }) {
   const { job, fields } = view;
@@ -663,7 +682,7 @@ function MissingPanel({ view, busy, onFill, onShow, onLeave }) {
 
 // ---- Undo, with what it will do ---------------------------------------------------------------------
 
-const PLURAL = { purchases: "purchase bills", inventory: "stock batches", products: "products", suppliers: "suppliers", customers: "customers" };
+const PLURAL = { bills: "sales bills", purchases: "purchase bills", inventory: "stock batches", products: "products", suppliers: "suppliers", customers: "customers" };
 
 function UndoDialog({ open, pid, job, onClose, onDone }) {
   const [plan, setPlan] = useState(null);
@@ -729,28 +748,61 @@ function UndoDialog({ open, pid, job, onClose, onDone }) {
 // ---- One import ---------------------------------------------------------------------------------
 
 function Steps({ job }) {
-  const step = job.status === "checking" ? (job.progress?.step === "matching" ? 2 : 1) : job.status === "committing" ? 4 : ["ready"].includes(job.status) ? 3 : job.status === "mapped" ? 1 : 5;
+  const order = ["reading", "analysing", "checking", "ready", "committing", "committed"];
+  let step = job.status === "reading" ? 0 : job.status === "analysing" ? 1 : job.status === "mapped" ? 1 : job.status === "checking" ? (job.progress?.step === "matching" ? 3 : 2) : job.status === "ready" ? 4 : job.status === "committing" ? 5 : 6;
+  if (job.status === "failed") step = job.total_rows ? 2 : 0;
+  const prog = (p) => (p?.total ? `${num(p.done)} of ${num(p.total)}` : null);
+  const aiDetail = job.ai ? (job.ai.status === "running" ? job.progress?.label || "AI is reading the layout" : job.ai.status === "failed" ? "headings used instead" : job.ai.source === "saved" ? "saved layout, ₹0" : `AI, ${rupees(job.ai.cost_inr)}`) : job.meta?.report && job.meta.report !== "ai" ? "known layout" : null;
   const items = [
-    ["Read the file", `${num(job.total_rows)} rows`],
-    ["Check every row", job.progress?.step === "checking" && job.progress.total ? `${num(job.progress.done)} of ${num(job.progress.total)}` : null],
-    ["Match products", job.progress?.step === "matching" && job.progress.total ? `${num(job.progress.done)} of ${num(job.progress.total)}` : null],
+    ["Read the file", job.total_rows ? `${num(job.total_rows)} lines` : null],
+    ["Understand the layout", job.status === "analysing" && job.progress?.step === "staging" ? `preparing ${prog(job.progress) || ""}` : aiDetail],
+    ["Check every row", job.progress?.step === "checking" ? prog(job.progress) : null],
+    ["Match products", job.progress?.step === "matching" ? prog(job.progress) : null],
     ["Review and fill", null],
-    ["Import", job.status === "committing" && job.progress?.total ? `${num(job.progress.done)} of ${num(job.progress.total)}` : null],
+    ["Import", job.status === "committing" ? prog(job.progress) : null],
   ];
+  void order;
   return (
     <ol className="flex flex-wrap gap-2">
       {items.map(([label, detail], i) => {
-        const done = i < step;
-        const now = i === step && (RUNNING.includes(job.status) || job.status === "ready" || job.status === "mapped");
+        const doneStep = i < step;
+        const now = i === step && !["committed", "partly_undone", "undone"].includes(job.status);
+        const failed = now && job.status === "failed";
         return (
-          <li key={label} className={`flex items-center gap-1.5 px-3 h-8 rounded-full text-xs font-bold ${done ? "bg-emerald-50 text-emerald-700" : now ? "bg-brand-50 text-brand-700 ring-1 ring-brand-200" : "bg-slate-50 text-slate-400"}`}>
-            {done ? <Check className="w-3.5 h-3.5" /> : now && RUNNING.includes(job.status) ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <span className="w-3.5 text-center">{i + 1}</span>}
+          <li key={label} className={`flex items-center gap-1.5 px-3 h-8 rounded-full text-xs font-bold ${failed ? "bg-rose-50 text-rose-700" : doneStep ? "bg-emerald-50 text-emerald-700" : now ? "bg-brand-50 text-brand-700 ring-1 ring-brand-200" : "bg-slate-50 text-slate-400"}`}>
+            {failed ? <X className="w-3.5 h-3.5" /> : doneStep ? <Check className="w-3.5 h-3.5" /> : now && RUNNING.includes(job.status) ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <span className="w-3.5 text-center">{i + 1}</span>}
             {label}
             {detail && <span className="font-medium tabular-nums">· {detail}</span>}
           </li>
         );
       })}
     </ol>
+  );
+}
+
+// What the AI made of the file, what it cost, and what our own checks changed
+function AiCard({ job }) {
+  const ai = job.ai;
+  if (!ai) return null;
+  if (ai.status === "running") return null;
+  if (ai.status === "failed") {
+    return (
+      <div className="flex items-start gap-2 text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
+        <AlertTriangle className="w-4 h-4 shrink-0 mt-px" />
+        <span><b>The AI couldn't read this layout:</b> {ai.error} Columns were matched by their headings instead; check them below.</span>
+      </div>
+    );
+  }
+  return (
+    <div className="flex flex-wrap items-start gap-x-6 gap-y-1 text-xs text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2">
+      <span className="flex items-center gap-1.5 font-bold text-slate-900"><Sparkles className="w-3.5 h-3.5 text-brand-500" />{ai.source === "saved" ? "Saved layout reused" : "Layout read by AI"}</span>
+      {ai.report_type && <span>{ai.report_type}{ai.software ? ` (${ai.software})` : ""}</span>}
+      <span>{num(ai.lines)} lines read{ai.skipped_rows ? `, ${num(ai.skipped_rows)} total/heading rows skipped` : ""}</span>
+      <span>Quantities in {job.options?.quantity_in === "units" ? "loose units" : "packs"}{job.options?.amount_includes_gst === true ? ", amounts include GST" : job.options?.amount_includes_gst === false ? ", amounts before GST" : ""}</span>
+      <span className="font-bold">Import cost {rupees(ai.cost_inr)}{ai.calls ? ` · ${num(ai.calls)} AI call${ai.calls === 1 ? "" : "s"}, ${num((ai.input_tokens || 0) + (ai.output_tokens || 0))} tokens` : " · no AI used"}</span>
+      {ai.checked?.changes?.length > 0 && <span className="basis-full text-slate-500">Checked against the file's own amounts: {ai.checked.changes.join(", ")}.</span>}
+      {ai.notes && <span className="basis-full text-slate-500">{ai.notes}</span>}
+    </div>
   );
 }
 
@@ -848,16 +900,24 @@ function ImportView({ pid, pharmacyName, jobId, onBack, onChanged }) {
             {job.meta?.label && <p className="text-xs text-slate-600 mt-1">Read as a {job.meta.label}{job.meta.period_from ? `, ${job.meta.period_from} to ${job.meta.period_to}` : ""}.</p>}
             {(job.meta?.warnings || []).map((w) => <p key={w} className="text-xs text-amber-700 mt-1 flex gap-1"><AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-px" />{w}</p>)}
             {job.same_file_as && <p className="text-xs text-amber-700 mt-1">This exact file was imported before. Records already in DavaDesk are skipped, not added twice.</p>}
-            {job.error && <p className="text-xs text-rose-600 mt-1">{job.error}</p>}
+            {job.error && job.status !== "failed" && <p className="text-xs text-rose-600 mt-1">{job.error}</p>}
           </div>
           <div className="flex flex-wrap gap-2">
             {done && <button className={btnPrimary} onClick={() => downloadReport(pid, { ...job, pharmacy_name: pharmacyName })}><FileText className="w-4 h-4" /> Import report (PDF)</button>}
             {(done || job.status === "ready") && <button className={btnGhost} onClick={download}><Download className="w-4 h-4" /> Problem rows</button>}
+            {PREPARING.includes(job.status) && <button className={`${btn} bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100`} onClick={() => setConfirm("discard")}><X className="w-4 h-4" /> Cancel</button>}
             {["mapped", "ready", "failed"].includes(job.status) && <button className={btnGhost} onClick={() => setConfirm("discard")}><Trash2 className="w-4 h-4" /> Discard</button>}
             {["committed", "partly_undone", "failed_commit"].includes(job.status) && <button className={`${btn} bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100`} onClick={() => setConfirm("undo")}><Undo2 className="w-4 h-4" /> Undo import</button>}
           </div>
         </div>
         <Steps job={job} />
+        {PREPARING.includes(job.status) && (
+          <p className="text-xs text-slate-600 flex items-center gap-2"><Loader2 className="w-3.5 h-3.5 animate-spin text-brand-500" />{job.progress?.label || "Reading the file"}… Large files can take a minute. You can leave this page; it carries on.</p>
+        )}
+        {job.status === "failed" && job.error && (
+          <div className="flex items-start gap-2 text-sm text-rose-800 bg-rose-50 border border-rose-200 rounded-xl px-3 py-2"><AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" /><span>{job.error}</span></div>
+        )}
+        <AiCard job={job} />
         {view.stale && (
           <div className="flex items-center gap-3 text-xs text-amber-800 bg-amber-50 rounded-lg px-3 py-2">
             <AlertTriangle className="w-4 h-4" /> This hasn't moved for a while (the server may have restarted).
@@ -881,7 +941,8 @@ function ImportView({ pid, pharmacyName, jobId, onBack, onChanged }) {
               <>
                 <Stat label="Ready to import" value={`${num(okRows)} of ${num(job.total_rows - (rows.ignored || 0))} rows`} tone="text-emerald-700" />
                 <Stat label="Need attention" value={num(c.attention || 0)} tone={c.attention ? "text-amber-700" : undefined} />
-                {job.entity === "purchases" && c.purchases ? <Stat label="Bills" value={`${num(c.purchases.bills)} from ${num(c.purchases.suppliers)} suppliers`} /> : <Stat label="Skipped" value={`${num(c.skipped?.expired || 0)} expired · ${num(c.skipped?.no_stock || 0)} no stock`} />}
+                {["purchases", "sales"].includes(job.entity) && c.purchases ? <Stat label={job.entity === "sales" ? "Sales bills" : "Bills"} value={job.entity === "sales" ? `${num(c.purchases.bills)} bills` : `${num(c.purchases.bills)} from ${num(c.purchases.suppliers)} suppliers`} /> : <Stat label="Skipped" value={`${num(c.skipped?.expired || 0)} expired · ${num(c.skipped?.no_stock || 0)} no stock`} />}
+                {c.skipped?.return ? <Stat label="Returns (not imported)" value={num(c.skipped.return)} /> : null}
                 {usesProducts ? <Stat label="Products" value={`${num(prod.match?.products || 0)} matched · ${num(prod.new?.products || 0)} new${open ? ` · ${num(open)} to decide` : ""}`} tone={open ? "text-amber-700" : undefined} /> : <Stat label="Problems" value={num(rows.error || 0)} />}
               </>
             ) : (
@@ -893,6 +954,16 @@ function ImportView({ pid, pharmacyName, jobId, onBack, onChanged }) {
               </>
             )}
           </div>
+          {job.entity === "sales" && c.purchases && (
+            <div className={`${card} px-4 py-3 text-sm text-slate-700 flex flex-wrap gap-x-6 gap-y-1`}>
+              <span>Billed <b className="tabular-nums">{inr(c.purchases.gross)}</b></span>
+              <span>Before GST <b className="tabular-nums">{inr(c.purchases.net)}</b></span>
+              <span><b className="tabular-nums">{num(c.purchases.units)}</b> units sold</span>
+              <span className="text-xs text-slate-500 basis-full">
+                Saved as paid sales bills on their own dates.{job.options?.deduct_stock !== false ? " Sold units are taken out of the matching stock batches, so stock comes out right after the purchase history is in." : " Stock isn't changed."}
+              </span>
+            </div>
+          )}
           {job.entity === "purchases" && c.purchases && (
             <div className={`${card} px-4 py-3 text-sm text-slate-700 flex flex-wrap gap-x-6 gap-y-1`}>
               <span>Before GST <b className="tabular-nums">{inr(c.purchases.net)}</b></span>
@@ -977,11 +1048,35 @@ function ImportView({ pid, pharmacyName, jobId, onBack, onChanged }) {
         <p>It appears under Import history, where you can undo it.</p>
       </Confirm>
       <UndoDialog open={confirm === "undo"} pid={pid} job={{ ...job, pharmacy_name: pharmacyName }} onClose={() => setConfirm(null)} onDone={() => { setConfirm(null); load(); }} />
-      <Confirm open={confirm === "discard"} title="Discard this import?" action="Discard" danger busy={busy} onClose={() => setConfirm(null)} onConfirm={() => act(() => AdminAPI.discardImport(pid, jobId), "Discarded").then(onBack)}>
-        <p>The uploaded rows and your edits are thrown away. Nothing was added to the pharmacy, so nothing there changes.</p>
+      <Confirm open={confirm === "discard"} title={PREPARING.includes(job.status) ? "Cancel reading this file?" : "Discard this import?"} action={PREPARING.includes(job.status) ? "Cancel import" : "Discard"} danger busy={busy} onClose={() => setConfirm(null)} onConfirm={() => act(() => AdminAPI.discardImport(pid, jobId), "Discarded").then(onBack)}>
+        <p>{PREPARING.includes(job.status) ? "Reading stops and the file is thrown away." : "The uploaded rows and your edits are thrown away."} Nothing was added to the pharmacy, so nothing there changes.</p>
       </Confirm>
     </div>
   );
+}
+
+// A crash in one import's screen shows a message with a way back, not a blank page
+class ImportBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+  componentDidCatch(error) {
+    console.error("[Data import] screen error:", error);
+  }
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      <div className={`${card} p-5 space-y-3`}>
+        <p className="text-sm font-bold text-rose-700 flex items-center gap-2"><AlertTriangle className="w-4 h-4" /> This import's screen hit a problem</p>
+        <p className="text-xs text-slate-600">The import itself is safe: nothing was added or changed by this. Go back and open it again; if it keeps happening, tell the team what you were doing. ({String(this.state.error?.message || this.state.error).slice(0, 160)})</p>
+        <button className={btnGhost} onClick={() => { this.setState({ error: null }); this.props.onBack(); }}><ArrowLeft className="w-4 h-4" /> All imports</button>
+      </div>
+    );
+  }
 }
 
 // ---- Import history (every pharmacy) --------------------------------------------------------------
@@ -1000,7 +1095,7 @@ function History({ pharmacyId, onOpen, refreshKey }) {
         <div className="overflow-x-auto">
           <table className="w-full text-xs min-w-[760px]">
             <thead className="text-left text-[11px] uppercase tracking-wide text-slate-500">
-              <tr><th className="py-2 pr-3">When</th><th className="py-2 pr-3">Pharmacy</th><th className="py-2 pr-3">What</th><th className="py-2 pr-3">File</th><th className="py-2 pr-3">Added</th><th className="py-2 pr-3">Status</th><th className="py-2 pr-3">By</th><th className="py-2" /></tr>
+              <tr><th className="py-2 pr-3">When</th><th className="py-2 pr-3">Pharmacy</th><th className="py-2 pr-3">What</th><th className="py-2 pr-3">File</th><th className="py-2 pr-3">Added</th><th className="py-2 pr-3">AI cost</th><th className="py-2 pr-3">Status</th><th className="py-2 pr-3">By</th><th className="py-2" /></tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {jobs.map((j) => (
@@ -1010,6 +1105,7 @@ function History({ pharmacyId, onOpen, refreshKey }) {
                   <td className="py-2 pr-3">{ENTITY_LABEL[j.entity]}</td>
                   <td className="py-2 pr-3 truncate max-w-[14rem]">{j.file_name}</td>
                   <td className="py-2 pr-3 tabular-nums">{j.counts?.results?.created ? num(j.counts.results.created) : "—"}{j.entity === "purchases" && j.counts?.purchases?.bills ? ` (${num(j.counts.purchases.bills)} bills)` : ""}</td>
+                  <td className="py-2 pr-3 tabular-nums">{j.ai ? (j.ai.status === "failed" ? "—" : rupees(j.ai.cost_inr)) : "—"}</td>
                   <td className="py-2 pr-3"><StatusPill status={j.status} /></td>
                   <td className="py-2 pr-3 truncate max-w-[10rem]">{j.committed_by?.email || j.created_by?.email || ""}</td>
                   <td className="py-2 text-right whitespace-nowrap">
@@ -1070,7 +1166,11 @@ export default function DataImportPage({ activeEnv }) {
 
       {!pharmacy && <PharmacyPicker onPick={setPharmacy} />}
 
-      {pharmacy && jobId && <ImportView pid={pharmacy.id} pharmacyName={pharmacy.name} jobId={jobId} onBack={() => { setJobId(null); bump(); }} onChanged={bump} />}
+      {pharmacy && jobId && (
+        <ImportBoundary key={jobId} onBack={() => { setJobId(null); bump(); }}>
+          <ImportView pid={pharmacy.id} pharmacyName={pharmacy.name} jobId={jobId} onBack={() => { setJobId(null); bump(); }} onChanged={bump} />
+        </ImportBoundary>
+      )}
 
       {pharmacy && !jobId && <NewImport pharmacy={pharmacy} meta={meta} onCreated={(id) => { setJobId(id); bump(); }} />}
 

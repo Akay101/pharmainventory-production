@@ -11,7 +11,8 @@
 const crypto = require("crypto");
 const { v4: uuidv4 } = require("uuid");
 const { ENTITIES, SOURCES } = require("./fields");
-const { readImportFile } = require("./read");
+const { readSheets, knownReport, fromHeadings } = require("./read");
+const { readLayout, mainSheet } = require("./aiLayout");
 const { normalizeRow, effective } = require("./normalize");
 const { matchForPurchase } = require("../ai/inventoryMatch");
 const { looseNameRegex, normalizeText } = require("../search/normalize");
@@ -63,7 +64,7 @@ async function getJob(db, pharmacyId, jobId) {
   return job;
 }
 
-const isStale = (job) => !job.heartbeat_at || Date.now() - new Date(job.heartbeat_at).getTime() > STALE_MS;
+const isStale = (job, ms = STALE_MS) => !job.heartbeat_at || Date.now() - new Date(job.heartbeat_at).getTime() > ms;
 
 async function setJob(db, job, set) {
   await db.collection("migration_jobs").updateOne({ id: job.id }, { $set: { ...set, updated_at: now(), heartbeat_at: now() } });
@@ -71,14 +72,19 @@ async function setJob(db, job, set) {
 
 // ---- 1. Upload ------------------------------------------------------------------------------
 
+const PREPARING = ["reading", "analysing"];
+
+// Upload: the job is saved at once and the file is read in the background
+// (reading -> AI layout -> rows staged -> checks), so a large file never holds
+// the request open. The admin can cancel while it's being prepared.
 async function createJob(db, { pharmacyId, actor, entity, source, file, options = {} }) {
   await ensureIndexes(db);
-  if (!ENTITIES[entity]) throw new JobError("Choose what this file holds: stock, products, suppliers or customers");
+  if (!ENTITIES[entity]) throw new JobError("Choose what this file holds: purchases, sales, stock, products, suppliers or customers");
   if (!SOURCES[source]) throw new JobError("Choose which software the file came from");
   const pharmacy = await db.collection("pharmacies").findOne({ id: pharmacyId }, { projection: { _id: 0, id: 1, name: 1 } });
   if (!pharmacy) throw new JobError("Pharmacy not found", 404);
+  if (!file?.buffer?.length) throw new JobError("The file is empty");
 
-  const read = await readImportFile(file.buffer, file.name, ENTITIES[entity].fields, entity);
   const job = {
     id: uuidv4(),
     pharmacy_id: pharmacyId,
@@ -88,51 +94,162 @@ async function createJob(db, { pharmacyId, actor, entity, source, file, options 
     file_name: String(file.name || "upload").slice(0, 200),
     file_sha256: crypto.createHash("sha256").update(file.buffer).digest("hex"),
     file_bytes: file.buffer.length,
-    sheet: read.sheet,
-    header_row: read.header_row,
-    headers: read.headers,
-    mapping: read.mapping,
-    meta: read.meta || null,
+    sheet: null,
+    header_row: null,
+    headers: [],
+    mapping: {},
+    meta: null,
     options: {
       include_expired: !!options.include_expired,
       quantity_in: options.quantity_in === "units" ? "units" : "packs",
-      // Purchase history also adds the bought quantities to stock (the old software's sales aren't known)
+      // Purchase history adds the bought quantities to stock; sales history takes the sold ones out
       add_to_stock: options.add_to_stock === undefined ? true : !!options.add_to_stock,
+      deduct_stock: options.deduct_stock === undefined ? true : !!options.deduct_stock,
+      amount_includes_gst: undefined,
     },
     // A value for every row where the file's cell is empty, e.g. one date for undated bills
     fills: isoDay(options.purchase_date) ? { invoice_date: isoDay(options.purchase_date) } : {},
-    status: "mapped",
-    total_rows: read.rows.length,
+    status: "reading",
+    total_rows: 0,
     counts: {},
-    progress: null,
+    progress: { step: "reading", label: "Reading the file" },
+    ai: null,
     created_by: actor,
     created_at: now(),
     updated_at: now(),
+    heartbeat_at: now(),
   };
-  // A file already imported for this pharmacy is worth a warning, not a block
   const earlier = await db.collection("migration_jobs").findOne(
-    { pharmacy_id: pharmacyId, file_sha256: job.file_sha256, status: "committed" },
+    { pharmacy_id: pharmacyId, file_sha256: job.file_sha256, entity, status: "committed" },
     { projection: { _id: 0, id: 1, committed_at: 1 } }
   );
   if (earlier) job.same_file_as = earlier;
-
   await db.collection("migration_jobs").insertOne(job);
-  for (let i = 0; i < read.rows.length; i += CHUNK) {
-    await db.collection("migration_rows").insertMany(
-      read.rows.slice(i, i + CHUNK).map((r) => ({
-        job_id: job.id,
-        row_no: r.row_no,
-        cells: r.cells.map((c) => (c instanceof Date ? c : c === null || c === undefined ? "" : c)),
-        status: "pending",
-      })),
-      { ordered: false }
-    );
-  }
+  setImmediate(() => prepare(db, job, file, { fresh: !!options.fresh_ai }).catch((err) => console.error(`[Import ${job.id}] prepare failed:`, err)));
   return publicJob(job);
+}
+
+const stillPreparing = (db, job) => db.collection("migration_jobs").countDocuments({ id: job.id, status: { $in: PREPARING } }, { limit: 1 });
+
+async function prepare(db, job, file, { fresh }) {
+  const stage = (status, progress, extra = {}) => db.collection("migration_jobs").updateOne({ id: job.id, status: { $in: PREPARING } }, { $set: { status, progress, ...extra, updated_at: now(), heartbeat_at: now() } });
+  try {
+    const sheets = await readSheets(file.buffer, file.name);
+    if (!(await stillPreparing(db, job))) return;
+    let read = knownReport(sheets, job.entity);
+    let ai = null;
+    if (!read) {
+      const sheet = sheets[mainSheet(sheets)];
+      const startedAt = now();
+      const by = job.created_by?.email || job.created_by?.id || "unknown";
+      await stage("analysing", { step: "analysing", label: "Reading the layout" }, { ai: { status: "running", by, started_at: startedAt, calls: 0 } });
+      try {
+        const lay = await readLayout(db, {
+          entity: job.entity,
+          rows: sheet.rows,
+          actor: job.created_by,
+          jobId: job.id,
+          fresh,
+          onStage: (label) => stage("analysing", { step: "analysing", label }),
+        });
+        // Every AI call is logged even if the import is cancelled, for cost and limits
+        if (lay.usage.calls) {
+          await db.collection("import_ai_usage").insertOne({ job_id: job.id, pharmacy_id: job.pharmacy_id, by, at: startedAt, entity: job.entity, file_name: job.file_name, ...lay.usage });
+        }
+        ai = {
+          status: "done",
+          source: lay.source,
+          by,
+          started_at: startedAt,
+          finished_at: now(),
+          calls: lay.usage.calls,
+          attempts: lay.attempts,
+          model: lay.usage.model || null,
+          input_tokens: lay.usage.input_tokens,
+          output_tokens: lay.usage.output_tokens,
+          cost_usd: lay.usage.usd,
+          cost_inr: lay.usage.inr,
+          usd_inr: lay.usage.usd_inr || null,
+          report_type: lay.spec.report_type,
+          software: lay.spec.software,
+          notes: lay.spec.notes,
+          confidence: lay.spec.confidence,
+          checked: lay.spec.checked || null,
+          quality: lay.quality,
+          lines: lay.applied.stats.lines,
+          skipped_rows: lay.applied.stats.skipped,
+          group_rows: lay.applied.stats.group_rows,
+        };
+        read = {
+          sheet: sheet.name,
+          header_row: lay.spec.header_row || null,
+          headers: lay.applied.headers,
+          mapping: lay.applied.mapping,
+          rows: lay.applied.rows,
+          meta: { report: "ai", label: lay.spec.report_type || null, period_from: lay.spec.period_from, period_to: lay.spec.period_to, warnings: lay.quality.ok ? [] : lay.quality.problems },
+          conventions: { quantity_in: lay.spec.quantity_unit, amount_includes_gst: lay.spec.amount_includes_gst },
+          auto: lay.quality.ok,
+        };
+      } catch (err) {
+        ai = { status: "failed", by, started_at: startedAt, finished_at: now(), calls: 0, cost_inr: 0, error: err.message || "The AI couldn't read this layout", category: err.category || "ai" };
+        if (err.category === undefined) console.error(`[Import ${job.id}] AI layout failed:`, err);
+      }
+      if (!(await stillPreparing(db, job))) return;
+      if (!read) read = { ...fromHeadings([sheet], ENTITIES[job.entity].fields), auto: false };
+    } else read.auto = true;
+
+    if (read.rows.length > 200000) throw new JobError("This file has more than 2,00,000 lines. Split it into smaller files.");
+    await stage("analysing", { step: "staging", label: "Preparing the rows", done: 0, total: read.rows.length });
+    for (let i = 0; i < read.rows.length; i += CHUNK) {
+      if (!(await stillPreparing(db, job))) return db.collection("migration_rows").deleteMany({ job_id: job.id });
+      await db.collection("migration_rows").insertMany(
+        read.rows.slice(i, i + CHUNK).map((r) => ({
+          job_id: job.id,
+          row_no: r.row_no,
+          cells: r.cells.map((c) => (c instanceof Date ? c : c === null || c === undefined ? "" : c)),
+          status: "pending",
+        })),
+        { ordered: false }
+      );
+      if (i % (CHUNK * 10) === 0) await stage("analysing", { step: "staging", label: "Preparing the rows", done: i, total: read.rows.length });
+    }
+    const options = { ...job.options, ...(read.conventions?.quantity_in ? { quantity_in: read.conventions.quantity_in } : {}), amount_includes_gst: read.conventions?.amount_includes_gst };
+    const ready = await db.collection("migration_jobs").findOneAndUpdate(
+      { id: job.id, status: { $in: PREPARING } },
+      {
+        $set: {
+          status: "mapped",
+          sheet: read.sheet,
+          header_row: read.header_row,
+          headers: read.headers,
+          mapping: read.mapping,
+          meta: read.meta || null,
+          options,
+          ai,
+          total_rows: read.rows.length,
+          progress: null,
+          updated_at: now(),
+        },
+      },
+      { returnDocument: "after" }
+    );
+    if (!ready) return db.collection("migration_rows").deleteMany({ job_id: job.id });
+    // A layout we're sure of goes straight on to the checks; if the columns don't fit, the admin chooses them
+    if (read.auto) {
+      await applyMapping(db, job.pharmacy_id, job.id, {}).catch((err) =>
+        db.collection("migration_jobs").updateOne({ id: job.id }, { $set: { error: `Check the columns: ${err.message}` } })
+      );
+    }
+  } catch (err) {
+    const message = err.status && err.status < 500 ? err.message : "We couldn't read this file. Try saving it again as .xlsx or CSV.";
+    if (!err.status || err.status >= 500) console.error(`[Import ${job.id}] reading failed:`, err);
+    await db.collection("migration_jobs").updateOne({ id: job.id, status: { $in: PREPARING } }, { $set: { status: "failed", error: message, progress: null, updated_at: now() } });
+  }
 }
 
 // Sample values under each column, for the mapping screen
 async function samples(db, job, limit = 5) {
+  if (!job.headers?.length) return [];
   const rows = await db.collection("migration_rows").find({ job_id: job.id }).sort({ row_no: 1 }).limit(limit).toArray();
   return job.headers.map((_, i) => rows.map((r) => {
     const v = r.cells[i];
@@ -155,12 +272,14 @@ function cleanMapping(job, mapping) {
     used.add(col);
     out[f.key] = col;
   }
-  const missing = fields.filter((f) => f.required && out[f.key] === undefined).map((f) => f.label);
+  // A supplier column can be missing: the admin fills it for all rows or leaves it ("Unknown supplier")
+  const missing = fields.filter((f) => f.required && out[f.key] === undefined && !(job.entity === "purchases" && f.key === "supplier_name")).map((f) => f.label);
   if (missing.length) throw new JobError(`Choose a column for: ${missing.join(", ")}`);
   return out;
 }
 
-const usesProducts = (entity) => entity === "stock" || entity === "products" || entity === "purchases";
+const usesProducts = (entity) => ["stock", "products", "purchases", "sales"].includes(entity);
+const BILLS = ["purchases", "sales"];
 const isoDay = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(String(v || "")) && !isNaN(Date.parse(v)) ? String(v) : null);
 
 // Re-reads every staged row with the mapping, then matches products in the background
@@ -196,14 +315,15 @@ function runInBackground(db, job, work) {
 
 // Fields worth a person's look when empty, even though the row can be imported
 const ATTENTION = {
-  purchases: ["invoice_date", "invoice_no", "batch_no", "expiry_date"],
+  purchases: ["supplier_name", "invoice_date", "invoice_no", "batch_no", "expiry_date"],
+  sales: ["invoice_date", "invoice_no", "batch_no", "expiry_date"],
   stock: ["batch_no", "expiry_date", "purchase_rate"],
   products: ["mrp", "manufacturer"],
   suppliers: ["contact"],
   customers: ["mobile"],
 };
 // The ones a row imports fine without (a purchase still needs its bill date)
-const LEAVABLE = { ...ATTENTION, purchases: ["invoice_no", "batch_no", "expiry_date"] };
+const LEAVABLE = { ...ATTENTION, purchases: ["supplier_name", "invoice_no", "batch_no", "expiry_date"], sales: ["invoice_no", "batch_no", "expiry_date"] };
 // Which field an error is about, so the table can point at the cell
 const ERROR_FIELD = [
   [/^Bill date/, "invoice_date"], [/^Expiry/, "expiry_date"], [/MRP/, "mrp"], [/^Rate|Purchase rate/, "purchase_rate"],
@@ -222,6 +342,8 @@ function normalizeOne(job, row, t) {
     today: t,
     includeExpired: job.options.include_expired,
     quantityIn: job.options.quantity_in,
+    amountIncludesGst: job.options.amount_includes_gst === null ? undefined : job.options.amount_includes_gst,
+    leaveEmpty: job.leave_empty || [],
     fallbackDate: fromFill("invoice_date"),
   });
   const values = {};
@@ -322,7 +444,8 @@ async function leaveEmpty(db, pharmacyId, jobId, { field, leave }) {
   if (leave) set.add(field);
   else set.delete(field);
   await db.collection("migration_jobs").updateOne({ id: job.id }, { $set: { leave_empty: [...set] } });
-  if (leave) {
+  // An empty supplier stops a row from importing; leaving it empty means re-checking the rows
+  if (leave && field !== "supplier_name") {
     await db.collection("migration_rows").updateMany({ job_id: job.id, missing: field }, { $pull: { missing: field } });
     await setJob(db, job, { counts: await countJob(db, job) });
     return;
@@ -483,22 +606,24 @@ async function countJob(db, job) {
   ]).toArray();
   counts.missing = Object.fromEntries(missing.map((m) => [m._id, m.n]));
   counts.attention = await db.collection("migration_rows").countDocuments({ job_id: job.id, $or: [{ status: "error" }, { "missing.0": { $exists: true } }] });
-  if (job.entity === "purchases") {
+  if (BILLS.includes(job.entity)) {
+    const party = job.entity === "sales" ? "$data.customer_name" : "$data.supplier_name";
     const left = await db.collection("migration_products").distinct("key", { job_id: job.id, decision: "skip" });
     const [t] = await db.collection("migration_rows").aggregate([
       { $match: { job_id: job.id, status: "ok", product_key: { $nin: left }, result: { $nin: ["duplicate", "product_skipped"] } } },
       {
         $group: {
           _id: null,
-          bills: { $addToSet: { s: "$data.supplier_name", b: "$data.invoice_no", d: "$data.purchase_date" } },
-          suppliers: { $addToSet: "$data.supplier_name" },
+          bills: { $addToSet: { s: party, b: "$data.invoice_no", d: "$data.purchase_date" } },
+          suppliers: { $addToSet: party },
           net: { $sum: "$data.net" },
-          gross: { $sum: { $multiply: ["$data.net", { $add: [1, { $divide: [{ $ifNull: ["$data.gst_rate", 0] }, 100] }] }] } },
+          gross: { $sum: { $ifNull: ["$data.gross", { $multiply: ["$data.net", { $add: [1, { $divide: [{ $ifNull: ["$data.gst_rate", 0] }, 100] }] }] }] } },
+          units: { $sum: "$data.units" },
           undated: { $sum: { $cond: ["$data.date_from_file", 0, 1] } },
         },
       },
     ]).toArray();
-    counts.purchases = { bills: t?.bills.length || 0, suppliers: t?.suppliers.length || 0, net: round2(t?.net || 0), gross: round2(t?.gross || 0), undated_lines: t?.undated || 0 };
+    counts.purchases = { bills: t?.bills.length || 0, suppliers: t?.suppliers.length || 0, net: round2(t?.net || 0), gross: round2(t?.gross || 0), units: t?.units || 0, undated_lines: t?.undated || 0 };
   }
   if (job.entity === "stock") {
     // Totals of what will actually go in: rows of products left out don't count
@@ -535,7 +660,7 @@ async function jobView(db, pharmacyId, jobId) {
     samples: await samples(db, job),
     guide: SOURCES[job.source]?.guides?.[job.entity] || null,
     blockers: job.status === "ready" ? await blockers(db, job) : [],
-    stale: ["checking", "committing", "undoing"].includes(job.status) && isStale(job),
+    stale: ["reading", "analysing", "checking", "committing", "undoing"].includes(job.status) && isStale(job, PREPARING.includes(job.status) ? 4 * 60 * 1000 : undefined),
   };
 }
 
@@ -572,7 +697,7 @@ async function problemsCsv(db, pharmacyId, jobId) {
   const esc = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
   const lines = [["Row", "Status", "Problem", ...job.headers].map(esc).join(",")];
   const cursor = db.collection("migration_rows").find({ job_id: job.id, $or: [{ status: { $in: ["error", "skipped"] } }, { result: { $in: ["duplicate", "product_skipped", "failed"] } }] }).sort({ row_no: 1 });
-  const label = { no_stock: "No stock", expired: "Expired", duplicate: "Already in DavaDesk", product_skipped: "Product left out", failed: "Couldn't save" };
+  const label = { return: "Return / credit note (negative quantity)", no_stock: "No stock", expired: "Expired", duplicate: "Already in DavaDesk", product_skipped: "Product left out", failed: "Couldn't save" };
   for await (const r of cursor) {
     const problem = r.errors?.length ? r.errors.join("; ") : label[r.result] || label[r.skip] || r.status;
     lines.push([r.row_no, r.result || r.status, problem, ...r.cells.map((c) => (c instanceof Date ? c.toISOString().slice(0, 10) : c))].map(esc).join(","));
@@ -979,6 +1104,134 @@ async function addPurchasedStock(db, job, stock) {
   }
 }
 
+// Past sales as bills, marked paid. Unless switched off, each line takes its units
+// out of the matching batch (recorded in import_changes, so undo puts them back).
+async function commitSales(db, job, productIds, tick) {
+  const deduct = job.options?.deduct_stock !== false;
+  const bills = new Map();
+  for await (const r of db.collection("migration_rows").find({ job_id: job.id, status: "ok" }).sort({ row_no: 1 })) {
+    const d = r.data;
+    if (!productIds.get(d.product_key)) {
+      await db.collection("migration_rows").updateOne({ _id: r._id }, { $set: { result: "product_skipped" } });
+      await tick(1);
+      continue;
+    }
+    const k = `${d.invoice_no || "-"}|${d.purchase_date}|${normalizeText(d.customer_name)}`;
+    if (!bills.has(k)) bills.set(k, []);
+    bills.get(k).push(r);
+  }
+  const productsById = new Map();
+  for (const [k, rows] of bills) {
+    const first = rows[0].data;
+    const ids = rows.map((r) => r._id);
+    const id = uuidv4();
+    const billNo = first.invoice_no || `IMP-${first.purchase_date.replace(/-/g, "")}-${k.slice(-6).replace(/\W/g, "")}`;
+    const already = await db.collection("bills").findOne({ pharmacy_id: job.pharmacy_id, bill_no: billNo, billing_date: first.purchase_date }, { projection: { _id: 0, id: 1 } });
+    const held = already ? already.id : await claimKey(db, job, "sales", k, id, "bills");
+    if (held) {
+      await db.collection("migration_rows").updateMany({ _id: { $in: ids } }, { $set: { result: "duplicate", result_id: held } });
+      await tick(ids.length);
+      continue;
+    }
+    let total = 0;
+    let cost = 0;
+    let fromStock = 0;
+    let unstocked = 0;
+    const items = [];
+    for (const r of rows) {
+      const d = r.data;
+      const productId = productIds.get(d.product_key);
+      let product = productsById.get(productId);
+      if (!product) {
+        product = await db.collection("products").findOne({ id: productId, pharmacy_id: job.pharmacy_id }, { projection: { _id: 0, id: 1, name: 1, hsn_no: 1 } });
+        productsById.set(productId, product);
+      }
+      const batchQuery = { pharmacy_id: job.pharmacy_id, product_id: productId, ...(d.batch_no && d.batch_no !== "NA" ? { batch_no: looseNameRegex(d.batch_no) } : {}) };
+      const inv = deduct ? await db.collection("inventory").findOne({ ...batchQuery, available_quantity: { $gt: 0 } }, { sort: { expiry_date: 1 }, projection: { _id: 0, id: 1, available_quantity: 1, purchase_price: 1 } }) : null;
+      const take = inv ? Math.min(d.units, inv.available_quantity) : 0;
+      if (take > 0) {
+        await db.collection("inventory").updateOne({ id: inv.id, pharmacy_id: job.pharmacy_id }, { $inc: { available_quantity: -take }, $set: { updated_at: now() } });
+        await db.collection("import_changes").insertOne({ job_id: job.id, pharmacy_id: job.pharmacy_id, collection: "inventory", doc_id: inv.id, inc: { available_quantity: -take }, at: now() });
+      }
+      fromStock += take;
+      unstocked += d.units - take;
+      const gst = d.gst_rate || 0;
+      const upp = d.units_per_pack || 1;
+      const unitPrice = d.rate_pack ? Math.round((d.rate_pack / upp) * 10000) / 10000 : 0;
+      const buy = inv?.purchase_price || 0;
+      const itemTotal = round2(d.gross);
+      total += itemTotal;
+      cost += buy * d.units;
+      items.push({
+        inventory_id: inv?.id || null,
+        product_id: productId,
+        product_name: product?.name || d.product_name,
+        batch_no: d.batch_no === "NA" ? null : d.batch_no,
+        hsn_no: d.hsn_no || product?.hsn_no || null,
+        expiry_date: d.expiry_date,
+        quantity: d.units,
+        units_per_pack: upp,
+        unit_price: unitPrice,
+        purchase_price: buy,
+        discount_percent: d.discount || 0,
+        line_discount: round2(Math.max(0, d.units * unitPrice - itemTotal)),
+        item_total: itemTotal,
+        profit: round2(itemTotal - buy * d.units),
+        is_manual: !inv,
+        stock_deducted: take,
+        cgst: gst / 2,
+        sgst: gst / 2,
+        delivery_status: "Delivered",
+      });
+    }
+    total = round2(total);
+    await db.collection("bills").insertOne({
+      id,
+      bill_no: billNo,
+      pharmacy_id: job.pharmacy_id,
+      customer_id: null,
+      customer_name: first.customer_name || "Walk-in",
+      customer_mobile: first.customer_mobile || null,
+      customer_email: null,
+      billing_date: first.purchase_date,
+      items,
+      subtotal: total,
+      discount_percent: 0,
+      discount_amount: 0,
+      round_off: 0,
+      grand_total: total,
+      total_amount: total,
+      total_cost: round2(cost),
+      profit: round2(total - cost),
+      inventory_billed_qty: fromStock,
+      negative_billed_qty: unstocked,
+      is_paid: true,
+      is_advance_paid: false,
+      advance_amount: 0,
+      is_credit: false,
+      credit_amount: 0,
+      total_paid: total,
+      payments: [{ amount: total, payment_mode: "Cash", paid_at: first.purchase_date, note: "Imported as paid: the old software's report doesn't say how it was paid" }],
+      delivery_status: "Delivered",
+      due_date: null,
+      payment_date: first.purchase_date,
+      payment_mode: null,
+      notes: `Imported from ${SOURCES[job.source].label} (${job.file_name})`,
+      doctor: null,
+      has_schedule_h1: false,
+      schedule_h1_items: [],
+      prescription: null,
+      pdf_url: null,
+      created_by: "import",
+      imported: true,
+      stock_deducted: deduct,
+      ...stamp(job),
+    });
+    await db.collection("migration_rows").updateMany({ _id: { $in: ids } }, { $set: { result: "created", result_id: id } });
+    await tick(ids.length);
+  }
+}
+
 async function commit(db, job, actor) {
   let done = 0;
   let last = 0;
@@ -994,6 +1247,7 @@ async function commit(db, job, actor) {
     const ids = await commitProducts(db, job, tick);
     if (job.entity === "stock") await commitStock(db, job, ids, tick);
     else if (job.entity === "purchases") await commitPurchases(db, job, ids, tick);
+    else if (job.entity === "sales") await commitSales(db, job, ids, tick);
     else {
       // A product list has no stock: each row is done once its product is
       for await (const r of db.collection("migration_rows").find({ job_id: job.id, status: "ok" })) {
@@ -1030,9 +1284,10 @@ async function undoPlan(db, job) {
   const plan = { remove: {}, keep: {}, reverse: [], kept_reasons: [] };
 
   plan.remove.purchases = await idsOf("purchases");
+  plan.remove.bills = await idsOf("bills");
 
   const stock = await db.collection("inventory").find(mine, { projection: { _id: 0, id: 1, product_name: 1, batch_no: 1, quantity: 1, available_quantity: 1 } }).toArray();
-  const billed = await usedBy("bills", "items.inventory_id", stock.map((x) => x.id));
+  const billed = await usedBy("bills", "items.inventory_id", stock.map((x) => x.id), notMine);
   const sold = stock.filter((x) => x.available_quantity < x.quantity || billed.has(x.id));
   plan.remove.inventory = stock.filter((x) => !sold.includes(x)).map((x) => x.id);
   plan.keep.inventory = sold.map((x) => x.id);
@@ -1042,6 +1297,11 @@ async function undoPlan(db, job) {
   for (const ch of changes) {
     const doc = await db.collection(ch.collection).findOne({ id: ch.doc_id, pharmacy_id: P }, { projection: { _id: 0, id: 1, available_quantity: 1, product_name: 1, batch_no: 1 } });
     if (!doc) continue;
+    // Units a sale took out go back in full; units a purchase added come back out only as far as they're unsold
+    if (ch.inc.available_quantity < 0) {
+      plan.reverse.push({ change_id: ch._id, collection: ch.collection, doc_id: ch.doc_id, quantity: ch.inc.quantity || 0, available_quantity: ch.inc.available_quantity });
+      continue;
+    }
     const back = Math.min(ch.inc.available_quantity, Math.max(0, doc.available_quantity || 0));
     plan.reverse.push({ change_id: ch._id, collection: ch.collection, doc_id: ch.doc_id, quantity: back, available_quantity: back });
     if (back < ch.inc.available_quantity) plan.kept_reasons.push(`${doc.product_name} batch ${doc.batch_no}: ${ch.inc.available_quantity - back} of the units added were sold since`);
@@ -1050,14 +1310,14 @@ async function undoPlan(db, job) {
   const products = await idsOf("products");
   const stockOf = await db.collection("inventory").find({ pharmacy_id: P, product_id: { $in: products }, id: { $nin: plan.remove.inventory } }, { projection: { _id: 0, id: 1, product_id: 1 } }).toArray();
   const withStock = new Set(stockOf.map((x) => x.product_id));
-  const inBills = await usedBy("bills", "items.product_id", products);
+  const inBills = await usedBy("bills", "items.product_id", products, notMine);
   const inPurchases = await usedBy("purchases", "items.product_id", products, notMine);
   plan.remove.products = products.filter((id) => !withStock.has(id) && !inBills.has(id) && !inPurchases.has(id));
   plan.keep.products = products.filter((id) => !plan.remove.products.includes(id));
 
   for (const [coll, field, by] of [["suppliers", "supplier_id", "purchases"], ["customers", "customer_id", "bills"]]) {
     const ids = await idsOf(coll);
-    const used = await usedBy(by, field, ids, by === "purchases" ? notMine : {});
+    const used = await usedBy(by, field, ids, notMine);
     plan.remove[coll] = ids.filter((id) => !used.has(id));
     plan.keep[coll] = ids.filter((id) => used.has(id));
   }
@@ -1087,18 +1347,18 @@ async function undo(db, pharmacyId, jobId, actor) {
     const P = job.pharmacy_id;
     const plan = await undoPlan(db, job);
     // Purchases first, then stock, products and parties, so nothing points at a removed record
-    for (const coll of ["purchases", "inventory", "products", "suppliers", "customers"]) {
+    for (const coll of ["bills", "purchases", "inventory", "products", "suppliers", "customers"]) {
       const ids = plan.remove[coll] || [];
       for (let i = 0; i < ids.length; i += CHUNK) await db.collection(coll).deleteMany({ pharmacy_id: P, import_job_id: job.id, id: { $in: ids.slice(i, i + CHUNK) } });
     }
     for (const r of plan.reverse) {
-      if (r.available_quantity > 0) {
+      if (r.available_quantity !== 0) {
         await db.collection(r.collection).updateOne({ id: r.doc_id, pharmacy_id: P }, { $inc: { quantity: -r.quantity, available_quantity: -r.available_quantity }, $set: { updated_at: now() } });
       }
       await db.collection("import_changes").deleteOne({ _id: r.change_id });
     }
     const left = new Set();
-    for (const coll of ["inventory", "products", "suppliers", "customers", "purchases"]) {
+    for (const coll of ["inventory", "products", "suppliers", "customers", "purchases", "bills"]) {
       (await db.collection(coll).find({ pharmacy_id: P, import_job_id: job.id }, { projection: { _id: 0, id: 1 } }).toArray()).forEach((d) => left.add(d.id));
     }
     // Keys of removed records go, so the same data can be imported again
@@ -1172,7 +1432,7 @@ async function reportData(db, pharmacyId, jobId) {
     }
     const outcome =
       r.status === "error" ? `Not imported: ${(r.errors || []).join("; ")}`
-      : r.status === "skipped" ? `Not imported: ${r.skip === "expired" ? "expired batch" : "no stock"}`
+      : r.status === "skipped" ? `Not imported: ${r.skip === "expired" ? "expired batch" : r.skip === "return" ? "a return / credit note (negative quantity)" : "no stock"}`
       : r.result === "duplicate" ? "Skipped: already in DavaDesk"
       : r.result === "product_skipped" ? "Not imported: product left out"
       : r.result === "merged" ? "Imported (added to the same batch)"
@@ -1206,13 +1466,14 @@ async function reportData(db, pharmacyId, jobId) {
 
   const made = {};
   const P = job.pharmacy_id;
-  for (const coll of ["purchases", "inventory", "products", "suppliers", "customers"]) made[coll] = await db.collection(coll).countDocuments({ pharmacy_id: P, import_job_id: job.id });
+  for (const coll of ["purchases", "bills", "inventory", "products", "suppliers", "customers"]) made[coll] = await db.collection(coll).countDocuments({ pharmacy_id: P, import_job_id: job.id });
+  made.stock_taken = job.entity === "sales" ? await db.collection("import_changes").countDocuments({ job_id: job.id, "inc.available_quantity": { $lt: 0 } }) : 0;
   made.incomplete_products = await db.collection("products").countDocuments({ pharmacy_id: P, import_job_id: job.id, catalog_incomplete: true });
-  made.topped_up = await db.collection("import_changes").countDocuments({ job_id: job.id });
+  made.topped_up = await db.collection("import_changes").countDocuments({ job_id: job.id, "inc.available_quantity": { $gt: 0 } });
   // After an undo the records are gone: report what the import added, and what the undo removed or kept
   if (job.undo) {
     made.kept = {};
-    for (const coll of ["purchases", "inventory", "products", "suppliers", "customers"]) {
+    for (const coll of ["purchases", "bills", "inventory", "products", "suppliers", "customers"]) {
       const removed = job.undo.removed?.[coll] || 0;
       const kept = job.undo.kept?.[coll] || 0;
       made[coll] = removed + kept;
@@ -1247,7 +1508,7 @@ async function listJobs(db, pharmacyId) {
 // A job that never got saved can be thrown away with its staged rows
 async function discard(db, pharmacyId, jobId) {
   const job = await getJob(db, pharmacyId, jobId);
-  if (!["mapped", "ready", "failed"].includes(job.status)) throw new JobError("Only an import that hasn't been saved can be discarded");
+  if (!["reading", "analysing", "mapped", "ready", "failed"].includes(job.status)) throw new JobError("Only an import that hasn't been saved can be discarded");
   await db.collection("migration_rows").deleteMany({ job_id: job.id });
   await db.collection("migration_products").deleteMany({ job_id: job.id });
   await db.collection("migration_jobs").deleteOne({ id: job.id });
@@ -1264,6 +1525,11 @@ async function resume(db, pharmacyId, jobId, actor) {
   if (job.status === "undoing" && isStale(job)) {
     await setJob(db, job, { status: "committed" });
     return undo(db, pharmacyId, jobId, actor);
+  }
+  // The uploaded file isn't kept, so a read that stopped can only be started again by uploading it again
+  if (PREPARING.includes(job.status) && isStale(job, 4 * 60 * 1000)) {
+    await setJob(db, job, { status: "failed", error: "Reading the file stopped (the server restarted). Upload the file again." });
+    return;
   }
   throw new JobError("Nothing to resume");
 }

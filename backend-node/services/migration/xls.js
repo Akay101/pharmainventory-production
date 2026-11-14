@@ -95,13 +95,14 @@ function shortString(data, at) {
   return wide ? data.toString("utf16le", start, start + cch * 2) : data.toString("latin1", start, start + cch);
 }
 
+// RK: a number packed in 32 bits, read signed so negative whole numbers come out negative
 function rk(v) {
   let n;
   if (v & 0x02) n = v >> 2;
   else {
     const b = Buffer.alloc(8);
     b.writeUInt32LE(0, 0);
-    b.writeUInt32LE(v & 0xfffffffc, 4);
+    b.writeUInt32LE((v & 0xfffffffc) >>> 0, 4); // the high 30 bits of a double; >>> 0 keeps negative numbers in range
     n = b.readDoubleLE(0);
   }
   return v & 0x01 ? n / 100 : n;
@@ -158,12 +159,12 @@ function readXls(buffer) {
       if (type === T.LABELSST) set(data.readUInt16LE(0), data.readUInt16LE(2), sst[data.readUInt32LE(6)] ?? "");
       else if (type === T.LABEL) set(data.readUInt16LE(0), data.readUInt16LE(2), shortString(data, 6));
       else if (type === T.NUMBER) set(data.readUInt16LE(0), data.readUInt16LE(2), data.readDoubleLE(6));
-      else if (type === T.RK) set(data.readUInt16LE(0), data.readUInt16LE(2), rk(data.readUInt32LE(6)));
+      else if (type === T.RK) set(data.readUInt16LE(0), data.readUInt16LE(2), rk(data.readInt32LE(6)));
       else if (type === T.MULRK) {
         const row = data.readUInt16LE(0);
         const first = data.readUInt16LE(2);
         const n = (data.length - 6) / 6;
-        for (let k = 0; k < n; k++) set(row, first + k, rk(data.readUInt32LE(4 + k * 6 + 2)));
+        for (let k = 0; k < n; k++) set(row, first + k, rk(data.readInt32LE(4 + k * 6 + 2)));
       } else if (type === T.BOOLERR) {
         if (data[7] === 0) set(data.readUInt16LE(0), data.readUInt16LE(2), data[6] === 1);
       } else if (type === T.FORMULA) {
