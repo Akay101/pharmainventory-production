@@ -22,12 +22,13 @@ const keyName = (k) => (IS_MAC && MAC_KEYS[k]) || k;
 //   title     { text, sub? }                                big kinetic headline (no target)
 
 const TONES = {
-  orange: "from-orange-500 to-amber-400 text-white",
-  green: "from-emerald-500 to-teal-400 text-white",
-  rose: "from-rose-500 to-pink-500 text-white",
-  violet: "from-violet-500 to-fuchsia-500 text-white",
-  sky: "from-sky-500 to-indigo-500 text-white",
-  ink: "from-slate-900 to-slate-700 text-white",
+  // Landing-page palette: ink and orange, with plain status colours
+  orange: "bg-[#ff6b00] text-[#161616]",
+  green: "bg-emerald-600 text-white",
+  rose: "bg-rose-600 text-white",
+  violet: "bg-[#f6f4ef] text-[#161616]",
+  sky: "bg-[#f6f4ef] text-[#161616]",
+  ink: "bg-[#161616] text-white",
 };
 
 function anchor(fx, focusRect) {
@@ -102,7 +103,7 @@ function Chips({ fx, ...p }) {
     <Placed fx={fx} {...p}>
       <div className="flex flex-wrap gap-2">
         {fx.items.map((it, i) => (
-          <motion.div key={i} {...pop(i, (fx.delay || 0) / 1000)} className={`rounded-2xl bg-gradient-to-br px-3.5 py-2 shadow-[0_10px_30px_rgba(0,0,0,0.35)] ring-1 ring-white/20 ${TONES[it.tone || "ink"]}`}>
+          <motion.div key={i} {...pop(i, (fx.delay || 0) / 1000)} className={`rounded-2xl px-3.5 py-2 shadow-[0_10px_30px_rgba(0,0,0,0.35)] ring-1 ring-white/20 ${TONES[it.tone || "ink"]}`}>
             <div className="text-[10px] font-black uppercase tracking-[0.14em] opacity-75">{it.label}</div>
             {it.value !== undefined && <div className="font-mono text-sm font-black">{it.value}</div>}
           </motion.div>
@@ -123,7 +124,7 @@ function Equation({ fx, ...p }) {
             <motion.span
               key={i}
               {...pop(i, (fx.delay || 0) / 1000)}
-              className={op ? "px-0.5 text-lg font-black text-orange-300" : `rounded-lg px-2 py-1 font-mono text-sm font-black ${last ? "bg-gradient-to-r from-orange-500 to-amber-400 text-white shadow-[0_0_24px_rgba(249,115,22,0.6)]" : "bg-white/10 text-white"}`}
+              className={op ? "px-0.5 text-lg font-black text-orange-300" : `rounded-lg px-2 py-1 font-mono text-sm font-black ${last ? "bg-[#ff6b00] text-[#161616] shadow-[0_0_24px_rgba(249,115,22,0.6)]" : "bg-white/10 text-white"}`}
             >
               {t}
             </motion.span>
@@ -138,7 +139,7 @@ function Split({ fx, ...p }) {
   return (
     <Placed fx={fx} {...p}>
       <div className="flex flex-col items-center gap-2">
-        <motion.div {...pop(0)} className="rounded-xl bg-gradient-to-r from-sky-500 to-indigo-500 px-4 py-1.5 font-mono text-sm font-black text-white shadow-lg">
+        <motion.div {...pop(0)} className="rounded-xl bg-[#161616] px-4 py-1.5 font-mono text-sm font-black text-white shadow-lg ring-1 ring-[#ff6b00]/60">
           {fx.from}
         </motion.div>
         <svg width="180" height="26" className="overflow-visible">
@@ -147,7 +148,7 @@ function Split({ fx, ...p }) {
         </svg>
         <div className="flex gap-6">
           {fx.into.map((t, i) => (
-            <motion.div key={i} {...pop(i, 0.9)} className="rounded-xl bg-white px-3 py-1.5 font-mono text-xs font-black text-indigo-700 shadow-lg ring-2 ring-indigo-300">
+            <motion.div key={i} {...pop(i, 0.9)} className="rounded-xl bg-white px-3 py-1.5 font-mono text-xs font-black text-[#161616] shadow-lg ring-2 ring-[#ff6b00]/50">
               {t}
             </motion.div>
           ))}
@@ -287,7 +288,7 @@ function Keys({ fx, ...p }) {
     <Placed fx={fx} {...p}>
       <div className="flex items-center gap-1.5 rounded-2xl bg-slate-950/85 px-3 py-2 ring-1 ring-white/15">
         {fx.combo.map((k, i) => (
-          <motion.kbd key={i} {...pop(i)} className="min-w-[2.2rem] rounded-lg border-b-4 border-slate-400 bg-gradient-to-b from-white to-slate-200 px-2 py-1 text-center font-mono text-sm font-black text-slate-800 shadow">
+          <motion.kbd key={i} {...pop(i)} className="min-w-[2.2rem] rounded-lg border-b-4 border-slate-400 bg-white px-2 py-1 text-center font-mono text-sm font-black text-slate-800 shadow">
             {keyName(k)}
           </motion.kbd>
         ))}

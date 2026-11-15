@@ -72,7 +72,7 @@ export function LinkPharmacyDialog({ open, onOpenChange }) {
           <span className="text-xs font-bold text-muted-foreground">Pharmacy GSTIN</span>
           <input className={`${inputCls} uppercase`} value={details.gst_no} maxLength={15} onChange={(e) => set("gst_no", e.target.value.toUpperCase().replace(/[^0-9A-Z]/g, ""))} />
         </label>
-        <button type="submit" className="w-full h-11 rounded-xl font-bold text-white bg-gradient-to-r from-orange-500 to-amber-500" data-testid="link-pharmacy-next">
+        <button type="submit" className="w-full h-11 rounded-xl font-bold text-primary-foreground bg-primary" data-testid="link-pharmacy-next">
           Continue to payment
         </button>
       </form>

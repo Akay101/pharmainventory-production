@@ -148,7 +148,7 @@ export default function AuthCarousel({ autoPlayInterval = 4500 }) {
       {/* Full-bleed Showcase Card */}
       <div className="relative rounded-3xl border border-border/80 dark:border-zinc-800/80 bg-card/60 dark:bg-zinc-950/80 backdrop-blur-2xl shadow-2xl overflow-hidden group transition-all duration-300 hover:border-orange-500/30">
         {/* Top Glow Highlight */}
-        <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-orange-500 via-amber-500 to-orange-400 z-30" />
+        <div className="absolute top-0 left-0 right-0 h-1 z-30 bg-brand" />
 
         {/* Full Image Presentation with Ambient Gradient Mask */}
         <div className="relative w-full h-56 sm:h-64 lg:h-72 overflow-hidden bg-zinc-950">
@@ -235,7 +235,7 @@ export default function AuthCarousel({ autoPlayInterval = 4500 }) {
                 onClick={() => goToSlide(idx)}
                 className={`h-1.5 rounded-full transition-all duration-300 ${
                   idx === currentIndex
-                    ? "w-8 bg-gradient-to-r from-orange-500 to-amber-500 shadow-xs shadow-orange-500/50"
+                    ? "w-8 shadow-xs bg-primary"
                     : "w-2 bg-border/80 dark:bg-zinc-800 hover:bg-muted-foreground/40"
                 }`}
                 aria-label={`Go to slide ${idx + 1}`}

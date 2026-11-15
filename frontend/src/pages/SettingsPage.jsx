@@ -285,7 +285,7 @@ export default function SettingsPage() {
     <div className="space-y-6 animate-fade-in" data-testid="settings-page">
       {/* Header */}
       <div>
-        <h1 className="text-3xl font-extrabold tracking-tight bg-gradient-to-r from-foreground to-foreground/75 bg-clip-text text-transparent">Settings</h1>
+        <h1 className="text-3xl font-extrabold tracking-tight text-foreground">Settings</h1>
         <p className="text-muted-foreground">Manage your pharmacy, profile, and data settings</p>
       </div>
 

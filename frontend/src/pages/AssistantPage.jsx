@@ -110,7 +110,8 @@ function AgentChip({ agent, label }) {
   const Icon = AGENT_ICON[agent] || LayoutGrid;
   const meta = AGENT_META[agent] || {};
   return (
-    <span className={`inline-flex items-center gap-1 rounded-full bg-gradient-to-r ${meta.tone || "from-slate-500 to-zinc-500"} px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white shadow-sm`}>
+    <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-2 py-0.5 font-mono text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
+      <span className={`h-1.5 w-1.5 rounded-full ${meta.tone || "bg-zinc-500"}`} />
       <Icon className="h-3 w-3" /> {label || meta.label}
     </span>
   );
@@ -676,7 +677,7 @@ export default function AssistantPage() {
         <button
           type="button"
           onClick={newChat}
-          className="flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-orange-500 to-pink-500 text-sm font-semibold text-white shadow-md shadow-orange-500/20 active:scale-[0.99]"
+          className="flex h-10 w-full items-center justify-center gap-2 rounded-xl text-sm font-semibold text-primary-foreground shadow-md active:scale-[0.99] bg-primary"
         >
           <MessageSquarePlus className="h-4 w-4" /> New chat
         </button>
@@ -789,11 +790,12 @@ export default function AssistantPage() {
             ) : empty ? (
               <div className="flex flex-col items-center pt-6 text-center sm:pt-14">
                 <div className="relative">
-                  <div className="absolute inset-0 -z-10 animate-pulse rounded-full bg-gradient-to-br from-orange-500/40 via-pink-500/30 to-violet-500/40 blur-2xl" />
+                  <div className="absolute inset-0 -z-10 animate-pulse rounded-full blur-2xl bg-orange-500/10" />
                   <img src={AI_LOGO_SRC} alt="" className="h-20 w-20 rounded-full sm:h-24 sm:w-24" />
                 </div>
-                <h1 className="mt-5 text-2xl font-bold sm:text-3xl">
-                  Namaste{firstName ? `, ${firstName}` : ""} <span className="ai-shimmer-text">how can I help?</span>
+                <span className="eyebrow mt-6">DavaDesk AI</span>
+                <h1 className="mt-3 text-2xl font-semibold tracking-tight sm:text-4xl">
+                  Namaste{firstName ? `, ${firstName}` : ""} <span className="text-muted-foreground dark:text-brand">how can I help?</span>
                 </h1>
                 <p className="mt-2 max-w-md text-sm text-muted-foreground">
                   Ask in English, Hindi or Hinglish, type or speak. I can create purchases and bills, find anything in your data, check stock and answer medicine questions.
@@ -806,9 +808,9 @@ export default function AssistantPage() {
                         key={s.text}
                         type="button"
                         onClick={() => send(s.text)}
-                        className="group flex items-start gap-3 rounded-2xl border border-border bg-card/70 p-3 text-left transition hover:border-orange-500/40 hover:bg-card active:scale-[0.99]"
+                        className="group flex items-start gap-3 rounded-2xl border border-border bg-card/70 p-3 text-left transition hover:border-foreground/20 hover:bg-card active:scale-[0.99]"
                       >
-                        <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br ${AGENT_META[s.agent].tone} text-white`}>
+                        <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-muted text-foreground transition-colors group-hover:bg-primary group-hover:text-primary-foreground`}>
                           <Icon className="h-4 w-4" />
                         </span>
                         <span className="min-w-0">
@@ -835,7 +837,7 @@ export default function AssistantPage() {
                         </div>
                       )}
                       {m.text && (
-                        <div className={`max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-md px-4 py-2.5 text-[15px] ${m.action ? "border border-border bg-card italic text-muted-foreground" : "bg-gradient-to-br from-orange-500 to-pink-500 text-white shadow-md shadow-orange-500/15"}`}>
+                        <div className={`max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-md px-4 py-2.5 text-[15px] ${m.action ? "border border-border bg-card italic text-muted-foreground" : "text-primary-foreground shadow-md bg-primary"}`}>
                           {m.voice && <Mic className="mr-1 inline h-3.5 w-3.5 opacity-80" />}
                           {m.text}
                         </div>
@@ -1015,7 +1017,7 @@ export default function AssistantPage() {
                   onClick={() => send(undefined, { voice: dictated })}
                   disabled={micBusy || (!input.trim() && !photos.length)}
                   title="Send"
-                  className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-orange-500 to-pink-500 text-white shadow-md shadow-orange-500/20 transition active:scale-95 disabled:opacity-40"
+                  className="flex h-10 w-10 items-center justify-center rounded-xl text-primary-foreground shadow-md transition active:scale-95 disabled:opacity-40 bg-primary"
                 >
                   <ArrowUp className="h-5 w-5" />
                 </button>

@@ -134,7 +134,7 @@ export default function PaymentSuccessPage() {
         <div className="flex flex-col gap-2 pt-2">
           {(state.status === "success" || state.status === "pending") && (
             <Button
-              className="h-11 rounded-xl font-bold text-white bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600"
+              className="h-11 rounded-xl font-bold text-primary-foreground bg-primary hover:bg-primary/90"
               onClick={() => navigate(state.isCredits ? "/assistant" : state.isAddon ? "/settings?tab=billing" : "/dashboard", { replace: true })}
             >
               {state.isCredits ? "Back to DavaDesk AI" : "Go to dashboard"} <ArrowRight className="w-4 h-4 ml-2" />

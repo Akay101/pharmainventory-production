@@ -153,7 +153,7 @@ export function ItemLabelsDialog({ purchase, only = null, onClose }) {
           <Button type="button" variant="outline" onClick={onClose} className="rounded-xl text-xs font-bold">
             Cancel
           </Button>
-          <Button type="button" onClick={print} disabled={busy || !total} className="rounded-xl bg-orange-600 text-xs font-bold text-white hover:bg-orange-700" data-shortcut="save">
+          <Button type="button" onClick={print} disabled={busy || !total} className="rounded-xl bg-primary text-xs font-bold text-primary-foreground hover:bg-primary/90" data-shortcut="save">
             {busy ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Printer className="mr-1.5 h-4 w-4" />}
             Print {total} label{total === 1 ? "" : "s"}
           </Button>

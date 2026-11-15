@@ -2,7 +2,8 @@
 module.exports = {
     // Phones: hover styles don't stick after a tap (mouse/trackpad unchanged)
     future: { hoverOnlyWhenSupported: true },
-    darkMode: ["class"],
+    // Dark is the absence of .light on <html>, so dark: variants match that
+    darkMode: ["variant", "&:not(.light *)"],
     content: [
     "./src/**/*.{js,jsx,ts,tsx}",
     "./public/index.html"
@@ -14,7 +15,21 @@ module.exports = {
   			md: 'calc(var(--radius) - 2px)',
   			sm: 'calc(var(--radius) - 4px)'
   		},
+  		fontFamily: {
+  			sans: ['Manrope', 'system-ui', 'sans-serif'],
+  			mono: ['"Geist Mono"', 'ui-monospace', 'monospace']
+  		},
+  		// Calmer weights, like the landing page (headings are semibold there)
+  		fontWeight: {
+  			extrabold: '700',
+  			black: '750'
+  		},
   		colors: {
+  			brand: {
+  				DEFAULT: 'hsl(var(--brand))',
+  				foreground: 'hsl(var(--brand-foreground))',
+  				soft: 'hsl(var(--brand-soft))'
+  			},
   			background: 'hsl(var(--background))',
   			foreground: 'hsl(var(--foreground))',
   			card: {

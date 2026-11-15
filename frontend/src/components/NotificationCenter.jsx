@@ -205,7 +205,7 @@ export default function NotificationCenter() {
       >
         <Bell className={`w-4.5 h-4.5 text-foreground transition-transform duration-200 ${totalUnread > 0 ? "animate-bell-wiggle" : "group-hover:rotate-12"}`} />
         {totalUnread > 0 && (
-          <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] bg-orange-500 text-white text-[10px] font-black rounded-full flex items-center justify-center px-1 shadow-md shadow-orange-500/30 animate-in zoom-in-50 duration-200">
+          <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] bg-primary text-primary-foreground text-[10px] font-black rounded-full flex items-center justify-center px-1 shadow-md animate-in zoom-in-50 duration-200">
             {totalUnread > 99 ? "99+" : totalUnread}
           </span>
         )}

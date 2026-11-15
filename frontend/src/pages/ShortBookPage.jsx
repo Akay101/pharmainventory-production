@@ -172,7 +172,7 @@ export default function ShortBookPage() {
             </Button>
           )}
           {acc.create && (
-            <Button size="sm" onClick={() => setAddOpen(true)} className="h-9 rounded-xl bg-orange-600 text-xs font-bold text-white hover:bg-orange-700" data-shortcut="new" data-kbd={formatCombo("alt+n")}>
+            <Button size="sm" onClick={() => setAddOpen(true)} className="h-9 rounded-xl bg-primary text-xs font-bold text-primary-foreground hover:bg-primary/90" data-shortcut="new" data-kbd={formatCombo("alt+n")}>
               <Plus className="mr-1.5 h-4 w-4" /> Add item
             </Button>
           )}
@@ -202,7 +202,7 @@ export default function ShortBookPage() {
               type="button"
               aria-pressed={section === id}
               onClick={() => setSection(id)}
-              className={`px-2.5 text-[11px] font-bold rounded-md ${section === id ? "bg-orange-600 text-white" : "text-muted-foreground hover:text-foreground"}`}
+              className={`px-2.5 text-[11px] font-bold rounded-md ${section === id ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
             >
               {label}
               {id !== "all" && data.sections?.[id] && section === "all" ? ` (${data.sections[id]})` : ""}
@@ -390,7 +390,7 @@ export default function ShortBookPage() {
                 <Label className="text-xs font-bold">In</Label>
                 <div className="mt-1 grid h-10 grid-cols-2 gap-1 rounded-xl border border-border p-1" role="radiogroup">
                   {["packs", "units"].map((u) => (
-                    <button key={u} type="button" role="radio" aria-checked={form.unit === u} onClick={() => setForm((f) => ({ ...f, unit: u }))} className={`rounded-lg text-xs font-bold ${form.unit === u ? "bg-orange-600 text-white" : "text-muted-foreground"}`}>
+                    <button key={u} type="button" role="radio" aria-checked={form.unit === u} onClick={() => setForm((f) => ({ ...f, unit: u }))} className={`rounded-lg text-xs font-bold ${form.unit === u ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}>
                       {u === "packs" ? "Packs" : "Units"}
                     </button>
                   ))}
@@ -405,7 +405,7 @@ export default function ShortBookPage() {
               <Button type="button" variant="outline" onClick={() => setAddOpen(false)} className="rounded-xl text-xs font-bold">
                 Cancel
               </Button>
-              <Button type="submit" disabled={saving} className="rounded-xl bg-orange-600 text-xs font-bold text-white hover:bg-orange-700" data-shortcut="save">
+              <Button type="submit" disabled={saving} className="rounded-xl bg-primary text-xs font-bold text-primary-foreground hover:bg-primary/90" data-shortcut="save">
                 {saving ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-1.5 h-4 w-4" />}
                 Add
               </Button>

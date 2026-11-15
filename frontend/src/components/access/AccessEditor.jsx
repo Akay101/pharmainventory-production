@@ -17,7 +17,7 @@ function TriBox({ state, onClick, label }) {
       aria-label={label}
       onClick={onClick}
       className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border transition ${
-        state === "none" ? "border-border bg-background" : "border-orange-500 bg-orange-500 text-white"
+        state === "none" ? "border-border bg-background" : "border-orange-500 bg-primary text-primary-foreground"
       }`}
     >
       {state === "all" ? <Check className="h-3.5 w-3.5" strokeWidth={3} /> : state === "some" ? <Minus className="h-3.5 w-3.5" strokeWidth={3} /> : null}
@@ -133,7 +133,7 @@ export default function AccessEditor({ schema, value, onChange }) {
                           className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-bold transition ${on ? "border-orange-500/60 bg-orange-500/10 text-orange-700 dark:text-orange-300" : "border-border text-muted-foreground hover:bg-muted/50"}`}
                           data-testid={`action-${m.key}-${a}`}
                         >
-                          <span className={`flex h-3.5 w-3.5 items-center justify-center rounded border ${on ? "border-orange-500 bg-orange-500 text-white" : "border-border"}`}>{on && <Check className="h-2.5 w-2.5" strokeWidth={3} />}</span>
+                          <span className={`flex h-3.5 w-3.5 items-center justify-center rounded border ${on ? "border-orange-500 bg-primary text-primary-foreground" : "border-border"}`}>{on && <Check className="h-2.5 w-2.5" strokeWidth={3} />}</span>
                           {ACTION_LABEL[a]}
                         </button>
                       );

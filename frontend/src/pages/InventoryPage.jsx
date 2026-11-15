@@ -607,7 +607,7 @@ export default function InventoryPage() {
           {acc.update && selectedItemIds.length >= 2 && (
             <Button
               onClick={handleOpenMergeDialog}
-              className="bg-amber-500 hover:bg-amber-600 text-white h-9 text-xs font-extrabold shadow-sm rounded-xl px-3 flex items-center gap-1.5 cursor-pointer"
+              className="bg-primary hover:bg-primary/90 text-primary-foreground h-9 text-xs font-extrabold shadow-sm rounded-xl px-3 flex items-center gap-1.5 cursor-pointer"
               data-testid="merge-products-btn"
             >
               Merge Selected ({selectedItemIds.length})
@@ -655,7 +655,7 @@ export default function InventoryPage() {
           {acc.create && (
             <Button
               onClick={() => setProductDialog(true)}
-              className="h-9 px-3.5 text-xs font-extrabold bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white rounded-xl shadow-xs border-none flex items-center gap-1.5 cursor-pointer"
+              className="h-9 px-3.5 text-xs font-extrabold text-primary-foreground rounded-xl shadow-xs border-none flex items-center gap-1.5 cursor-pointer bg-primary hover:bg-primary/90"
               data-testid="add-product-btn"
               data-shortcut="new"
             >
@@ -708,13 +708,13 @@ export default function InventoryPage() {
             }}
             className={`h-9 text-xs font-extrabold px-3.5 rounded-xl border transition-all duration-200 cursor-pointer ${
               showLowStock 
-                ? "bg-amber-500 text-white border-amber-500 hover:bg-amber-600 shadow-xs" 
+                ? "bg-primary text-primary-foreground border-amber-500 hover:bg-primary/90 shadow-xs" 
                 : "bg-card/60 border-border/70 text-foreground hover:bg-muted"
             }`}
             data-testid="low-stock-filter-btn"
           >
             {showLowStock && filtering ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <AlertTriangle className={`w-3.5 h-3.5 mr-1.5 ${showLowStock ? "text-white" : "text-amber-500"}`} />}
-            Low Stock {counts?.low > 0 && <Badge className={`ml-1.5 border-0 text-[10px] px-1.5 py-0.5 font-black rounded-full ${showLowStock ? "bg-white text-amber-600" : "bg-amber-500 text-white"}`}>{counts.low}</Badge>}
+            Low Stock {counts?.low > 0 && <Badge className={`ml-1.5 border-0 text-[10px] px-1.5 py-0.5 font-black rounded-full ${showLowStock ? "bg-white text-amber-600" : "bg-primary text-primary-foreground"}`}>{counts.low}</Badge>}
           </Button>
 
           <Button
@@ -726,13 +726,13 @@ export default function InventoryPage() {
             }}
             className={`h-9 text-xs font-extrabold px-3.5 rounded-xl border transition-all duration-200 cursor-pointer ${
               showShortage 
-                ? "bg-orange-500 text-white border-orange-500 hover:bg-orange-600 shadow-xs" 
+                ? "bg-primary text-primary-foreground border-orange-500 hover:bg-primary/90 shadow-xs" 
                 : "bg-card/60 border-border/70 text-foreground hover:bg-muted"
             }`}
             data-testid="shortage-filter-btn"
           >
             {showShortage && filtering ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <AlertTriangle className={`w-3.5 h-3.5 mr-1.5 ${showShortage ? "text-white" : "text-orange-500"}`} />}
-            Shortage List {shortageCount > 0 && <Badge className={`ml-1.5 border-0 text-[10px] px-1.5 py-0.5 font-black rounded-full ${showShortage ? "bg-white text-orange-600" : "bg-orange-500 text-white"}`}>{shortageCount}</Badge>}
+            Shortage List {shortageCount > 0 && <Badge className={`ml-1.5 border-0 text-[10px] px-1.5 py-0.5 font-black rounded-full ${showShortage ? "bg-white text-orange-600" : "bg-primary text-primary-foreground"}`}>{shortageCount}</Badge>}
           </Button>
 
           <Button
@@ -744,13 +744,13 @@ export default function InventoryPage() {
             }}
             className={`h-9 text-xs font-extrabold px-3.5 rounded-xl border transition-all duration-200 cursor-pointer ${
               showExpiringSoon 
-                ? "bg-amber-500 text-white border-amber-500 hover:bg-amber-600 shadow-xs" 
+                ? "bg-primary text-primary-foreground border-amber-500 hover:bg-primary/90 shadow-xs" 
                 : "bg-card/60 border-border/70 text-foreground hover:bg-muted"
             }`}
             data-testid="expiring-filter-btn"
           >
             {showExpiringSoon && filtering ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <AlertTriangle className={`w-3.5 h-3.5 mr-1.5 ${showExpiringSoon ? "text-white" : "text-amber-500"}`} />}
-            Expiring Soon {counts?.expiring > 0 && <Badge className={`ml-1.5 border-0 text-[10px] px-1.5 py-0.5 font-black rounded-full ${showExpiringSoon ? "bg-white text-amber-600" : "bg-amber-500 text-white"}`}>{counts.expiring}</Badge>}
+            Expiring Soon {counts?.expiring > 0 && <Badge className={`ml-1.5 border-0 text-[10px] px-1.5 py-0.5 font-black rounded-full ${showExpiringSoon ? "bg-white text-amber-600" : "bg-primary text-primary-foreground"}`}>{counts.expiring}</Badge>}
           </Button>
 
           <Button
@@ -1358,7 +1358,7 @@ export default function InventoryPage() {
             <Button
               onClick={handleMergeSubmit}
               disabled={merging}
-              className="w-full bg-amber-500 hover:bg-amber-600 text-white h-10 text-xs font-bold shadow-md rounded-xl mt-2 flex items-center justify-center gap-2"
+              className="w-full bg-primary hover:bg-primary/90 text-primary-foreground h-10 text-xs font-bold shadow-md rounded-xl mt-2 flex items-center justify-center gap-2"
             >
               {merging ? (
                 <>
@@ -1754,7 +1754,7 @@ export default function InventoryPage() {
                   <Button
                     onClick={handleExecuteOtherMerge}
                     disabled={mergingOther || productsToMerge.length === 0}
-                    className="bg-amber-500 hover:bg-amber-600 text-white h-9 text-xs font-bold px-4 rounded-lg shadow-sm flex items-center gap-2 cursor-pointer"
+                    className="bg-primary hover:bg-primary/90 text-primary-foreground h-9 text-xs font-bold px-4 rounded-lg shadow-sm flex items-center gap-2 cursor-pointer"
                   >
                     {mergingOther ? (
                       <>

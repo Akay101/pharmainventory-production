@@ -39,7 +39,7 @@ export default function RightSidebarDrawer({
       />
 
       {/* Slide-over Drawer Container */}
-      <div className={`relative w-full ${widthClass} h-full bg-card/95 backdrop-blur-md border-l-2 border-border shadow-2xl flex flex-col z-10 animate-in slide-in-from-right duration-300`}>
+      <div className={`relative w-full ${widthClass} h-full bg-card border-l border-border shadow-2xl flex flex-col z-10 animate-in slide-in-from-right duration-300`}>
         {/* Drawer Header */}
         <div className="p-4 border-b border-border bg-muted/40 flex items-center justify-between gap-3 shrink-0">
           <div className="flex items-center gap-2.5 overflow-hidden">

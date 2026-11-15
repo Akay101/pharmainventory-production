@@ -8,7 +8,7 @@ import { API, useAuth } from "../App";
 import { Button } from "../components/ui/button";
 import WaveInput from "../components/ui/WaveInput";
 import { toast } from "sonner";
-import { Eye, EyeOff, Loader2, Lock, Mail, ArrowRight, Info } from "lucide-react";
+import { Eye, EyeOff, Loader2, Lock, Mail, Info } from "lucide-react";
 
 const ago = (d) => {
   const m = Math.round((Date.now() - new Date(d).getTime()) / 60000);
@@ -22,6 +22,7 @@ const DeviceIcon = ({ type, className }) => (type === "mobile" ? <Smartphone cla
 import ThemeToggle from "../components/ui/ThemeToggle";
 import FluidLinePattern from "../components/ui/FluidLinePattern";
 import AuthLeftPanel from "../components/ui/AuthLeftPanel";
+import { ArrowChip } from "../components/ui/arrow-chip";
 
 export default function LoginPage() {
   const navigate = useNavigate();
@@ -168,7 +169,7 @@ export default function LoginPage() {
             <Button variant="outline" className="rounded-xl" disabled={takingOver} onClick={() => setConflict(null)}>
               Cancel
             </Button>
-            <Button className="rounded-xl font-bold text-white bg-gradient-to-r from-orange-500 to-amber-500" disabled={takingOver} onClick={takeOver} data-testid="session-takeover-btn">
+            <Button className="rounded-xl font-bold text-primary-foreground bg-primary" disabled={takingOver} onClick={takeOver} data-testid="session-takeover-btn">
               {takingOver ? <Loader2 className="w-4 h-4 animate-spin" /> : "Log out that device and continue"}
             </Button>
           </DialogFooter>
@@ -288,19 +289,19 @@ export default function LoginPage() {
 
             <Button
               type="submit"
-              className="w-full h-12 font-bold text-sm bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white shadow-lg shadow-orange-500/25 transition-all duration-200 hover:-translate-y-0.5 active:translate-y-0 rounded-xl border-none mt-4 btn-shine group"
+              className="w-full h-12 font-semibold text-sm text-primary-foreground shadow-sm transition-all duration-200 rounded-full border-none mt-4 group bg-primary hover:bg-primary/90"
               disabled={loading}
               data-testid="login-submit-btn"
             >
               {loading ? (
                 <div className="flex items-center justify-center gap-2">
-                  <Loader2 className="w-4 h-4 animate-spin text-white" />
+                  <Loader2 className="w-4 h-4 animate-spin" />
                   <span>Signing in...</span>
                 </div>
               ) : (
                 <span className="flex items-center justify-center gap-2">
                   Sign In
-                  <ArrowRight className="w-4 h-4 transition-transform duration-200 group-hover:translate-x-1" />
+                  <ArrowChip className="h-7 w-7 -mr-2" />
                 </span>
               )}
             </Button>

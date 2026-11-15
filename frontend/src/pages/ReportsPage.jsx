@@ -281,7 +281,7 @@ export default function ReportsPage() {
       {/* Elegantly Designed Header */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 border-b border-white/5 pb-5">
         <div>
-          <h1 className="text-3xl font-extrabold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-foreground via-foreground to-muted-foreground">
+          <h1 className="text-3xl font-extrabold tracking-tight text-foreground">
             Reports & Analytics
           </h1>
           <p className="text-muted-foreground text-sm mt-1">
@@ -342,7 +342,7 @@ export default function ReportsPage() {
         <div className="space-y-6">
           {/* Summary Cards */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mobile-stat-grid">
-            <Card className="stat-card bg-gradient-to-br from-primary/5 to-transparent hover:border-primary/30 transition-all duration-300">
+            <Card className="stat-card hover:border-primary/30 transition-all duration-300 bg-primary/5">
               <CardContent className="p-6">
                 <div className="flex items-center justify-between">
                   <div>
@@ -356,7 +356,7 @@ export default function ReportsPage() {
               </CardContent>
             </Card>
 
-            <Card className="stat-card bg-gradient-to-br from-emerald-500/5 to-transparent hover:border-emerald-500/30 transition-all duration-300">
+            <Card className="stat-card hover:border-emerald-500/30 transition-all duration-300 bg-emerald-500/5">
               <CardContent className="p-6">
                 <div className="flex items-center justify-between">
                   <div>
@@ -376,7 +376,7 @@ export default function ReportsPage() {
               </CardContent>
             </Card>
 
-            <Card className="stat-card bg-gradient-to-br from-orange-500/5 to-transparent hover:border-orange-500/30 transition-all duration-300">
+            <Card className="stat-card hover:border-orange-500/30 transition-all duration-300 bg-orange-500/5">
               <CardContent className="p-6">
                 <div className="flex items-center justify-between">
                   <div>
@@ -390,7 +390,7 @@ export default function ReportsPage() {
               </CardContent>
             </Card>
 
-            <Card className="stat-card bg-gradient-to-br from-amber-500/5 to-transparent hover:border-amber-500/30 transition-all duration-300">
+            <Card className="stat-card hover:border-amber-500/30 transition-all duration-300 bg-amber-500/5">
               <CardContent className="p-6">
                 <div className="flex items-center justify-between">
                   <div>
@@ -633,7 +633,7 @@ export default function ReportsPage() {
             <div className="space-y-6 animate-fade-in">
               {/* Summary Cards */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <Card className="stat-card bg-gradient-to-br from-rose-500/10 to-transparent border-rose-500/20 hover:border-rose-500/30">
+                <Card className="stat-card border-rose-500/20 hover:border-rose-500/30 bg-rose-500/5">
                   <CardContent className="p-6">
                     <div className="flex items-center justify-between">
                       <div>
@@ -649,7 +649,7 @@ export default function ReportsPage() {
                   </CardContent>
                 </Card>
 
-                <Card className="stat-card bg-gradient-to-br from-amber-500/10 to-transparent border-amber-500/20 hover:border-amber-500/30">
+                <Card className="stat-card border-amber-500/20 hover:border-amber-500/30 bg-amber-500/5">
                   <CardContent className="p-6">
                     <div className="flex items-center justify-between">
                       <div>
@@ -665,7 +665,7 @@ export default function ReportsPage() {
                   </CardContent>
                 </Card>
 
-                <Card className="stat-card bg-gradient-to-br from-blue-500/10 to-transparent border-blue-500/20 hover:border-blue-500/30">
+                <Card className="stat-card border-blue-500/20 hover:border-blue-500/30 bg-blue-500/5">
                   <CardContent className="p-6">
                     <div className="flex items-center justify-between">
                       <div>
@@ -1019,7 +1019,7 @@ export default function ReportsPage() {
             <div className="space-y-6 animate-fade-in">
               {/* Sourcing Summary Metric Cards */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <Card className="stat-card bg-gradient-to-br from-emerald-500/5 to-transparent">
+                <Card className="stat-card bg-emerald-500/5">
                   <CardContent className="p-6 flex items-center justify-between">
                     <div>
                       <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1">Cheapest Historical Rate</p>
@@ -1035,7 +1035,7 @@ export default function ReportsPage() {
                   </CardContent>
                 </Card>
 
-                <Card className="stat-card bg-gradient-to-br from-blue-500/5 to-transparent">
+                <Card className="stat-card bg-blue-500/5">
                   <CardContent className="p-6 flex items-center justify-between">
                     <div>
                       <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1">Matched Product Name</p>
@@ -1049,7 +1049,7 @@ export default function ReportsPage() {
                   </CardContent>
                 </Card>
 
-                <Card className="stat-card bg-gradient-to-br from-orange-500/5 to-transparent">
+                <Card className="stat-card bg-orange-500/5">
                   <CardContent className="p-6 flex items-center justify-between">
                     <div>
                       <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1">Total Purchases Logs</p>
@@ -1224,7 +1224,7 @@ export default function ReportsPage() {
             <div className="space-y-6 animate-fade-in">
               {/* Summary Dashboard Grid */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <Card className="stat-card bg-gradient-to-br from-amber-500/10 to-transparent border-amber-500/20">
+                <Card className="stat-card border-amber-500/20 bg-amber-500/5">
                   <CardContent className="p-6 flex items-center justify-between">
                     <div>
                       <p className="text-xs font-semibold text-amber-400 uppercase tracking-wider mb-1">Customer Receivables (Outstanding)</p>
@@ -1239,7 +1239,7 @@ export default function ReportsPage() {
                   </CardContent>
                 </Card>
 
-                <Card className="stat-card bg-gradient-to-br from-rose-500/10 to-transparent border-rose-500/20">
+                <Card className="stat-card border-rose-500/20 bg-rose-500/5">
                   <CardContent className="p-6 flex items-center justify-between">
                     <div>
                       <p className="text-xs font-semibold text-rose-400 uppercase tracking-wider mb-1">Supplier Liabilities (Payables)</p>

@@ -16,7 +16,7 @@ import AuthLeftPanel from "../components/ui/AuthLeftPanel";
 // bar and history, and only ever sent in a POST body.
 
 const primaryBtn =
-  "w-full h-12 font-bold text-sm bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white shadow-lg shadow-orange-500/25 transition-all duration-200 hover:-translate-y-0.5 active:translate-y-0 rounded-xl border-none";
+  "w-full h-12 font-bold text-sm text-primary-foreground shadow-lg transition-all duration-200 hover:-translate-y-0.5 active:translate-y-0 rounded-xl border-none bg-primary hover:bg-primary/90";
 
 const until = (d) => new Date(d).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
 

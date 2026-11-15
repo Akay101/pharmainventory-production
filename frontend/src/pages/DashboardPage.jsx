@@ -19,7 +19,6 @@ import {
   Package,
   PackageX,
   PiggyBank,
-  Plus,
   Receipt,
   RefreshCw,
   ScanLine,
@@ -58,6 +57,7 @@ import {
 } from "recharts";
 import { toast } from "sonner";
 import Loader from "../components/Loader";
+import { ArrowChip } from "../components/ui/arrow-chip";
 
 // ---------------------------------------------------------------------------
 // Formatting
@@ -198,17 +198,16 @@ function Sparkline({ data, dataKey = "revenue", color = BRAND, id }) {
 
 function KpiCard({ icon: Icon, tone, label, value, delta, deltaLabel, footer, spark }) {
   const tones = {
-    orange: "from-orange-500/15 to-amber-500/5 text-orange-500",
-    emerald: "from-emerald-500/15 to-emerald-500/5 text-emerald-500",
-    sky: "from-sky-500/15 to-sky-500/5 text-sky-500",
-    violet: "from-violet-500/15 to-violet-500/5 text-violet-500",
+    orange: "bg-orange-500/10 text-orange-600 dark:text-orange-400",
+    emerald: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+    sky: "bg-sky-500/10 text-sky-600 dark:text-sky-400",
+    violet: "bg-violet-500/10 text-violet-600 dark:text-violet-400",
   };
   return (
     <Card className="relative overflow-hidden p-5 flex flex-col gap-3 max-md:p-3.5 max-md:gap-2 max-md:rounded-2xl">
-      <div className={`absolute -top-10 -right-10 w-36 h-36 rounded-full bg-gradient-to-br blur-2xl opacity-60 ${tones[tone]}`} />
       <div className="relative flex items-center justify-between">
-        <span className="text-[11px] font-extrabold uppercase tracking-wider text-muted-foreground max-md:text-[10px] max-md:truncate">{label}</span>
-        <div className={`w-8 h-8 max-md:w-7 max-md:h-7 max-md:shrink-0 rounded-xl bg-gradient-to-br flex items-center justify-center ${tones[tone]}`}>
+        <span className="font-mono text-[10.5px] font-medium uppercase tracking-[0.12em] text-muted-foreground max-md:text-[9.5px] max-md:truncate">{label}</span>
+        <div className={`w-8 h-8 max-md:w-7 max-md:h-7 max-md:shrink-0 rounded-xl flex items-center justify-center ${tones[tone]}`}>
           <Icon className="w-4 h-4" />
         </div>
       </div>
@@ -525,9 +524,9 @@ export default function DashboardPage() {
           <Button
             hidden={!can("billing", "create")}
             onClick={() => navigate("/billing")}
-            className="h-10 rounded-xl font-bold text-white bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 shadow-lg shadow-orange-500/25 max-md:flex-1 max-md:h-11"
+            className="group h-10 rounded-full pl-5 pr-1.5 font-semibold text-primary-foreground shadow-sm max-md:flex-1 max-md:h-11 bg-primary hover:bg-primary/90"
           >
-            <Plus className="w-4 h-4 mr-1.5" /> New bill
+            New bill <ArrowChip />
           </Button>
         </div>
       </div>
@@ -709,7 +708,7 @@ export default function DashboardPage() {
                     <div className="flex items-center gap-2.5 min-w-0">
                       <span
                         className={`w-6 h-6 rounded-lg flex items-center justify-center text-[10px] font-black shrink-0 ${
-                          i === 0 ? "bg-orange-500 text-white" : "bg-muted text-muted-foreground"
+                          i === 0 ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
                         }`}
                       >
                         {i + 1}
@@ -723,7 +722,7 @@ export default function DashboardPage() {
                   </div>
                   <div className="h-1.5 rounded-full bg-muted overflow-hidden">
                     <div
-                      className="h-full rounded-full bg-gradient-to-r from-orange-500 to-amber-400"
+                      className="h-full rounded-full bg-primary"
                       style={{ width: `${Math.max(4, (p.revenue / topMax) * 100)}%` }}
                     />
                   </div>
@@ -1044,7 +1043,7 @@ export default function DashboardPage() {
                       </Button>
                       <Button
                         size="sm"
-                        className="h-7 rounded-lg text-[11px] font-bold bg-orange-500 hover:bg-orange-600 text-white"
+                        className="h-7 rounded-lg text-[11px] font-bold bg-primary hover:bg-primary/90 text-primary-foreground"
                         onClick={() => setSupplierClearDuesDialog({ open: true, supplierId: s.id, supplierName: s.name })}
                       >
                         Settle
@@ -1158,7 +1157,7 @@ export default function DashboardPage() {
             <Button
               onClick={confirmSupplierPartialPayment}
               disabled={saving}
-              className="w-full h-11 rounded-xl font-bold text-white bg-gradient-to-r from-orange-500 to-amber-500"
+              className="w-full h-11 rounded-xl font-bold text-primary-foreground bg-primary"
             >
               {saving ? <RefreshCw className="w-4 h-4 animate-spin" /> : "Record payment"}
             </Button>
@@ -1185,7 +1184,7 @@ export default function DashboardPage() {
               Cancel
             </AlertDialogCancel>
             <AlertDialogAction
-              className="rounded-xl bg-orange-500 hover:bg-orange-600 text-white"
+              className="rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground"
               disabled={saving}
               onClick={(e) => {
                 e.preventDefault();

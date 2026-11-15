@@ -77,7 +77,7 @@ export default function NoAccessPage({ module, action = "read", path }) {
     <div className="relative mx-auto flex min-h-[70vh] max-w-2xl flex-col items-center justify-center px-4 py-10 text-center animate-fade-in" data-testid="no-access-page">
       <div aria-hidden className="pointer-events-none absolute inset-x-0 top-6 mx-auto h-64 w-64 rounded-full bg-orange-500/10 blur-3xl" />
       <div className="relative mb-6">
-        <div className="flex h-24 w-24 items-center justify-center rounded-[2rem] bg-gradient-to-br from-orange-500 to-amber-500 text-white shadow-xl shadow-orange-500/25 rotate-3">
+        <div className="flex h-24 w-24 items-center justify-center rounded-[2rem] text-primary-foreground shadow-xl rotate-3 bg-primary">
           <Lock className="h-10 w-10 -rotate-3" strokeWidth={2.4} />
         </div>
         <span className="absolute -bottom-2 -right-2 flex h-10 w-10 items-center justify-center rounded-2xl border-4 border-background bg-card text-orange-600 shadow">
@@ -94,7 +94,7 @@ export default function NoAccessPage({ module, action = "read", path }) {
       </p>
 
       <div className="mt-7 flex w-full flex-col justify-center gap-2.5 sm:w-auto sm:flex-row">
-        <Button onClick={ask} disabled={state !== "idle"} className="h-12 rounded-xl px-6 font-bold text-white bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 shadow-lg shadow-orange-500/20" data-testid="request-access-btn">
+        <Button onClick={ask} disabled={state !== "idle"} className="h-12 rounded-xl px-6 font-bold text-primary-foreground shadow-lg bg-primary hover:bg-primary/90" data-testid="request-access-btn">
           {state === "sending" ? <Loader2 className="h-4 w-4 animate-spin" /> : state === "sent" ? <><Check className="mr-2 h-4 w-4" /> Request sent to {who}</> : <><BellRing className="mr-2 h-4 w-4" /> Ask {who} for access</>}
         </Button>
         <Button variant="outline" onClick={() => (window.history.length > 1 ? navigate(-1) : navigate("/dashboard"))} className="h-12 rounded-xl px-5 font-bold">

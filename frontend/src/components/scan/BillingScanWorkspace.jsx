@@ -233,7 +233,7 @@ function ScanCard({ card, index, onUpdate, onRemove, onScan, canRemove }) {
         <button
           type="button"
           onClick={() => onScan(card.photos)}
-          className="mt-2 w-full h-10 rounded-xl bg-gradient-to-r from-orange-500 to-pink-500 text-white text-sm font-semibold flex items-center justify-center gap-2 active:scale-[0.99]"
+          className="mt-2 w-full h-10 rounded-xl text-primary-foreground text-sm font-semibold flex items-center justify-center gap-2 active:scale-[0.99] bg-primary"
         >
           <ScanLine className="h-4 w-4" /> Scan again
         </button>

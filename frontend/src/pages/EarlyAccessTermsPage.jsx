@@ -226,8 +226,7 @@ export default function EarlyAccessTermsPage() {
 
   return (
     <div className="min-h-screen bg-background text-foreground" data-testid="early-access-terms">
-      <div className="pointer-events-none absolute inset-x-0 top-0 h-[420px] bg-[radial-gradient(60%_60%_at_50%_0%,rgba(249,115,22,0.16),transparent)]" />
-
+      
       <header className="relative z-10 mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 pt-6 sm:px-6">
         <div className="flex min-w-0 items-center gap-3">
           <img src="/assets/svgs/logoBrand/logoOnlyWithoutBackground.svg" alt="DavaDesk" className="h-10 w-10 shrink-0" />
@@ -277,7 +276,7 @@ export default function EarlyAccessTermsPage() {
         <section className="mx-auto grid max-w-5xl gap-3 sm:grid-cols-2 lg:grid-cols-4" aria-label="Key points">
           {HIGHLIGHTS.map(({ icon: Icon, tone, title, text }) => (
             <div key={title} className="rounded-2xl border border-border bg-card p-4 shadow-sm">
-              <span className={`flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br ${tone} text-white shadow-md`}>
+              <span className={`flex h-10 w-10 items-center justify-center rounded-xl bg-brand/10 text-brand-soft`}>
                 <Icon className="h-5 w-5" />
               </span>
               <h2 className="mt-3 text-sm font-black leading-snug">{title}</h2>
@@ -357,7 +356,7 @@ export default function EarlyAccessTermsPage() {
             <Button
               onClick={accept}
               disabled={!agreed || saving}
-              className="h-12 shrink-0 rounded-xl px-6 font-bold text-white bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 shadow-lg shadow-orange-500/25 disabled:opacity-50"
+              className="h-12 shrink-0 rounded-xl px-6 font-bold text-primary-foreground shadow-lg disabled:opacity-50 bg-primary hover:bg-primary/90"
               data-testid="terms-accept"
             >
               {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : (

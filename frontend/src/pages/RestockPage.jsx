@@ -239,7 +239,7 @@ export default function RestockPage() {
             Select all
           </label>
           <span className="text-muted-foreground">{picked.size ? `${picked.size} selected` : "Tick reminders to order them together on one purchase"}</span>
-          <Button size="sm" disabled={!picked.size || busy === "bulk"} onClick={orderPicked} className="ml-auto h-8 rounded-lg bg-orange-600 text-xs font-bold text-white hover:bg-orange-700" data-testid="restock-order-selected">
+          <Button size="sm" disabled={!picked.size || busy === "bulk"} onClick={orderPicked} className="ml-auto h-8 rounded-lg bg-primary text-xs font-bold text-primary-foreground hover:bg-primary/90" data-testid="restock-order-selected">
             {busy === "bulk" ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Package className="mr-1 h-3.5 w-3.5" />} Order selected{picked.size ? ` (${picked.size})` : ""}
           </Button>
         </div>

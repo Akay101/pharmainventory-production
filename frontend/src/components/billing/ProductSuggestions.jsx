@@ -139,7 +139,7 @@ export function SuggestionList({
                 className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-[11px] font-bold transition-colors ${
                   filter === f.id
                     ? f.id === "expiring"
-                      ? "border-amber-500 bg-amber-500 text-white"
+                      ? "border-amber-500 bg-primary text-primary-foreground"
                       : "border-primary bg-primary text-primary-foreground"
                     : "border-border bg-card hover:bg-muted text-foreground/80"
                 }`}

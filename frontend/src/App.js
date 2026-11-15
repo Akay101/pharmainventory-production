@@ -250,11 +250,12 @@ const AuthProvider = ({ children }) => {
 
   useEffect(() => {
     restoreSession();
+    // Light by default; dark only when the user picked it
     const savedTheme = localStorage.getItem("theme");
-    if (savedTheme === "light") {
-      document.documentElement.classList.add("light");
-    } else if (savedTheme === "dark") {
+    if (savedTheme === "dark") {
       document.documentElement.classList.remove("light");
+    } else {
+      document.documentElement.classList.add("light");
     }
   }, []);
 

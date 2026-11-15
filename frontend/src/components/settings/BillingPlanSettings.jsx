@@ -118,7 +118,7 @@ export default function BillingPlanSettings({ active }) {
           <Pill status={sub.status}>{sub.status === "NONE" ? "No plan" : sub.status}</Pill>
         </CardHeader>
         <CardContent className="flex flex-wrap gap-2">
-          <Button className="rounded-xl font-bold text-white bg-gradient-to-r from-orange-500 to-amber-500" onClick={() => navigate("/upgrade")} data-testid="renew-plan-btn">
+          <Button className="rounded-xl font-bold text-primary-foreground bg-primary" onClick={() => navigate("/upgrade")} data-testid="renew-plan-btn">
             {paid ? "Renew plan" : "Choose plan"}
           </Button>
         </CardContent>

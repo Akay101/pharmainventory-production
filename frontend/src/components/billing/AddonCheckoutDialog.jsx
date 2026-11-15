@@ -98,7 +98,7 @@ export default function AddonCheckoutDialog({ open, onOpenChange, request, title
           <Button
             onClick={pay}
             disabled={!quote || paying}
-            className="w-full h-12 rounded-xl font-bold text-white bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600"
+            className="w-full h-12 rounded-xl font-bold text-primary-foreground bg-primary hover:bg-primary/90"
             data-testid="addon-pay-btn"
           >
             {paying ? <Loader2 className="w-4 h-4 animate-spin" /> : <><Lock className="w-4 h-4 mr-2" /> Pay {quote ? formatINR(quote.amount_paise) : ""} securely</>}

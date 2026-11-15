@@ -453,7 +453,7 @@ export default function CustomersPage() {
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-black tracking-tight bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent">Customers</h1>
+          <h1 className="text-3xl font-black tracking-tight text-foreground">Customers</h1>
           <p className="text-sm font-semibold text-muted-foreground">
             {pagination.total} registered customers in database
           </p>
@@ -633,7 +633,7 @@ export default function CustomersPage() {
               {/* Customer Info Card */}
               <div className="flex items-start justify-between gap-4 p-4 rounded-2xl bg-muted/20 border border-border/50">
                 <div className="flex items-center gap-3.5 min-w-0">
-                  <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-primary/15 to-indigo-500/15 border border-primary/20 flex items-center justify-center shrink-0">
+                  <div className="w-12 h-12 rounded-xl border border-primary/20 flex items-center justify-center shrink-0 bg-primary/10">
                     <Users className="w-6 h-6 text-primary" />
                   </div>
                   <div className="min-w-0">
@@ -1401,7 +1401,7 @@ export default function CustomersPage() {
                   >
                     <TableCell>
                       <div className="flex items-center gap-3">
-                        <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-primary/10 to-accent/10 border border-primary/20 flex items-center justify-center">
+                        <div className="w-9 h-9 rounded-lg border border-primary/20 flex items-center justify-center bg-primary/5">
                           <span className="font-bold text-primary">
                             {customer.name ? customer.name.charAt(0).toUpperCase() : "?"}
                           </span>

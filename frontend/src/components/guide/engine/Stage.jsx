@@ -291,17 +291,17 @@ function TypingSparks() {
 function ChapterCard({ card }) {
   return (
     <motion.div className="pointer-events-none fixed inset-0 flex items-center justify-center" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.35 }}>
-      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(20,14,40,0.86),rgba(3,3,10,0.95))]" />
+      <div className="absolute inset-0 bg-black/90" />
       <motion.div className="absolute inset-x-0 top-0 bg-black" initial={{ height: 0 }} animate={{ height: "11vh" }} exit={{ height: 0 }} transition={{ duration: 0.5, ease: [0.7, 0, 0.3, 1] }} />
       <motion.div className="absolute inset-x-0 bottom-0 bg-black" initial={{ height: 0 }} animate={{ height: "11vh" }} exit={{ height: 0 }} transition={{ duration: 0.5, ease: [0.7, 0, 0.3, 1] }} />
       <div className="relative px-6 text-center text-white">
-        <motion.p className="text-xs font-black uppercase tracking-[0.5em] text-orange-300" initial={{ opacity: 0, letterSpacing: "1.2em" }} animate={{ opacity: 1, letterSpacing: "0.5em" }} transition={{ duration: 0.9, delay: 0.15 }}>
+        <motion.p className="text-xs font-black uppercase tracking-[0.5em] font-mono text-[#ff6b00]" initial={{ opacity: 0, letterSpacing: "1.2em" }} animate={{ opacity: 1, letterSpacing: "0.5em" }} transition={{ duration: 0.9, delay: 0.15 }}>
           {String(card.n).padStart(2, "0")}
         </motion.p>
         <motion.h2 className="mt-3 text-3xl font-black tracking-tight sm:text-5xl" initial={{ opacity: 0, y: 18, filter: "blur(8px)" }} animate={{ opacity: 1, y: 0, filter: "blur(0px)" }} transition={{ duration: 0.7, delay: 0.3 }}>
           {card.title}
         </motion.h2>
-        <motion.div className="mx-auto mt-5 h-[2px] bg-gradient-to-r from-transparent via-orange-400 to-transparent" initial={{ width: 0 }} animate={{ width: 260 }} transition={{ duration: 0.9, delay: 0.55, ease: "easeOut" }} />
+        <motion.div className="mx-auto mt-5 h-[2px] bg-[#ff6b00]" initial={{ width: 0 }} animate={{ width: 260 }} transition={{ duration: 0.9, delay: 0.55, ease: "easeOut" }} />
       </div>
     </motion.div>
   );

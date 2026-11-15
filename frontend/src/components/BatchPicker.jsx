@@ -139,7 +139,7 @@ export default function BatchPicker({
               onClick={onToggleNearExpiry}
               className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold border transition-all duration-150 flex items-center gap-1 cursor-pointer ${
                 nearExpiry
-                  ? "bg-amber-500 text-white border-amber-600 shadow-xs"
+                  ? "bg-primary text-primary-foreground border-amber-600 shadow-xs"
                   : "bg-background hover:bg-muted text-muted-foreground border-border"
               }`}
               title={

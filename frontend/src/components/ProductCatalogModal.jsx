@@ -931,7 +931,7 @@ export default function ProductCatalogModal({
             form="product-catalog-form"
             onClick={handleSubmit}
             disabled={loading}
-            className="h-9 px-5 text-xs font-extrabold bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white rounded-xl shadow-sm border-none flex items-center gap-1.5 cursor-pointer"
+            className="h-9 px-5 text-xs font-extrabold text-primary-foreground rounded-xl shadow-sm border-none flex items-center gap-1.5 cursor-pointer bg-primary hover:bg-primary/90"
           >
             {loading ? (
               <Loader2 className="w-3.5 h-3.5 animate-spin" />

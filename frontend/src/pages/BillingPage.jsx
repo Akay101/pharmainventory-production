@@ -3368,7 +3368,7 @@ export default function BillingPage() {
               <Button
                 size="sm"
                 hidden={!billAcc.create}
-                className="h-8 px-3.5 text-xs font-extrabold bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white rounded-xl shadow-xs border-none max-md:h-10 max-md:shadow-md max-md:shadow-orange-500/25"
+                className="h-8 px-3.5 text-xs font-extrabold text-primary-foreground rounded-xl shadow-xs border-none max-md:h-10 max-md:shadow-md bg-primary hover:bg-primary/90"
                 onClick={handleStartNewBill}
                 data-testid="new-bill-btn"
                 data-shortcut="new"
@@ -4734,7 +4734,7 @@ export default function BillingPage() {
                 {/* Patient Restock / Refill Reminder Card */}
                 <div data-guide="refill" className={`p-3.5 rounded-2xl border transition-all duration-200 ${
                   refillReminder.enabled 
-                    ? "bg-gradient-to-br from-indigo-500/10 via-purple-500/5 to-primary/5 border-indigo-500/30 shadow-sm" 
+                    ? "border-indigo-500/30 shadow-sm bg-indigo-500/5" 
                     : "bg-muted/15 border-border/60 hover:border-border"
                 }`}>
                   <div className="flex flex-wrap items-center justify-between gap-3">
@@ -6054,7 +6054,7 @@ export default function BillingPage() {
               <Button
                 variant="outline"
                 size="sm"
-                className="h-9 text-xs font-bold rounded-xl bg-gradient-to-r from-amber-500/10 to-orange-500/10 border-amber-500/30 text-amber-600 dark:text-amber-400 hover:border-amber-500/50 cursor-pointer shadow-2xs"
+                className="h-9 text-xs font-bold rounded-xl border-amber-500/30 text-amber-600 dark:text-amber-400 hover:border-amber-500/50 cursor-pointer shadow-2xs bg-amber-500/5"
                 onClick={() => openScanner("/scan-bill")}
                 hidden={!billAcc.create}
                 data-testid="scan-bill-list-btn"
@@ -6098,7 +6098,7 @@ export default function BillingPage() {
                 }}
                 className={`h-9 text-xs font-bold rounded-xl transition-all cursor-pointer ${
                   activeViewTab === "drafts"
-                    ? "bg-orange-600 hover:bg-orange-700 text-white shadow-md"
+                    ? "bg-primary hover:bg-primary/90 text-primary-foreground shadow-md"
                     : "border-orange-500/30 text-orange-600 dark:text-orange-400 bg-orange-500/10 hover:bg-orange-500/20"
                 }`}
               >
@@ -6169,7 +6169,7 @@ export default function BillingPage() {
                     size="sm"
                     className={`h-9 text-xs font-bold rounded-xl transition-all cursor-pointer ${
                       startDate || endDate
-                        ? "bg-orange-600 hover:bg-orange-700 text-white shadow-md"
+                        ? "bg-primary hover:bg-primary/90 text-primary-foreground shadow-md"
                         : "border-border/70 hover:bg-muted"
                     }`}
                   >
@@ -6311,7 +6311,7 @@ export default function BillingPage() {
                   </div>
                 ) : insightsData ? (
                   <div className="animate-in fade-in slide-in-from-top-4 duration-700">
-                    <div className="p-6 border-b border-border/50 flex justify-between items-center bg-gradient-to-r from-primary/5 to-transparent">
+                    <div className="p-6 border-b border-border/50 flex justify-between items-center bg-primary/5">
                       <div className="flex items-center gap-3">
                         <div className="p-2.5 bg-primary/10 rounded-xl">
                           <BarChart3 className="w-5 h-5 text-primary" />
@@ -6354,7 +6354,7 @@ export default function BillingPage() {
                           </p>
                         </div>
 
-                        <div className="p-5 rounded-2xl border border-emerald-500/20 bg-gradient-to-br from-emerald-500/5 to-transparent shadow-sm relative overflow-hidden group hover:border-emerald-500/40 transition-all duration-300">
+                        <div className="p-5 rounded-2xl border border-emerald-500/20 shadow-sm relative overflow-hidden group hover:border-emerald-500/40 transition-all duration-300 bg-emerald-500/5">
                           <div className="absolute top-0 right-0 w-20 h-20 bg-emerald-500/10 rounded-full -mr-10 -mt-10 blur-xl group-hover:bg-emerald-500/20 transition-colors"></div>
                           <p className="text-xs font-bold text-emerald-700/80 dark:text-emerald-400/80 tracking-widest uppercase mb-1.5">
                             Net Profit
@@ -6375,7 +6375,7 @@ export default function BillingPage() {
                           </p>
                         </div>
 
-                        <div className="p-5 rounded-2xl border border-red-500/20 bg-gradient-to-br from-red-500/5 to-transparent shadow-sm relative overflow-hidden group hover:border-red-500/40 transition-all duration-300">
+                        <div className="p-5 rounded-2xl border border-red-500/20 shadow-sm relative overflow-hidden group hover:border-red-500/40 transition-all duration-300 bg-red-500/5">
                           <div className="absolute top-0 right-0 w-20 h-20 bg-red-500/10 rounded-full -mr-10 -mt-10 blur-xl group-hover:bg-red-500/20 transition-colors"></div>
                           <p className="text-xs font-bold text-red-700/80 dark:text-red-400/80 tracking-widest uppercase mb-1.5">
                             Unpaid Debt
@@ -6391,7 +6391,7 @@ export default function BillingPage() {
                           </p>
                         </div>
 
-                        <div className="p-5 rounded-2xl border border-blue-500/20 bg-gradient-to-br from-blue-500/5 to-transparent shadow-sm relative overflow-hidden group hover:border-blue-500/40 transition-all duration-300">
+                        <div className="p-5 rounded-2xl border border-blue-500/20 shadow-sm relative overflow-hidden group hover:border-blue-500/40 transition-all duration-300 bg-blue-500/5">
                           <div className="absolute top-0 right-0 w-20 h-20 bg-blue-500/10 rounded-full -mr-10 -mt-10 blur-xl group-hover:bg-blue-500/20 transition-colors"></div>
                           <p className="text-xs font-bold text-blue-700/80 dark:text-blue-400/80 tracking-widest uppercase mb-1.5">
                             Total Bills
@@ -6544,7 +6544,7 @@ export default function BillingPage() {
                               size="sm"
                               hidden={!billAcc.create}
                               onClick={() => handleLoadDraftToBill(d)}
-                              className="h-8 px-3 text-xs font-black bg-orange-600 hover:bg-orange-700 text-white rounded-xl shadow-xs cursor-pointer"
+                              className="h-8 px-3 text-xs font-black bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl shadow-xs cursor-pointer"
                             >
                               <ChevronRight className="w-3.5 h-3.5 mr-1" /> Complete Bill
                             </Button>
@@ -7454,7 +7454,7 @@ export default function BillingPage() {
               Skip
             </AlertDialogCancel>
             <AlertDialogAction
-              className="rounded-xl bg-gradient-to-r from-primary to-primary/90 hover:from-primary/95 hover:to-primary text-primary-foreground shadow-md shadow-primary/20 h-10 px-4 font-semibold transition-all hover:scale-[1.02] active:scale-[0.98]"
+              className="rounded-xl text-primary-foreground shadow-md h-10 px-4 font-semibold transition-all hover:scale-[1.02] active:scale-[0.98] bg-primary hover:bg-primary/90"
               onClick={async () => {
                 if (!pdfConfirmDialog.billId) return;
                 await generateBillPdf(pdfConfirmDialog.billId, pdfWithQr);
@@ -7714,7 +7714,7 @@ export default function BillingPage() {
                         e.preventDefault();
                         switchTab(tab.id);
                       }}
-                      className={`pr-8 h-9 rounded-full transition-all duration-200 ${isActive ? "bg-orange-500 text-white shadow-md shadow-orange-500/20 font-bold" : "bg-slate-100 hover:bg-slate-200 dark:bg-muted/65 dark:hover:bg-muted/90 text-slate-700 dark:text-muted-foreground border border-slate-200/80 dark:border-border/50 font-semibold"}`}
+                      className={`pr-8 h-9 rounded-full transition-all duration-200 ${isActive ? "bg-primary text-primary-foreground shadow-md font-bold" : "bg-slate-100 hover:bg-slate-200 dark:bg-muted/65 dark:hover:bg-muted/90 text-slate-700 dark:text-muted-foreground border border-slate-200/80 dark:border-border/50 font-semibold"}`}
                     >
                       <FileText className="w-3.5 h-3.5 mr-1.5 opacity-70" />
                       <span className="max-w-[120px] truncate">{tabName}</span>
@@ -7865,7 +7865,7 @@ export default function BillingPage() {
                   <Label className="text-xs font-bold">In</Label>
                   <div className="mt-1 grid h-10 grid-cols-2 gap-1 rounded-xl border border-border p-1" role="radiogroup">
                     {["packs", "units"].map((u) => (
-                      <button key={u} type="button" role="radio" aria-checked={shortBookFor.unit === u} onClick={() => setShortBookFor((s) => ({ ...s, unit: u }))} className={`rounded-lg text-xs font-bold ${shortBookFor.unit === u ? "bg-orange-600 text-white" : "text-muted-foreground"}`}>
+                      <button key={u} type="button" role="radio" aria-checked={shortBookFor.unit === u} onClick={() => setShortBookFor((s) => ({ ...s, unit: u }))} className={`rounded-lg text-xs font-bold ${shortBookFor.unit === u ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}>
                         {u === "packs" ? `Packs${shortBookFor.item.units_per_pack > 1 ? ` of ${shortBookFor.item.units_per_pack}` : ""}` : "Units"}
                       </button>
                     ))}
@@ -7894,7 +7894,7 @@ export default function BillingPage() {
                 <Button type="button" variant="outline" onClick={() => setShortBookFor(null)} className="rounded-xl text-xs font-bold">
                   Cancel
                 </Button>
-                <Button type="submit" disabled={shortBookSaving} className="rounded-xl bg-orange-600 text-xs font-bold text-white hover:bg-orange-700" data-shortcut="save">
+                <Button type="submit" disabled={shortBookSaving} className="rounded-xl bg-primary text-xs font-bold text-primary-foreground hover:bg-primary/90" data-shortcut="save">
                   {shortBookSaving ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Plus className="mr-1.5 h-4 w-4" />}
                   Add to short book
                 </Button>
@@ -7926,7 +7926,7 @@ export default function BillingPage() {
                 setPdfFor(null);
                 generateBillPdf(id, pdfWithQr);
               }}
-              className="rounded-xl bg-orange-600 text-xs font-bold text-white hover:bg-orange-700"
+              className="rounded-xl bg-primary text-xs font-bold text-primary-foreground hover:bg-primary/90"
             >
               <FileText className="mr-1.5 h-4 w-4" /> Generate PDF
             </Button>

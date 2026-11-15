@@ -551,7 +551,7 @@ export default function ReturnNotesPage({ kind }) {
             <RefreshCw className="w-3.5 h-3.5 sm:mr-1.5" />
             <span className="hidden sm:inline">Refresh</span>
           </Button>
-          <Button size="sm" hidden={!acc.create} onClick={() => openCreate()} className="h-9 rounded-xl bg-orange-600 hover:bg-orange-700 text-white font-bold text-xs shadow-md shadow-orange-600/20" data-shortcut="new" data-kbd={formatCombo("alt+n")}>
+          <Button size="sm" hidden={!acc.create} onClick={() => openCreate()} className="h-9 rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground font-bold text-xs shadow-md" data-shortcut="new" data-kbd={formatCombo("alt+n")}>
             <Plus className="w-4 h-4 mr-1.5" />
             New Return Note
           </Button>
@@ -614,7 +614,7 @@ export default function ReturnNotesPage({ kind }) {
                     {g.batches.length} batch{g.batches.length === 1 ? "" : "es"} · <span className="text-orange-500 font-bold">{inr(g.value)}</span>
                   </p>
                 </div>
-                <Button size="sm" hidden={!acc.create} onClick={() => openCreate(g.supplier_id, g.batches)} className="h-8 text-[11px] font-bold rounded-lg bg-orange-600 hover:bg-orange-700 text-white shrink-0">
+                <Button size="sm" hidden={!acc.create} onClick={() => openCreate(g.supplier_id, g.batches)} className="h-8 text-[11px] font-bold rounded-lg bg-primary hover:bg-primary/90 text-primary-foreground shrink-0">
                   Create note
                   <ArrowUpRight className="w-3 h-3 ml-1" />
                 </Button>
@@ -717,7 +717,7 @@ export default function ReturnNotesPage({ kind }) {
                       <p className="text-xs font-bold uppercase tracking-widest">
                         {search || statusFilter !== "all" || supplierFilter !== "all" ? "No notes match these filters" : "No return notes yet"}
                       </p>
-                      <Button size="sm" hidden={!acc.create} onClick={() => openCreate()} className="mt-3 h-8 text-xs font-bold rounded-xl bg-orange-600 hover:bg-orange-700 text-white">
+                      <Button size="sm" hidden={!acc.create} onClick={() => openCreate()} className="mt-3 h-8 text-xs font-bold rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground">
                         <Plus className="w-3.5 h-3.5 mr-1" />
                         New Return Note
                       </Button>
@@ -858,7 +858,7 @@ export default function ReturnNotesPage({ kind }) {
                   </Button>
                 )}
                 {selectedReturnable.length > 0 && (
-                  <Button size="sm" hidden={!acc.create} onClick={() => openCreate("", selectedReturnable)} className="h-8 rounded-xl bg-orange-600 hover:bg-orange-700 text-white text-xs font-bold">
+                  <Button size="sm" hidden={!acc.create} onClick={() => openCreate("", selectedReturnable)} className="h-8 rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground text-xs font-bold">
                     <Layers className="w-3.5 h-3.5 mr-1.5" />
                     Return {selectedReturnable.length} to supplier
                   </Button>
@@ -954,7 +954,7 @@ export default function ReturnNotesPage({ kind }) {
                               </Button>
                             )}
                             {canReturn && (
-                              <Button size="sm" hidden={!acc.create} onClick={() => openCreate(b.supplier_id || "", [b])} className="h-8 px-2 text-[11px] font-bold bg-orange-600 hover:bg-orange-700 text-white" title="Create a return note for this batch">
+                              <Button size="sm" hidden={!acc.create} onClick={() => openCreate(b.supplier_id || "", [b])} className="h-8 px-2 text-[11px] font-bold bg-primary hover:bg-primary/90 text-primary-foreground" title="Create a return note for this batch">
                                 Return
                               </Button>
                             )}
@@ -1075,7 +1075,7 @@ export default function ReturnNotesPage({ kind }) {
                             {b.batch_no} · Exp {formatExpiry(b.expiry_date)} · {b.returnable_units}u{pickerAll && b.supplier_name ? ` · ${b.supplier_name}` : ""}
                           </span>
                         </span>
-                        <span className={`text-[10px] font-black px-1.5 py-0.5 rounded shrink-0 ${added ? "bg-orange-500 text-white" : "bg-muted text-muted-foreground"}`}>{added ? "Added" : "+ Add"}</span>
+                        <span className={`text-[10px] font-black px-1.5 py-0.5 rounded shrink-0 ${added ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>{added ? "Added" : "+ Add"}</span>
                       </button>
                     );
                   })}
@@ -1180,7 +1180,7 @@ export default function ReturnNotesPage({ kind }) {
             <Button variant="outline" onClick={() => setCreateOpen(false)} className="rounded-xl text-xs font-bold">
               Cancel
             </Button>
-            <Button disabled={creating || !draftItems.length || !draftSupplier} onClick={submitCreate} className="rounded-xl bg-orange-600 hover:bg-orange-700 text-white font-bold text-xs" data-shortcut="save">
+            <Button disabled={creating || !draftItems.length || !draftSupplier} onClick={submitCreate} className="rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground font-bold text-xs" data-shortcut="save">
               {creating ? "Saving…" : `Save note · ${inr(draftTotal)}`}
             </Button>
           </DialogFooter>

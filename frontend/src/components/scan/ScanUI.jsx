@@ -2,15 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import { Camera, Check, ImagePlus, Loader2, X } from "lucide-react";
 import { MATCH_META } from "./scanClient";
 
-// Soft animated colour blobs behind the scanner screens
+// AI screens sit on the plain page background (the colour blobs were retired
+// with the landing-page restyle); kept as a component so callers don't change.
 export function AiAmbient() {
-  return (
-    <div aria-hidden className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
-      <div className="ai-blob absolute -top-24 -left-20 h-72 w-72 rounded-full bg-orange-500/20 blur-3xl" />
-      <div className="ai-blob absolute top-1/3 -right-24 h-80 w-80 rounded-full bg-fuchsia-500/15 blur-3xl" style={{ animationDelay: "-3s" }} />
-      <div className="ai-blob absolute -bottom-24 left-1/4 h-72 w-72 rounded-full bg-violet-500/15 blur-3xl" style={{ animationDelay: "-6s" }} />
-    </div>
-  );
+  return null;
 }
 
 // DavaDesk AI badge, used on every AI screen
@@ -128,7 +123,7 @@ export function ScanningView({ photo, steps, active, title = "Reading with AI", 
       <div className="flex gap-3 sm:gap-4">
         <div className="relative h-24 w-24 sm:h-28 sm:w-28 shrink-0 overflow-hidden rounded-xl bg-muted">
           {photo && <img src={photo} alt="" className="h-full w-full object-cover opacity-90" />}
-          <div className="absolute inset-0 bg-gradient-to-b from-violet-500/10 to-orange-500/10" />
+          <div className="absolute inset-0 bg-orange-500/5" />
           <div className="ai-scan-beam" />
         </div>
         <div className="min-w-0 flex-1">

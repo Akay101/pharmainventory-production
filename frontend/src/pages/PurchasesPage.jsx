@@ -969,7 +969,7 @@ const PriceTrendChart = ({
                 title={`${item.supplier}\nRate: ₹${item.rate.toFixed(2)}\nMRP: ₹${item.mrp.toFixed(2)}`}
                 className={`flex flex-col items-center gap-1.5 group cursor-pointer px-2.5 py-2 rounded-2xl min-w-[85px] shrink-0 transition-all ${
                   item.isCurrent
-                    ? "ring-2 ring-orange-500 bg-orange-500/10 shadow-md shadow-orange-500/20"
+                    ? "ring-2 ring-orange-500 bg-orange-500/10 shadow-md"
                     : item.isLowest
                       ? "ring-2 ring-sky-400 bg-sky-400/10 shadow-md shadow-sky-400/20"
                       : "hover:bg-muted/40 border border-transparent hover:border-border/60"
@@ -993,7 +993,7 @@ const PriceTrendChart = ({
                       style={{ height: `${rateHeight}%` }}
                       className={`w-full rounded-t-md transition-all duration-300 ${
                         item.isCurrent
-                          ? "bg-gradient-to-t from-orange-600 to-amber-400"
+                          ? "bg-primary"
                           : item.isLowest
                             ? "bg-sky-400"
                             : "bg-orange-500/80 group-hover:bg-orange-500"
@@ -1014,7 +1014,7 @@ const PriceTrendChart = ({
                 <span
                   className={`text-[10px] font-extrabold tracking-tight px-2 py-0.5 rounded-full mt-1 ${
                     item.isCurrent
-                      ? "bg-orange-500 text-white shadow-xs"
+                      ? "bg-primary text-primary-foreground shadow-xs"
                       : item.isLowest
                         ? "bg-sky-400 text-slate-950 font-black shadow-xs"
                         : "text-muted-foreground bg-muted/60"
@@ -4591,7 +4591,7 @@ export default function PurchasesPage() {
     >
       <style>{`
         .ai-loading-row {
-          background: linear-gradient(270deg, rgba(99, 102, 241, 0.08), rgba(168, 85, 247, 0.08), rgba(236, 72, 153, 0.08)) !important;
+          background: rgba(255, 107, 0, 0.06) !important;
           background-size: 600% 600% !important;
           animation: gradientScroll 3s ease infinite !important;
           border-left: 3px solid #6366f1 !important;
@@ -4837,7 +4837,7 @@ export default function PurchasesPage() {
                               ? "bg-emerald-500 text-white shadow-xs"
                               : status === "Unpaid"
                                 ? "bg-rose-500 text-white shadow-xs"
-                                : "bg-amber-500 text-white shadow-xs"
+                                : "bg-primary text-primary-foreground shadow-xs"
                             : "text-muted-foreground hover:bg-card"
                         }`}
                       >
@@ -5046,7 +5046,7 @@ export default function PurchasesPage() {
                     variant="default"
                     onClick={handleAutofillWithAI}
                     data-kbd={formatCombo("alt+g")}
-                    className="relative overflow-hidden group bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white shadow-md border-none font-extrabold text-xs h-9 rounded-xl px-3 flex items-center gap-1.5"
+                    className="relative overflow-hidden group text-primary-foreground shadow-md border-none font-extrabold text-xs h-9 rounded-xl px-3 flex items-center gap-1.5 bg-primary hover:bg-primary/90"
                     size="sm"
                   >
                     <Sparkles className="w-3.5 h-3.5 text-white" />
@@ -6107,7 +6107,7 @@ export default function PurchasesPage() {
                                           searchMedicine
                                         );
                                       }}
-                                      className="mt-3 inline-flex items-center gap-2 px-3.5 py-1.5 bg-orange-500 hover:bg-orange-600 text-white rounded-lg text-xs font-bold shadow-sm transition-all cursor-pointer"
+                                      className="mt-3 inline-flex items-center gap-2 px-3.5 py-1.5 bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg text-xs font-bold shadow-sm transition-all cursor-pointer"
                                     >
                                       <PackagePlus className="w-3.5 h-3.5" />
                                       Create in Product Catalog
@@ -7370,7 +7370,7 @@ export default function PurchasesPage() {
                 <Button
                   variant="outline"
                   size="sm"
-                  className="h-8 text-xs font-bold rounded-xl bg-gradient-to-r from-orange-500/10 to-amber-500/10 border-orange-500/30 text-orange-600 dark:text-orange-400 hover:border-orange-500/50 max-md:order-3 max-md:h-10"
+                  className="h-8 text-xs font-bold rounded-xl border-orange-500/30 text-orange-600 dark:text-orange-400 hover:border-orange-500/50 max-md:order-3 max-md:h-10 bg-orange-500/5"
                   onClick={() => openScanner("/scan")}
                   hidden={!purAcc.create}
                   data-testid="scan-products-btn"
@@ -7403,13 +7403,13 @@ export default function PurchasesPage() {
                   <FileText className="w-3.5 h-3.5 mr-1.5 text-orange-500" />
                   Drafts
                   {purchaseDrafts.length > 0 && (
-                    <span className="ml-1.5 rounded-full bg-orange-500 px-1.5 text-[10px] font-black text-white">{purchaseDrafts.length}</span>
+                    <span className="ml-1.5 rounded-full bg-primary px-1.5 text-[10px] font-black text-primary-foreground">{purchaseDrafts.length}</span>
                   )}
                 </Button>
 
                 <Button
                   size="sm"
-                  className="h-8 px-3.5 text-xs font-extrabold bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white rounded-xl shadow-xs border-none max-md:order-2 max-md:h-10 max-md:shadow-md max-md:shadow-orange-500/25"
+                  className="h-8 px-3.5 text-xs font-extrabold text-primary-foreground rounded-xl shadow-xs border-none max-md:order-2 max-md:h-10 max-md:shadow-md bg-primary hover:bg-primary/90"
                   onClick={handleStartNewPurchase}
                   hidden={!purAcc.create}
                   data-testid="add-purchase-btn"
@@ -8449,7 +8449,7 @@ export default function PurchasesPage() {
                 setPdfFor(null);
                 handleGeneratePurchasePdf(id);
               }}
-              className="rounded-xl bg-orange-600 text-xs font-bold text-white hover:bg-orange-700"
+              className="rounded-xl bg-primary text-xs font-bold text-primary-foreground hover:bg-primary/90"
             >
               <FileText className="mr-1.5 h-4 w-4" /> Generate PDF
             </Button>
@@ -8720,7 +8720,7 @@ export default function PurchasesPage() {
                           e.preventDefault();
                           switchTab(tab.id);
                         }}
-                        className={`pr-8 h-9 rounded-full transition-all duration-200 ${isActive ? "bg-orange-500 text-white shadow-md shadow-orange-500/20 font-bold" : "bg-slate-100 hover:bg-slate-200 dark:bg-muted/65 dark:hover:bg-muted/90 text-slate-700 dark:text-muted-foreground border border-slate-200/80 dark:border-border/50 font-semibold"}`}
+                        className={`pr-8 h-9 rounded-full transition-all duration-200 ${isActive ? "bg-primary text-primary-foreground shadow-md font-bold" : "bg-slate-100 hover:bg-slate-200 dark:bg-muted/65 dark:hover:bg-muted/90 text-slate-700 dark:text-muted-foreground border border-slate-200/80 dark:border-border/50 font-semibold"}`}
                       >
                         <FileText className="w-3.5 h-3.5 mr-1.5 opacity-70" />
                         <span className="max-w-[120px] truncate">
@@ -9001,7 +9001,7 @@ export default function PurchasesPage() {
                             <Button
                               size="sm"
                               onClick={() => handleApplyBatchToRow(batch)}
-                              className="h-8 px-3 text-xs font-extrabold bg-orange-500 hover:bg-orange-600 active:scale-95 text-white shadow-sm hover:shadow-orange-500/20 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 shrink-0"
+                              className="h-8 px-3 text-xs font-extrabold bg-primary hover:bg-primary/90 active:scale-95 text-primary-foreground shadow-sm rounded-xl transition-all cursor-pointer flex items-center gap-1.5 shrink-0"
                             >
                               <CheckCircle2 className="w-3.5 h-3.5" />
                               <span>Use Batch</span>
@@ -9320,7 +9320,7 @@ export default function PurchasesPage() {
                               <Button
                                 size="sm"
                                 onClick={() => handleApplyHistoryToRow(record)}
-                                className="h-8 px-3 text-xs font-extrabold bg-orange-500 hover:bg-orange-600 active:scale-95 text-white shadow-sm hover:shadow-orange-500/20 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 shrink-0"
+                                className="h-8 px-3 text-xs font-extrabold bg-primary hover:bg-primary/90 active:scale-95 text-primary-foreground shadow-sm rounded-xl transition-all cursor-pointer flex items-center gap-1.5 shrink-0"
                               >
                                 <Sparkles className="w-3.5 h-3.5" />
                                 <span>Apply Rate</span>
@@ -9579,7 +9579,7 @@ export default function PurchasesPage() {
             <Button
               onClick={handlePreviewPurchaseFromCsv}
               disabled={submitting || csvColumns.length === 0 || csvReading}
-              className="w-full sm:w-auto h-9 px-5 bg-orange-500 hover:bg-orange-600 text-white font-extrabold text-xs rounded-xl shadow-md cursor-pointer flex items-center justify-center gap-1.5"
+              className="w-full sm:w-auto h-9 px-5 bg-primary hover:bg-primary/90 text-primary-foreground font-extrabold text-xs rounded-xl shadow-md cursor-pointer flex items-center justify-center gap-1.5"
             >
               <Eye className="w-4 h-4" />
               <span>Preview Purchase Draft</span>

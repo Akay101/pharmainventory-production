@@ -70,13 +70,13 @@ export const assistantApi = {
 };
 
 export const AGENT_META = {
-  purchase: { label: "Purchase agent", tone: "from-orange-500 to-amber-500" },
-  billing: { label: "Billing agent", tone: "from-emerald-500 to-teal-500" },
-  inventory: { label: "Inventory agent", tone: "from-sky-500 to-blue-500" },
-  customer: { label: "Customer agent", tone: "from-pink-500 to-rose-500" },
-  supplier: { label: "Supplier agent", tone: "from-violet-500 to-purple-500" },
-  app: { label: "App assistant", tone: "from-slate-500 to-zinc-500" },
-  medi: { label: "Medi expert", tone: "from-red-500 to-pink-500" },
+  purchase: { label: "Purchase agent", tone: "bg-orange-500" },
+  billing: { label: "Billing agent", tone: "bg-emerald-600" },
+  inventory: { label: "Inventory agent", tone: "bg-sky-600" },
+  customer: { label: "Customer agent", tone: "bg-rose-600" },
+  supplier: { label: "Supplier agent", tone: "bg-violet-600" },
+  app: { label: "App assistant", tone: "bg-zinc-600" },
+  medi: { label: "Medi expert", tone: "bg-red-600" },
 };
 
 export const inr = (n) =>

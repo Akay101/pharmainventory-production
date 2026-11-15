@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
-    <meta name="theme-color" content="#ff751f" />
+    <meta name="theme-color" content="#F6F4EF" />
     <meta
       name="description"
       content="DavaDesk - Next-Gen Smart Pharmacy Management & Inventory System"
@@ -15,11 +15,12 @@
     <script>
       (function () {
         try {
+          // Light is the default; only an explicit "dark" keeps the dark theme
           var t = localStorage.getItem("theme");
-          if (t === "light") {
-            document.documentElement.classList.add("light");
-          } else if (t === "dark") {
+          if (t === "dark") {
             document.documentElement.classList.remove("light");
+          } else {
+            document.documentElement.classList.add("light");
           }
         } catch (e) {}
       })();
@@ -27,7 +28,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@600&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;600&family=Manrope:wght@300..800&display=swap"
       rel="stylesheet"
     />
     <title>DavaDesk - Pharmacy Management Software</title>

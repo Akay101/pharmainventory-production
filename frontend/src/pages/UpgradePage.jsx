@@ -334,8 +334,7 @@ export default function UpgradePage() {
   return (
     <div className="min-h-screen bg-background text-foreground relative overflow-x-hidden" data-testid="upgrade-page">
       {/* Soft brand glow */}
-      <div className="pointer-events-none absolute inset-x-0 top-0 h-[520px] bg-[radial-gradient(60%_60%_at_50%_0%,rgba(249,115,22,0.18),transparent)]" />
-
+      
       {/* Top bar */}
       <header className="relative z-10 max-w-6xl mx-auto px-4 sm:px-6 pt-6 flex items-center justify-between gap-3">
         <div className="flex items-center gap-3 min-w-0">
@@ -372,7 +371,7 @@ export default function UpgradePage() {
         <section className="text-center max-w-2xl mx-auto pt-12 pb-8 space-y-4">
           <h1 className="text-4xl sm:text-5xl font-black tracking-tight">
             Plans that grow with your{" "}
-            <span className="text-transparent bg-clip-text bg-gradient-to-r from-orange-500 to-amber-500">pharmacy</span>
+            <span className="text-foreground">pharmacy</span>
           </h1>
           <p className="text-muted-foreground text-base sm:text-lg font-medium">
             {hidden
@@ -386,7 +385,7 @@ export default function UpgradePage() {
 
           {catalogue?.offer && (
             <div
-              className="mx-auto max-w-3xl rounded-2xl bg-gradient-to-r from-orange-500 to-amber-500 text-white px-5 py-3 flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-sm font-bold shadow-lg shadow-orange-500/20"
+              className="mx-auto max-w-3xl rounded-2xl text-primary-foreground px-5 py-3 flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-sm font-bold shadow-lg bg-primary"
               data-testid="offer-banner"
             >
               <BadgePercent className="w-5 h-5" />
@@ -420,7 +419,7 @@ export default function UpgradePage() {
               <Button
                 onClick={startTrial}
                 disabled={startingTrial}
-                className="h-12 px-6 rounded-xl font-bold text-white bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 shadow-lg shadow-orange-500/25 shrink-0"
+                className="h-12 px-6 rounded-xl font-bold text-primary-foreground shadow-lg shrink-0 bg-primary hover:bg-primary/90"
                 data-testid="start-trial-btn"
               >
                 {startingTrial ? <Loader2 className="w-4 h-4 animate-spin" /> : `Start ${status.trial.days}-day free trial`}
@@ -461,12 +460,12 @@ export default function UpgradePage() {
                   <div
                     key={plan.code}
                     className={`relative flex flex-col rounded-3xl border bg-card p-7 shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-xl ${
-                      plan.highlight ? "border-orange-500/60 shadow-orange-500/10 ring-1 ring-orange-500/40" : "border-border"
+                      plan.highlight ? "border-orange-500/60 ring-1 ring-orange-500/40" : "border-border"
                     }`}
                     data-testid={`plan-card-${plan.code}`}
                   >
                     {plan.highlight && (
-                      <span className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-gradient-to-r from-orange-500 to-amber-500 px-3 py-1 text-[11px] font-extrabold uppercase tracking-wider text-white shadow">
+                      <span className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full px-3 py-1 text-[11px] font-extrabold uppercase tracking-wider text-primary-foreground shadow bg-primary">
                         Most popular
                       </span>
                     )}
@@ -523,7 +522,7 @@ export default function UpgradePage() {
                       disabled={hidden || btn.disabled || quoting === plan.code}
                       className={`h-12 rounded-xl font-bold mb-2 ${
                         plan.highlight
-                          ? "text-white bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 shadow-lg shadow-orange-500/25"
+                          ? "text-primary-foreground shadow-lg bg-primary hover:bg-primary/90"
                           : ""
                       }`}
                       variant={plan.highlight ? "default" : "outline"}
@@ -650,7 +649,7 @@ export default function UpgradePage() {
                 <Button
                   onClick={pay}
                   disabled={paying}
-                  className="w-full h-12 rounded-xl font-bold text-white bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600"
+                  className="w-full h-12 rounded-xl font-bold text-primary-foreground bg-primary hover:bg-primary/90"
                   data-testid="pay-btn"
                 >
                   {paying ? (

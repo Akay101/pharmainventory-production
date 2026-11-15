@@ -88,7 +88,7 @@ export default function TopNav({ items, isActive }) {
 
   const tabClass = (active) =>
     `group relative flex h-8 items-center gap-1.5 rounded-xl px-2.5 text-xs font-bold whitespace-nowrap transition-colors duration-200 active:scale-95 ${
-      active ? "bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-sm shadow-orange-500/30" : "text-muted-foreground hover:bg-background hover:text-foreground dark:hover:bg-muted/60"
+      active ? "text-primary-foreground shadow-sm bg-primary" : "text-muted-foreground hover:bg-background hover:text-foreground dark:hover:bg-muted/60"
     }`;
 
   const navigate = useNavigate();

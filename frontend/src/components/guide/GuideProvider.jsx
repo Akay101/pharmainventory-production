@@ -90,7 +90,7 @@ function GuideHub({ open, onOpenChange, onPick, lang }) {
                 data-testid={`guide-hub-${t.id}`}
                 className={`group flex items-center gap-3 rounded-xl border p-3 text-left transition ${ready ? "border-border hover:border-orange-500/50 hover:bg-orange-500/5" : "cursor-not-allowed border-border/50 opacity-55"}`}
               >
-                <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${ready ? "bg-gradient-to-br from-orange-500 to-amber-400 text-white" : "bg-muted text-muted-foreground"}`}>
+                <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${ready ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>
                   <Icon className="h-5 w-5" />
                 </span>
                 <span className="min-w-0 flex-1">
@@ -232,7 +232,7 @@ export function GuideButton({ tour, className = "", compact = false }) {
         data-testid={`guide-start-${tour}`}
         title={hi ? "इस पेज का गाइडेड टूर देखें" : "Watch the guided tour of this page"}
         aria-label={hi ? "गाइडेड टूर" : "Guided tour"}
-        className={`group relative inline-flex h-8 shrink-0 items-center gap-1.5 overflow-hidden rounded-xl ${compact ? "max-md:w-8 max-md:justify-center max-md:px-0" : ""} border border-violet-500/30 bg-gradient-to-r from-violet-500/10 via-fuchsia-500/10 to-orange-500/10 px-3 text-xs font-bold text-violet-700 transition hover:border-violet-500/60 dark:text-violet-300 ${hint ? "ring-2 ring-violet-500/60 ring-offset-2 ring-offset-background" : ""} ${className}`}
+        className={`group relative inline-flex h-8 shrink-0 items-center gap-1.5 overflow-hidden rounded-xl ${compact ? "max-md:w-8 max-md:justify-center max-md:px-0" : ""} border border-border bg-card px-3 text-xs font-semibold text-foreground transition hover:border-foreground/30 [&>svg]:text-brand ${hint ? "ring-2 ring-brand/60 ring-offset-2 ring-offset-background" : ""} ${className}`}
       >
         <Sparkles className="h-3.5 w-3.5 transition group-hover:rotate-12" />
         {/* compact: icon only on phones, where the header has no room */}
@@ -243,7 +243,7 @@ export function GuideButton({ tour, className = "", compact = false }) {
           <>
             <motion.span
               aria-hidden="true"
-              className="pointer-events-none absolute inset-0 rounded-xl border-2 border-violet-500"
+              className="pointer-events-none absolute inset-0 rounded-xl border-2 border-brand"
               initial={{ opacity: 0.8, scale: 1 }}
               animate={{ opacity: [0.8, 0], scale: [1, 1.35] }}
               exit={{ opacity: 0 }}
@@ -252,24 +252,24 @@ export function GuideButton({ tour, className = "", compact = false }) {
             <motion.div
               role="status"
               data-testid={`guide-hint-${tour}`}
-              className="absolute right-0 top-full z-[70] mt-3 w-[270px] max-w-[calc(100vw-24px)] rounded-2xl border border-violet-500/30 bg-card p-3.5 text-left shadow-2xl shadow-violet-500/20 max-md:left-0 max-md:right-auto"
+              className="absolute right-0 top-full z-[70] mt-3 w-[270px] max-w-[calc(100vw-24px)] rounded-2xl border border-border bg-card p-3.5 text-left shadow-2xl max-md:left-0 max-md:right-auto"
               initial={{ opacity: 0, y: -6, scale: 0.96 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: -4, scale: 0.97 }}
               transition={{ type: "spring", stiffness: 320, damping: 24 }}
             >
-              <span className="absolute -top-1.5 right-6 h-3 w-3 rotate-45 border-l border-t border-violet-500/30 bg-card max-md:left-6 max-md:right-auto" />
+              <span className="absolute -top-1.5 right-6 h-3 w-3 rotate-45 border-l border-t border-border bg-card max-md:left-6 max-md:right-auto" />
               <button type="button" onClick={later} className="absolute right-2 top-2 rounded-full p-1 text-muted-foreground hover:bg-muted" aria-label="Close">
                 <X className="h-3.5 w-3.5" />
               </button>
-              <p className="pr-5 text-sm font-black text-foreground">{hi ? "नया: इस पेज का गाइडेड टूर" : "New: a guided tour of this page"}</p>
+              <p className="pr-5 text-sm font-semibold text-foreground">{hi ? "नया: इस पेज का गाइडेड टूर" : "New: a guided tour of this page"}</p>
               <p className="mt-1 text-xs font-medium leading-relaxed text-muted-foreground">
                 {hi
                   ? "AI असिस्टेंट आवाज़ के साथ हर बटन और हर स्टेप दिखाएगा, हिंदी या English में। डेमो डेटा पर चलता है।"
                   : "The AI assistant shows you every button and step, with voice, in Hindi or English. It runs on demo data."}
               </p>
               <div className="mt-3 flex gap-2">
-                <button type="button" onClick={() => start(tour)} className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-gradient-to-r from-violet-600 to-fuchsia-600 px-3 text-xs font-bold text-white">
+                <button type="button" onClick={() => start(tour)} className="inline-flex h-8 items-center gap-1.5 rounded-full bg-primary px-3.5 text-xs font-semibold text-primary-foreground hover:bg-primary/90">
                   <Play className="h-3.5 w-3.5" /> {hi ? "टूर शुरू करें" : "Start the tour"}
                 </button>
                 <button type="button" onClick={later} className="h-8 rounded-lg px-3 text-xs font-bold text-muted-foreground hover:bg-muted">

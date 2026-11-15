@@ -206,7 +206,7 @@ export function CreditsBlock({ block, onBuy }) {
     <div className="ai-pop-in flex flex-wrap items-center gap-3 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-3.5 py-3">
       <Coins className="h-5 w-5 shrink-0 text-amber-500" />
       <p className="min-w-0 flex-1 text-sm font-medium">{block.text}</p>
-      <button type="button" onClick={onBuy} className="h-9 rounded-xl bg-gradient-to-r from-orange-500 to-pink-500 px-3.5 text-sm font-semibold text-white">
+      <button type="button" onClick={onBuy} className="h-9 rounded-xl px-3.5 text-sm font-semibold text-primary-foreground bg-primary">
         Buy credits
       </button>
     </div>
@@ -361,7 +361,7 @@ export function CreditsSheet({ open, onClose, data, refresh }) {
                   type="button"
                   onClick={() => buy(payPack)}
                   disabled={!billing || !!buying}
-                  className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 text-sm font-bold text-white hover:from-orange-600 hover:to-amber-600 disabled:opacity-60"
+                  className="flex h-12 w-full items-center justify-center gap-2 rounded-xl text-sm font-bold text-primary-foreground disabled:opacity-60 bg-primary hover:bg-primary/90"
                   data-testid="credits-pay-btn"
                 >
                   {buying ? <Loader2 className="h-4 w-4 animate-spin" /> : <><Lock className="h-4 w-4" /> Pay {inr(payPack.price_paise)} securely</>}
@@ -372,7 +372,7 @@ export function CreditsSheet({ open, onClose, data, refresh }) {
             {tab === "balance" && !payPack && (
               <div className="space-y-3">
                 {data.prices_hidden && (
-                  <div className="flex items-start gap-3 rounded-2xl border border-orange-500/30 bg-gradient-to-r from-orange-500/10 to-amber-500/10 p-3.5" data-testid="early-access-ai-note">
+                  <div className="flex items-start gap-3 rounded-2xl border border-orange-500/30 p-3.5 bg-orange-500/5" data-testid="early-access-ai-note">
                     <Sparkles className="mt-0.5 h-5 w-5 shrink-0 text-orange-500" />
                     <div className="text-sm">
                       <p className="font-bold">You're using DavaDesk free during early access</p>

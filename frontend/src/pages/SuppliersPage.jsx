@@ -656,7 +656,7 @@ export default function SuppliersPage() {
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 border-b border-border/40 pb-6 max-md:gap-3 max-md:pb-0 max-md:border-0">
         <div>
-          <h1 className="text-3xl font-extrabold tracking-tight bg-gradient-to-r from-foreground to-foreground/75 bg-clip-text text-transparent flex items-center gap-3">
+          <h1 className="text-3xl font-extrabold tracking-tight flex items-center gap-3 text-foreground">
             <div className="p-2.5 rounded-xl bg-primary/10 text-primary border border-primary/20 shrink-0">
               <Truck className="w-8 h-8" />
             </div>
@@ -1062,7 +1062,7 @@ export default function SuppliersPage() {
           ) : detailsDialog.data ? (
             <div className="flex-1 overflow-hidden flex flex-col min-h-0">
               {/* Header Section */}
-              <div className="bg-gradient-to-br from-primary/10 to-accent/5 p-6 md:p-8 flex flex-col md:flex-row justify-between items-start md:items-center border-b border-border/40 gap-4 shrink-0">
+              <div className="p-6 md:p-8 flex flex-col md:flex-row justify-between items-start md:items-center border-b border-border/40 gap-4 shrink-0 bg-primary/5">
                 <div>
                   <h2 className="text-2xl font-black tracking-tight text-foreground flex items-center gap-3">
                     <div className="w-10 h-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center border border-primary/20 shrink-0">
@@ -1478,12 +1478,12 @@ export default function SuppliersPage() {
                       className="glass bg-card/45 border-border/70 shadow-md hover:shadow-lg rounded-2xl hover:border-primary/30 transition-all duration-300 relative overflow-hidden group p-5"
                       data-testid={`supplier-card-${supplier.id}`}
                     >
-                      <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-primary/30 to-accent/30 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                      <div className="absolute top-0 left-0 right-0 h-1 opacity-0 group-hover:opacity-100 transition-opacity bg-primary/10"></div>
                       
                       <div className="flex items-start justify-between mb-4 gap-2">
                         <div className="flex items-center gap-3 min-w-0">
                           <div 
-                            className="w-12 h-12 rounded-xl bg-gradient-to-br from-primary/10 to-accent/10 border border-primary/20 flex items-center justify-center text-primary font-bold text-lg cursor-pointer hover:scale-105 transition-transform shrink-0" 
+                            className="w-12 h-12 rounded-xl border border-primary/20 flex items-center justify-center text-primary font-bold text-lg cursor-pointer hover:scale-105 transition-transform shrink-0 bg-primary/5" 
                             onClick={() => handleViewDetails(supplier.id)}
                           >
                             {initial}
@@ -1711,12 +1711,12 @@ export default function SuppliersPage() {
                       key={targetId}
                       className="glass bg-card/45 border-border/70 shadow-md hover:shadow-lg rounded-2xl hover:border-primary/30 transition-all duration-300 relative overflow-hidden group p-5 flex flex-col justify-between"
                     >
-                      <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-sky-400 to-primary/40 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                      <div className="absolute top-0 left-0 right-0 h-1 opacity-0 group-hover:opacity-100 transition-opacity bg-brand"></div>
                       
                       <div>
                         <div className="flex items-start justify-between mb-3 gap-2">
                           <div className="flex items-center gap-3 min-w-0">
-                            <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-sky-500/10 to-primary/10 border border-sky-500/20 flex items-center justify-center text-sky-400 font-bold shrink-0">
+                            <div className="w-11 h-11 rounded-xl border border-sky-500/20 flex items-center justify-center text-sky-400 font-bold shrink-0 bg-sky-500/5">
                               <Building2 className="w-5 h-5" />
                             </div>
                             <div className="min-w-0 flex-1">
@@ -1936,7 +1936,7 @@ export default function SuppliersPage() {
               <Button
                 onClick={handleSaveCsvTemplate}
                 disabled={csvTemplateDialog.saving || csvTemplateDialog.loading}
-                className="h-9 px-4 bg-orange-500 hover:bg-orange-600 text-white font-extrabold text-xs rounded-xl shadow-md cursor-pointer flex items-center gap-1.5"
+                className="h-9 px-4 bg-primary hover:bg-primary/90 text-primary-foreground font-extrabold text-xs rounded-xl shadow-md cursor-pointer flex items-center gap-1.5"
               >
                 {csvTemplateDialog.saving ? (
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />

@@ -183,9 +183,9 @@ function GuidedToursItem() {
     <DropdownMenuItem
       onClick={openHub}
       data-testid="guided-tours"
-      className="cursor-pointer font-bold py-2 px-3 rounded-xl group hover:bg-violet-500/10 focus:bg-violet-500/10 text-foreground hover:text-violet-600 focus:text-violet-600 dark:hover:text-violet-400 dark:focus:text-violet-400 transition-colors"
+      className="cursor-pointer font-bold py-2 px-3 rounded-xl group hover:bg-orange-500/10 focus:bg-orange-500/10 text-foreground hover:text-orange-600 focus:text-orange-600 dark:hover:text-orange-400 dark:focus:text-orange-400 transition-colors"
     >
-      <Clapperboard className="w-4 h-4 mr-2.5 text-violet-500 group-hover:-rotate-6 transition-transform duration-200" />
+      <Clapperboard className="w-4 h-4 mr-2.5 text-orange-500 group-hover:-rotate-6 transition-transform duration-200" />
       Guided tours
     </DropdownMenuItem>
   );
@@ -443,7 +443,7 @@ export default function DashboardLayout() {
                             onClick={() => setMobileOpen(false)}
                             className={`group flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold transition-all ${
                               isItemActive
-                                ? "bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-md shadow-orange-500/25"
+                                ? "text-primary-foreground shadow-md bg-primary"
                                 : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
                             }`}
                           >
@@ -610,7 +610,7 @@ export default function DashboardLayout() {
                     <LifeBuoy className="w-4 h-4 mr-2.5 text-orange-500" />
                     Help & Support
                     {supportUnread > 0 && (
-                      <span className="ml-auto rounded-full bg-violet-600 px-1.5 py-0.5 text-[10px] font-black text-white" aria-label={`${supportUnread} new replies`}>
+                      <span className="ml-auto rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-black text-primary-foreground" aria-label={`${supportUnread} new replies`}>
                         {supportUnread}
                       </span>
                     )}
