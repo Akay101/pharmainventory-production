@@ -108,7 +108,7 @@ export function MobileBottomNav({ items, isActive, onLogout, onOpenActivity, pha
                 // Sits inside the bar like the other tabs, so it never covers the page
                 return (
                   <button key="scan" type="button" onClick={() => setSheet("scan")} aria-label="Scan" data-tour="mtab-scan" className={`${cls} group`}>
-                    <span className="flex h-8 w-12 items-center justify-center rounded-[0.9rem] text-primary-foreground shadow-md transition-transform duration-150 group-active:scale-90 bg-primary">
+                    <span className="ink-pill flex h-8 w-12 items-center justify-center rounded-[0.9rem] text-primary-foreground shadow-md transition-transform duration-150 group-active:scale-90 bg-primary">
                       <ScanLine className="h-[1.15rem] w-[1.15rem]" />
                     </span>
                     <span className={`text-[10.5px] font-bold leading-none ${sheet === "scan" ? "text-orange-500" : "text-muted-foreground"}`}>Scan</span>

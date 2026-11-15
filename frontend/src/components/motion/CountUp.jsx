@@ -28,7 +28,12 @@ export default function CountUp({ value, duration = 1100 }) {
       if (k < 1) raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
+    return () => {
+      // Interrupted (remount, value change): never leave a half-counted figure
+      cancelAnimationFrame(raf);
+      done.current = false;
+      setShown(null);
+    };
   }, [text]);
 
   if (!m || shown === null) return <>{text}</>;

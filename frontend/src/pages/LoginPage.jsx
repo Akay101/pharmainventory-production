@@ -291,7 +291,7 @@ export default function LoginPage() {
 
             <Button
               type="submit"
-              className="w-full h-12 font-semibold text-sm text-primary-foreground shadow-sm transition-all duration-200 rounded-full border-none mt-4 group bg-primary hover:bg-primary/90"
+              className="ink-pill w-full h-12 font-semibold text-sm text-primary-foreground shadow-sm transition-all duration-200 rounded-full border-none mt-4 group bg-primary hover:bg-primary/90"
               disabled={loading}
               data-testid="login-submit-btn"
             >

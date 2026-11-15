@@ -64,8 +64,10 @@ div[style*="Made with Emergent"] {
     --card-foreground: 0 0% 9%;
     --popover: 0 0% 100%;
     --popover-foreground: 0 0% 9%;
-    --primary: 0 0% 9%;
+    /* Orange leads; black (--ink) is kept for contrast accents */
+    --primary: 22 100% 47%;
     --primary-foreground: 0 0% 100%;
+    --ink: 0 0% 9%;
     --secondary: 43 22% 92%;
     --secondary-foreground: 0 0% 9%;
     --muted: 43 22% 92%;
@@ -2465,4 +2467,15 @@ tbody tr {
   :is(button, a, [role="button"]) > .lucide {
     transition: none !important;
   }
+}
+
+/* Light mode keeps a few signature pills in ink, like the landing page's
+   "Start today", so black adds contrast without taking over */
+.light .ink-pill {
+  background-color: hsl(var(--ink)) !important;
+  color: #fff !important;
+}
+.light .ink-pill:hover {
+  background-color: hsl(var(--ink) / 0.88) !important;
+  box-shadow: 0 10px 24px -10px hsl(var(--ink) / 0.5) !important;
 }

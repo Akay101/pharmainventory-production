@@ -528,7 +528,7 @@ export default function DashboardPage() {
           <Button
             hidden={!can("billing", "create")}
             onClick={() => navigate("/billing")}
-            className="group h-10 rounded-full pl-5 pr-1.5 font-semibold text-primary-foreground shadow-sm max-md:flex-1 max-md:h-11 bg-primary hover:bg-primary/90"
+            className="ink-pill group h-10 rounded-full pl-5 pr-1.5 font-semibold text-primary-foreground shadow-sm max-md:flex-1 max-md:h-11 bg-primary hover:bg-primary/90"
           >
             New bill <ArrowChip />
           </Button>
