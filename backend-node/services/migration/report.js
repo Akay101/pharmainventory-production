@@ -134,7 +134,7 @@ function renderReport(data) {
   // Key figures
   const sc = data.status_count;
   const res = job.counts?.results || {};
-  const notImported = (sc.error || 0) + (sc.skipped || 0) + (res.product_skipped || 0);
+  const notImported = (sc.error || 0) + (sc.skipped || 0) + (res.product_skipped || 0) + (job.options?.import_incomplete === false ? sc.incomplete || 0 : 0);
   const tiles = [
     ["Records in the file", num(Object.values(sc).reduce((a, b) => a + b, 0)), C.ink],
     ["Imported", num((res.created || 0) + (res.merged || 0)), C.green],
@@ -164,6 +164,8 @@ function renderReport(data) {
     ["Uploaded", `${when(job.created_at)} by ${who(job.created_by)}`],
     ["Imported", job.committed_at ? `${when(job.committed_at)} by ${who(job.committed_by)}` : "Not imported yet"],
     ...(job.undo ? [["Undone", `${when(job.undo.at)} by ${who(job.undo.by)}`]] : []),
+    ...(sc.incomplete ? [["Incomplete records", job.options?.import_incomplete === false ? `${num(sc.incomplete)} with gaps were left out` : `${num(sc.incomplete)} imported with gaps left empty (each is listed below)`]] : []),
+    ...(job.ai ? [["Layout read by", job.ai.status === "failed" ? `AI couldn't read it (${job.ai.error}); columns were matched by their headings` : job.ai.source === "saved" ? "A layout saved from an earlier file (no AI cost)" : `AI (${job.ai.model || "Gemini"}): ${num(job.ai.calls)} call${job.ai.calls === 1 ? "" : "s"}, ${num(job.ai.input_tokens)} + ${num(job.ai.output_tokens)} tokens, cost Rs. ${Number(job.ai.cost_inr || 0).toFixed(2)}`]] : []),
     ["Import ID", job.id],
   ];
   table([{ label: "Detail", w: 0.26 }, { label: "Value", w: 0.74 }], facts, { cell: (r, c, i) => (i === 0 ? { text: r[0], bold: true, color: C.ink } : r[1] || "-"), zebra: false });
@@ -174,6 +176,8 @@ function renderReport(data) {
   const purchases = job.counts?.purchases;
   const createdRows = [
     job.entity === "purchases" && ["Purchase bills", num(job.undo ? purchases?.bills : made.purchases), purchases ? `${money(purchases.net)} before GST, ${money(purchases.gross)} with GST${meta.file_net_total ? ` (report's grand total ${money(meta.file_net_total)})` : ""}` : ""],
+    job.entity === "sales" && ["Sales bills", num(made.bills), purchases ? `${money(purchases.gross)} billed, ${num(purchases.units)} units sold` : ""],
+    job.entity === "sales" && made.stock_taken && ["Stock batches sold from", num(made.stock_taken), "The sold units were taken out of these batches"],
     ["Stock batches added", num(made.inventory), job.entity === "purchases" ? (job.options?.add_to_stock === false ? "Stock wasn't changed for this import" : "Bought quantities added to stock; they show in Inventory and billing") : ""],
     made.topped_up && ["Existing batches topped up", num(made.topped_up), "The pharmacy already had these batches; the bought units were added to them"],
     ["New products in the catalog", num(made.products), made.incomplete_products ? `${num(made.incomplete_products)} still need a manufacturer or salt in the catalog` : ""],
@@ -181,7 +185,7 @@ function renderReport(data) {
     job.entity === "customers" && ["New customers", num(made.customers), ""],
   ].filter(Boolean);
   if (job.undo) {
-    const collOf = { "Purchase bills": "purchases", "Stock batches added": "inventory", "New products in the catalog": "products", "New suppliers": "suppliers", "New customers": "customers" };
+    const collOf = { "Sales bills": "bills", "Purchase bills": "purchases", "Stock batches added": "inventory", "New products in the catalog": "products", "New suppliers": "suppliers", "New customers": "customers" };
     for (const r of createdRows) {
       const k = collOf[r[0]];
       if (!k) continue;

@@ -7,7 +7,12 @@ const GSTIN_RE = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
 const MOBILE_RE = /^(?:\+?91|0)?([6-9]\d{9})$/;
 const MONTHS = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, sept: 9, oct: 10, nov: 11, dec: 12 };
 
-const text = (v) => (v instanceof Date ? v.toISOString().slice(0, 10) : String(v ?? "").replace(/\s+/g, " ").trim());
+// Placeholders billing software prints for "nothing" ("  -   -", "*", "--") read as empty
+const text = (v) => {
+  if (v instanceof Date) return v.toISOString().slice(0, 10);
+  const s = String(v ?? "").replace(/\s+/g, " ").trim();
+  return /^[-–—*.\s]+$/.test(s) ? "" : s;
+};
 
 // "₹1,23,456.50", "(12)", "12.00 Rs" -> number; blank or "-" -> null; anything else -> NaN
 function num(v) {
@@ -38,6 +43,8 @@ function expiry(v) {
     const year = m[2].length === 2 ? 2000 + +m[2] : +m[2];
     return month >= 1 && month <= 12 ? lastDay(year, month) : null;
   }
+  m = s.match(/^\d{1,2}[-./ ]([a-z]{3})[a-z]*[-./ ](\d{2}|\d{4})$/); // 01-Jul-30, 1 jul 2030
+  if (m && MONTHS[m[1]]) return lastDay(m[2].length === 2 ? 2000 + +m[2] : +m[2], MONTHS[m[1]]);
   m = s.match(/^([a-z]{3,4})[a-z]*[-./ ']?(\d{2}|\d{4})$/); // mar-26, march 2026, MAR'26
   if (m && MONTHS[m[1]]) return lastDay(m[2].length === 2 ? 2000 + +m[2] : +m[2], MONTHS[m[1]]);
   m = s.match(/^(\d{4})[-/](\d{1,2})$/);
@@ -100,9 +107,13 @@ const isNoise = (name) => {
   return !n || /^(grand )?(sub )?total\b/.test(n) || /^(page|continued)\b/.test(n);
 };
 
-function product(cells, mapping, errors, warnings) {
+function product(cells, mapping, errors, warnings, soft = (m) => errors.push(m)) {
   const rawName = text(pick(cells, mapping, "product_name"));
-  const name = cleanProductName(rawName) || rawName;
+  // A pack size printed after the name ("... 1X10TAB", "... 1X100 ML") is read for units, then dropped
+  let bare = rawName;
+  for (let i = 0; i < 3; i++) bare = bare.replace(/\s+\d+\s*[x*]\s*\d+(\.\d+)?\s*[a-z]*\.?\s*$/i, "").replace(/\s+1\s*(pc|pcs|nos)\s*$/i, "").trim();
+  bare = bare || rawName;
+  const name = cleanProductName(bare) || bare;
   const packCell = pick(cells, mapping, "packing");
   let pack = packing(packCell);
   if (!pack.units) pack = { ...packing(rawName, true), pack_type: pack.pack_type || packing(rawName, true).pack_type };
@@ -115,7 +126,7 @@ function product(cells, mapping, errors, warnings) {
   const mrp = num(pick(cells, mapping, "mrp"));
   const rate = num(pick(cells, mapping, "purchase_rate"));
   const gst = num(pick(cells, mapping, "gst_rate"));
-  if (Number.isNaN(mrp)) errors.push("MRP isn't a number");
+  if (Number.isNaN(mrp)) soft("MRP isn't a number");
   if (Number.isNaN(rate)) warnings.push("Purchase rate isn't a number, so it's left blank");
   if (Number.isNaN(gst) || (gst !== null && (gst < 0 || gst > 28))) warnings.push("GST % isn't between 0 and 28, so it's left blank");
   if (mrp > 0 && rate > mrp) warnings.push("Purchase rate is above MRP");
@@ -124,7 +135,8 @@ function product(cells, mapping, errors, warnings) {
     product_key: `${medicineKey(name)}|${Math.round(units)}`,
     units_per_pack: Math.round(units),
     pack_type: pack.pack_type || "Strip",
-    manufacturer: text(pick(cells, mapping, "manufacturer")) || null,
+    // "INTAS PHARMA ALL/8218429756/KULDEEP": the company before any contact details
+    manufacturer: text(pick(cells, mapping, "manufacturer")).split("/")[0].replace(/\b\d{10}\b/g, "").trim() || null,
     salt_composition: text(pick(cells, mapping, "salt_composition")) || null,
     mrp_pack: mrp > 0 ? mrp : null,
     rate_pack: rate > 0 ? rate : null,
@@ -153,30 +165,56 @@ function billDate(v) {
   return null;
 }
 
-// One line of a purchase bill. History only: nothing here touches stock.
-function purchaseRow(cells, mapping, errors, warnings, { fallbackDate }) {
+// One line of a purchase or sale bill. Conventions from the file's layout:
+// quantityIn "packs" | "units" (Marg's bill-wise analysis counts units),
+// amountIncludesGst (a sale's amount is at MRP, GST inside), and fields the
+// admin chose to leave empty (a missing supplier then becomes "Unknown supplier").
+function billLine(kind, cells, mapping, errors, warnings, { fallbackDate, quantityIn = "packs", amountIncludesGst, leaveEmpty = [], soft, today }) {
   if (isNoise(pick(cells, mapping, "product_name"))) return { noise: true };
-  const data = product(cells, mapping, errors, warnings);
+  const sale = kind === "sales";
+  const inclusive = amountIncludesGst === undefined ? sale : !!amountIncludesGst;
+  const data = product(cells, mapping, errors, warnings, soft);
   if (!data.product_name) errors.push("Product name is missing");
-  const supplier = text(pick(cells, mapping, "supplier_name"));
-  if (!supplier) errors.push("Supplier is missing");
+  const partyField = sale ? "customer_name" : "supplier_name";
+  let party = text(pick(cells, mapping, partyField));
+  // Marg's cash sales: "CASH", "CASH [MARGPAY PENDING]"
+  if (sale && /^cash\b/i.test(party)) party = "";
+  if (!party) {
+    if (sale) party = "Walk-in";
+    else if (leaveEmpty.includes("supplier_name")) party = "Unknown supplier";
+    else {
+      soft("Supplier is missing");
+      party = "Unknown supplier";
+    }
+  }
   const qty = num(pick(cells, mapping, "quantity"));
-  const free = num(pick(cells, mapping, "free")) || 0;
+  let free = num(pick(cells, mapping, "free")) || 0;
+  // A return or credit note (negative quantity) isn't a bill line: it's listed, not imported
+  if (qty < 0) return { data: { ...data, [partyField]: party, invoice_no: text(pick(cells, mapping, "invoice_no")) || null }, errors: [], warnings: [], skip: "return" };
   if (!(qty >= 0) || qty === null) errors.push("Quantity is missing or not a number");
-  if (Number.isNaN(free) || free < 0) errors.push("Free quantity isn't a number");
+  if (Number.isNaN(free) || free < 0) {
+    soft("Free quantity isn't a number");
+    free = 0;
+  }
+  const rateField = sale ? "sale_rate" : "purchase_rate";
   const fileAmountEarly = num(pick(cells, mapping, "amount"));
-  let rate = num(pick(cells, mapping, "purchase_rate"));
+  let rate = num(pick(cells, mapping, rateField));
+  if (sale && (rate === null || Number.isNaN(rate))) rate = data.mrp_pack;
   // A free item (a test kit at ₹0) has a rate of 0; a missing rate comes from the line amount
-  if (rate === null || Number.isNaN(rate)) rate = qty > 0 && fileAmountEarly >= 0 ? fileAmountEarly / qty : null;
-  if (rate === null || rate < 0) errors.push("Rate is missing");
+  if (rate === null || Number.isNaN(rate)) rate = qty > 0 && fileAmountEarly >= 0 ? fileAmountEarly / (quantityIn === "units" ? qty / data.units_per_pack : qty) : null;
+  if (rate === null || Number.isNaN(rate) || rate < 0) {
+    soft("Rate is missing");
+    rate = 0;
+  }
   data.rate_pack = rate >= 0 ? rate : null;
 
-  // Total units (Marg's LOOS) is the true count; the pack size comes from it, or from the packing
+  // Units: an explicit total (Marg's LOOS), else the quantity in units or in packs
   const totalUnits = num(pick(cells, mapping, "units"));
-  const packs = (qty || 0) + (free || 0);
+  let billedPacks;
   let units;
   if (totalUnits > 0) {
     units = Math.round(totalUnits);
+    const packs = (qty || 0) + (free || 0);
     const ratio = packs > 0 ? totalUnits / packs : 0;
     if (ratio >= 1 && Math.abs(ratio - Math.round(ratio)) < 0.01) data.units_per_pack = Math.round(ratio);
     else if (packs > 0 && Math.abs(packs * data.units_per_pack - totalUnits) > Math.max(1, data.units_per_pack * 0.05)) {
@@ -185,26 +223,58 @@ function purchaseRow(cells, mapping, errors, warnings, { fallbackDate }) {
     data.product_key = `${data.product_key.split("|")[0]}|${data.units_per_pack}`;
     const i = warnings.indexOf("Units per pack not found, so it's taken as 1");
     if (i >= 0) warnings.splice(i, 1);
+    billedPacks = qty || 0;
+  } else if (quantityIn === "units") {
+    units = Math.round((qty || 0) + (free || 0));
+    billedPacks = (qty || 0) / data.units_per_pack;
   } else {
+    const packs = (qty || 0) + (free || 0);
     units = Math.round(packs * data.units_per_pack * 1000) / 1000;
-    if (!Number.isInteger(units)) errors.push(`${packs} packs of ${data.units_per_pack} come to ${units} units, which isn't a whole number`);
+    if (!Number.isInteger(units)) {
+      soft(`${packs} packs of ${data.units_per_pack} come to ${units} units, which isn't a whole number`);
+      units = Math.max(1, Math.round(units));
+    }
+    billedPacks = qty || 0;
   }
 
-  const disc = num(pick(cells, mapping, "discount")) || 0;
+  let disc = num(pick(cells, mapping, "discount")) || 0;
+  const discAmount = num(pick(cells, mapping, "discount_amount")) || 0;
+  // A discount given in rupees becomes a percent of the line
+  if (!disc && discAmount > 0 && billedPacks > 0 && rate > 0) disc = Math.round((discAmount / (billedPacks * rate)) * 10000) / 100;
   if (Number.isNaN(disc) || disc < 0 || disc > 100) warnings.push("Discount isn't between 0 and 100%, so it's taken as 0");
   const discount = disc >= 0 && disc <= 100 ? disc : 0;
-  const computed = Math.round((qty || 0) * (rate || 0) * (1 - discount / 100) * 100) / 100;
+  const gst = data.gst_rate || 0;
+  const base = Math.round(billedPacks * (rate || 0) * (1 - discount / 100) * 100) / 100;
   const fileAmount = num(pick(cells, mapping, "amount"));
-  let net = computed;
+  const tax = num(pick(cells, mapping, "tax_amount"));
+  // net = before GST, gross = with GST
+  let net;
+  let gross;
   if (fileAmount >= 0 && fileAmount !== null) {
-    if (Math.abs(fileAmount - computed) > Math.max(1, computed * 0.01)) warnings.push(`Line amount ₹${fileAmount} differs from quantity × rate less discount (₹${computed}); the file's amount is kept`);
-    net = fileAmount;
+    if (inclusive) {
+      gross = fileAmount;
+      net = tax >= 0 && tax !== null ? fileAmount - tax : fileAmount / (1 + gst / 100);
+    } else {
+      net = fileAmount;
+      gross = fileAmount * (1 + gst / 100);
+    }
+    const expected = inclusive ? gross : net;
+    if (base > 0 && Math.abs(expected - base) > Math.max(1, base * 0.02)) warnings.push(`Line amount ₹${fileAmount} differs from quantity × rate less discount (₹${base}); the file's amount is kept`);
+  } else if (inclusive) {
+    gross = base;
+    net = base / (1 + gst / 100);
+  } else {
+    net = base;
+    gross = base * (1 + gst / 100);
   }
 
   const rawDate = pick(cells, mapping, "invoice_date");
-  const date = billDate(rawDate);
-  if (!date) errors.push(text(rawDate) ? `Bill date "${text(rawDate)}" isn't a date we can read` : "Bill date is missing");
+  let date = billDate(rawDate);
   const dateFromFile = !!date && !fallbackDate;
+  if (!date) {
+    soft(text(rawDate) ? `Bill date "${text(rawDate)}" isn't a date we can read` : "Bill date is missing");
+    date = today || null; // imported anyway: dated today
+  }
 
   const rawExpiry = pick(cells, mapping, "expiry_date");
   const exp = expiry(rawExpiry);
@@ -213,17 +283,19 @@ function purchaseRow(cells, mapping, errors, warnings, { fallbackDate }) {
   return {
     data: {
       ...data,
-      supplier_name: supplier.slice(0, 120),
+      [partyField]: party.slice(0, 120),
+      ...(sale ? { customer_mobile: mobile(pick(cells, mapping, "customer_mobile")).value } : {}),
       invoice_no: text(pick(cells, mapping, "invoice_no")).toUpperCase().slice(0, 60) || null,
       purchase_date: date,
       date_from_file: dateFromFile,
       batch_no: text(pick(cells, mapping, "batch_no")).toUpperCase().slice(0, 40) || "NA",
       expiry_date: exp,
-      pack_qty: qty || 0,
-      free_packs: free || 0,
+      pack_qty: Math.round(billedPacks * 1000) / 1000,
+      free_packs: quantityIn === "units" ? Math.round(((free || 0) / data.units_per_pack) * 1000) / 1000 : free || 0,
       units,
       discount,
       net: Math.round(net * 100) / 100,
+      gross: Math.round(gross * 100) / 100,
     },
     errors,
     warnings,
@@ -234,13 +306,22 @@ function purchaseRow(cells, mapping, errors, warnings, { fallbackDate }) {
  * Normalise one row. Returns { data, errors, warnings, noise }.
  * `today` (YYYY-MM-DD) decides what counts as expired.
  */
-function normalizeRow(entity, cells, mapping, { today, includeExpired = false, quantityIn = "packs", fallbackDate = null } = {}) {
+function normalizeRow(entity, cells, mapping, { today, includeExpired = false, quantityIn = "packs", fallbackDate = null, amountIncludesGst, leaveEmpty = [], lenient = false } = {}) {
   const errors = [];
   const warnings = [];
+  // With lenient, a gap a row can still be imported with (no expiry, no MRP, no
+  // supplier...) is listed in gaps and given a safe value, instead of blocking the row
+  const gaps = [];
+  const soft = (m) => (lenient ? gaps : errors).push(m);
+  const out = normalizeEntity(entity, cells, mapping, { today, includeExpired, quantityIn, fallbackDate, amountIncludesGst, leaveEmpty, errors, warnings, soft });
+  return out.noise ? out : { ...out, gaps };
+}
+
+function normalizeEntity(entity, cells, mapping, { today, includeExpired, quantityIn, fallbackDate, amountIncludesGst, leaveEmpty, errors, warnings, soft }) {
 
   if (entity === "stock" || entity === "products") {
     if (isNoise(pick(cells, mapping, "product_name"))) return { noise: true };
-    const data = product(cells, mapping, errors, warnings);
+    const data = product(cells, mapping, errors, warnings, soft);
     if (!data.product_name) errors.push("Product name is missing");
     if (entity === "products") return { data, errors, warnings };
 
@@ -251,8 +332,8 @@ function normalizeRow(entity, cells, mapping, { today, includeExpired = false, q
     }
     const rawExpiry = pick(cells, mapping, "expiry_date");
     const exp = expiry(rawExpiry);
-    if (!exp) errors.push(text(rawExpiry) ? `Expiry "${text(rawExpiry)}" isn't a date we can read` : "Expiry is missing");
-    if (!(data.mrp_pack > 0)) errors.push("MRP is missing");
+    if (!exp && !(leaveEmpty.includes("expiry_date") && !text(rawExpiry))) soft(text(rawExpiry) ? `Expiry "${text(rawExpiry)}" isn't a date we can read` : "Expiry is missing");
+    if (!(data.mrp_pack > 0)) soft("MRP is missing");
 
     const qty = num(pick(cells, mapping, "quantity"));
     const loose = num(pick(cells, mapping, "loose_units"));
@@ -261,14 +342,16 @@ function normalizeRow(entity, cells, mapping, { today, includeExpired = false, q
     if (qty > 0 || loose > 0) {
       units = quantityIn === "units" ? qty || 0 : (qty || 0) * data.units_per_pack;
       if (loose > 0) units += loose;
-      if (Math.abs(units - Math.round(units)) > 0.001) errors.push(`Stock comes to ${+units.toFixed(3)} units, which isn't a whole number`);
-      units = Math.round(units);
+      if (Math.abs(units - Math.round(units)) > 0.001) {
+        soft(`Stock comes to ${+units.toFixed(3)} units, which isn't a whole number`);
+        units = Math.max(1, Math.round(units));
+      } else units = Math.round(units);
     }
     const skip = !errors.length && units <= 0 ? "no_stock" : !errors.length && exp && exp < today && !includeExpired ? "expired" : null;
     return { data: { ...data, batch_no: batch.slice(0, 40), expiry_date: exp, units }, errors, warnings, skip };
   }
 
-  if (entity === "purchases") return purchaseRow(cells, mapping, errors, warnings, { fallbackDate });
+  if (entity === "purchases" || entity === "sales") return billLine(entity, cells, mapping, errors, warnings, { fallbackDate, quantityIn, amountIncludesGst, leaveEmpty, soft, today });
 
   const name = text(pick(cells, mapping, "name"));
   if (isNoise(name)) return { noise: true };

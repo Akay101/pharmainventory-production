@@ -16,7 +16,7 @@ const { renderReport } = require("../services/migration/report");
 const router = express.Router();
 const db = () => mongoose.connection.db;
 
-const MAX_FILE_BYTES = 25 * 1024 * 1024;
+const MAX_FILE_BYTES = 60 * 1024 * 1024;
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_FILE_BYTES, files: 1 } });
 
 const tokenMatches = (given) => {
@@ -93,10 +93,15 @@ router.post(
       entity: String(req.body.entity || ""),
       source: String(req.body.source || ""),
       file: { buffer: req.file.buffer, name: req.file.originalname },
-      options: { include_expired: req.body.include_expired === "true", quantity_in: req.body.quantity_in, purchase_date: req.body.purchase_date, add_to_stock: req.body.add_to_stock === undefined ? undefined : req.body.add_to_stock === "true" },
+      options: {
+        include_expired: req.body.include_expired === "true",
+        quantity_in: req.body.quantity_in,
+        purchase_date: req.body.purchase_date,
+        add_to_stock: req.body.add_to_stock === undefined ? undefined : req.body.add_to_stock === "true",
+        deduct_stock: req.body.deduct_stock === undefined ? undefined : req.body.deduct_stock === "true",
+        fresh_ai: req.body.fresh_ai === "true",
+      },
     });
-    // A known report layout needs no column choices: start checking at once
-    if (job.meta?.report) await jobs.applyMapping(db(), req.importer.pharmacyId, job.id, {});
     res.status(201).json(await jobs.jobView(db(), req.importer.pharmacyId, job.id));
   })
 );
@@ -126,6 +131,12 @@ router.post("/:id/fill", handle(async (req, res) => {
 // POST /api/imports/:id/leave-empty {field, leave} - import rows with this field empty, without asking again
 router.post("/:id/leave-empty", handle(async (req, res) => {
   await jobs.leaveEmpty(db(), req.importer.pharmacyId, req.params.id, { field: String(req.body?.field || ""), leave: req.body?.leave !== false });
+  res.json(await jobs.jobView(db(), req.importer.pharmacyId, req.params.id));
+}));
+
+// POST /api/imports/:id/incomplete {include} - import rows with gaps too, or only complete rows
+router.post("/:id/incomplete", handle(async (req, res) => {
+  await jobs.setIncomplete(db(), req.importer.pharmacyId, req.params.id, { include: req.body?.include !== false });
   res.json(await jobs.jobView(db(), req.importer.pharmacyId, req.params.id));
 }));
 

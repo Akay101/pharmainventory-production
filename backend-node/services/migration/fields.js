@@ -55,11 +55,13 @@ const PURCHASE_FIELDS = [
   F("packing", "Packing", ["packing", "pack", "pack size", "unit", "uom"]),
   F("batch_no", "Batch", ["batch no", "batch", "batchno", "b no", "batch number", "lot no"]),
   F("expiry_date", "Expiry", ["expiry", "exp", "exp date", "expiry date", "expdt"]),
-  F("quantity", "Quantity (packs)", ["qty", "quantity", "pur qty", "billed qty"], { required: true }),
-  F("free", "Free (packs)", ["free", "free qty", "sch qty", "scheme qty", "bonus"]),
+  F("quantity", "Quantity", ["qty", "quantity", "pur qty", "billed qty"], { required: true }),
+  F("free", "Free quantity", ["free", "free qty", "sch qty", "scheme qty", "bonus"]),
   F("purchase_rate", "Rate (per pack)", ["rate", "purchase rate", "pur rate", "p rate", "ptr", "cost", "purchase price"], { required: true }),
-  F("discount", "Discount %", ["discount %", "discount", "dis", "disc", "dis%", "disc%", "disc %", "cd%"]),
-  F("amount", "Line amount (before GST)", ["amount", "net amount", "taxable amount", "taxable value", "value", "net value"]),
+  F("discount", "Discount %", ["discount %", "dis1 %", "dis1%", "dis", "disc", "dis%", "disc%", "disc %", "cd%"]),
+  F("amount", "Line amount", ["amount", "bill amount", "net amount", "taxable amount", "taxable value", "value", "net value"]),
+  F("tax_amount", "GST amount", ["tax amount", "gst amount", "tax amt", "gst amt"]),
+  F("discount_amount", "Discount (₹)", ["discount amount", "disc amt", "discount rs", "dis amt"]),
   F("units", "Total units", ["units", "total units", "loose", "loos", "qty in units"]),
   F("gst_rate", "GST %", ["gst %", "gst", "gst%", "tax", "tax%", "gst rate", "igst%"]),
   F("mrp", "MRP (per pack)", ["mrp", "m r p", "mrp per pack"]),
@@ -67,12 +69,64 @@ const PURCHASE_FIELDS = [
   F("hsn_no", "HSN code", ["hsn", "hsn code", "hsn sac", "hsnsac"]),
 ];
 
+const SALES_FIELDS = [
+  F("invoice_no", "Bill no.", ["bill no", "bill no#", "bill", "invoice no", "invoice", "inv no", "bill number", "voucher no", "vch no"]),
+  F("invoice_date", "Bill date", ["bill date", "date", "invoice date", "inv date", "voucher date", "sale date"]),
+  F("customer_name", "Customer", ["customer", "customer name", "party", "party name", "patient", "patient name", "account name"]),
+  F("customer_mobile", "Customer mobile", ["mobile", "phone", "mobile no", "contact", "contact no"]),
+  F("product_name", "Product name", ["item name", "item", "product", "product name", "item description", "medicine", "particulars", "description"], { required: true }),
+  F("packing", "Packing", ["packing", "pack", "pack size", "unit", "uom"]),
+  F("batch_no", "Batch", ["batch no", "batch", "batchno", "b no", "batch number"]),
+  F("expiry_date", "Expiry", ["expiry", "expriy date", "exp", "exp date", "expiry date", "expdt"]),
+  F("quantity", "Quantity", ["qty", "quantity", "sale qty", "billed qty"], { required: true }),
+  F("free", "Free quantity", ["free", "free qty", "sch qty", "scheme qty"]),
+  F("sale_rate", "Selling rate (per pack)", ["rate", "sale rate", "s rate", "selling price", "price"]),
+  F("discount", "Discount %", ["discount %", "dis1 %", "dis1%", "dis%", "disc%", "disc %"]),
+  F("amount", "Line amount", ["amount", "bill amount", "net amount", "value", "total"]),
+  F("tax_amount", "GST amount", ["tax amount", "gst amount", "tax amt"]),
+  F("discount_amount", "Discount (₹)", ["discount amount", "disc amt", "discount rs", "dis amt"]),
+  F("gst_rate", "GST %", ["gst %", "gst", "gst%", "tax%", "gst rate"]),
+  F("mrp", "MRP (per pack)", ["mrp", "m r p", "mrp per pack"]),
+  F("units", "Total units", ["units", "total units", "loose", "loos"]),
+  F("manufacturer", "Manufacturer", ["company", "company name", "mfg", "mfr", "manufacturer"]),
+];
+
+// What each field means, for the AI that reads a file's layout
+const HINTS = {
+  supplier_name: "the distributor/party the goods were bought from",
+  customer_name: "who the sale was billed to (patient/customer); often missing for walk-in sales",
+  invoice_no: "the bill/invoice/voucher number; several lines share one",
+  invoice_date: "the bill date (not the month column, not expiry)",
+  product_name: "the item/medicine name",
+  packing: "pack description such as 1X10, 10'S, 100ML",
+  batch_no: "batch/lot number",
+  expiry_date: "expiry date of the batch",
+  quantity: "quantity billed (say in quantity_unit whether it counts loose units/tablets or packs/strips)",
+  free: "free/scheme quantity",
+  purchase_rate: "purchase rate per pack/strip before discount",
+  sale_rate: "selling rate per pack/strip before discount",
+  discount: "discount as a PERCENT; only map a column whose values are percentages",
+  discount_amount: "discount in RUPEES for the line (map here, not to discount, when the column holds amounts)",
+  amount: "the line's total amount",
+  tax_amount: "GST/tax amount of the line in rupees",
+  gst_rate: "GST/tax PERCENT",
+  mrp: "MRP per pack",
+  units: "total loose units including free (only if the file has such a column)",
+  manufacturer: "company/manufacturer",
+  hsn_no: "HSN code",
+  name: "the person's or firm's name",
+  contact: "phone/mobile",
+  mobile: "phone/mobile",
+  stock_quantity: "stock quantity",
+};
+
 const ENTITIES = {
   stock: { label: "Stock with batches", fields: STOCK_FIELDS },
   products: { label: "Product list", fields: PRODUCT_FIELDS },
   suppliers: { label: "Suppliers", fields: SUPPLIER_FIELDS },
   customers: { label: "Customers", fields: CUSTOMER_FIELDS },
   purchases: { label: "Purchase history", fields: PURCHASE_FIELDS },
+  sales: { label: "Sales history (bills)", fields: SALES_FIELDS },
 };
 
 // Where each source's export steps live. The headings themselves are covered by
@@ -85,10 +139,11 @@ const SOURCES = {
       products: "Marg: Reports › Management Report › Utilities › Data Import/Export › Product Export (Excel).",
       suppliers: "Marg: Reports › Management Report › Utilities › Data Import/Export › Ledger Export (Excel), suppliers only.",
       customers: "Marg: Reports › Management Report › Utilities › Data Import/Export › Ledger Export (Excel), customers only.",
-      purchases: "Marg: Purchase › Supplier/Item wise Purchase Statement (or the purchase register with bill dates), then Excel. Upload the .xls or .xlsx as it is.",
+      purchases: "Marg: Purchase › Supplier/Item wise Purchase Statement, or the Bill Wise Purchase Analysis, then Excel. Upload the .xls or .xlsx as it is.",
+      sales: "Marg: Sale › Bill Wise Sale Analysis (or any sale register), then Excel. Upload the .xls or .xlsx as it is.",
     },
   },
   other: { label: "Other software or a spreadsheet", guides: {} },
 };
 
-module.exports = { ENTITIES, SOURCES, headerKey };
+module.exports = { ENTITIES, SOURCES, HINTS, headerKey };

@@ -4,6 +4,7 @@ const ExcelJS = require("exceljs");
 const { headerKey } = require("./fields");
 const { readXls } = require("./xls");
 const { margPurchaseStatement } = require("./margReports");
+const { readPdfTable } = require("./pdfTable");
 
 const MAX_ROWS = 200000;
 const HEADER_SCAN_ROWS = 30;
@@ -72,6 +73,22 @@ const cellValue = (v) => {
   return v;
 };
 
+// JSON: an array of records, or an object holding one ({ "data": [...] }); nested values become text
+function readJson(buffer) {
+  let doc;
+  try {
+    doc = JSON.parse(decodeText(buffer));
+  } catch {
+    throw new ImportFileError("This JSON file isn't valid JSON.");
+  }
+  const list = Array.isArray(doc) ? doc : Object.values(doc || {}).find((v) => Array.isArray(v) && v.length && typeof v[0] === "object");
+  if (!Array.isArray(list) || !list.length) throw new ImportFileError("This JSON file has no list of records in it.");
+  const keys = [];
+  for (const rec of list.slice(0, 500)) for (const k of Object.keys(rec || {})) if (!keys.includes(k)) keys.push(k);
+  const cell = (v) => (v === null || v === undefined ? "" : typeof v === "object" ? JSON.stringify(v) : v);
+  return [{ name: "JSON", rows: [keys, ...list.slice(0, MAX_ROWS).map((rec) => keys.map((k) => cell(rec?.[k])))] }];
+}
+
 async function readSheets(buffer, fileName) {
   const name = String(fileName || "").toLowerCase();
   const isZip = buffer[0] === 0x50 && buffer[1] === 0x4b;
@@ -98,7 +115,9 @@ async function readSheets(buffer, fileName) {
       return { name: ws.name, rows: Array.from(rows, (r) => r || []) };
     });
   }
-  if (name.endsWith(".pdf")) throw new ImportFileError("PDF files can't be imported yet. Export the report to Excel or CSV instead.");
+  if (name.endsWith(".pdf") || buffer.subarray(0, 4).toString("latin1") === "%PDF") return readPdfTable(buffer);
+  const textStart = decodeText(buffer.subarray(0, 64)).trimStart();
+  if (name.endsWith(".json") || /^[[{]/.test(textStart)) return readJson(buffer);
   return [{ name: "CSV", rows: parseCsv(decodeText(buffer)) }];
 }
 
@@ -137,17 +156,20 @@ function guessMapping(headers, fields) {
   return mapping;
 }
 
-// Picks the sheet and heading row that best fit, and returns the data rows after it.
-// Known report layouts (Marg's purchase statement) are flattened first.
-async function readImportFile(buffer, fileName, fields, entity) {
-  const sheets = await readSheets(buffer, fileName);
+// A known report layout that needs no AI (Marg's supplier/item-wise purchase statement), or null
+function knownReport(sheets, entity) {
   for (const sheet of sheets) {
     const report = margPurchaseStatement(sheet.rows);
     if (!report) continue;
     if (entity !== "purchases") throw new ImportFileError(`This is a ${report.meta.label}. Choose "Purchase history" for it.`);
     if (report.rows.length > MAX_ROWS) throw new ImportFileError(`This file has more than ${MAX_ROWS.toLocaleString("en-IN")} lines. Split it into smaller files.`);
-    return { sheet: sheet.name, header_row: null, headers: report.headers, mapping: guessMapping(report.headers, fields), rows: report.rows, meta: report.meta };
+    return { sheet: sheet.name, header_row: null, headers: report.headers, mapping: guessMapping(report.headers, require("./fields").ENTITIES[entity].fields), rows: report.rows, meta: report.meta };
   }
+  return null;
+}
+
+// Without AI: the sheet and heading row whose headings best match the fields, and the data rows after it
+function fromHeadings(sheets, fields) {
   let pick = null;
   for (const sheet of sheets) {
     const headerIndex = findHeader(sheet.rows, fields);
@@ -172,4 +194,9 @@ async function readImportFile(buffer, fileName, fields, entity) {
   return { sheet: pick.sheet.name, header_row: pick.headerIndex + 1, headers: pick.headers, mapping: pick.mapping, rows: dataRows };
 }
 
-module.exports = { readImportFile, parseCsv, guessMapping, findHeader, ImportFileError };
+async function readImportFile(buffer, fileName, fields, entity) {
+  const sheets = await readSheets(buffer, fileName);
+  return knownReport(sheets, entity) || fromHeadings(sheets, fields);
+}
+
+module.exports = { readImportFile, readSheets, knownReport, fromHeadings, parseCsv, guessMapping, findHeader, ImportFileError };
