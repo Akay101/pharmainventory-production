@@ -322,7 +322,8 @@ function Title({ fx, vp }) {
   const words = String(fx.text).split(" ");
   return (
     <motion.div className="fixed inset-x-0 text-center" style={{ top: vp.h * (fx.y ?? 0.16) }} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-      <div className="mx-auto max-w-3xl px-6">
+      {/* dark plate so the white headline reads over the light theme too */}
+      <div className="mx-auto w-fit max-w-[min(48rem,calc(100vw-32px))] rounded-3xl bg-[#0a0a0a]/85 px-6 py-4 shadow-2xl ring-1 ring-white/10 sm:px-8 sm:py-5">
         <h2 className="text-3xl font-black tracking-tight text-white drop-shadow-[0_6px_30px_rgba(0,0,0,0.6)] sm:text-5xl">
           {words.map((w, i) => (
             <motion.span key={i} className="mr-[0.25em] inline-block" initial={{ opacity: 0, y: 24, rotateX: 70 }} animate={{ opacity: 1, y: 0, rotateX: 0 }} transition={{ delay: 0.15 + i * 0.09, type: "spring", stiffness: 200, damping: 18 }}>
@@ -331,7 +332,7 @@ function Title({ fx, vp }) {
           ))}
         </h2>
         {fx.sub && (
-          <motion.p className="mt-3 text-base font-semibold text-white/80" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.3 + words.length * 0.09 }}>
+          <motion.p className="mt-2 font-mono text-xs font-medium uppercase tracking-[0.14em] text-[#ff6b00] sm:text-sm" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.3 + words.length * 0.09 }}>
             {fx.sub}
           </motion.p>
         )}

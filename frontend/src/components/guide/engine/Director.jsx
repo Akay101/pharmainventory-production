@@ -38,13 +38,13 @@ function LanguagePick({ tour, initial, onPick, onClose }) {
   const [hover, setHover] = useState(initial);
   return (
     <motion.div className="fixed inset-0 z-[2147483001] flex items-center justify-center p-4" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_50%_35%,rgba(76,29,149,0.55),rgba(3,3,12,0.92)_65%)] backdrop-blur-xl" onClick={onClose} />
+      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_50%_35%,rgba(58,22,0,0.9),rgba(6,6,6,0.95)_62%)] backdrop-blur-xl" onClick={onClose} />
       <div className="relative w-full max-w-lg text-center text-white">
         <motion.div className="mx-auto flex h-36 w-36 items-center justify-center" initial={{ scale: 0.3, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ type: "spring", stiffness: 140, damping: 14 }}>
-          <div className="absolute h-40 w-40 rounded-full bg-[radial-gradient(circle,rgba(236,72,153,0.45),transparent_65%)] blur-md" />
+          <div className="absolute h-40 w-40 rounded-full bg-[radial-gradient(circle,rgba(255,107,0,0.35),transparent_65%)] blur-md" />
           <Orb size={130} count={90} />
         </motion.div>
-        <motion.p className="mt-2 text-xs font-black uppercase tracking-[0.4em] text-orange-300" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.3 }}>
+        <motion.p className="mt-2 font-mono text-xs font-medium uppercase tracking-[0.4em] text-brand" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.3 }}>
           Guided tour · {tour.title.en}
         </motion.p>
         <motion.h2 className="mt-3 text-2xl font-black sm:text-3xl" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.45 }}>
@@ -62,7 +62,7 @@ function LanguagePick({ tour, initial, onPick, onClose }) {
               onMouseEnter={() => setHover(l)}
               onFocus={() => setHover(l)}
               onClick={() => onPick(l)}
-              className={`group relative overflow-hidden rounded-2xl border px-4 py-5 text-left transition-colors ${hover === l ? "border-orange-400/80 bg-white/10" : "border-white/15 bg-white/5"}`}
+              className={`group relative overflow-hidden rounded-2xl border px-4 py-5 text-left transition-colors ${hover === l ? "border-brand/80 bg-white/10" : "border-white/15 bg-white/5"}`}
               initial={{ opacity: 0, y: 16 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.7 + i * 0.1 }}
@@ -70,7 +70,7 @@ function LanguagePick({ tour, initial, onPick, onClose }) {
             >
               <div className="text-2xl font-black">{LANGS[l].label}</div>
               <div className="text-xs font-semibold text-white/60">{LANGS[l].sub}</div>
-              <Play className="absolute right-4 top-1/2 h-6 w-6 -translate-y-1/2 text-orange-300 opacity-70 transition-transform group-hover:scale-125" />
+              <Play className="absolute right-4 top-1/2 h-6 w-6 -translate-y-1/2 text-brand opacity-80 transition-transform group-hover:scale-125" />
             </motion.button>
           ))}
         </div>
@@ -98,7 +98,7 @@ function Caption({ text, progress }) {
   return (
     <p className="text-[15px] font-semibold leading-snug sm:text-[17px]">
       {words.map((w, i) => (
-        <span key={i} className="transition-colors duration-200" style={{ color: lit === -1 || i < lit ? "rgba(255,255,255,0.96)" : i === lit ? "#fdba74" : "rgba(255,255,255,0.38)" }}>
+        <span key={i} className="transition-colors duration-200" style={{ color: lit === -1 || i < lit ? "rgba(255,255,255,0.96)" : i === lit ? "#ff8a3d" : "rgba(255,255,255,0.38)" }}>
           {w}{" "}
         </span>
       ))}
@@ -127,13 +127,13 @@ function Bar({ runner, state, focusRect, tour, lang, setLang, onClose, onToggle,
   return (
     <div data-guide-layer className={`pointer-events-none fixed inset-x-0 z-[2147483002] flex justify-center px-2 ${atTop ? "top-3" : phone ? "bottom-[calc(8px+env(safe-area-inset-bottom))]" : "bottom-5"}`}>
     <motion.div key={atTop ? "top" : "bottom"} className="pointer-events-auto w-full max-w-[760px]" initial={{ opacity: 0, y: atTop ? -10 : 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}>
-      <div className="overflow-hidden rounded-[22px] bg-slate-950/95 text-white shadow-[0_24px_80px_rgba(0,0,0,0.55)] ring-1 ring-white/10">
+      <div className="overflow-hidden rounded-[22px] bg-[#0a0a0a]/95 text-white shadow-[0_24px_80px_rgba(0,0,0,0.55)] ring-1 ring-white/10">
         <div className="flex items-start gap-3 px-4 pb-2 pt-3">
           <div className="relative mt-0.5 shrink-0">
             <Orb size={34} count={30} />
           </div>
           <div className="min-w-0 flex-1">
-            <div className={`mb-0.5 flex items-center gap-2 text-[10px] font-black text-orange-300/90 ${lang === "hi" ? "text-[11px]" : "uppercase tracking-[0.18em]"}`}>
+            <div className={`mb-0.5 flex items-center gap-2 text-[10px] font-medium font-mono text-brand ${lang === "hi" ? "text-[11px]" : "uppercase tracking-[0.18em]"}`}>
               <span className="truncate">{tour.title[lang]} · {chapter?.title?.[lang]}</span>
               <span className="ml-auto shrink-0 rounded-full bg-emerald-400/15 px-2 py-0.5 text-[9px] tracking-wider text-emerald-300">{t.demo}</span>
             </div>
@@ -158,7 +158,7 @@ function Bar({ runner, state, focusRect, tour, lang, setLang, onClose, onToggle,
             return (
               <button key={s} type="button" title={tour.chapters[ci].title[lang]} onClick={() => runner.goTo(s)} className="group h-3 flex-1 py-1" style={{ flexGrow: end - s }}>
                 <div className="h-1 overflow-hidden rounded-full bg-white/15 group-hover:bg-white/25">
-                  <div className="h-full rounded-full bg-gradient-to-r from-orange-500 to-amber-300" style={{ width: `${frac * 100}%`, transition: "width 200ms linear" }} />
+                  <div className="h-full rounded-full bg-brand" style={{ width: `${frac * 100}%`, transition: "width 200ms linear" }} />
                 </div>
               </button>
             );
@@ -169,11 +169,11 @@ function Bar({ runner, state, focusRect, tour, lang, setLang, onClose, onToggle,
             <ChevronLeft className="h-5 w-5" />
           </button>
           {state.status === "error" ? (
-            <button type="button" onClick={() => runner.restartBeat()} className="flex h-9 items-center gap-1.5 rounded-full bg-orange-500 px-4 text-sm font-bold">
+            <button type="button" onClick={() => runner.restartBeat()} className="flex h-9 items-center gap-1.5 rounded-full bg-brand px-4 text-sm font-bold text-brand-foreground">
               <RotateCcw className="h-4 w-4" /> {t.retry}
             </button>
           ) : (
-            <button type="button" className="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-orange-500 to-amber-400 text-white shadow-[0_0_24px_rgba(249,115,22,0.5)] active:scale-95" onClick={onToggle} aria-label={state.paused ? "Play" : "Pause"} data-testid="guide-play">
+            <button type="button" className="flex h-10 w-10 items-center justify-center rounded-full bg-brand text-brand-foreground shadow-[0_0_20px_rgba(255,107,0,0.35)] active:scale-95" onClick={onToggle} aria-label={state.paused ? "Play" : "Pause"} data-testid="guide-play">
               {state.paused ? <Play className="ml-0.5 h-5 w-5" /> : <Pause className="h-5 w-5" />}
             </button>
           )}
@@ -213,19 +213,19 @@ function Outro({ tour, lang, onReplay, onClose, next }) {
   const t = T[lang];
   return (
     <motion.div data-guide-layer className="fixed inset-0 z-[2147483002] flex items-center justify-center p-4" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_50%_40%,rgba(124,45,18,0.5),rgba(3,3,12,0.92)_65%)] backdrop-blur-xl" />
+      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_50%_40%,rgba(58,22,0,0.9),rgba(6,6,6,0.95)_62%)] backdrop-blur-xl" />
       <div className="relative max-w-md text-center text-white">
         <motion.div className="mx-auto flex h-28 w-28 items-center justify-center" initial={{ scale: 0.4 }} animate={{ scale: 1 }} transition={{ type: "spring", stiffness: 160, damping: 12 }}>
           <Orb size={110} count={80} />
         </motion.div>
-        <p className="mt-2 text-xs font-black uppercase tracking-[0.4em] text-orange-300">{t.done}</p>
+        <p className="mt-2 font-mono text-xs font-medium uppercase tracking-[0.4em] text-brand">{t.done}</p>
         <h2 className="mt-2 text-4xl font-black">{tour.title[lang]}</h2>
         {tour.outro?.[lang] && <p className="mt-3 text-sm text-white/75">{tour.outro[lang]}</p>}
         <div className="mt-7 flex flex-wrap justify-center gap-2">
           <button type="button" onClick={onReplay} className="flex h-11 items-center gap-2 rounded-full border border-white/20 px-5 text-sm font-bold hover:bg-white/10">
             <RotateCcw className="h-4 w-4" /> {t.again}
           </button>
-          <button type="button" onClick={onClose} className="flex h-11 items-center gap-2 rounded-full bg-gradient-to-r from-orange-500 to-amber-400 px-6 text-sm font-black shadow-[0_0_30px_rgba(249,115,22,0.45)]" data-testid="guide-try">
+          <button type="button" onClick={onClose} className="flex h-11 items-center gap-2 rounded-full bg-brand px-6 text-sm font-black text-brand-foreground shadow-[0_0_24px_rgba(255,107,0,0.35)]" data-testid="guide-try">
             {t.tryIt}
           </button>
         </div>
@@ -429,7 +429,7 @@ export default function Director({ tour, env, initialLang, onLang, onClose, next
         <>
           {/* Catches clicks on the page while playing: they pause the tour */}
           {!state.paused && !state.busy && <div data-guide-layer className="fixed inset-0 z-[2147482999] cursor-pointer" onClick={() => runnerRef.current?.pause()} />}
-          {state.busy && <div data-guide-layer className="fixed inset-0 z-[2147482999] bg-slate-950/85" />}
+          {state.busy && <div data-guide-layer className="fixed inset-0 z-[2147482999] bg-[#0a0a0a]/85" />}
           {!state.paused && <Stage state={state} rect={focusRect} speaking={speaking} compact={phone} quality={quality} lang={lang} />}
           <Bar runner={runnerRef.current} state={state} focusRect={focusRect} tour={tour} lang={lang} setLang={setLang} onClose={onClose} onToggle={toggle} phone={phone} captionsOn={captionsOn} setCaptionsOn={setCaptionsOn} />
         </>

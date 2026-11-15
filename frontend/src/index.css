@@ -2059,7 +2059,7 @@ html.kbd-hints [data-kbd]::after {
    rainbow ring is a large conic gradient spun with a transform (GPU) inside a
    static ring mask, so nothing is repainted per frame. */
 .guide-halo {
-  box-shadow: 0 0 0 2px hsl(var(--background) / 0.9), 0 0 28px 6px rgba(255, 107, 0, 0.4), 0 0 80px 18px rgba(255, 107, 0, 0.15);
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.85), 0 0 28px 6px rgba(249, 115, 22, 0.45), 0 0 80px 18px rgba(168, 85, 247, 0.25);
 }
 .guide-halo-ring {
   position: absolute;
@@ -2075,7 +2075,7 @@ html.kbd-hints [data-kbd]::after {
   position: absolute;
   left: 50%;
   top: 50%;
-  background: conic-gradient(#ff6b00, #ffc9a1, hsl(var(--foreground)), #ffc9a1, #ff6b00);
+  background: conic-gradient(#f97316, #ec4899, #a855f7, #6366f1, #f97316);
   animation: guide-spin 3.2s linear infinite;
   will-change: transform;
 }
