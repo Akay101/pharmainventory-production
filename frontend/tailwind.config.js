@@ -71,7 +71,29 @@ module.exports = {
   				'5': 'hsl(var(--chart-5))'
   			}
   		},
+  		transitionTimingFunction: {
+  			// Expo-out: fast start, long soft landing. The house curve for motion.
+  			out: 'cubic-bezier(0.16, 1, 0.3, 1)',
+  			spring: 'cubic-bezier(0.34, 1.56, 0.64, 1)',
+  			snap: 'cubic-bezier(0.2, 0.8, 0.2, 1)'
+  		},
   		keyframes: {
+  			// Windows (dialogs): rise out of a slightly smaller, softer self.
+  			// No "to" frame, so the element's own centring transform is kept.
+  			'dialog-in': {
+  				from: { opacity: '0', transform: 'translate(-50%, calc(-50% + 22px)) scale(0.9)', filter: 'blur(6px)' }
+  			},
+  			'dialog-out': {
+  				to: { opacity: '0', transform: 'translate(-50%, calc(-50% + 14px)) scale(0.94)', filter: 'blur(4px)' }
+  			},
+  			'overlay-in': { from: { opacity: '0', backdropFilter: 'blur(0px)' } },
+  			'overlay-out': { to: { opacity: '0', backdropFilter: 'blur(0px)' } },
+  			// Floating panels grow from the control that opened them (Radix sets the origin)
+  			'pop-in': { from: { opacity: '0', transform: 'translateY(var(--pop-y, -6px)) scale(0.94)', filter: 'blur(2px)' } },
+  			'pop-out': { to: { opacity: '0', transform: 'translateY(-2px) scale(0.97)' } },
+  			'tip-in': { from: { opacity: '0', transform: 'translateY(var(--pop-y, -3px)) scale(0.92)' } },
+  			// Content that replaces other content (tab panels, wizard steps)
+  			'panel-in': { from: { opacity: '0', transform: 'translateY(8px)' } },
   			'accordion-down': {
   				from: {
   					height: '0'
@@ -90,6 +112,14 @@ module.exports = {
   			}
   		},
   		animation: {
+  			'dialog-in': 'dialog-in 520ms cubic-bezier(0.16, 1, 0.3, 1) both',
+  			'dialog-out': 'dialog-out 200ms cubic-bezier(0.4, 0, 1, 1) both',
+  			'overlay-in': 'overlay-in 360ms cubic-bezier(0.16, 1, 0.3, 1) both',
+  			'overlay-out': 'overlay-out 220ms ease-in both',
+  			'pop-in': 'pop-in 300ms cubic-bezier(0.16, 1, 0.3, 1) both',
+  			'pop-out': 'pop-out 150ms ease-in both',
+  			'tip-in': 'tip-in 220ms cubic-bezier(0.16, 1, 0.3, 1) both',
+  			'panel-in': 'panel-in 420ms cubic-bezier(0.16, 1, 0.3, 1) both',
   			'accordion-down': 'accordion-down 0.2s ease-out',
   			'accordion-up': 'accordion-up 0.2s ease-out'
   		}

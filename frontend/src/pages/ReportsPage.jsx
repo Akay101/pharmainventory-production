@@ -58,6 +58,7 @@ import {
 import { toast } from "sonner";
 import Loader from "../components/Loader";
 import { formatExpiry } from "./utils";
+import Glider from "../components/motion/Glider";
 
 const COLORS = ["#10B981", "#8B5CF6", "#3B82F6", "#F59E0B", "#EF4444"];
 
@@ -291,7 +292,7 @@ export default function ReportsPage() {
 
         {/* Global Days Selector */}
         {activeTab === "financial" && (
-          <div className="flex items-center gap-3 bg-card/40 border border-white/5 rounded-xl px-3 py-1.5 backdrop-blur-sm self-start md:self-auto">
+          <div data-panel className="flex items-center gap-3 bg-card/40 border border-white/5 rounded-xl px-3 py-1.5 backdrop-blur-sm self-start md:self-auto">
             <Calendar className="w-4 h-4 text-primary" />
             <Select value={days} onValueChange={setDays}>
               <SelectTrigger className="w-40 border-0 bg-transparent focus:ring-0 focus:ring-offset-0 text-sm font-medium p-0 h-auto" data-testid="days-select">
@@ -309,7 +310,8 @@ export default function ReportsPage() {
       </div>
 
       {/* Modern Pill-Shaped Tab Switcher */}
-      <div className="flex overflow-x-auto space-x-1 p-1 bg-card/40 border border-white/5 rounded-xl max-w-3xl backdrop-blur-md">
+      <div className="dd-glide-row relative flex overflow-x-auto space-x-1 p-1 bg-card border border-border rounded-xl max-w-3xl">
+        <Glider className="bg-primary shadow-sm" />
         {[
           { id: "financial", label: "Financial Metrics", icon: BarChart3 },
           { id: "products", label: "Product Performance", icon: TrendingUp },
@@ -321,11 +323,12 @@ export default function ReportsPage() {
           return (
             <button
               key={tab.id}
+              data-active={activeTab === tab.id ? "true" : undefined}
               onClick={() => setActiveTab(tab.id)}
-              className={`flex items-center gap-2 px-4 py-2 text-xs md:text-sm font-medium rounded-lg whitespace-nowrap transition-all duration-200 ${
+              className={`flex items-center gap-2 px-4 py-2 text-xs md:text-sm font-medium rounded-lg whitespace-nowrap transition-colors duration-300 ${
                 activeTab === tab.id
-                  ? "bg-primary text-primary-foreground shadow-lg shadow-primary/20 scale-[1.02]"
-                  : "text-muted-foreground hover:text-foreground hover:bg-white/5"
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:text-foreground"
               }`}
             >
               <Icon className="w-4 h-4" />
@@ -339,7 +342,7 @@ export default function ReportsPage() {
 
       {/* TAB 1: FINANCIAL PERFORMANCE */}
       {activeTab === "financial" && (
-        <div className="space-y-6">
+        <div data-panel className="space-y-6">
           {/* Summary Cards */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mobile-stat-grid">
             <Card className="stat-card hover:border-primary/30 transition-all duration-300 bg-primary/5">
@@ -623,7 +626,7 @@ export default function ReportsPage() {
 
       {/* TAB 2: INVENTORY & EXPIRY HEALTH */}
       {activeTab === "inventory" && (
-        <div className="space-y-6">
+        <div data-panel className="space-y-6">
           {loadingInventory ? (
             <div className="flex flex-col items-center justify-center py-20 gap-4">
               <div className="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
@@ -823,7 +826,7 @@ export default function ReportsPage() {
 
       {/* TAB 3: SOURCING PRICE AUDITOR */}
       {activeTab === "sourcing" && (
-        <div className="space-y-6">
+        <div data-panel className="space-y-6">
           <Card className="glass border-white/5 shadow-md overflow-visible">
             <CardHeader className="border-b border-white/5 bg-white/[0.01] px-6 py-4">
               <CardTitle className="text-lg font-bold flex items-center gap-2">
@@ -1217,7 +1220,7 @@ export default function ReportsPage() {
 
       {/* TAB 4: DEBT & CREDIT RISKS */}
       {activeTab === "dues" && (
-        <div className="space-y-6">
+        <div data-panel className="space-y-6">
           {loadingDebtDues ? (
             <Loader size="md" text="Calculating outstanding accounts receivables and payables..." />
           ) : (

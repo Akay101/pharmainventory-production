@@ -58,6 +58,8 @@ import {
 import { toast } from "sonner";
 import Loader from "../components/Loader";
 import { ArrowChip } from "../components/ui/arrow-chip";
+import Glider from "../components/motion/Glider";
+import CountUp from "../components/motion/CountUp";
 
 // ---------------------------------------------------------------------------
 // Formatting
@@ -212,7 +214,7 @@ function KpiCard({ icon: Icon, tone, label, value, delta, deltaLabel, footer, sp
         </div>
       </div>
       <div className="relative">
-        <div className="text-[28px] max-md:text-[22px] leading-none font-black tracking-tight text-foreground tabular-nums">{value}</div>
+        <div className="text-[28px] max-md:text-[22px] leading-none font-black tracking-tight text-foreground tabular-nums"><CountUp value={value} /></div>
         <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px] font-semibold text-muted-foreground">
           {delta}
           {deltaLabel && <span>{deltaLabel}</span>}
@@ -240,12 +242,14 @@ function ChartTooltip({ active, payload, label, metric }) {
 
 function SegmentedToggle({ value, onChange, options }) {
   return (
-    <div className="inline-flex items-center rounded-xl border border-border bg-muted/60 p-0.5">
+    <div className="dd-glide-row relative inline-flex items-center rounded-xl border border-border bg-muted/60 p-0.5">
+      <Glider className="bg-card shadow-sm" />
       {options.map(([v, label]) => (
         <button
           key={v}
+          data-active={value === v ? "true" : undefined}
           onClick={() => onChange(v)}
-          className={`px-2.5 py-1 text-[11px] font-bold rounded-lg transition-colors ${
+          className={`px-2.5 py-1 text-[11px] font-bold rounded-lg transition-colors duration-300 ${
             value === v ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
           }`}
         >

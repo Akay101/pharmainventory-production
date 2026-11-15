@@ -22,6 +22,7 @@ import {
 import Loader from "../components/Loader";
 import { Popover, PopoverContent, PopoverTrigger } from "../components/ui/popover";
 import { formatCombo } from "../lib/shortcuts";
+import Glider from "../components/motion/Glider";
 
 const TABS = [
   ["pending", "To order"],
@@ -180,7 +181,8 @@ export default function ShortBookPage() {
       </div>
 
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex gap-1 overflow-x-auto border-b border-border/60" role="tablist">
+        <div className="dd-glide-row relative flex gap-1 overflow-x-auto border-b border-border/60" role="tablist">
+          <Glider variant="tab" />
           {TABS.map(([id, label]) => (
             <button
               key={id}
@@ -195,14 +197,15 @@ export default function ShortBookPage() {
             </button>
           ))}
         </div>
-        <div className="flex h-8 shrink-0 rounded-lg border border-border/70 bg-muted/30 p-0.5" role="group" aria-label="Section">
+        <div className="dd-glide-row relative flex h-8 shrink-0 rounded-lg border border-border/70 bg-muted/30 p-0.5" role="group" aria-label="Section">
+          <Glider className="bg-primary" />
           {SECTIONS.map(([id, label]) => (
             <button
               key={id}
               type="button"
               aria-pressed={section === id}
               onClick={() => setSection(id)}
-              className={`px-2.5 text-[11px] font-bold rounded-md ${section === id ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
+              className={`px-2.5 text-[11px] font-bold rounded-md transition-colors duration-300 ${section === id ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
             >
               {label}
               {id !== "all" && data.sections?.[id] && section === "all" ? ` (${data.sections[id]})` : ""}

@@ -36,7 +36,7 @@ const DropdownMenuSubContent = React.forwardRef(({ className, ...props }, ref) =
   <DropdownMenuPrimitive.SubContent
     ref={ref}
     className={cn(
-      "z-[999999] min-w-[8rem] overflow-hidden rounded-md border bg-popover p-1 text-popover-foreground shadow-lg data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 origin-[--radix-dropdown-menu-content-transform-origin]",
+      "z-[999999] min-w-[8rem] overflow-hidden rounded-md border bg-popover p-1 text-popover-foreground shadow-lg origin-[--radix-dropdown-menu-content-transform-origin] data-[state=open]:animate-pop-in data-[state=closed]:animate-pop-out data-[side=top]:[--pop-y:6px] data-[side=left]:[--pop-y:0px] data-[side=right]:[--pop-y:0px]",
       className
     )}
     {...props} />
@@ -51,7 +51,7 @@ const DropdownMenuContent = React.forwardRef(({ className, sideOffset = 4, ...pr
       sideOffset={sideOffset}
       className={cn(
         "z-[999999] max-h-[var(--radix-dropdown-menu-content-available-height)] min-w-[8rem] overflow-y-auto overflow-x-hidden rounded-md border bg-popover p-1 text-popover-foreground shadow-md",
-        "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 origin-[--radix-dropdown-menu-content-transform-origin]",
+        "origin-[--radix-dropdown-menu-content-transform-origin] data-[state=open]:animate-pop-in data-[state=closed]:animate-pop-out data-[side=top]:[--pop-y:6px] data-[side=left]:[--pop-y:0px] data-[side=right]:[--pop-y:0px]",
         className
       )}
       {...props} />

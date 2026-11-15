@@ -28,12 +28,14 @@ import {
 import ThemeToggle from "../components/ui/ThemeToggle";
 import FluidLinePattern from "../components/ui/FluidLinePattern";
 import AuthLeftPanel from "../components/ui/AuthLeftPanel";
+import { warmIntro } from "../components/motion/IntroFilm";
 
 const STEPS = ["Personal Info", "Pharmacy Details", "Verify Email"];
 
 const RESEND_COOLDOWN_S = 60;
 
 export default function RegisterPage() {
+  useEffect(() => warmIntro(), []);
   const location = useLocation();
   const navigate = useNavigate();
   const { completeLogin } = useAuth();

@@ -658,7 +658,7 @@ export default function DashboardLayout() {
           >
             <div
               key={location.pathname}
-              className={`flex-1 w-full flex flex-col animate-in fade-in-0 slide-in-from-bottom-2 duration-300 ease-out ${
+              className={`dd-page flex-1 w-full flex flex-col ${
                 location.pathname.startsWith("/purchases") || location.pathname.startsWith("/billing")
                   ? "max-w-none"
                   : "max-w-[1650px] mx-auto"

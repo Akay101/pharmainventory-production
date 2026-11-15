@@ -13,6 +13,8 @@ import {
 } from "react-router-dom";
 import axios from "axios";
 import { Toaster } from "./components/ui/sonner";
+import MotionRuntime from "./components/motion/MotionRuntime";
+import IntroFilm, { playIntro } from "./components/motion/IntroFilm";
 import { toast } from "sonner";
 
 // Pages
@@ -375,6 +377,8 @@ const AuthProvider = ({ children }) => {
     }
     fetchSettings();
     authChannel?.postMessage("login");
+    // The logo film plays while the dashboard loads underneath
+    playIntro();
     return data.user;
   };
 
@@ -713,6 +717,8 @@ function App() {
         </GuideProvider>
       </BrowserRouter>
       <Toaster position="top-right" richColors />
+      <MotionRuntime />
+      <IntroFilm />
     </AuthProvider>
   );
 }

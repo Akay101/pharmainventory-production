@@ -48,6 +48,7 @@ import { Label } from "../ui/label";
 import Loader from "../Loader";
 import { formatExpiry } from "../../pages/utils";
 import { formatCombo } from "../../lib/shortcuts";
+import Glider from "../motion/Glider";
 
 // Returns and Expiry share one workflow; only the stock they deal with differs.
 const KINDS = {
@@ -625,7 +626,8 @@ export default function ReturnNotesPage({ kind }) {
       )}
 
       {/* Tabs */}
-      <div className="flex items-center gap-1 border-b border-border/60 overflow-x-auto" role="tablist">
+      <div className="dd-glide-row relative flex items-center gap-1 border-b border-border/60 overflow-x-auto" role="tablist">
+        <Glider variant="tab" />
         {[
           ["notes", `Return Notes (${pagination.total || 0})`, Layers],
           ["stock", K.stockTab, Package],
@@ -648,7 +650,7 @@ export default function ReturnNotesPage({ kind }) {
 
       {/* Notes tab */}
       {activeTab === "notes" && (
-        <div className="space-y-3">
+        <div data-panel className="space-y-3">
           <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-2 p-3 rounded-2xl bg-card/60 border border-border/70">
             <div className="relative flex-1 min-w-0 sm:min-w-[240px]">
               <Search className="w-4 h-4 absolute left-3 top-2.5 text-muted-foreground" />
@@ -815,7 +817,7 @@ export default function ReturnNotesPage({ kind }) {
 
       {/* Stock tab */}
       {activeTab === "stock" && (
-        <div className="space-y-3">
+        <div data-panel className="space-y-3">
           <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-2 p-3 rounded-2xl bg-card/60 border border-border/70">
             <div className="relative flex-1 min-w-0 sm:min-w-[240px]">
               <Search className="w-4 h-4 absolute left-3 top-2.5 text-muted-foreground" />

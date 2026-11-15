@@ -10,6 +10,7 @@ import { Label } from "../components/ui/label";
 import { Textarea } from "../components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../components/ui/dialog";
 import Loader from "../components/Loader";
+import Glider from "../components/motion/Glider";
 
 export const SUPPORT_CATEGORIES = {
   bug: { label: "Something's broken", short: "Bug", icon: Bug, tone: "text-rose-600 dark:text-rose-400 bg-rose-500/10 border-rose-500/30" },
@@ -199,7 +200,8 @@ export default function SupportPage() {
         </div>
       </div>
 
-      <div className="flex gap-1 border-b border-border/60" role="tablist">
+      <div className="dd-glide-row relative flex gap-1 border-b border-border/60" role="tablist">
+        <Glider variant="tab" />
         {tabs.map(([id, label]) => (
           <button
             key={id}

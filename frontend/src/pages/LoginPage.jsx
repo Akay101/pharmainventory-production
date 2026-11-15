@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../components/ui/dialog";
 import { Monitor, Smartphone, Tablet, MapPin, Clock } from "lucide-react";
 import { SIGNED_OUT_REASON_KEY } from "../App";
@@ -23,8 +23,10 @@ import ThemeToggle from "../components/ui/ThemeToggle";
 import FluidLinePattern from "../components/ui/FluidLinePattern";
 import AuthLeftPanel from "../components/ui/AuthLeftPanel";
 import { ArrowChip } from "../components/ui/arrow-chip";
+import { warmIntro } from "../components/motion/IntroFilm";
 
 export default function LoginPage() {
+  useEffect(() => warmIntro(), []);
   const navigate = useNavigate();
   const location = useLocation();
   const { login, continueLogin, user } = useAuth();

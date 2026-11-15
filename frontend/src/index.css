@@ -2178,3 +2178,291 @@ html[data-guide-demo] .ai-shimmer-text {
 .light :not(svg).text-red-400 { color: #be123c; }
 .light :not(svg).text-violet-400,
 .light :not(svg).text-violet-500 { color: #6d28d9; }
+
+/* ==========================================================================
+   Motion system. One curve (expo-out) for things arriving, a quick ease-in
+   for things leaving, a slight spring for presses. Only transform/opacity
+   move, so it stays smooth on the counter PC. Off for reduced motion.
+   ========================================================================== */
+:root {
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+}
+
+/* Gliding tab indicator (components/motion/Glider) */
+.dd-glider {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0;
+  transition: transform 520ms var(--ease-out), width 520ms var(--ease-out), height 520ms var(--ease-out), opacity 200ms;
+  will-change: transform, width;
+}
+.dd-glider-tab {
+  border-radius: 0 !important;
+  background: hsl(var(--brand) / 0.07);
+  box-shadow: inset 0 -2px 0 hsl(var(--brand));
+}
+.dd-glide-row > :not(.dd-glider)[aria-selected="true"],
+.dd-glide-row > :not(.dd-glider)[data-active="true"] {
+  border-bottom-color: transparent !important;
+}
+.dd-glider-line {
+  height: 2px;
+  border-radius: 2px;
+  background: hsl(var(--brand));
+}
+.dd-glide-row > :not(.dd-glider) {
+  position: relative;
+  z-index: 1;
+}
+/* Tabs in a glide row don't paint their own active fill; the glider does */
+.dd-glide-row > :not(.dd-glider)[aria-current="page"],
+.dd-glide-row > :not(.dd-glider)[data-state="active"],
+.dd-glide-row > :not(.dd-glider)[data-active="true"],
+.dd-glide-row > :not(.dd-glider)[aria-pressed="true"],
+.dd-glide-row > :not(.dd-glider)[aria-selected="true"] {
+  background-color: transparent !important;
+  box-shadow: none !important;
+}
+
+/* Every pressable thing gives under the finger and springs back.
+   `scale` composes with any positioning transform the element already has. */
+:where(button, [role="button"], [role="tab"], a[href], summary, label[for]):not(:disabled) {
+  transition-property: color, background-color, border-color, box-shadow, opacity, scale, translate, rotate;
+  transition-duration: 220ms;
+  transition-timing-function: var(--ease-out);
+}
+:where(button, [role="button"], [role="tab"], summary):not(:disabled):active {
+  scale: 0.97;
+  transition-duration: 90ms;
+}
+
+/* Buttons: cursor-following glow on solid buttons, ripple on press */
+.dd-btn {
+  position: relative;
+  isolation: isolate;
+}
+.dd-solid::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: radial-gradient(120px circle at var(--mx, 50%) var(--my, 50%), rgba(255, 255, 255, 0.22), transparent 60%);
+  opacity: 0;
+  transition: opacity 300ms var(--ease-out);
+  pointer-events: none;
+}
+@media (hover: hover) {
+  .dd-solid:hover::before {
+    opacity: 1;
+  }
+}
+.dd-ripple-host {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+}
+.dd-ripple {
+  position: absolute;
+  border-radius: 9999px;
+  pointer-events: none;
+  background: currentColor;
+  opacity: 0.18;
+  transform: translate(-50%, -50%) scale(0);
+  animation: dd-ripple 620ms var(--ease-out) forwards;
+  z-index: 0;
+}
+@keyframes dd-ripple {
+  to {
+    transform: translate(-50%, -50%) scale(1);
+    opacity: 0;
+  }
+}
+.dd-btn:focus-visible {
+  box-shadow: 0 0 0 2px hsl(var(--background)), 0 0 0 4px hsl(var(--brand) / 0.7);
+}
+
+/* Icons that act out their meaning when their button is hovered */
+@media (hover: hover) {
+  :is(button, a, [role="button"]):hover > .lucide-arrow-right,
+  :is(button, a, [role="button"]):hover .arrow-chip .lucide-arrow-right {
+    translate: 3px 0;
+  }
+  :is(button, a, [role="button"]):hover > .lucide-arrow-left,
+  :is(button, a, [role="button"]):hover > .lucide-chevron-left {
+    translate: -2px 0;
+  }
+  :is(button, a, [role="button"]):hover > .lucide-chevron-right {
+    translate: 2px 0;
+  }
+  :is(button, a, [role="button"]):hover > .lucide-plus {
+    rotate: 90deg;
+  }
+  :is(button, a, [role="button"]):hover > :is(.lucide-refresh-cw, .lucide-rotate-cw, .lucide-refresh-ccw) {
+    rotate: 180deg;
+  }
+  :is(button, a, [role="button"]):hover > :is(.lucide-x) {
+    rotate: 90deg;
+  }
+  :is(button, a, [role="button"]):hover > :is(.lucide-bell) {
+    animation: bellWiggle 0.7s ease-in-out;
+  }
+  :is(button, a, [role="button"]):hover > :is(.lucide-sparkles, .lucide-wand-sparkles) {
+    scale: 1.15;
+    rotate: -8deg;
+  }
+  :is(button, a, [role="button"]):hover > :is(.lucide-download, .lucide-arrow-down) {
+    translate: 0 2px;
+  }
+  :is(button, a, [role="button"]):hover > :is(.lucide-trash-2, .lucide-trash) {
+    rotate: -10deg;
+  }
+}
+:is(button, a, [role="button"]) > .lucide,
+.arrow-chip .lucide {
+  transition: translate 380ms var(--ease-spring), rotate 450ms var(--ease-spring), scale 300ms var(--ease-spring);
+}
+
+/* Cards: a soft light follows the cursor and the edge warms toward it */
+:where(.dd-spot) {
+  position: relative;
+}
+.dd-spot::after {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  pointer-events: none;
+  padding: 1px;
+  background: radial-gradient(260px circle at var(--mx, 50%) var(--my, 50%), hsl(var(--brand) / 0.55), transparent 65%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  opacity: 0;
+  transition: opacity 400ms var(--ease-out);
+}
+@media (hover: hover) {
+  .dd-spot:hover::after {
+    opacity: 1;
+  }
+  .dd-spot:hover {
+    box-shadow: 0 18px 40px -24px rgba(22, 22, 22, 0.28);
+  }
+}
+
+/* Menus and lists: the highlight eases in, the leading icon leans in */
+[role="menuitem"],
+[role="option"],
+[role="menuitemcheckbox"],
+[role="menuitemradio"] {
+  transition: background-color 160ms var(--ease-out), color 160ms var(--ease-out);
+}
+[role="menuitem"] > svg:first-child,
+[role="option"] > svg:first-child {
+  transition: translate 260ms var(--ease-spring);
+}
+[role="menuitem"][data-highlighted] > svg:first-child,
+[role="option"][data-highlighted] > svg:first-child {
+  translate: 2px 0;
+}
+
+/* Table rows warm up under the pointer */
+tbody tr {
+  transition: background-color 180ms var(--ease-out);
+}
+
+/* Checks pop in */
+[role="checkbox"][data-state="checked"] svg,
+[role="radio"][data-state="checked"] svg {
+  animation: dd-check-pop 360ms var(--ease-spring);
+}
+@keyframes dd-check-pop {
+  from {
+    scale: 0.3;
+    opacity: 0;
+  }
+}
+
+/* Fields: borders and glows ease instead of snapping */
+:where(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), textarea, select) {
+  transition: border-color 220ms var(--ease-out), box-shadow 260ms var(--ease-out), background-color 220ms var(--ease-out);
+}
+
+/* Pages arrive: a quick fade for the whole page, then its sections rise in
+   one after another. No transform on the page wrapper itself, so fixed bars
+   inside pages stay pinned to the screen. */
+.dd-page {
+  animation: dd-page-fade 360ms var(--ease-out) backwards;
+}
+.dd-page > * > :not(.fixed):not(.sticky):not([data-no-rise]):not(:has(.fixed)):nth-child(-n + 8) {
+  animation: dd-rise 640ms var(--ease-out) backwards;
+}
+.dd-page > * > :nth-child(2) { animation-delay: 50ms; }
+.dd-page > * > :nth-child(3) { animation-delay: 100ms; }
+.dd-page > * > :nth-child(4) { animation-delay: 150ms; }
+.dd-page > * > :nth-child(5) { animation-delay: 200ms; }
+.dd-page > * > :nth-child(6) { animation-delay: 240ms; }
+.dd-page > * > :nth-child(7) { animation-delay: 280ms; }
+.dd-page > * > :nth-child(8) { animation-delay: 320ms; }
+@keyframes dd-page-fade {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes dd-rise {
+  from {
+    opacity: 0;
+    translate: 0 14px;
+  }
+}
+
+/* Content that swaps in place (tab panels, steps) */
+[data-panel],
+.dd-panel {
+  animation: panel-in 420ms var(--ease-out) backwards;
+}
+@keyframes panel-in {
+  from {
+    opacity: 0;
+    translate: 0 8px;
+  }
+}
+
+/* Dialog backdrops blur in together with the fade */
+.dd-overlay {
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
+}
+
+/* Phone bottom sheets: a longer, softer arrival */
+@media (max-width: 767.98px) {
+  .mobile-sheet {
+    animation: mobile-sheet-up 0.52s var(--ease-out) both !important;
+  }
+  .mobile-sheet[data-state="closed"] {
+    animation: mobile-sheet-down 0.22s var(--ease-in) both !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dd-page,
+  .dd-page > * > *,
+  .dd-panel,
+  [data-panel],
+  .dd-ripple,
+  [role="checkbox"][data-state="checked"] svg {
+    animation: none !important;
+  }
+  .dd-glider,
+  :is(button, a, [role="button"]) > .lucide {
+    transition: none !important;
+  }
+}

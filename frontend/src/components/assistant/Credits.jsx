@@ -5,6 +5,7 @@ import { ArrowLeft, Lock, Coins, Loader2, Zap, Target, History, ShoppingBag, Inf
 import { API, useAuth } from "../../App";
 import BillingDetailsFields, { billingError, billingPayload, initialBilling } from "../billing/BillingDetailsFields";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "../ui/dialog";
+import Glider from "../motion/Glider";
 
 export const creditsApi = {
   get: () => axios.get(`${API}/credits`).then((r) => r.data),
@@ -313,7 +314,8 @@ export function CreditsSheet({ open, onClose, data, refresh }) {
               ))}
             </div>
 
-            <div className="flex gap-1 rounded-xl border border-border bg-muted/60 p-1 text-sm font-semibold" role="tablist">
+            <div className="dd-glide-row relative flex gap-1 rounded-xl border border-border bg-muted/60 p-1 text-sm font-semibold" role="tablist">
+              <Glider className="bg-card shadow-sm" />
               {[
                 ["balance", data?.prices_hidden ? "Credits" : "Buy credits", ShoppingBag],
                 ["usage", "What costs what", Info],

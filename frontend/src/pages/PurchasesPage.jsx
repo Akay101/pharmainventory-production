@@ -141,6 +141,7 @@ import { useShortcuts, useShortcutLayer } from "../components/shortcuts/Shortcut
 import { ItemLabelsDialog } from "../components/ItemQr";
 import ProductCatalogModal from "../components/ProductCatalogModal";
 import DuplicateProductsDialog, { useDuplicateCount } from "../components/DuplicateProducts";
+import Glider from "../components/motion/Glider";
 
 const PACK_TYPES = ["Strip", "Bottle", "Tube", "Packet", "Box", "Unit"];
 
@@ -7515,14 +7516,15 @@ export default function PurchasesPage() {
                     }
                   }}
                 />
-                <div className="flex h-9 rounded-xl border border-border/70 bg-card/60 p-0.5 m-span-2" role="group" aria-label="Payment">
+                <div className="dd-glide-row relative flex h-9 rounded-xl border border-border/70 bg-card/60 p-0.5 m-span-2" role="group" aria-label="Payment">
+                  <Glider className="bg-primary" />
                   {[["all", "All bills"], ["Paid", "Paid"], ["Unpaid", "Unpaid"]].map(([v, label]) => (
                     <button
                       key={v}
                       type="button"
                       onClick={() => setFilterPayment(v)}
                       aria-pressed={filterPayment === v}
-                      className={`px-3 text-xs font-bold rounded-lg transition-colors ${filterPayment === v ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
+                      className={`px-3 text-xs font-bold rounded-lg transition-colors duration-300 ${filterPayment === v ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
                     >
                       {label}
                     </button>
