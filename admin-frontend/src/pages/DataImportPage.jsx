@@ -816,14 +816,16 @@ function AiCard({ job }) {
   );
 }
 
-async function downloadReport(pid, job) {
-  const t = toast.loading("Preparing the report…");
+// audience "customer": the copy to hand to the pharmacy (no team emails, AI cost or
+// internal ids); "internal": DavaDesk's own copy with everything
+async function downloadReport(pid, job, audience = "internal") {
+  const t = toast.loading(audience === "customer" ? "Preparing the pharmacy's report…" : "Preparing the internal report…");
   try {
-    const r = await AdminAPI.importReportPdf(pid, job.id);
+    const r = await AdminAPI.importReportPdf(pid, job.id, audience);
     const url = URL.createObjectURL(r.data);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `DavaDesk import report - ${(job.pharmacy_name || "pharmacy").replace(/[^\w.\- ]/g, "_")} - ${job.file_name.replace(/\.[^.]+$/, "")}.pdf`;
+    a.download = `DavaDesk import report - ${(job.pharmacy_name || "pharmacy").replace(/[^\w.\- ]/g, "_")} - ${job.file_name.replace(/\.[^.]+$/, "")}${audience === "internal" ? " (internal)" : ""}.pdf`;
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
     toast.success("Report downloaded", { id: t });
@@ -917,7 +919,8 @@ function ImportView({ pid, pharmacyName, jobId, onBack, onChanged }) {
             {job.error && job.status !== "failed" && <p className="text-xs text-rose-600 mt-1">{job.error}</p>}
           </div>
           <div className="flex flex-wrap gap-2">
-            {done && <button className={btnPrimary} onClick={() => downloadReport(pid, { ...job, pharmacy_name: pharmacyName })}><FileText className="w-4 h-4" /> Import report (PDF)</button>}
+            {done && <button className={btnPrimary} onClick={() => downloadReport(pid, { ...job, pharmacy_name: pharmacyName }, "customer")} title="For the pharmacy: no team emails, AI cost or internal ids"><FileText className="w-4 h-4" /> Report for the pharmacy</button>}
+            {done && <button className={btnGhost} onClick={() => downloadReport(pid, { ...job, pharmacy_name: pharmacyName }, "internal")} title="DavaDesk's own copy: who did it, AI model and cost, import id"><FileText className="w-4 h-4" /> Internal report</button>}
             {(done || job.status === "ready") && <button className={btnGhost} onClick={download}><Download className="w-4 h-4" /> Problem rows</button>}
             {PREPARING.includes(job.status) && <button className={`${btn} bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100`} onClick={() => setConfirm("discard")}><X className="w-4 h-4" /> Cancel</button>}
             {["mapped", "ready", "failed"].includes(job.status) && <button className={btnGhost} onClick={() => setConfirm("discard")}><Trash2 className="w-4 h-4" /> Discard</button>}
@@ -956,7 +959,7 @@ function ImportView({ pid, pharmacyName, jobId, onBack, onChanged }) {
                 <Stat label="Will be imported" value={`${num(okRows)} of ${num(job.total_rows - (rows.ignored || 0))} rows`} tone="text-emerald-700" />
                 <Stat label="Complete · incomplete" value={`${num(rows.ok || 0)} · ${num(incomplete)}`} tone={incomplete ? "text-amber-700" : undefined} />
                 {rows.error ? <Stat label="Can't import" value={`${num(rows.error)} rows`} tone="text-rose-600" /> : null}
-                {["purchases", "sales"].includes(job.entity) && c.purchases ? <Stat label={job.entity === "sales" ? "Sales bills" : "Bills"} value={job.entity === "sales" ? `${num(c.purchases.bills)} bills` : `${num(c.purchases.bills)} from ${num(c.purchases.suppliers)} suppliers`} /> : <Stat label="Skipped" value={`${num(c.skipped?.expired || 0)} expired · ${num(c.skipped?.no_stock || 0)} no stock`} />}
+                {["purchases", "sales"].includes(job.entity) && c.purchases ? <Stat label={job.entity === "sales" ? "Sales bills" : "Bills"} value={job.entity === "sales" ? `${num(c.purchases.bills)} bills · ${num(c.purchases.customers || 0)} customers` : `${num(c.purchases.bills)} from ${num(c.purchases.suppliers)} suppliers`} /> : <Stat label="Skipped" value={`${num(c.skipped?.expired || 0)} expired · ${num(c.skipped?.no_stock || 0)} no stock`} />}
                 {c.skipped?.return ? <Stat label="Returns (not imported)" value={num(c.skipped.return)} /> : null}
                 {usesProducts ? <Stat label={`Products found: ${num(productTotal)}`} value={`${num(prod.match?.products || 0)} matched · ${num(prod.new?.products || 0)} new${open ? ` · ${num(open)} to decide` : ""}${prod.skip?.products ? ` · ${num(prod.skip.products)} left out` : ""}`} tone={open ? "text-amber-700" : undefined} /> : null}
               </>
@@ -973,7 +976,10 @@ function ImportView({ pid, pharmacyName, jobId, onBack, onChanged }) {
             <div className={`${card} px-4 py-3 text-sm text-slate-700 flex flex-wrap gap-x-6 gap-y-1`}>
               <span>Billed <b className="tabular-nums">{inr(c.purchases.gross)}</b></span>
               <span>Before GST <b className="tabular-nums">{inr(c.purchases.net)}</b></span>
+              <span>GST <b className="tabular-nums">{inr(c.purchases.tax ?? c.purchases.gross - c.purchases.net)}</b></span>
+              <span><b className="tabular-nums">{num(c.purchases.lines || 0)}</b> item lines</span>
               <span><b className="tabular-nums">{num(c.purchases.units)}</b> units sold</span>
+              <span><b className="tabular-nums">{num(c.purchases.customers || 0)}</b> customers</span>
               <span className="text-xs text-slate-500 basis-full">
                 Saved as paid sales bills on their own dates.{job.options?.deduct_stock !== false ? " Sold units are taken out of the matching stock batches, so stock comes out right after the purchase history is in." : " Stock isn't changed."}
               </span>
@@ -982,7 +988,10 @@ function ImportView({ pid, pharmacyName, jobId, onBack, onChanged }) {
           {job.entity === "purchases" && c.purchases && (
             <div className={`${card} px-4 py-3 text-sm text-slate-700 flex flex-wrap gap-x-6 gap-y-1`}>
               <span>Before GST <b className="tabular-nums">{inr(c.purchases.net)}</b></span>
+              <span>GST <b className="tabular-nums">{inr(c.purchases.tax ?? c.purchases.gross - c.purchases.net)}</b></span>
               <span>With GST <b className="tabular-nums">{inr(c.purchases.gross)}</b></span>
+              <span><b className="tabular-nums">{num(c.purchases.lines || 0)}</b> item lines</span>
+              <span><b className="tabular-nums">{num(c.purchases.suppliers)}</b> suppliers</span>
               {job.meta?.file_net_total ? <span className={Math.abs(job.meta.file_net_total - c.purchases.net) < 0.5 ? "text-emerald-700" : "text-amber-700"}>Report's grand total <b className="tabular-nums">{inr(job.meta.file_net_total)}</b></span> : null}
               <span className="text-xs text-slate-500 basis-full">
                 Saved as paid purchase bills with batch and expiry.{job.options?.add_to_stock !== false ? " The quantities are added to stock, so they show in Inventory and in billing suggestions." : " Stock isn't changed."}
@@ -1130,14 +1139,17 @@ function History({ pharmacyId, onOpen, refreshKey }) {
                   <td className="py-2 pr-3 font-semibold text-slate-800">{j.pharmacy_name || j.pharmacy_id}</td>
                   <td className="py-2 pr-3">{ENTITY_LABEL[j.entity]}</td>
                   <td className="py-2 pr-3 truncate max-w-[14rem]">{j.file_name}</td>
-                  <td className="py-2 pr-3 tabular-nums">{j.counts?.results?.created ? num(j.counts.results.created) : "—"}{j.entity === "purchases" && j.counts?.purchases?.bills ? ` (${num(j.counts.purchases.bills)} bills)` : ""}</td>
+                  <td className="py-2 pr-3 tabular-nums">{j.counts?.results?.created ? num(j.counts.results.created) : "—"}{["purchases", "sales"].includes(j.entity) && j.counts?.purchases?.bills ? ` (${num(j.counts.purchases.bills)} bills)` : ""}</td>
                   <td className="py-2 pr-3 tabular-nums">{j.ai ? (j.ai.status === "failed" ? "—" : rupees(j.ai.cost_inr)) : "—"}</td>
                   <td className="py-2 pr-3"><StatusPill status={j.status} /></td>
                   <td className="py-2 pr-3 truncate max-w-[10rem]">{j.committed_by?.email || j.created_by?.email || ""}</td>
                   <td className="py-2 text-right whitespace-nowrap">
                     <button className={`${btnGhost} h-7`} onClick={() => onOpen(j)}>Open</button>
                     {["committed", "partly_undone", "undone", "failed_commit"].includes(j.status) && (
-                      <button className={`${btnGhost} h-7 ml-1`} onClick={() => downloadReport(j.pharmacy_id, j)} title="Download the import report"><FileText className="w-3.5 h-3.5" /> Report</button>
+                      <>
+                        <button className={`${btnGhost} h-7 ml-1`} onClick={() => downloadReport(j.pharmacy_id, j, "customer")} title="Report for the pharmacy: no team emails, AI cost or internal ids"><FileText className="w-3.5 h-3.5" /> For pharmacy</button>
+                        <button className={`${btnGhost} h-7 ml-1`} onClick={() => downloadReport(j.pharmacy_id, j, "internal")} title="Internal report: who did it, AI model and cost, import id"><FileText className="w-3.5 h-3.5" /> Internal</button>
+                      </>
                     )}
                     {["committed", "partly_undone", "failed_commit"].includes(j.status) && (
                       <button className={`${btn} h-7 ml-1 bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100`} onClick={() => setUndo(j)}><Undo2 className="w-3.5 h-3.5" /> Undo</button>

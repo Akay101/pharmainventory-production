@@ -253,7 +253,7 @@ export const AdminAPI = {
   fillImport: (pid, id, field, value) => api.post(`/imports/${id}/fill`, { field, value }, { headers: { "x-pharmacy-id": pid } }),
   leaveImportFieldEmpty: (pid, id, field, leave) => api.post(`/imports/${id}/leave-empty`, { field, leave }, { headers: { "x-pharmacy-id": pid } }),
   setImportIncomplete: (pid, id, include) => api.post(`/imports/${id}/incomplete`, { include }, { headers: { "x-pharmacy-id": pid } }),
-  importReportPdf: (pid, id) => api.get(`/imports/${id}/report.pdf`, { headers: { "x-pharmacy-id": pid }, responseType: "blob", timeout: 180000 }),
+  importReportPdf: (pid, id, audience = "internal") => api.get(`/imports/${id}/report.pdf`, { params: { audience }, headers: { "x-pharmacy-id": pid }, responseType: "blob", timeout: 180000 }),
   importUndoPreview: (pid, id) => api.get(`/imports/${id}/undo-preview`, { headers: { "x-pharmacy-id": pid }, timeout: 60000 }),
   importHistory: (params) => api.get("/imports/history", { params }),
   commitImport: (pid, id) => api.post(`/imports/${id}/commit`, {}, { headers: { "x-pharmacy-id": pid } }),

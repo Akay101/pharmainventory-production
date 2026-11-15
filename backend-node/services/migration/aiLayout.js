@@ -13,7 +13,7 @@ const gemini = require("../ai/gemini");
 const meter = require("../credits/meter");
 const { getConfig } = require("../credits/config");
 const { ENTITIES, HINTS, headerKey } = require("./fields");
-const { packing, num } = require("./normalize");
+const { packing, num, billDate } = require("./normalize");
 
 const MAX_COLS = 40;
 const CELL_CHARS = 40;
@@ -111,7 +111,10 @@ Return the layout:
 - skip_rows: regular expressions (JavaScript, case-insensitive) tested against one column's text that identify rows that are NOT data lines: totals, sub-totals, grand totals, repeated headings, page numbers, report titles, adverts. Use short anchored patterns such as "^total$" or "^grand".
 - required_columns: columns that are filled on EVERY real data line (for example the item name and quantity columns); a row missing any of them is not a data line.
 - quantity_unit: "units" if the quantity counts loose units/tablets (e.g. 15 for one strip of 15, 7 for "1X7"), "packs" if it counts strips/bottles/boxes. Check against rate and amount: if amount ≈ quantity/pack size × rate, it is units.
-- amount_includes_gst: true if the line amount already includes GST/tax (for example amount ≈ net + tax amount, or a sale billed at MRP).
+- amount_includes_gst: true if the line amount already includes GST/tax. Check with the tax amount column: if tax ≈ amount × GST% the amount is BEFORE GST (false); if tax ≈ amount × GST/(100+GST) it includes GST (true). Marg's date-wise analysis prints "Amount" before GST and "Tax Amount" beside it; its bill-wise analysis prints a GST-inclusive "Bill Amount".
+- Money columns: map amount to the line's own amount column, never to "MRP Amt"/"MRP Value" (that is mrp_amount). A plain "Discount" column in Marg holds RUPEES (map it to discount_amount); only a column headed with % ("Dis1 %", "Disc %") is the percent discount.
+- People: in a purchase file "Party Name" is the supplier (supplier_name) and "GST No." is the supplier's GSTIN (supplier_gst). In a sale file "Party Name" is the ledger (often CASH) → customer_name, and "Patient Name" → patient_name. "Compnay Name"/"Company Name" is the manufacturer.
+- bill_type: map the entry type column ("Type": Purc, Sale, Stk., P/Re, S/Re, Brk/) if there is one; returns are recognised from it.
 - period_from / period_to: the report period if printed (YYYY-MM-DD), else empty. report_type: a short name of the report. software: the billing software if you can tell.
 - notes: one or two sentences on anything unusual. confidence: 0 to 1.
 ${feedback ? `\nA previous reading of this layout did not work: ${feedback}\nFix it.` : ""}`;
@@ -162,11 +165,41 @@ function cleanSpec(raw, entity, width) {
  * Applies a layout to every row of a sheet. Returns the data lines with any
  * carried-down values appended as extra columns, the headings and the mapping.
  */
+// "PERIOD : 01-04-2026 TO 15-11-2026" printed above the table: this file's own period,
+// so a layout saved from another year's file doesn't carry that year's dates
+const DATE_RE = "(\\d{1,2}[-/.](?:\\d{1,2}|[a-z]{3})[-/.]\\d{2,4})";
+function filePeriod(rows) {
+  const re = new RegExp(`${DATE_RE}\\s*(?:to|-|–|till|upto)\\s*${DATE_RE}`, "i");
+  for (const r of rows.slice(0, 15)) {
+    const m = (r || []).map(cellText).join(" ").match(re);
+    if (m) {
+      const from = billDate(m[1]);
+      const to = billDate(m[2]);
+      if (from && to) return { period_from: from, period_to: to };
+    }
+  }
+  return null;
+}
+
 function applyLayout(rows, spec) {
   const width = Math.max(0, ...rows.slice(0, 2000).map((r) => (r || []).length));
   const heading = spec.header_row ? (rows[spec.header_row - 1] || []).map(cellText) : [];
   const headingKey = heading.join("|").toLowerCase();
   const skips = spec.skip_rows.map((s) => ({ column: s.column, re: new RegExp(s.pattern, "i") }));
+  // The AI's rules may never drop a real line. A row with an item name and a
+  // numeric quantity is data, whatever a skip rule says (unless the name reads
+  // as a total), and a "must be filled" column has to be filled on every such row.
+  const nameCol = spec.columns.product_name ?? spec.columns.name;
+  const qtyCol = spec.columns.quantity;
+  const TOTALS = /^(grand |sub |net )?total\b|^page\b|^continued\b|^(carried|brought) (forward|fwd)/i;
+  const dataLike = (r) =>
+    nameCol !== undefined && !blank(r[nameCol]) && !TOTALS.test(cellText(r[nameCol])) && (qtyCol === undefined || /^-?\d+(\.\d+)?$/.test(cellText(r[qtyCol]).replace(/,/g, "")));
+  let required = spec.required_columns;
+  if (nameCol !== undefined) {
+    const real = [];
+    for (let i = Math.max(0, spec.first_data_row - 1); i < rows.length; i++) if (rows[i] && dataLike(rows[i])) real.push(rows[i]);
+    required = [...new Set([nameCol, ...(qtyCol !== undefined ? [qtyCol] : []), ...spec.required_columns.filter((c) => real.length && real.filter((r) => !blank(r[c])).length / real.length >= 0.999)])];
+  }
   const groupFields = Object.entries(spec.group_fields || {});
   const context = Object.fromEntries(groupFields.map(([f]) => [f, ""]));
   const out = [];
@@ -178,18 +211,18 @@ function applyLayout(rows, spec) {
       stats.skipped++;
       continue;
     }
-    if (skips.some((s) => s.re.test(cellText(r[s.column])))) {
+    if (!dataLike(r) && skips.some((s) => s.re.test(cellText(r[s.column])))) {
       stats.skipped++;
       continue;
     }
     // A carried-down value: the group column filled and (almost) nothing else
     const g = groupFields.find(([, col]) => !blank(r[col]) && filled(r) <= 2);
-    if (g && spec.required_columns.some((c) => blank(r[c]))) {
+    if (g && required.some((c) => blank(r[c]))) {
       context[g[0]] = cellText(r[g[1]]);
       stats.group_rows++;
       continue;
     }
-    if (spec.required_columns.some((c) => blank(r[c]))) {
+    if (required.some((c) => blank(r[c]))) {
       stats.skipped++;
       continue;
     }
@@ -302,7 +335,24 @@ function verifyConventions(entity, rows, spec) {
     out.checked.changes.push(`quantities are ${best.unit}, not ${spec.quantity_unit}`);
     out.quantity_unit = best.unit;
   }
-  const inclusive = best.plusTax >= Math.max(best.plain, best.minusTax) ? true : best.minusTax > best.plain ? false : entity === "sales";
+  // The GST amount settles it where the file has one: tax = amount x GST% means the
+  // amount is before GST; tax = amount x GST/(100+GST) means it includes GST
+  let taxSays = null;
+  {
+    let ex = 0;
+    let inc = 0;
+    for (const l of lines) {
+      if (!(l.tax > 0 && l.g > 0)) continue;
+      const tol = Math.max(0.05, l.tax * 0.02);
+      const e = Math.abs(l.tax - (l.amount * l.g) / 100);
+      const i = Math.abs(l.tax - (l.amount * l.g) / (100 + l.g));
+      if (Math.abs(e - i) <= tol) continue; // too small a line to tell
+      if (e <= tol) ex++;
+      else if (i <= tol) inc++;
+    }
+    if (ex + inc >= 5) taxSays = inc > ex ? true : ex > inc ? false : null;
+  }
+  const inclusive = taxSays !== null ? taxSays : best.plusTax >= Math.max(best.plain, best.minusTax) ? true : best.minusTax > best.plain ? false : entity === "sales";
   if (inclusive !== spec.amount_includes_gst) {
     out.checked.changes.push(`the line amount ${inclusive ? "includes" : "excludes"} GST`);
     out.amount_includes_gst = inclusive;
@@ -350,19 +400,23 @@ function quality(entity, applied) {
   return { ok: score >= 0.8, score: Math.max(0, Math.round(score * 100) / 100), problems };
 }
 
+// Bumped when the fields or the reading rules change, so layouts saved under the
+// old rules are read again instead of reused
+const LAYOUT_VERSION = 2;
+const keyOf = (entity, heading) => crypto.createHash("sha256").update(`v${LAYOUT_VERSION}|${entity}|${heading}`).digest("hex");
 const fingerprint = (entity, rows, spec) => {
   if (!spec.header_row) return null;
   const heading = (rows[spec.header_row - 1] || []).map(headerKey).join("|");
-  return heading ? crypto.createHash("sha256").update(`${entity}|${heading}`).digest("hex") : null;
+  return heading ? keyOf(entity, heading) : null;
 };
 
 // The headings row of a sheet that matches a saved layout, if any
 async function savedLayout(db, entity, rows) {
   for (let i = 0; i < Math.min(rows.length, 40); i++) {
     if (filled(rows[i]) < 3) continue;
-    const fp = crypto.createHash("sha256").update(`${entity}|${(rows[i] || []).map(headerKey).join("|")}`).digest("hex");
+    const fp = keyOf(entity, (rows[i] || []).map(headerKey).join("|"));
     const hit = await db.collection("migration_layouts").findOne({ _id: fp });
-    if (hit) return { ...hit.spec, header_row: i + 1, first_data_row: Math.max(i + 2, hit.spec.first_data_row - hit.spec.header_row + i + 1) };
+    if (hit) return { ...hit.spec, period_from: null, period_to: null, ...(filePeriod(rows) || {}), header_row: i + 1, first_data_row: Math.max(i + 2, hit.spec.first_data_row - hit.spec.header_row + i + 1) };
   }
   return null;
 }
@@ -411,7 +465,7 @@ async function readLayout(db, { entity, rows, actor, jobId, fresh = false, onSta
     const res = await meter.run(m, () =>
       gemini.extractJson({ prompt: promptFor(entity, text, feedback), images: [], schema: schemaFor(entity), timeoutMs: 90000, retries: 1, maxOutputTokens: 4096 })
     );
-    const rawSpec = cleanSpec(res.data || {}, entity, width);
+    const rawSpec = { ...cleanSpec(res.data || {}, entity, width), ...(filePeriod(rows) || {}) };
     const spec = verifyConventions(entity, applyLayout(rows, rawSpec).rows, rawSpec);
     const applied = applyLayout(rows, spec);
     const q = quality(entity, applied);
@@ -444,4 +498,4 @@ async function readLayout(db, { entity, rows, actor, jobId, fresh = false, onSta
   return { ...best, source: "ai", usage, attempts: Math.min(attempts, 2) };
 }
 
-module.exports = { readLayout, applyLayout, verifyConventions, quality, mainSheet, sampleText, LayoutError };
+module.exports = { readLayout, applyLayout, verifyConventions, quality, mainSheet, sampleText, filePeriod, LayoutError };
