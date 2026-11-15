@@ -49,6 +49,8 @@ const CUSTOMER_FIELDS = [
 
 const PURCHASE_FIELDS = [
   F("supplier_name", "Supplier", ["supplier", "supplier name", "party", "party name", "distributor", "distributor name", "vendor", "account name"], { required: true }),
+  F("supplier_gst", "Supplier GSTIN", ["gst no", "gstin", "gst number", "party gstin", "supplier gstin", "gstin no"]),
+  F("bill_type", "Entry type", ["type", "vch type", "voucher type", "entry type", "bill type", "trans type"]),
   F("invoice_no", "Bill / invoice no.", ["bill no", "bill", "invoice no", "invoice", "inv no", "invoice number", "bill number", "voucher no", "vch no"]),
   F("invoice_date", "Bill date", ["bill date", "invoice date", "date", "inv date", "voucher date", "vch date", "purchase date"]),
   F("product_name", "Product name", ["item name", "item", "product", "product name", "item description", "medicine", "medicine name", "particulars", "description"], { required: true }),
@@ -65,14 +67,17 @@ const PURCHASE_FIELDS = [
   F("units", "Total units", ["units", "total units", "loose", "loos", "qty in units"]),
   F("gst_rate", "GST %", ["gst %", "gst", "gst%", "tax", "tax%", "gst rate", "igst%"]),
   F("mrp", "MRP (per pack)", ["mrp", "m r p", "mrp per pack"]),
-  F("manufacturer", "Manufacturer", ["company", "company name", "mfg", "mfr", "manufacturer"]),
+  F("mrp_amount", "MRP value of the line", ["mrp amt", "mrp amount", "mrp value", "mrp val"]),
+  F("manufacturer", "Manufacturer", ["company", "company name", "compnay name", "mfg", "mfr", "manufacturer"]),
   F("hsn_no", "HSN code", ["hsn", "hsn code", "hsn sac", "hsnsac"]),
 ];
 
 const SALES_FIELDS = [
   F("invoice_no", "Bill no.", ["bill no", "bill no#", "bill", "invoice no", "invoice", "inv no", "bill number", "voucher no", "vch no"]),
   F("invoice_date", "Bill date", ["bill date", "date", "invoice date", "inv date", "voucher date", "sale date"]),
-  F("customer_name", "Customer", ["customer", "customer name", "party", "party name", "patient", "patient name", "account name"]),
+  F("customer_name", "Customer / party", ["customer", "customer name", "party", "party name", "account name"]),
+  F("patient_name", "Patient", ["patient", "patient name", "patient nm"]),
+  F("bill_type", "Entry type", ["type", "vch type", "voucher type", "entry type", "bill type", "trans type"]),
   F("customer_mobile", "Customer mobile", ["mobile", "phone", "mobile no", "contact", "contact no"]),
   F("product_name", "Product name", ["item name", "item", "product", "product name", "item description", "medicine", "particulars", "description"], { required: true }),
   F("packing", "Packing", ["packing", "pack", "pack size", "unit", "uom"]),
@@ -87,14 +92,19 @@ const SALES_FIELDS = [
   F("discount_amount", "Discount (₹)", ["discount amount", "disc amt", "discount rs", "dis amt"]),
   F("gst_rate", "GST %", ["gst %", "gst", "gst%", "tax%", "gst rate"]),
   F("mrp", "MRP (per pack)", ["mrp", "m r p", "mrp per pack"]),
+  F("mrp_amount", "MRP value of the line", ["mrp amt", "mrp amount", "mrp value", "mrp val"]),
   F("units", "Total units", ["units", "total units", "loose", "loos"]),
-  F("manufacturer", "Manufacturer", ["company", "company name", "mfg", "mfr", "manufacturer"]),
+  F("manufacturer", "Manufacturer", ["company", "company name", "compnay name", "mfg", "mfr", "manufacturer"]),
 ];
 
 // What each field means, for the AI that reads a file's layout
 const HINTS = {
   supplier_name: "the distributor/party the goods were bought from",
-  customer_name: "who the sale was billed to (patient/customer); often missing for walk-in sales",
+  customer_name: "the party/ledger account the sale was billed to (CASH means a walk-in sale); if the file also has a patient column, map the patient there, not here",
+  patient_name: "the patient's / customer's own name typed on the bill (e.g. a 'Patient Name' column); this is who the pharmacy's customer is",
+  supplier_gst: "the supplier's GSTIN (15 characters, e.g. 09AAHCM0651P1Z1)",
+  bill_type: "the entry type column (e.g. Purc, Sale, Stk., P/Re, S/Re, Brk/) that tells purchases or sales from returns",
+  mrp_amount: "the line's MRP value (MRP x packs, sometimes without GST); NOT the line amount",
   invoice_no: "the bill/invoice/voucher number; several lines share one",
   invoice_date: "the bill date (not the month column, not expiry)",
   product_name: "the item/medicine name",
@@ -105,9 +115,9 @@ const HINTS = {
   free: "free/scheme quantity",
   purchase_rate: "purchase rate per pack/strip before discount",
   sale_rate: "selling rate per pack/strip before discount",
-  discount: "discount as a PERCENT; only map a column whose values are percentages",
-  discount_amount: "discount in RUPEES for the line (map here, not to discount, when the column holds amounts)",
-  amount: "the line's total amount",
+  discount: "discount as a PERCENT (a column headed like 'Dis %', 'Disc%', 'Dis1 %'); only map a column whose values are percentages",
+  discount_amount: "discount in RUPEES for the line. Marg's plain 'Discount' column is rupees (e.g. 18.6 on a Rs 155 line), so it goes here, not to discount",
+  amount: "the line's own amount column ('Amount', 'Bill Amount', 'Net Amt'), never the MRP value column",
   tax_amount: "GST/tax amount of the line in rupees",
   gst_rate: "GST/tax PERCENT",
   mrp: "MRP per pack",

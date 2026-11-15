@@ -26,12 +26,15 @@ const HEAD = 52; // space for the running header
 const FOOT = 34;
 
 const num = (n) => Number(n || 0).toLocaleString("en-IN");
+const round2 = (n) => Math.round(n * 100) / 100;
 const money = (n) => `Rs. ${Number(n || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const when = (iso) => (iso ? new Date(iso).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "-");
 const day = (iso) => (iso ? new Date(`${iso}T00:00:00`).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "-");
 const showValue = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(String(v)) ? day(v) : String(v));
 const kb = (b) => (b >= 1024 * 1024 ? `${(b / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round((b || 0) / 1024))} KB`);
-const who = (a) => (a ? a.email || a.name || "-" : "-");
+// The internal copy names who did each step; the pharmacy's copy says "DavaDesk team"
+let audienceInternal = true;
+const who = (a) => (!a ? "-" : audienceInternal ? a.email || a.name || "-" : a.type === "admin" ? "DavaDesk team" : a.name || "Pharmacy admin");
 
 const STATUS = {
   committed: ["Imported", C.green, C.greenSoft],
@@ -41,8 +44,14 @@ const STATUS = {
   failed_commit: ["Import stopped part-way", C.red, C.redSoft],
 };
 
-function renderReport(data) {
+/**
+ * audience "internal" (DavaDesk's own copy: who did it, AI model and cost, import id)
+ * or "customer" (the pharmacy's copy: no team emails, AI usage or internal ids).
+ */
+function renderReport(data, { audience = "internal" } = {}) {
   const { job, pharmacy } = data;
+  const internal = audience !== "customer";
+  audienceInternal = internal;
   const doc = new PDFDocument({ size: "A4", margins: { top: M + HEAD, bottom: M + FOOT, left: M, right: M }, bufferPages: true, info: { Title: `Data import report - ${pharmacy.name || ""}`, Author: "DavaDesk" } });
   const W = doc.page.width - M * 2;
   const bottom = () => doc.page.height - M - FOOT;
@@ -165,8 +174,8 @@ function renderReport(data) {
     ["Imported", job.committed_at ? `${when(job.committed_at)} by ${who(job.committed_by)}` : "Not imported yet"],
     ...(job.undo ? [["Undone", `${when(job.undo.at)} by ${who(job.undo.by)}`]] : []),
     ...(sc.incomplete ? [["Incomplete records", job.options?.import_incomplete === false ? `${num(sc.incomplete)} with gaps were left out` : `${num(sc.incomplete)} imported with gaps left empty (each is listed below)`]] : []),
-    ...(job.ai ? [["Layout read by", job.ai.status === "failed" ? `AI couldn't read it (${job.ai.error}); columns were matched by their headings` : job.ai.source === "saved" ? "A layout saved from an earlier file (no AI cost)" : `AI (${job.ai.model || "Gemini"}): ${num(job.ai.calls)} call${job.ai.calls === 1 ? "" : "s"}, ${num(job.ai.input_tokens)} + ${num(job.ai.output_tokens)} tokens, cost Rs. ${Number(job.ai.cost_inr || 0).toFixed(2)}`]] : []),
-    ["Import ID", job.id],
+    ...(job.ai && internal ? [["Layout read by", job.ai.status === "failed" ? `AI couldn't read it (${job.ai.error}); columns were matched by their headings` : job.ai.source === "saved" ? "A layout saved from an earlier file (no AI cost)" : `AI (${job.ai.model || "Gemini"}): ${num(job.ai.calls)} call${job.ai.calls === 1 ? "" : "s"}, ${num(job.ai.input_tokens)} + ${num(job.ai.output_tokens)} tokens, cost Rs. ${Number(job.ai.cost_inr || 0).toFixed(2)}`]] : []),
+    ...(internal ? [["Import ID", job.id]] : [["Reference", job.id.slice(0, 8).toUpperCase()]]),
   ];
   table([{ label: "Detail", w: 0.26 }, { label: "Value", w: 0.74 }], facts, { cell: (r, c, i) => (i === 0 ? { text: r[0], bold: true, color: C.ink } : r[1] || "-"), zebra: false });
 
@@ -178,11 +187,11 @@ function renderReport(data) {
     job.entity === "purchases" && ["Purchase bills", num(job.undo ? purchases?.bills : made.purchases), purchases ? `${money(purchases.net)} before GST, ${money(purchases.gross)} with GST${meta.file_net_total ? ` (report's grand total ${money(meta.file_net_total)})` : ""}` : ""],
     job.entity === "sales" && ["Sales bills", num(made.bills), purchases ? `${money(purchases.gross)} billed, ${num(purchases.units)} units sold` : ""],
     job.entity === "sales" && made.stock_taken && ["Stock batches sold from", num(made.stock_taken), "The sold units were taken out of these batches"],
-    ["Stock batches added", num(made.inventory), job.entity === "purchases" ? (job.options?.add_to_stock === false ? "Stock wasn't changed for this import" : "Bought quantities added to stock; they show in Inventory and billing") : ""],
+    job.entity !== "sales" && ["Stock batches added", num(made.inventory), job.entity === "purchases" ? (job.options?.add_to_stock === false ? "Stock wasn't changed for this import" : "Bought quantities added to stock; they show in Inventory and billing") : ""],
     made.topped_up && ["Existing batches topped up", num(made.topped_up), "The pharmacy already had these batches; the bought units were added to them"],
-    ["New products in the catalog", num(made.products), made.incomplete_products ? `${num(made.incomplete_products)} still need a manufacturer or salt in the catalog` : ""],
-    ["New suppliers", num(made.suppliers), ""],
-    job.entity === "customers" && ["New customers", num(made.customers), ""],
+    !["suppliers", "customers"].includes(job.entity) && ["New products in the catalog", num(made.products), made.incomplete_products ? `${num(made.incomplete_products)} still need a manufacturer or salt in the catalog` : ""],
+    !["sales", "customers"].includes(job.entity) && ["New suppliers", num(made.suppliers), job.entity === "purchases" && purchases ? `${num(purchases.suppliers)} suppliers on the bills; the rest were already in DavaDesk` : ""],
+    ["sales", "customers"].includes(job.entity) && ["New customers", num(made.customers), job.entity === "sales" && purchases?.customers !== undefined ? `${num(purchases.customers)} named customers on the bills (from the patient name); the rest were already in DavaDesk` : ""],
   ].filter(Boolean);
   if (job.undo) {
     const collOf = { "Sales bills": "bills", "Purchase bills": "purchases", "Stock batches added": "inventory", "New products in the catalog": "products", "New suppliers": "suppliers", "New customers": "customers" };
@@ -196,6 +205,43 @@ function renderReport(data) {
   table([{ label: "Record", w: 0.34 }, { label: "Count", w: 0.14, align: "right" }, { label: "Notes", w: 0.52 }], createdRows, {
     cell: (r, c, i) => (i === 0 ? { text: r[0], bold: true, color: C.ink } : i === 1 ? { text: r[1], bold: true, color: C.ink } : r[2] ? { text: r[2], color: C.muted } : "-"),
   });
+
+  // Bills: every count, and the money reconciled with the sheet
+  if (["purchases", "sales"].includes(job.entity) && purchases) {
+    const sale = job.entity === "sales";
+    heading(sale ? "Sales bills summary" : "Purchase bills summary", "Counted from what was imported, and checked against the totals of the sheet itself.");
+    const p = purchases;
+    const rows = sale
+      ? [
+          ["Sales bills imported", num(made.bills || p.bills), p.walk_in_bills !== undefined ? `${num((made.bills || p.bills) - p.walk_in_bills)} with a named customer, ${num(p.walk_in_bills)} walk-in (cash, no name)` : ""],
+          ["Customers on the bills", num(p.customers || 0), `${num(made.customers)} new customer records added; returning customers were linked to their existing record`],
+          ["Item lines billed", num(p.lines), "One line per item per bill, as in the sheet"],
+          ["Different products billed", num(p.products), `${num(made.products)} of them were new to the catalog and were added`],
+          ["Units sold", num(p.units), made.units_billed !== undefined ? `${num(made.units_from_stock)} taken from matching stock batches; ${num(Math.max(0, (made.units_billed || 0) - (made.units_from_stock || 0)))} had no matching batch left, so only the bill was recorded` : ""],
+        ]
+      : [
+          ["Purchase bills imported", num(job.undo ? p.bills : made.purchases || p.bills), "One per supplier, bill number and date"],
+          ["Suppliers on the bills", num(p.suppliers), `${num(made.suppliers)} new supplier records added (with GSTIN where the sheet had it)`],
+          ["Item lines added", num(p.lines), "One line per item per bill, as in the sheet"],
+          ["Different products bought", num(p.products), `${num(made.products)} of them were new to the catalog and were added`],
+          ["Units bought", num(p.units), job.options?.add_to_stock === false ? "Stock wasn't changed" : `Added to stock in ${num(made.inventory)} new batches${made.topped_up ? ` and ${num(made.topped_up)} existing ones` : ""}`],
+        ];
+    rows.push(
+      ["Amount before GST", money(p.net), ""],
+      ["GST", money(p.tax ?? p.gross - p.net), ""],
+      ["Total with GST", money(p.gross), "Each line keeps the sheet's own amount and GST amount, to the paisa"],
+      ["Discount given", money(p.discount || 0), "Worked out per line as a percent of quantity × rate, from the amounts in the sheet"]
+    );
+    if (p.return_lines) {
+      rows.push(
+        [sale ? "Sales returns in the sheet" : "Purchase returns in the sheet", num(p.return_lines), `${money(Math.abs(p.return_amount || 0))} before GST. Returns, credit notes and write-offs are listed in the sheet but not imported as ${sale ? "sales" : "purchases"}`],
+        ["Sheet total including returns", money(round2(p.net + (p.return_amount || 0))), "Before GST: what the report's own grand total shows"]
+      );
+    }
+    table([{ label: "Item", w: 0.3 }, { label: "Count / amount", w: 0.2, align: "right" }, { label: "Notes", w: 0.5 }], rows, {
+      cell: (r, c, i) => (i === 0 ? { text: r[0], bold: true, color: C.ink } : i === 1 ? { text: r[1], bold: true, color: C.ink } : r[2] ? { text: r[2], color: C.muted } : "-"),
+    });
+  }
 
   // Missing fields and what was done about them
   heading("Missing information", "Fields that were empty in the file, and how each one was handled before importing.");
@@ -283,7 +329,7 @@ function renderReport(data) {
     table(
       [
         { label: "Row", w: 0.06 },
-        { label: job.entity === "purchases" ? "Supplier · bill" : "Name", w: 0.22 },
+        { label: job.entity === "purchases" ? "Supplier · bill" : job.entity === "sales" ? "Customer · bill" : "Name", w: 0.22 },
         { label: "Product", w: 0.2 },
         { label: "Batch · expiry", w: 0.13 },
         { label: "Missing or changed", w: 0.23 },
@@ -320,7 +366,7 @@ function renderReport(data) {
     }
     const fy = doc.page.height - M - 10;
     doc.save().moveTo(M, fy - 8).lineTo(M + W, fy - 8).lineWidth(0.6).strokeColor(C.line).stroke().restore();
-    doc.font("Helvetica").fontSize(7.5).fillColor(C.muted).text(`DavaDesk · ${job.file_name} · Import ${job.id.slice(0, 8)}`, M, fy, { width: W * 0.75, lineBreak: false });
+    doc.font("Helvetica").fontSize(7.5).fillColor(C.muted).text(`DavaDesk · ${job.file_name} · ${internal ? `Import ${job.id.slice(0, 8)} · internal copy` : `Ref ${job.id.slice(0, 8).toUpperCase()}`}`, M, fy, { width: W * 0.75, lineBreak: false });
     doc.text(`Page ${i - range.start + 1} of ${range.count}`, M, fy, { width: W, align: "right", lineBreak: false });
     doc.page.margins.bottom = keep;
   }

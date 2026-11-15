@@ -291,6 +291,11 @@ async function applyMapping(db, pharmacyId, jobId, { mapping, options = {} }) {
     include_expired: options.include_expired === undefined ? job.options.include_expired : !!options.include_expired,
     quantity_in: (options.quantity_in || job.options.quantity_in) === "units" ? "units" : "packs",
     add_to_stock: options.add_to_stock === undefined ? job.options.add_to_stock !== false : !!options.add_to_stock,
+    // What the layout check found about the amounts, and the admin's earlier choices, are kept
+    ...(job.options.amount_includes_gst !== undefined && job.options.amount_includes_gst !== null ? { amount_includes_gst: !!job.options.amount_includes_gst } : {}),
+    ...(options.amount_includes_gst !== undefined && options.amount_includes_gst !== null ? { amount_includes_gst: !!options.amount_includes_gst } : {}),
+    ...(job.options.import_incomplete === false ? { import_incomplete: false } : {}),
+    ...(job.options.deduct_stock === false ? { deduct_stock: false } : {}),
   };
   const claimed = await db.collection("migration_jobs").findOneAndUpdate(
     { id: job.id, status: job.status },
@@ -639,12 +644,41 @@ async function countJob(db, job) {
           suppliers: { $addToSet: party },
           net: { $sum: "$data.net" },
           gross: { $sum: { $ifNull: ["$data.gross", { $multiply: ["$data.net", { $add: [1, { $divide: [{ $ifNull: ["$data.gst_rate", 0] }, 100] }] }] }] } },
+          discount: { $sum: { $ifNull: ["$data.discount_amount", 0] } },
           units: { $sum: "$data.units" },
+          lines: { $sum: 1 },
+          products: { $addToSet: "$product_key" },
           undated: { $sum: { $cond: ["$data.date_from_file", 0, 1] } },
         },
       },
     ]).toArray();
-    counts.purchases = { bills: t?.bills.length || 0, suppliers: t?.suppliers.length || 0, net: round2(t?.net || 0), gross: round2(t?.gross || 0), units: t?.units || 0, undated_lines: t?.undated || 0 };
+    const named = [...new Set((t?.suppliers || []).filter((n) => n && !/^(walk[- ]?in|unknown supplier)$/i.test(n)).map((n) => normalizeText(n)))];
+    counts.purchases = {
+      bills: t?.bills.length || 0,
+      suppliers: t?.suppliers.length || 0,
+      ...(job.entity === "sales" ? { customers: named.length, walk_in_bills: (t?.bills || []).filter((b) => /^walk[- ]?in$/i.test(b.s || "")).length } : {}),
+      net: round2(t?.net || 0),
+      gross: round2(t?.gross || 0),
+      tax: round2((t?.gross || 0) - (t?.net || 0)),
+      discount: round2(t?.discount || 0),
+      units: t?.units || 0,
+      lines: t?.lines || 0,
+      products: t?.products.length || 0,
+      undated_lines: t?.undated || 0,
+    };
+    // Returns, credit notes and write-offs listed in the file, which aren't imported
+    let retLines = 0;
+    let retAmount = 0;
+    let retTax = 0;
+    const cell = (r, k) => (job.mapping?.[k] === undefined ? 0 : Number(String(r.cells[job.mapping[k]] ?? "").replace(/,/g, "")) || 0);
+    for await (const r of db.collection("migration_rows").find({ job_id: job.id, skip: "return" }, { projection: { cells: 1 } })) {
+      retLines++;
+      retAmount += cell(r, "amount");
+      retTax += cell(r, "tax_amount");
+    }
+    counts.purchases.return_lines = retLines;
+    counts.purchases.return_amount = round2(retAmount);
+    counts.purchases.return_tax = round2(retTax);
   }
   if (job.entity === "stock") {
     // Totals of what will actually go in: rows of products left out don't count
@@ -951,10 +985,12 @@ async function commitParties(db, job, tick) {
 }
 
 // Supplier for a name: the pharmacy's own (same name, any spacing or case), else a new one
-async function supplierFor(db, job, name, cache) {
+async function supplierFor(db, job, name, cache, gst = null) {
   const k = normalizeText(name);
   if (cache.has(k)) return cache.get(k);
-  const existing = await db.collection("suppliers").findOne({ pharmacy_id: job.pharmacy_id, name: looseNameRegex(name) }, { projection: { _id: 0, id: 1, name: 1 } });
+  const existing =
+    (gst && (await db.collection("suppliers").findOne({ pharmacy_id: job.pharmacy_id, gst_no: gst }, { projection: { _id: 0, id: 1, name: 1 } }))) ||
+    (await db.collection("suppliers").findOne({ pharmacy_id: job.pharmacy_id, name: looseNameRegex(name) }, { projection: { _id: 0, id: 1, name: 1 } }));
   let s = existing;
   if (!s) {
     const id = uuidv4();
@@ -962,7 +998,7 @@ async function supplierFor(db, job, name, cache) {
     if (held) s = await db.collection("suppliers").findOne({ id: held, pharmacy_id: job.pharmacy_id }, { projection: { _id: 0, id: 1, name: 1 } });
     else {
       s = { id, name };
-      await db.collection("suppliers").insertOne({ id, pharmacy_id: job.pharmacy_id, name, contact: null, email: null, address: null, gst_no: null, notes: null, default_margin_percent: null, ...stamp(job) });
+      await db.collection("suppliers").insertOne({ id, pharmacy_id: job.pharmacy_id, name, contact: null, email: null, address: null, gst_no: gst || null, notes: null, default_margin_percent: null, ...stamp(job) });
     }
   }
   cache.set(k, s);
@@ -991,7 +1027,7 @@ async function commitPurchases(db, job, productIds, tick) {
   const products = new Map();
   for (const [k, rows] of bills) {
     const first = rows[0].data;
-    const supplier = await supplierFor(db, job, first.supplier_name, suppliers);
+    const supplier = await supplierFor(db, job, first.supplier_name, suppliers, rows.map((r) => r.data.supplier_gst).find(Boolean) || null);
     const ids = rows.map((r) => r._id);
     const id = uuidv4();
     const already = first.invoice_no
@@ -1014,7 +1050,8 @@ async function commitPurchases(db, job, productIds, tick) {
         products.set(productId, product);
       }
       const gst = d.gst_rate === null ? 0 : d.gst_rate;
-      const itemTotal = d.net * (1 + gst / 100);
+      // The file's own line total (amount + its GST amount), to the paisa
+      const itemTotal = d.gross ?? d.net * (1 + gst / 100);
       total += itemTotal;
       const perUnit = d.units ? Math.round((d.net / d.units) * 10000) / 10000 : 0;
       const mrpUnit = d.mrp_pack ? round2(d.mrp_pack / d.units_per_pack) : null;
@@ -1043,6 +1080,9 @@ async function commitPurchases(db, job, productIds, tick) {
         cgst: gst / 2,
         sgst: gst / 2,
         discount: d.discount,
+        discount_amount: d.discount_amount || 0,
+        taxable_amount: round2(d.net),
+        tax_amount: round2((d.gross ?? d.net) - d.net),
         scheme_discount: 0,
         scheme_discount_type: "percent",
         scheme_discount_amount: 0,
@@ -1132,6 +1172,31 @@ async function addPurchasedStock(db, job, stock) {
   }
 }
 
+// The customer a past bill was made out to: the pharmacy's own (same mobile, or
+// same name with no other mobile), else a new one. Walk-in sales have none.
+const WALK_IN = /^(walk[- ]?in|cash|counter|na|n\/a)$/i;
+async function customerFor(db, job, name, mobileNo, cache) {
+  if (!name || WALK_IN.test(name.trim())) return null;
+  const k = `${normalizeText(name)}|${mobileNo || ""}`;
+  if (cache.has(k)) return cache.get(k);
+  const P = job.pharmacy_id;
+  const proj = { projection: { _id: 0, id: 1, name: 1 } };
+  let c =
+    (mobileNo && (await db.collection("customers").findOne({ pharmacy_id: P, mobile: { $regex: `${mobileNo}$` } }, proj))) ||
+    (await db.collection("customers").findOne({ pharmacy_id: P, name: looseNameRegex(name), ...(mobileNo ? { $or: [{ mobile: null }, { mobile: "" }, { mobile: { $exists: false } }] } : {}) }, proj));
+  if (!c) {
+    const id = uuidv4();
+    const held = await claimKey(db, job, "customers", mobileNo ? `mob|${mobileNo}` : `name|${normalizeText(name)}`, id, "customers");
+    if (held) c = await db.collection("customers").findOne({ id: held, pharmacy_id: P }, proj);
+    if (!c) {
+      c = { id, name };
+      await db.collection("customers").insertOne({ id, pharmacy_id: P, name: name.slice(0, 120), mobile: mobileNo || null, email: null, address: null, total_debt: 0, total_advance: 0, ...stamp(job) });
+    }
+  }
+  cache.set(k, c);
+  return c;
+}
+
 // Past sales as bills, marked paid. Unless switched off, each line takes its units
 // out of the matching batch (recorded in import_changes, so undo puts them back).
 async function commitSales(db, job, productIds, tick) {
@@ -1149,8 +1214,10 @@ async function commitSales(db, job, productIds, tick) {
     bills.get(k).push(r);
   }
   const productsById = new Map();
+  const customers = new Map();
   for (const [k, rows] of bills) {
     const first = rows[0].data;
+    const customer = await customerFor(db, job, first.customer_name, first.customer_mobile, customers);
     const ids = rows.map((r) => r._id);
     const id = uuidv4();
     const billNo = first.invoice_no || `IMP-${first.purchase_date.replace(/-/g, "")}-${k.slice(-6).replace(/\W/g, "")}`;
@@ -1203,6 +1270,8 @@ async function commitSales(db, job, productIds, tick) {
         purchase_price: buy,
         discount_percent: d.discount || 0,
         line_discount: round2(Math.max(0, d.units * unitPrice - itemTotal)),
+        taxable_amount: round2(d.net),
+        tax_amount: round2(d.gross - d.net),
         item_total: itemTotal,
         profit: round2(itemTotal - buy * d.units),
         is_manual: !inv,
@@ -1217,8 +1286,8 @@ async function commitSales(db, job, productIds, tick) {
       id,
       bill_no: billNo,
       pharmacy_id: job.pharmacy_id,
-      customer_id: null,
-      customer_name: first.customer_name || "Walk-in",
+      customer_id: customer?.id || null,
+      customer_name: customer?.name || first.customer_name || "Walk-in",
       customer_mobile: first.customer_mobile || null,
       customer_email: null,
       billing_date: first.purchase_date,
@@ -1411,6 +1480,8 @@ const FILE_FORMAT = (name) => {
   return { xls: "Excel 97-2003 workbook (.xls)", xlsx: "Excel workbook (.xlsx)", csv: "CSV text (.csv)", txt: "Text (.txt)" }[ext] || `.${ext} file`;
 };
 
+const OPTIONAL_DETAIL = new Set(["patient_name", "customer_name", "customer_mobile", "supplier_gst", "bill_type", "mrp_amount", "discount", "discount_amount", "free", "tax_amount", "manufacturer", "hsn_no"]);
+
 // Everything the import report shows: what came in, what was missing and what was done about it, row by row
 async function reportData(db, pharmacyId, jobId) {
   const job = await getJob(db, pharmacyId, jobId);
@@ -1447,6 +1518,8 @@ async function reportData(db, pharmacyId, jobId) {
         continue;
       }
       if (!origEmpty) continue;
+      // A field the file doesn't have at all is said once in the overview, not on every record
+      if ((col === undefined || col === null) && fills[k] === undefined) continue;
       if (fills[k] !== undefined && String(now).trim() !== "") {
         pf.filled_for_all++;
         if (watch.has(k)) notes.push({ kind: "fill", field: k, text: `${label[k]} missing, filled for all: ${fills[k]}` });
@@ -1473,7 +1546,7 @@ async function reportData(db, pharmacyId, jobId) {
       const v = r.values || {};
       records.push({
         row_no: r.row_no,
-        who: v.supplier_name || v.name || "",
+        who: v.supplier_name || v.patient_name || (/^cash\b/i.test(v.customer_name || "") ? "" : v.customer_name) || v.name || (job.entity === "sales" ? "Walk-in" : ""),
         ref: [v.invoice_no && `Bill ${v.invoice_no}`, v.invoice_date].filter(Boolean).join(" · "),
         item: v.product_name || v.name || "",
         batch: v.batch_no || "",
@@ -1501,6 +1574,12 @@ async function reportData(db, pharmacyId, jobId) {
   made.stock_taken = job.entity === "sales" ? await db.collection("import_changes").countDocuments({ job_id: job.id, "inc.available_quantity": { $lt: 0 } }) : 0;
   made.incomplete_products = await db.collection("products").countDocuments({ pharmacy_id: P, import_job_id: job.id, catalog_incomplete: true });
   made.topped_up = await db.collection("import_changes").countDocuments({ job_id: job.id, "inc.available_quantity": { $gt: 0 } });
+  if (job.entity === "sales") {
+    const [u] = await db.collection("bills").aggregate([{ $match: { pharmacy_id: P, import_job_id: job.id } }, { $unwind: "$items" }, { $group: { _id: null, taken: { $sum: "$items.stock_deducted" }, sold: { $sum: "$items.quantity" } } }]).toArray();
+    made.units_from_stock = u?.taken || 0;
+    made.units_billed = u?.sold || 0;
+    made.bills_with_customer = await db.collection("bills").countDocuments({ pharmacy_id: P, import_job_id: job.id, customer_id: { $ne: null } });
+  }
   // After an undo the records are gone: report what the import added, and what the undo removed or kept
   if (job.undo) {
     made.kept = {};
@@ -1520,7 +1599,8 @@ async function reportData(db, pharmacyId, jobId) {
     source: SOURCES[job.source]?.label || job.source,
     entity: ENTITIES[job.entity].label,
     format: FILE_FORMAT(job.file_name),
-    fields: Object.values(perField).filter((f) => !unmapped.includes(f.field) && (f.empty_in_file || f.filled_by_hand || f.corrected_by_hand || f.filled_for_all || f.left_empty)),
+    // Details that are often blank by nature (a walk-in has no patient name) aren't listed as missing
+    fields: Object.values(perField).filter((f) => !unmapped.includes(f.field) && !OPTIONAL_DETAIL.has(f.field) && (f.empty_in_file || f.filled_by_hand || f.corrected_by_hand || f.filled_for_all || f.left_empty)),
     not_in_file: unmapped.map((k) => label[k]),
     filled_everywhere: [...everywhere].map((k) => ({ label: label[k], value: fills[k], rows: total })),
     status_count: statusCount,

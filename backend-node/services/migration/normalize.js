@@ -25,6 +25,8 @@ function num(v) {
   return (neg ? -1 : 1) * parseFloat(cleaned);
 }
 
+const round2 = (n) => Math.round(n * 100) / 100;
+
 const lastDay = (y, m) => `${y}-${String(m).padStart(2, "0")}-${String(new Date(Date.UTC(y, m, 0)).getUTCDate()).padStart(2, "0")}`;
 
 // Expiry is printed by month, so month-only values become that month's last day
@@ -177,8 +179,10 @@ function billLine(kind, cells, mapping, errors, warnings, { fallbackDate, quanti
   if (!data.product_name) errors.push("Product name is missing");
   const partyField = sale ? "customer_name" : "supplier_name";
   let party = text(pick(cells, mapping, partyField));
-  // Marg's cash sales: "CASH", "CASH [MARGPAY PENDING]"
+  // Marg's cash sales: "CASH", "CASH [MARGPAY PENDING]". The patient typed on the bill is the customer
   if (sale && /^cash\b/i.test(party)) party = "";
+  const patient = sale ? text(pick(cells, mapping, "patient_name")) : "";
+  if (sale && patient && !/^(cash|walk[- ]?in|na|n\/a|self)$/i.test(patient)) party = patient;
   if (!party) {
     if (sale) party = "Walk-in";
     else if (leaveEmpty.includes("supplier_name")) party = "Unknown supplier";
@@ -190,7 +194,10 @@ function billLine(kind, cells, mapping, errors, warnings, { fallbackDate, quanti
   const qty = num(pick(cells, mapping, "quantity"));
   let free = num(pick(cells, mapping, "free")) || 0;
   // A return or credit note (negative quantity) isn't a bill line: it's listed, not imported
-  if (qty < 0) return { data: { ...data, [partyField]: party, invoice_no: text(pick(cells, mapping, "invoice_no")) || null }, errors: [], warnings: [], skip: "return" };
+  // P/Re, S/Re, Cr. Note, Brk/ entries are returns or write-offs, whatever the sign of the quantity
+  const entryType = text(pick(cells, mapping, "bill_type"));
+  const isReturn = /\/\s*re\b|return|credit|\bcr\.?\s*n|\bdr\.?\s*n|debit note|brk|breakage/i.test(entryType);
+  if (qty < 0 || isReturn) return { data: { ...data, [partyField]: party, invoice_no: text(pick(cells, mapping, "invoice_no")) || null }, errors: [], warnings: [], skip: "return" };
   if (!(qty >= 0) || qty === null) errors.push("Quantity is missing or not a number");
   if (Number.isNaN(free) || free < 0) {
     soft("Free quantity isn't a number");
@@ -237,35 +244,86 @@ function billLine(kind, cells, mapping, errors, warnings, { fallbackDate, quanti
     billedPacks = qty || 0;
   }
 
-  let disc = num(pick(cells, mapping, "discount")) || 0;
-  const discAmount = num(pick(cells, mapping, "discount_amount")) || 0;
-  // A discount given in rupees becomes a percent of the line
-  if (!disc && discAmount > 0 && billedPacks > 0 && rate > 0) disc = Math.round((discAmount / (billedPacks * rate)) * 10000) / 100;
-  if (Number.isNaN(disc) || disc < 0 || disc > 100) warnings.push("Discount isn't between 0 and 100%, so it's taken as 0");
-  const discount = disc >= 0 && disc <= 100 ? disc : 0;
   const gst = data.gst_rate || 0;
-  const base = Math.round(billedPacks * (rate || 0) * (1 - discount / 100) * 100) / 100;
   const fileAmount = num(pick(cells, mapping, "amount"));
   const tax = num(pick(cells, mapping, "tax_amount"));
-  // net = before GST, gross = with GST
+  const hasAmount = fileAmount >= 0 && fileAmount !== null;
+  const hasTax = tax >= 0 && tax !== null;
+
+  // The pack size, checked against the line's MRP value (MRP x packs, with or
+  // without GST): "B-COMPLEX 1X10 1X15" sold 10 at an MRP value of 2/3 of a pack is a pack of 15
+  const mrpValue = num(pick(cells, mapping, "mrp_amount"));
+  if (quantityIn === "units" && !(totalUnits > 0) && qty > 0 && data.mrp_pack > 0 && mrpValue > 0) {
+    const byName = qty / data.units_per_pack;
+    const order = sale ? [1 + gst / 100, 1] : [1, 1 + gst / 100];
+    const packsFor = order.map((f) => (mrpValue * f) / data.mrp_pack);
+    const close = (a, b) => Math.abs(a - b) <= Math.max(0.011, b * 0.015);
+    if (!packsFor.some((p) => close(p, byName))) {
+      const fit = packsFor.map((p) => qty / p).find((u) => u >= 0.98 && Math.abs(u - Math.round(u)) <= Math.max(0.02, u * 0.01));
+      if (fit) {
+        warnings.push(`Pack of ${Math.max(1, Math.round(fit))} taken from the line's MRP value (the name reads as ${data.units_per_pack})`);
+        data.units_per_pack = Math.max(1, Math.round(fit));
+        data.product_key = `${data.product_key.split("|")[0]}|${data.units_per_pack}`;
+        billedPacks = qty / data.units_per_pack;
+        units = Math.round(qty + (free || 0));
+      }
+    }
+  }
+
+  // net = before GST, gross = with GST. The file's own amount and GST amount are
+  // kept to the paisa, so the bills total exactly what the report says.
   let net;
   let gross;
-  if (fileAmount >= 0 && fileAmount !== null) {
-    if (inclusive) {
+  if (hasAmount) {
+    // Whether this line's amount includes GST, from the GST amount itself where it tells
+    let incl = inclusive;
+    if (hasTax && tax > 0 && gst > 0) {
+      const exTax = Math.abs(tax - (fileAmount * gst) / 100);
+      const inTax = Math.abs(tax - (fileAmount * gst) / (100 + gst));
+      const tol = Math.max(0.05, tax * 0.02);
+      // Only a line big enough to tell the two apart decides; small lines follow the file
+      if (Math.min(exTax, inTax) <= tol && Math.abs(exTax - inTax) > tol) incl = inTax < exTax;
+    }
+    if (incl) {
       gross = fileAmount;
-      net = tax >= 0 && tax !== null ? fileAmount - tax : fileAmount / (1 + gst / 100);
+      net = hasTax ? fileAmount - tax : fileAmount / (1 + gst / 100);
     } else {
       net = fileAmount;
-      gross = fileAmount * (1 + gst / 100);
+      gross = hasTax ? fileAmount + tax : fileAmount * (1 + gst / 100);
     }
-    const expected = inclusive ? gross : net;
-    if (base > 0 && Math.abs(expected - base) > Math.max(1, base * 0.02)) warnings.push(`Line amount ₹${fileAmount} differs from quantity × rate less discount (₹${base}); the file's amount is kept`);
-  } else if (inclusive) {
-    gross = base;
-    net = base / (1 + gst / 100);
+  }
+
+  // Discount as a percent. With the line amount in the file, it is worked out
+  // from the amount (quantity x rate against what was charged), which also takes
+  // in a discount given on the whole bill. Without one, from the discount column.
+  const base = billedPacks * (rate || 0);
+  let discount = 0;
+  let discountAmount = 0;
+  if (hasAmount && base > 0) {
+    // A sale's rate is GST-inclusive (MRP-based), a purchase rate is before GST
+    const targets = sale ? [gross, net] : [net, gross];
+    const target = targets.find((t) => t <= base * 1.005) ?? null;
+    if (target === null) warnings.push(`Charged ₹${round2(targets[0])}, more than quantity × rate (₹${round2(base)}); the file's amount is kept`);
+    else {
+      discountAmount = Math.max(0, round2(base - target));
+      discount = Math.max(0, Math.min(100, Math.round((discountAmount / base) * 10000) / 100));
+    }
   } else {
-    net = base;
-    gross = base * (1 + gst / 100);
+    let disc = num(pick(cells, mapping, "discount")) || 0;
+    const discAmount = num(pick(cells, mapping, "discount_amount")) || 0;
+    // A discount given in rupees becomes a percent of the line
+    if (!disc && discAmount > 0 && base > 0) disc = Math.round((discAmount / base) * 10000) / 100;
+    if (Number.isNaN(disc) || disc < 0 || disc > 100) warnings.push("Discount isn't between 0 and 100%, so it's taken as 0");
+    discount = disc >= 0 && disc <= 100 ? disc : 0;
+    discountAmount = round2((base * discount) / 100);
+    const after = round2(base - discountAmount);
+    if (inclusive) {
+      gross = after;
+      net = after / (1 + gst / 100);
+    } else {
+      net = after;
+      gross = after * (1 + gst / 100);
+    }
   }
 
   const rawDate = pick(cells, mapping, "invoice_date");
@@ -284,7 +342,8 @@ function billLine(kind, cells, mapping, errors, warnings, { fallbackDate, quanti
     data: {
       ...data,
       [partyField]: party.slice(0, 120),
-      ...(sale ? { customer_mobile: mobile(pick(cells, mapping, "customer_mobile")).value } : {}),
+      ...(sale ? { customer_mobile: mobile(pick(cells, mapping, "customer_mobile")).value } : { supplier_gst: GSTIN_RE.test(text(pick(cells, mapping, "supplier_gst")).toUpperCase().replace(/\s/g, "")) ? text(pick(cells, mapping, "supplier_gst")).toUpperCase().replace(/\s/g, "") : null }),
+      entry_type: entryType || null,
       invoice_no: text(pick(cells, mapping, "invoice_no")).toUpperCase().slice(0, 60) || null,
       purchase_date: date,
       date_from_file: dateFromFile,
@@ -294,6 +353,7 @@ function billLine(kind, cells, mapping, errors, warnings, { fallbackDate, quanti
       free_packs: quantityIn === "units" ? Math.round(((free || 0) / data.units_per_pack) * 1000) / 1000 : free || 0,
       units,
       discount,
+      discount_amount: discountAmount,
       net: Math.round(net * 100) / 100,
       gross: Math.round(gross * 100) / 100,
     },

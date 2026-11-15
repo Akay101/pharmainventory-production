@@ -141,12 +141,15 @@ router.post("/:id/incomplete", handle(async (req, res) => {
 }));
 
 // GET /api/imports/:id/report.pdf - the branded import report
+// ?audience=customer is the pharmacy's copy (no team emails, AI usage or ids); internal is ours
 router.get("/:id/report.pdf", handle(async (req, res) => {
   const data = await jobs.reportData(db(), req.importer.pharmacyId, req.params.id);
-  const name = `DavaDesk import report - ${data.pharmacy.name || "pharmacy"} - ${String(data.job.committed_at || data.job.created_at).slice(0, 10)}`.replace(/[^\w.\- ]/g, "_");
+  // A pharmacy's own login always gets the pharmacy's copy
+  const audience = req.query.audience === "customer" || req.importer.actor?.type !== "admin" ? "customer" : "internal";
+  const name = `DavaDesk import report - ${data.pharmacy.name || "pharmacy"} - ${String(data.job.committed_at || data.job.created_at).slice(0, 10)}${audience === "internal" ? " (internal)" : ""}`.replace(/[^\w.\- ()]/g, "_");
   res.setHeader("Content-Type", "application/pdf");
   res.setHeader("Content-Disposition", `attachment; filename="${name}.pdf"`);
-  renderReport(data).pipe(res);
+  renderReport(data, { audience }).pipe(res);
 }));
 
 // GET /api/imports/:id/undo-preview - what an undo would remove, keep and take back
