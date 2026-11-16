@@ -46,7 +46,7 @@ export default function BillingScannerModal({ open, onOpenChange, onTransferToBi
             type="button"
             onClick={transfer}
             disabled={!lines.length}
-            className="h-10 px-4 rounded-xl bg-gradient-to-r from-orange-500 to-pink-500 text-white text-sm font-semibold flex items-center gap-2 disabled:opacity-40 active:scale-[0.99]"
+            className="h-10 px-4 rounded-xl text-primary-foreground text-sm font-semibold flex items-center gap-2 disabled:opacity-40 active:scale-[0.99] bg-primary"
           >
             Add to bill <ArrowRight className="h-4 w-4" />
           </button>

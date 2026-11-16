@@ -1,3 +1,4 @@
+import { useOnlineFeatures } from "../lib/desktop";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
@@ -18,7 +19,6 @@ import {
   Package,
   PackageX,
   PiggyBank,
-  Plus,
   Receipt,
   RefreshCw,
   ScanLine,
@@ -57,6 +57,9 @@ import {
 } from "recharts";
 import { toast } from "sonner";
 import Loader from "../components/Loader";
+import { ArrowChip } from "../components/ui/arrow-chip";
+import Glider from "../components/motion/Glider";
+import CountUp from "../components/motion/CountUp";
 
 // ---------------------------------------------------------------------------
 // Formatting
@@ -197,22 +200,21 @@ function Sparkline({ data, dataKey = "revenue", color = BRAND, id }) {
 
 function KpiCard({ icon: Icon, tone, label, value, delta, deltaLabel, footer, spark }) {
   const tones = {
-    orange: "from-orange-500/15 to-amber-500/5 text-orange-500",
-    emerald: "from-emerald-500/15 to-emerald-500/5 text-emerald-500",
-    sky: "from-sky-500/15 to-sky-500/5 text-sky-500",
-    violet: "from-violet-500/15 to-violet-500/5 text-violet-500",
+    orange: "bg-orange-500/10 text-orange-600 dark:text-orange-400",
+    emerald: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+    sky: "bg-sky-500/10 text-sky-600 dark:text-sky-400",
+    violet: "bg-violet-500/10 text-violet-600 dark:text-violet-400",
   };
   return (
     <Card className="relative overflow-hidden p-5 flex flex-col gap-3 max-md:p-3.5 max-md:gap-2 max-md:rounded-2xl">
-      <div className={`absolute -top-10 -right-10 w-36 h-36 rounded-full bg-gradient-to-br blur-2xl opacity-60 ${tones[tone]}`} />
       <div className="relative flex items-center justify-between">
-        <span className="text-[11px] font-extrabold uppercase tracking-wider text-muted-foreground max-md:text-[10px] max-md:truncate">{label}</span>
-        <div className={`w-8 h-8 max-md:w-7 max-md:h-7 max-md:shrink-0 rounded-xl bg-gradient-to-br flex items-center justify-center ${tones[tone]}`}>
+        <span className="font-mono text-[10.5px] font-medium uppercase tracking-[0.12em] text-muted-foreground max-md:text-[9.5px] max-md:truncate">{label}</span>
+        <div className={`w-8 h-8 max-md:w-7 max-md:h-7 max-md:shrink-0 rounded-xl flex items-center justify-center ${tones[tone]}`}>
           <Icon className="w-4 h-4" />
         </div>
       </div>
       <div className="relative">
-        <div className="text-[28px] max-md:text-[22px] leading-none font-black tracking-tight text-foreground tabular-nums">{value}</div>
+        <div className="text-[28px] max-md:text-[22px] leading-none font-black tracking-tight text-foreground tabular-nums"><CountUp value={value} /></div>
         <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px] font-semibold text-muted-foreground">
           {delta}
           {deltaLabel && <span>{deltaLabel}</span>}
@@ -240,12 +242,14 @@ function ChartTooltip({ active, payload, label, metric }) {
 
 function SegmentedToggle({ value, onChange, options }) {
   return (
-    <div className="inline-flex items-center rounded-xl border border-border bg-muted/60 p-0.5">
+    <div className="dd-glide-row relative inline-flex items-center rounded-xl border border-border bg-muted/60 p-0.5">
+      <Glider className="bg-card shadow-sm" />
       {options.map(([v, label]) => (
         <button
           key={v}
+          data-active={value === v ? "true" : undefined}
           onClick={() => onChange(v)}
-          className={`px-2.5 py-1 text-[11px] font-bold rounded-lg transition-colors ${
+          className={`px-2.5 py-1 text-[11px] font-bold rounded-lg transition-colors duration-300 ${
             value === v ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
           }`}
         >
@@ -293,8 +297,9 @@ function EmptyState({ icon: Icon = CheckCircle2, text }) {
 // Page
 // ---------------------------------------------------------------------------
 export default function DashboardPage() {
+  const onlineFeatures = useOnlineFeatures();
   const navigate = useNavigate();
-  const { pharmacy, user } = useAuth();
+  const { pharmacy, user, can } = useAuth();
   const isDark = useIsDark();
 
   const [data, setData] = useState(null);
@@ -332,7 +337,17 @@ export default function DashboardPage() {
     load(true);
     // Keep the counter screen fresh without a manual refresh
     const t = setInterval(() => load(false), 2 * 60 * 1000);
-    return () => clearInterval(t);
+    // Back on this tab or window (e.g. after a bill in another tab): reload now
+    const onShow = () => {
+      if (document.visibilityState === "visible") load(false);
+    };
+    document.addEventListener("visibilitychange", onShow);
+    window.addEventListener("focus", onShow);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener("visibilitychange", onShow);
+      window.removeEventListener("focus", onShow);
+    };
   }, [load]);
 
   const trend = useMemo(() => (data?.trend || []).slice(-range), [data, range]);
@@ -504,17 +519,18 @@ export default function DashboardPage() {
           >
             <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />
           </Button>
-          <Button variant="outline" onClick={() => navigate("/purchases")} className="h-10 rounded-xl font-bold max-md:flex-1 max-md:h-11">
+          <Button variant="outline" hidden={!can("purchases", "create")} onClick={() => navigate("/purchases")} className="h-10 rounded-xl font-bold max-md:flex-1 max-md:h-11">
             <ShoppingCart className="w-4 h-4 mr-1.5 text-orange-500" /> Add purchase
           </Button>
-          <Button variant="outline" onClick={() => window.open("/scan", "_blank")} className="h-10 rounded-xl font-bold hidden sm:inline-flex">
+          <Button variant="outline" hidden={!can("purchases", "create")} onClick={() => window.open("/scan", "_blank")} style={onlineFeatures ? undefined : { display: "none" }} className="h-10 rounded-xl font-bold hidden sm:inline-flex">
             <ScanLine className="w-4 h-4 mr-1.5 text-orange-500" /> Scan bill
           </Button>
           <Button
+            hidden={!can("billing", "create")}
             onClick={() => navigate("/billing")}
-            className="h-10 rounded-xl font-bold text-white bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 shadow-lg shadow-orange-500/25 max-md:flex-1 max-md:h-11"
+            className="ink-pill group h-10 rounded-full pl-5 pr-1.5 font-semibold text-primary-foreground shadow-sm max-md:flex-1 max-md:h-11 bg-primary hover:bg-primary/90"
           >
-            <Plus className="w-4 h-4 mr-1.5" /> New bill
+            New bill <ArrowChip />
           </Button>
         </div>
       </div>
@@ -696,7 +712,7 @@ export default function DashboardPage() {
                     <div className="flex items-center gap-2.5 min-w-0">
                       <span
                         className={`w-6 h-6 rounded-lg flex items-center justify-center text-[10px] font-black shrink-0 ${
-                          i === 0 ? "bg-orange-500 text-white" : "bg-muted text-muted-foreground"
+                          i === 0 ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
                         }`}
                       >
                         {i + 1}
@@ -710,7 +726,7 @@ export default function DashboardPage() {
                   </div>
                   <div className="h-1.5 rounded-full bg-muted overflow-hidden">
                     <div
-                      className="h-full rounded-full bg-gradient-to-r from-orange-500 to-amber-400"
+                      className="h-full rounded-full bg-primary"
                       style={{ width: `${Math.max(4, (p.revenue / topMax) * 100)}%` }}
                     />
                   </div>
@@ -1031,7 +1047,7 @@ export default function DashboardPage() {
                       </Button>
                       <Button
                         size="sm"
-                        className="h-7 rounded-lg text-[11px] font-bold bg-orange-500 hover:bg-orange-600 text-white"
+                        className="h-7 rounded-lg text-[11px] font-bold bg-primary hover:bg-primary/90 text-primary-foreground"
                         onClick={() => setSupplierClearDuesDialog({ open: true, supplierId: s.id, supplierName: s.name })}
                       >
                         Settle
@@ -1145,7 +1161,7 @@ export default function DashboardPage() {
             <Button
               onClick={confirmSupplierPartialPayment}
               disabled={saving}
-              className="w-full h-11 rounded-xl font-bold text-white bg-gradient-to-r from-orange-500 to-amber-500"
+              className="w-full h-11 rounded-xl font-bold text-primary-foreground bg-primary"
             >
               {saving ? <RefreshCw className="w-4 h-4 animate-spin" /> : "Record payment"}
             </Button>
@@ -1172,7 +1188,7 @@ export default function DashboardPage() {
               Cancel
             </AlertDialogCancel>
             <AlertDialogAction
-              className="rounded-xl bg-orange-500 hover:bg-orange-600 text-white"
+              className="rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground"
               disabled={saving}
               onClick={(e) => {
                 e.preventDefault();

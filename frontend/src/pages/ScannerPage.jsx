@@ -655,7 +655,7 @@ export default function ScannerPage() {
                 setPhotos([]);
               }}
               className={`flex h-10 items-center justify-center gap-2 rounded-xl text-sm font-semibold transition ${
-                mode === key ? "bg-gradient-to-r from-orange-500 to-pink-500 text-white shadow" : "text-muted-foreground hover:text-foreground"
+                mode === key ? "text-primary-foreground shadow bg-primary" : "text-muted-foreground hover:text-foreground"
               }`}
             >
               <m.icon className="h-4 w-4" /> {m.label}
@@ -672,7 +672,7 @@ export default function ScannerPage() {
               type="button"
               disabled={!photos.length}
               onClick={scan}
-              className="mt-3 h-12 w-full rounded-xl bg-gradient-to-r from-orange-500 via-pink-500 to-violet-500 text-white font-semibold flex items-center justify-center gap-2 shadow-lg shadow-fuchsia-500/20 disabled:opacity-40 active:scale-[0.99]"
+              className="mt-3 h-12 w-full rounded-xl text-primary-foreground font-semibold flex items-center justify-center gap-2 shadow-lg disabled:opacity-40 active:scale-[0.99] bg-primary"
             >
               <Sparkles className="h-4 w-4" /> Read {photos.length ? `${photos.length} photo${photos.length > 1 ? "s" : ""} ` : ""}with AI
             </button>
@@ -739,7 +739,7 @@ export default function ScannerPage() {
                 </div>
                 <div className="flex h-10 rounded-xl border border-border bg-background p-1 text-xs font-semibold">
                   {[["Unpaid", false], ["Paid", true]].map(([label, v]) => (
-                    <button key={label} type="button" onClick={() => setPaid(v)} className={`flex-1 rounded-lg transition ${paid === v ? "bg-orange-500 text-white" : "text-muted-foreground"}`}>
+                    <button key={label} type="button" onClick={() => setPaid(v)} className={`flex-1 rounded-lg transition ${paid === v ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}>
                       {label}
                     </button>
                   ))}
@@ -766,7 +766,7 @@ export default function ScannerPage() {
                   type="button"
                   onClick={createPurchase}
                   disabled={submitting || !supplier}
-                  className="h-11 px-4 rounded-xl bg-gradient-to-r from-orange-500 to-pink-500 text-white text-sm font-semibold flex items-center gap-2 shadow-lg shadow-orange-500/20 disabled:opacity-40"
+                  className="h-11 px-4 rounded-xl text-primary-foreground text-sm font-semibold flex items-center gap-2 shadow-lg disabled:opacity-40 bg-primary"
                 >
                   {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShoppingCart className="h-4 w-4" />} Create purchase
                 </button>
@@ -774,7 +774,7 @@ export default function ScannerPage() {
                 <button
                   type="button"
                   onClick={() => setSheetOpen(true)}
-                  className="h-11 px-4 rounded-xl bg-gradient-to-r from-orange-500 to-pink-500 text-white text-sm font-semibold flex items-center gap-2 shadow-lg shadow-orange-500/20"
+                  className="h-11 px-4 rounded-xl text-primary-foreground text-sm font-semibold flex items-center gap-2 shadow-lg bg-primary"
                 >
                   <Truck className="h-4 w-4" /> Supplier & save
                 </button>

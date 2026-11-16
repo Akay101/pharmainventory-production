@@ -87,7 +87,7 @@ async function generateReturnNotePDF(bundle, pharmacy, { kind = "return", suppli
         let drewLogo = false;
         if (logo) {
           try {
-            doc.image(logo, 30, 28, { width: 60, height: 48 });
+            doc.image(logo, 30, 28, { fit: [60, 48], align: "center", valign: "center" });
             drewLogo = true;
           } catch {}
         }

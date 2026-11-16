@@ -203,7 +203,7 @@ export default function BillingScannerPage() {
                             setPaymentMode(m);
                           }
                         }}
-                        className={`flex-1 rounded-lg transition ${active ? "bg-orange-500 text-white" : "text-muted-foreground hover:text-foreground"}`}
+                        className={`flex-1 rounded-lg transition ${active ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
                       >
                         {m}
                       </button>
@@ -241,7 +241,7 @@ export default function BillingScannerPage() {
             type="button"
             onClick={openInBilling}
             disabled={!lines.length}
-            className="h-11 px-4 rounded-xl bg-gradient-to-r from-orange-500 to-pink-500 text-white text-sm font-semibold flex items-center gap-1.5 shadow-lg shadow-orange-500/20 disabled:opacity-40 active:scale-[0.99]"
+            className="h-11 px-4 rounded-xl text-primary-foreground text-sm font-semibold flex items-center gap-1.5 shadow-lg disabled:opacity-40 active:scale-[0.99] bg-primary"
           >
             Open bill <ArrowRight className="h-4 w-4" />
           </button>

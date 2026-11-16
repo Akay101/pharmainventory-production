@@ -5,6 +5,7 @@ const morgan = require("morgan");
 const { initConnections } = require("./db/connections");
 
 const app = express();
+app.disable("x-powered-by");
 const PORT = process.env.PORT || 8002;
 
 // Middleware
@@ -41,6 +42,7 @@ app.get("/api", (req, res) => {
       "/api/leads",
       "/api/promos",
       "/api/global-data",
+      "/api/imports",
       "/api/broadcasts",
       "/api/analytics/funnel",
       "/api/analytics/activity-feed",
@@ -77,10 +79,12 @@ app.use("/api/leads", requireAdminAuth, leadsRoutes);
 app.use("/api/promos", requireAdminAuth, promosRoutes);
 app.use("/api/pricing", requireAdminAuth, require("./routes/pricing"));
 app.use("/api/subscriptions", requireAdminAuth, require("./routes/subscriptions"));
+app.use("/api/invoices", requireAdminAuth, require("./routes/invoices"));
 app.use("/api/credits", requireAdminAuth, require("./routes/credits"));
 app.use("/api/support", requireAdminAuth, require("./routes/support"));
 app.use("/api/offer-leads", requireAdminAuth, require("./routes/offerLeads"));
 app.use("/api/global-data", requireAdminAuth, require("./routes/globalData"));
+app.use("/api/imports", requireAdminAuth, require("./routes/imports"));
 app.use("/api/broadcasts", requireAdminAuth, require("./routes/broadcasts"));
 app.use("/api/analytics", requireAdminAuth, analyticsRoutes);
 

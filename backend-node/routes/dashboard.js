@@ -286,6 +286,142 @@ router.get(
   }
 );
 
+// GET /api/dashboard/product-performance?days=30&category=all|medicine|cosmetic
+// Every product sold in the period: units, revenue, profit, bills, stock on
+// hand, how long that stock lasts at this rate (demand), what was bought, and
+// the supplier it came from; plus suppliers ranked by the sales of what they
+// supplied. Feeds Reports → Product Performance.
+router.get("/product-performance", auth, requireSubscription(), async (req, res, next) => {
+  try {
+    const db = mongoose.connection.db;
+    const pid = req.user.pharmacy_id;
+    const days = Math.min(Math.max(parseInt(req.query.days) || 30, 1), 3650);
+    const today = dash.istDate();
+    const from = dash.addDays(today, -(days - 1));
+    const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+    const key = (n) => String(n || "").trim().toLowerCase();
+
+    const [sold, stock, bought, products] = await Promise.all([
+      db
+        .collection("bills")
+        .aggregate([
+          { $match: { pharmacy_id: pid, billing_date: { $gte: from, $lte: today } } },
+          { $unwind: "$items" },
+          {
+            $group: {
+              _id: { $toLower: { $trim: { input: { $ifNull: ["$items.product_name", ""] } } } },
+              name: { $first: "$items.product_name" },
+              units: { $sum: { $ifNull: ["$items.quantity", 0] } },
+              revenue: { $sum: { $ifNull: ["$items.item_total", 0] } },
+              profit: { $sum: { $ifNull: ["$items.profit", 0] } },
+              bills: { $addToSet: "$id" },
+              customers: { $addToSet: "$customer_id" },
+              last_sold: { $max: "$billing_date" },
+              batch_ids: { $addToSet: "$items.inventory_id" },
+            },
+          },
+        ])
+        .toArray(),
+      db
+        .collection("inventory")
+        .aggregate([
+          { $match: { pharmacy_id: pid, status: { $nin: ["Returned", "Expired & Returned"] } } },
+          { $group: { _id: { $toLower: { $trim: { input: { $ifNull: ["$product_name", ""] } } } }, on_hand: { $sum: { $max: [0, { $ifNull: ["$available_quantity", 0] }] } } } },
+        ])
+        .toArray(),
+      db
+        .collection("purchases")
+        .aggregate([
+          { $match: { pharmacy_id: pid, purchase_date: { $gte: from, $lte: today } } },
+          { $unwind: "$items" },
+          { $sort: { purchase_date: -1 } },
+          {
+            $group: {
+              _id: { $toLower: { $trim: { input: { $ifNull: ["$items.product_name", ""] } } } },
+              units: { $sum: { $ifNull: ["$items.total_units", { $ifNull: ["$items.quantity", 0] }] } },
+              spent: { $sum: { $ifNull: ["$items.item_total", 0] } },
+              last_supplier: { $first: "$supplier_name" },
+            },
+          },
+        ])
+        .toArray(),
+      db.collection("products").find({ pharmacy_id: pid }, { projection: { _id: 0, name: 1, product_name: 1, category: 1 } }).toArray(),
+    ]);
+    const stockBy = new Map(stock.map((x) => [x._id, x.on_hand]));
+    const boughtBy = new Map(bought.map((x) => [x._id, x]));
+    const catBy = new Map();
+    for (const p of products) for (const n of [p.name, p.product_name]) if (n && !catBy.has(key(n))) catBy.set(key(n), p.category || "medicine");
+
+    // Which supplier each sold batch came from
+    const batchIds = [...new Set(sold.flatMap((x) => x.batch_ids).filter(Boolean))];
+    const batches = batchIds.length
+      ? await db.collection("inventory").find({ pharmacy_id: pid, id: { $in: batchIds } }, { projection: { _id: 0, id: 1, supplier_id: 1 } }).toArray()
+      : [];
+    const supIds = [...new Set(batches.map((b) => b.supplier_id).filter(Boolean))];
+    const sups = supIds.length ? await db.collection("suppliers").find({ pharmacy_id: pid, id: { $in: supIds } }, { projection: { _id: 0, id: 1, name: 1 } }).toArray() : [];
+    const supName = new Map(sups.map((x) => [x.id, x.name]));
+    const batchSup = new Map(batches.map((b) => [b.id, b.supplier_id ? supName.get(b.supplier_id) || "Unknown supplier" : null]));
+
+    let rows = sold
+      .filter((x) => x._id)
+      .map((x) => {
+        const onHand = stockBy.get(x._id) || 0;
+        const perDay = x.units / days;
+        const b = boughtBy.get(x._id);
+        const category = catBy.get(x._id) || "medicine";
+        return {
+          product_name: x.name,
+          category,
+          units_sold: x.units,
+          revenue: r2(x.revenue),
+          profit: r2(x.profit),
+          margin_percent: x.revenue > 0 ? r2((x.profit / x.revenue) * 100) : 0,
+          bills: x.bills.length,
+          customers: x.customers.filter(Boolean).length,
+          last_sold: x.last_sold,
+          on_hand: onHand,
+          per_day: r2(perDay),
+          days_of_stock: perDay > 0 ? Math.floor(onHand / perDay) : null,
+          bought_units: b?.units || 0,
+          bought_amount: r2(b?.spent || 0),
+          last_supplier: b?.last_supplier || null,
+          // Units to order to cover the next 30 days at this rate
+          suggested_order: Math.max(0, Math.ceil(perDay * 30 - onHand)),
+        };
+      });
+    const cat = String(req.query.category || "all");
+    if (cat === "cosmetic") rows = rows.filter((r) => r.category === "cosmetic");
+    else if (cat === "medicine") rows = rows.filter((r) => r.category !== "cosmetic");
+    rows.sort((a, b) => b.revenue - a.revenue);
+
+    // Suppliers by the sales of what they supplied
+    const bySup = new Map();
+    const billItems = await db
+      .collection("bills")
+      .aggregate([
+        { $match: { pharmacy_id: pid, billing_date: { $gte: from, $lte: today } } },
+        { $unwind: "$items" },
+        { $match: { "items.inventory_id": { $in: batchIds } } },
+        { $project: { _id: 0, inv: "$items.inventory_id", amount: "$items.item_total", profit: "$items.profit", units: "$items.quantity" } },
+      ])
+      .toArray();
+    for (const it of billItems) {
+      const name = batchSup.get(it.inv);
+      if (!name) continue;
+      const cur = bySup.get(name) || { supplier_name: name, revenue: 0, profit: 0, units: 0 };
+      cur.revenue += Number(it.amount) || 0;
+      cur.profit += Number(it.profit) || 0;
+      cur.units += Number(it.units) || 0;
+      bySup.set(name, cur);
+    }
+    const suppliers = [...bySup.values()].map((x) => ({ ...x, revenue: r2(x.revenue), profit: r2(x.profit) })).sort((a, b) => b.revenue - a.revenue);
+
+    res.json({ from, to: today, days, products: rows.slice(0, 500), suppliers, totals: { products: rows.length, revenue: r2(rows.reduce((t, r) => t + r.revenue, 0)), profit: r2(rows.reduce((t, r) => t + r.profit, 0)) } });
+  } catch (error) {
+    next(error);
+  }
+});
+
 // GET /api/dashboard/ai-tips
 router.get("/ai-tips", auth, requireSubscription(), async (req, res, next) => {
   try {

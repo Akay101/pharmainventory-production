@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import axios from "axios";
-import { API } from "../App";
+import { API, useAuth } from "../App";
+import { useAccess } from "../components/access/Can";
 import { Card, CardContent } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -55,6 +56,10 @@ import { formatDate } from "./utils";
 import Loader from "../components/Loader";
 
 export default function SuppliersPage() {
+  // Hide what this user's access doesn't allow (the server enforces it too)
+  const acc = useAccess("suppliers");
+  const { can, rule } = useAuth();
+  const canPaySuppliers = can("suppliers", "update") && !rule("no_supplier_payments");
   const navigate = useNavigate();
   const location = useLocation();
   const isInitialMount = useRef(true);
@@ -70,6 +75,7 @@ export default function SuppliersPage() {
     email: "",
     address: "",
     gst_no: "",
+    dl_no: "",
     default_margin_percent: "",
   });
 
@@ -93,6 +99,8 @@ export default function SuppliersPage() {
 
   // Details Dialog State
   const [detailsDialog, setDetailsDialog] = useState({ open: false, data: null, loading: false });
+  // Supplier ledger: all bills, or only the ones still to be paid
+  const [ledgerFilter, setLedgerFilter] = useState("all");
   // Payment Dialog
   const [paymentDialog, setPaymentDialog] = useState({ open: false, purchase: null });
   const [newPaymentAmount, setNewPaymentAmount] = useState("");
@@ -444,6 +452,7 @@ export default function SuppliersPage() {
       email: supplier.email || "",
       address: supplier.address || "",
       gst_no: supplier.gst_no || "",
+      dl_no: supplier.dl_no || "",
       default_margin_percent:
         supplier.default_margin_percent !== undefined && supplier.default_margin_percent !== null
           ? String(supplier.default_margin_percent)
@@ -477,6 +486,7 @@ export default function SuppliersPage() {
       email: "",
       address: "",
       gst_no: "",
+      dl_no: "",
       default_margin_percent: "",
     });
     setEditingSupplier(null);
@@ -646,7 +656,7 @@ export default function SuppliersPage() {
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 border-b border-border/40 pb-6 max-md:gap-3 max-md:pb-0 max-md:border-0">
         <div>
-          <h1 className="text-3xl font-extrabold tracking-tight bg-gradient-to-r from-foreground to-foreground/75 bg-clip-text text-transparent flex items-center gap-3">
+          <h1 className="text-3xl font-extrabold tracking-tight flex items-center gap-3 text-foreground">
             <div className="p-2.5 rounded-xl bg-primary/10 text-primary border border-primary/20 shrink-0">
               <Truck className="w-8 h-8" />
             </div>
@@ -662,6 +672,7 @@ export default function SuppliersPage() {
           <Dialog open={mergeDialogOpen} onOpenChange={setMergeDialogOpen}>
             <Button 
               variant="outline" 
+              hidden={!acc.update}
               className="h-10 text-sm font-semibold border-border/80 hover:bg-muted rounded-xl transition-all flex items-center gap-2" 
               onClick={openMergeDialog}
             >
@@ -785,7 +796,7 @@ export default function SuppliersPage() {
             }}
           >
             <DialogTrigger asChild>
-              <Button className="btn-primary flex items-center gap-2 rounded-xl h-10" data-testid="add-supplier-btn" data-shortcut="new">
+              <Button hidden={!acc.create} className="btn-primary flex items-center gap-2 rounded-xl h-10" data-testid="add-supplier-btn" data-shortcut={acc.create ? "new" : undefined}>
                 <Plus className="w-4 h-4" />
                 Add Supplier
               </Button>
@@ -923,6 +934,20 @@ export default function SuppliersPage() {
                     className="h-10 border-border/80 focus-visible:ring-primary focus-visible:ring-offset-0 rounded-xl"
                     data-testid="supplier-gst-input"
                   />
+                  {!String(formData.gst_no || "").trim() && (
+                    <p className="text-[10px] text-muted-foreground">Leave empty if the supplier has no GST registration.</p>
+                  )}
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="text-xs font-bold text-muted-foreground uppercase">Drug Licence (DL) Number</Label>
+                  <Input
+                    placeholder="E.g. UP-LKO-20B-123456, UP-LKO-21B-123457"
+                    value={formData.dl_no}
+                    onChange={(e) => setFormData({ ...formData, dl_no: e.target.value })}
+                    className="h-10 border-border/80 focus-visible:ring-primary focus-visible:ring-offset-0 rounded-xl"
+                    data-testid="supplier-dl-input"
+                  />
                 </div>
 
                 <div className="space-y-2">
@@ -1037,7 +1062,7 @@ export default function SuppliersPage() {
           ) : detailsDialog.data ? (
             <div className="flex-1 overflow-hidden flex flex-col min-h-0">
               {/* Header Section */}
-              <div className="bg-gradient-to-br from-primary/10 to-accent/5 p-6 md:p-8 flex flex-col md:flex-row justify-between items-start md:items-center border-b border-border/40 gap-4 shrink-0">
+              <div className="p-6 md:p-8 flex flex-col md:flex-row justify-between items-start md:items-center border-b border-border/40 gap-4 shrink-0 bg-primary/5">
                 <div>
                   <h2 className="text-2xl font-black tracking-tight text-foreground flex items-center gap-3">
                     <div className="w-10 h-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center border border-primary/20 shrink-0">
@@ -1064,6 +1089,12 @@ export default function SuppliersPage() {
                         GST: {detailsDialog.data.supplier.gst_no}
                       </span>
                     )}
+                    {detailsDialog.data.supplier.dl_no && (
+                      <span className="flex items-center gap-1 font-mono text-foreground/80">
+                        <FileText className="w-3.5 h-3.5 shrink-0" />
+                        DL: {detailsDialog.data.supplier.dl_no}
+                      </span>
+                    )}
                     {detailsDialog.data.supplier.default_margin_percent !== undefined && detailsDialog.data.supplier.default_margin_percent !== null && (
                       <span className="flex items-center gap-1 font-semibold text-sky-700 dark:text-sky-300">
                         Default margin {detailsDialog.data.supplier.default_margin_percent}%
@@ -1079,7 +1110,7 @@ export default function SuppliersPage() {
                       ₹{(detailsDialog.data.total_amount_owed || 0).toFixed(2)}
                     </p>
                   </div>
-                  {detailsDialog.data.total_amount_owed > 0 && (
+                  {detailsDialog.data.total_amount_owed > 0 && canPaySuppliers && (
                     <Button 
                       onClick={() => handleClearAllDues(detailsDialog.data.supplier.id)} 
                       size="sm" 
@@ -1117,9 +1148,24 @@ export default function SuppliersPage() {
                 )}
 
                 <div className="flex justify-between items-center">
-                  <h3 className="text-lg font-bold flex items-center gap-2 text-foreground">
-                    <CreditCard className="w-4.5 h-4.5 text-primary" /> Purchase Ledger
-                  </h3>
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <h3 className="text-lg font-bold flex items-center gap-2 text-foreground">
+                      <CreditCard className="w-4.5 h-4.5 text-primary" /> Purchase Ledger
+                    </h3>
+                    <div className="flex h-8 rounded-lg border border-border/70 bg-muted/30 p-0.5" role="group" aria-label="Ledger filter">
+                      {[["all", "All bills"], ["pending", "Pending"], ["paid", "Paid"]].map(([v, label]) => (
+                        <button
+                          key={v}
+                          type="button"
+                          aria-pressed={ledgerFilter === v}
+                          onClick={() => setLedgerFilter(v)}
+                          className={`px-2.5 text-[11px] font-bold rounded-md ${ledgerFilter === v ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                   <Button 
                     variant="outline" 
                     size="sm" 
@@ -1137,9 +1183,13 @@ export default function SuppliersPage() {
                   </div>
                 ) : (
                   <div className="space-y-4">
-                    {detailsDialog.data.purchases.map(purchase => {
+                    {detailsDialog.data.purchases
+                      .filter((p) => ledgerFilter === "all" || (ledgerFilter === "paid") === (p.payment_status === "Paid"))
+                      .map(purchase => {
                       const isPaid = purchase.payment_status === "Paid";
                       const remaining = (purchase.total_amount || 0) - (purchase.amount_paid || 0);
+                      const payments = [...(purchase.payments || [])].sort((a, b) => new Date(b.date) - new Date(a.date));
+                      const lastPayment = payments[0];
                       return (
                         <div 
                           key={purchase.id} 
@@ -1178,6 +1228,26 @@ export default function SuppliersPage() {
                                 {purchase.items?.length || 0} product lines purchased.
                               </p>
                             </div>
+                            {payments.length > 0 && (
+                              <div className="rounded-xl border border-border/50 bg-muted/20 p-2.5 space-y-1.5" data-testid="supplier-bill-payments">
+                                <p className="text-[11px] font-bold text-foreground">
+                                  Last paid ₹{Number(lastPayment.amount || 0).toFixed(2)} on {formatDate(lastPayment.date)}
+                                  {lastPayment.payment_mode ? ` (${lastPayment.payment_mode})` : ""}
+                                  <span className="text-muted-foreground font-semibold"> · paid ₹{Number(purchase.amount_paid || 0).toFixed(2)} in {payments.length} payment{payments.length === 1 ? "" : "s"}</span>
+                                </p>
+                                <details className="text-[11px]">
+                                  <summary className="cursor-pointer text-primary font-semibold select-none">Payment history</summary>
+                                  <div className="mt-1.5 space-y-1">
+                                    {payments.map((pm, i) => (
+                                      <div key={pm.id || i} className="flex justify-between gap-2 text-muted-foreground">
+                                        <span>{formatDate(pm.date)} · {pm.payment_mode || "—"}{pm.notes ? ` · ${pm.notes}` : ""}</span>
+                                        <span className="font-mono font-bold text-foreground">₹{Number(pm.amount || 0).toFixed(2)}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </details>
+                              </div>
+                            )}
                           </div>
                           
                           {/* Action Info */}
@@ -1186,7 +1256,7 @@ export default function SuppliersPage() {
                               <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Remaining</span>
                               <span className={`text-base font-mono font-extrabold ${remaining > 0 ? "text-red-500" : "text-green-500"}`}>₹{Math.max(0, remaining).toFixed(2)}</span>
                             </div>
-                            {!isPaid && (
+                            {!isPaid && canPaySuppliers && (
                               <div className="flex gap-2">
                                 <Button 
                                   size="sm" 
@@ -1408,12 +1478,12 @@ export default function SuppliersPage() {
                       className="glass bg-card/45 border-border/70 shadow-md hover:shadow-lg rounded-2xl hover:border-primary/30 transition-all duration-300 relative overflow-hidden group p-5"
                       data-testid={`supplier-card-${supplier.id}`}
                     >
-                      <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-primary/30 to-accent/30 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                      <div className="absolute top-0 left-0 right-0 h-1 opacity-0 group-hover:opacity-100 transition-opacity bg-primary/10"></div>
                       
                       <div className="flex items-start justify-between mb-4 gap-2">
                         <div className="flex items-center gap-3 min-w-0">
                           <div 
-                            className="w-12 h-12 rounded-xl bg-gradient-to-br from-primary/10 to-accent/10 border border-primary/20 flex items-center justify-center text-primary font-bold text-lg cursor-pointer hover:scale-105 transition-transform shrink-0" 
+                            className="w-12 h-12 rounded-xl border border-primary/20 flex items-center justify-center text-primary font-bold text-lg cursor-pointer hover:scale-105 transition-transform shrink-0 bg-primary/5" 
                             onClick={() => handleViewDetails(supplier.id)}
                           >
                             {initial}
@@ -1440,10 +1510,11 @@ export default function SuppliersPage() {
                           </div>
                         </div>
 
-                        <div className="flex gap-0.5 bg-muted/20 p-0.5 rounded-lg border border-border/50 shrink-0">
+                        <div className="flex gap-0.5 bg-muted/20 p-0.5 rounded-lg border border-border/50 shrink-0" hidden={!acc.update && !acc.delete}>
                           <Button
                             variant="ghost"
                             size="icon"
+                            hidden={!acc.update}
                             onClick={() => openCsvTemplateModal(supplier)}
                             className={`w-8 h-8 rounded-md transition-all ${
                               supplier.csv_template
@@ -1457,6 +1528,7 @@ export default function SuppliersPage() {
                           <Button
                             variant="ghost"
                             size="icon"
+                            hidden={!acc.update}
                             onClick={() => handleEdit(supplier)}
                             className="w-8 h-8 rounded-md text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all"
                             data-testid={`edit-supplier-${supplier.id}`}
@@ -1467,6 +1539,7 @@ export default function SuppliersPage() {
                           <Button
                             variant="ghost"
                             size="icon"
+                            hidden={!acc.delete}
                             onClick={() => handleDelete(supplier.id)}
                             className="w-8 h-8 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-all"
                             data-testid={`delete-supplier-${supplier.id}`}
@@ -1638,12 +1711,12 @@ export default function SuppliersPage() {
                       key={targetId}
                       className="glass bg-card/45 border-border/70 shadow-md hover:shadow-lg rounded-2xl hover:border-primary/30 transition-all duration-300 relative overflow-hidden group p-5 flex flex-col justify-between"
                     >
-                      <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-sky-400 to-primary/40 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                      <div className="absolute top-0 left-0 right-0 h-1 opacity-0 group-hover:opacity-100 transition-opacity bg-brand"></div>
                       
                       <div>
                         <div className="flex items-start justify-between mb-3 gap-2">
                           <div className="flex items-center gap-3 min-w-0">
-                            <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-sky-500/10 to-primary/10 border border-sky-500/20 flex items-center justify-center text-sky-400 font-bold shrink-0">
+                            <div className="w-11 h-11 rounded-xl border border-sky-500/20 flex items-center justify-center text-sky-400 font-bold shrink-0 bg-sky-500/5">
                               <Building2 className="w-5 h-5" />
                             </div>
                             <div className="min-w-0 flex-1">
@@ -1701,6 +1774,7 @@ export default function SuppliersPage() {
                         ) : (
                           <Button
                             size="sm"
+                            hidden={!acc.create}
                             onClick={() => handleAddGlobalSupplier(dist)}
                             disabled={isAdding}
                             className="btn-primary h-8 px-3 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm"
@@ -1862,7 +1936,7 @@ export default function SuppliersPage() {
               <Button
                 onClick={handleSaveCsvTemplate}
                 disabled={csvTemplateDialog.saving || csvTemplateDialog.loading}
-                className="h-9 px-4 bg-orange-500 hover:bg-orange-600 text-white font-extrabold text-xs rounded-xl shadow-md cursor-pointer flex items-center gap-1.5"
+                className="h-9 px-4 bg-primary hover:bg-primary/90 text-primary-foreground font-extrabold text-xs rounded-xl shadow-md cursor-pointer flex items-center gap-1.5"
               >
                 {csvTemplateDialog.saving ? (
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />

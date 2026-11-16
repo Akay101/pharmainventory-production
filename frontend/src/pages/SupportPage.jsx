@@ -10,6 +10,7 @@ import { Label } from "../components/ui/label";
 import { Textarea } from "../components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../components/ui/dialog";
 import Loader from "../components/Loader";
+import Glider from "../components/motion/Glider";
 
 export const SUPPORT_CATEGORIES = {
   bug: { label: "Something's broken", short: "Bug", icon: Bug, tone: "text-rose-600 dark:text-rose-400 bg-rose-500/10 border-rose-500/30" },
@@ -193,13 +194,14 @@ export default function SupportPage() {
           <Button variant="outline" size="sm" onClick={load} className="h-9 rounded-xl text-xs font-bold" aria-label="Refresh">
             <RefreshCw className="h-3.5 w-3.5" />
           </Button>
-          <Button size="sm" onClick={() => setNewOpen(true)} className="h-9 flex-1 rounded-xl bg-orange-600 text-xs font-bold text-white hover:bg-orange-700 sm:flex-none" data-shortcut="new">
+          <Button size="sm" onClick={() => setNewOpen(true)} className="h-9 flex-1 rounded-xl bg-primary text-xs font-bold text-primary-foreground hover:bg-primary/90 sm:flex-none" data-shortcut="new">
             <Plus className="mr-1.5 h-4 w-4" /> Report a problem
           </Button>
         </div>
       </div>
 
-      <div className="flex gap-1 border-b border-border/60" role="tablist">
+      <div className="dd-glide-row relative flex gap-1 border-b border-border/60" role="tablist">
+        <Glider variant="tab" />
         {tabs.map(([id, label]) => (
           <button
             key={id}
@@ -226,7 +228,7 @@ export default function SupportPage() {
           <LifeBuoy className="mx-auto mb-2 h-10 w-10 text-muted-foreground opacity-50" />
           <p className="text-sm font-bold text-foreground">{tab === "resolved" ? "Nothing resolved yet" : "No open queries"}</p>
           <p className="mt-1 text-xs text-muted-foreground">Found a bug or stuck somewhere? Tell us and we'll get back to you.</p>
-          <Button size="sm" onClick={() => setNewOpen(true)} className="mt-4 rounded-xl bg-orange-600 text-xs font-bold text-white hover:bg-orange-700">
+          <Button size="sm" onClick={() => setNewOpen(true)} className="mt-4 rounded-xl bg-primary text-xs font-bold text-primary-foreground hover:bg-primary/90">
             <Plus className="mr-1.5 h-4 w-4" /> Report a problem
           </Button>
         </div>
@@ -351,7 +353,7 @@ export default function SupportPage() {
               <Button type="button" variant="outline" onClick={() => setNewOpen(false)} className="rounded-xl text-xs font-bold">
                 Cancel
               </Button>
-              <Button type="submit" disabled={creating || !subjectOk || !descOk} className="rounded-xl bg-orange-600 text-xs font-bold text-white hover:bg-orange-700" data-shortcut="save">
+              <Button type="submit" disabled={creating || !subjectOk || !descOk} className="rounded-xl bg-primary text-xs font-bold text-primary-foreground hover:bg-primary/90" data-shortcut="save">
                 {creating ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Send className="mr-1.5 h-4 w-4" />}
                 Send report
               </Button>
@@ -380,7 +382,7 @@ export default function SupportPage() {
                   const mine = m.author === "user";
                   return (
                     <div key={m.id} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
-                      <div className={`max-w-[85%] rounded-2xl px-3.5 py-2 text-sm ${mine ? "rounded-br-md bg-orange-600 text-white" : "rounded-bl-md border border-border bg-card text-foreground"}`}>
+                      <div className={`max-w-[85%] rounded-2xl px-3.5 py-2 text-sm ${mine ? "rounded-br-md bg-primary text-primary-foreground" : "rounded-bl-md border border-border bg-card text-foreground"}`}>
                         {!mine && <p className="mb-0.5 text-[10px] font-black uppercase tracking-wide text-orange-600 dark:text-orange-400">{m.author_name || "DavaDesk team"}</p>}
                         <p className="whitespace-pre-wrap break-words">{m.text}</p>
                         <p className={`mt-1 text-[10px] ${mine ? "text-white/70" : "text-muted-foreground"}`}>
@@ -409,7 +411,7 @@ export default function SupportPage() {
                     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) sendReply(e);
                   }}
                 />
-                <Button type="submit" disabled={sending || !reply.trim()} className="h-11 rounded-xl bg-orange-600 px-4 font-bold text-white hover:bg-orange-700" aria-label="Send reply">
+                <Button type="submit" disabled={sending || !reply.trim()} className="h-11 rounded-xl bg-primary px-4 font-bold text-primary-foreground hover:bg-primary/90" aria-label="Send reply">
                   {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
                 </Button>
               </form>

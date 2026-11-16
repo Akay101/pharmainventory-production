@@ -3,6 +3,7 @@ import axios from "axios";
 import { toast } from "sonner";
 import { CheckCircle2, ClipboardList, Copy, Loader2, PackageCheck, Plus, RefreshCw, RotateCcw, Search, Trash2, Truck } from "lucide-react";
 import { API } from "../App";
+import { useAccess } from "../components/access/Can";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
@@ -19,7 +20,9 @@ import {
   AlertDialogTitle,
 } from "../components/ui/alert-dialog";
 import Loader from "../components/Loader";
+import { Popover, PopoverContent, PopoverTrigger } from "../components/ui/popover";
 import { formatCombo } from "../lib/shortcuts";
+import Glider from "../components/motion/Glider";
 
 const TABS = [
   ["pending", "To order"],
@@ -35,11 +38,21 @@ const STATUS_TONE = {
 };
 const STATUS_LABEL = { pending: "To order", ordered: "Ordered", received: "Received", cancelled: "Cancelled" };
 const err = (e, f) => e?.response?.data?.detail || f;
+const SECTIONS = [
+  ["all", "All"],
+  ["medicine", "Medicines"],
+  ["cosmetic", "Cosmetics"],
+  ["other", "Other"],
+];
+const rs = (n) => (Number(n) > 0 ? `₹${Number(n).toFixed(2)}` : "—");
 const day = (iso) => (iso ? new Date(iso).toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : "");
 const qtyText = (e) => `${e.quantity} ${e.unit === "packs" ? (e.quantity === 1 ? "pack" : "packs") : e.quantity === 1 ? "unit" : "units"}`;
 
 export default function ShortBookPage() {
+  // Hide what this user's access doesn't allow (the server enforces it too)
+  const acc = useAccess("short_book");
   const [tab, setTab] = useState("pending");
+  const [section, setSection] = useState("all"); // medicines / cosmetics / other
   const [search, setSearch] = useState("");
   const [data, setData] = useState({ entries: [], counts: {} });
   const [loading, setLoading] = useState(true);
@@ -52,14 +65,14 @@ export default function ShortBookPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await axios.get(`${API}/shortbook`, { params: { status: tab, search: search.trim() || undefined } });
+      const res = await axios.get(`${API}/shortbook`, { params: { status: tab, search: search.trim() || undefined, section: section === "all" ? undefined : section } });
       setData(res.data);
     } catch (e) {
       toast.error(err(e, "Couldn't load the short book"));
     } finally {
       setLoading(false);
     }
-  }, [tab, search]);
+  }, [tab, search, section]);
 
   useEffect(() => {
     const t = setTimeout(load, search ? 250 : 0);
@@ -159,14 +172,17 @@ export default function ShortBookPage() {
               <Copy className="mr-1.5 h-3.5 w-3.5" /> Copy order list
             </Button>
           )}
-          <Button size="sm" onClick={() => setAddOpen(true)} className="h-9 rounded-xl bg-orange-600 text-xs font-bold text-white hover:bg-orange-700" data-shortcut="new" data-kbd={formatCombo("alt+n")}>
-            <Plus className="mr-1.5 h-4 w-4" /> Add item
-          </Button>
+          {acc.create && (
+            <Button size="sm" onClick={() => setAddOpen(true)} className="h-9 rounded-xl bg-primary text-xs font-bold text-primary-foreground hover:bg-primary/90" data-shortcut="new" data-kbd={formatCombo("alt+n")}>
+              <Plus className="mr-1.5 h-4 w-4" /> Add item
+            </Button>
+          )}
         </div>
       </div>
 
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex gap-1 overflow-x-auto border-b border-border/60" role="tablist">
+        <div className="dd-glide-row relative flex gap-1 overflow-x-auto border-b border-border/60" role="tablist">
+          <Glider variant="tab" />
           {TABS.map(([id, label]) => (
             <button
               key={id}
@@ -178,6 +194,21 @@ export default function ShortBookPage() {
             >
               {label}
               {id !== "all" && counts[id] ? ` (${counts[id]})` : ""}
+            </button>
+          ))}
+        </div>
+        <div className="dd-glide-row relative flex h-8 shrink-0 rounded-lg border border-border/70 bg-muted/30 p-0.5" role="group" aria-label="Section">
+          <Glider className="bg-primary" />
+          {SECTIONS.map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              aria-pressed={section === id}
+              onClick={() => setSection(id)}
+              className={`px-2.5 text-[11px] font-bold rounded-md transition-colors duration-300 ${section === id ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
+            >
+              {label}
+              {id !== "all" && data.sections?.[id] && section === "all" ? ` (${data.sections[id]})` : ""}
             </button>
           ))}
         </div>
@@ -219,7 +250,15 @@ export default function ShortBookPage() {
               data.entries.map((e) => (
                 <TableRow key={e.id} data-row tabIndex={0} className="hover:bg-muted/40">
                   <TableCell>
-                    <p className="text-sm font-bold text-foreground">{e.product_name}</p>
+                    <p className="text-sm font-bold text-foreground">
+                      {e.product_name}
+                      {e.section === "cosmetic" && <span className="ml-1.5 rounded border border-pink-500/30 bg-pink-500/10 px-1 text-[9px] font-black text-pink-600 dark:text-pink-400 align-middle">COSMETIC</span>}
+                    </p>
+                    <p className="text-[11px] text-muted-foreground" data-testid="shortbook-prices">
+                      {[e.pack_size || (e.units_per_pack ? `${e.units_per_pack} per ${String(e.pack_type || "pack").toLowerCase()}` : null), `MRP ${rs(e.mrp_pack)}`, `Rate ${rs(e.rate_pack)}`, e.net_pack ? `Net ${rs(e.net_pack)}` : null]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </p>
                     {e.notes && <p className="text-[11px] text-muted-foreground">{e.notes}</p>}
                   </TableCell>
                   <TableCell>
@@ -246,12 +285,53 @@ export default function ShortBookPage() {
                   <TableCell className="text-right font-mono text-xs">
                     <span className={e.on_hand <= 0 ? "font-bold text-rose-500" : "text-foreground"}>{e.on_hand} units</span>
                   </TableCell>
-                  <TableCell className="text-xs text-muted-foreground">{e.last_supplier?.name || "—"}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground">
+                    <p>{e.last_supplier?.name || "—"}</p>
+                    {e.cheapest && (
+                      <p className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400" title="Lowest net cost per pack you have paid (GST, discounts and free packs counted)">
+                        Cheapest: {e.cheapest.supplier_name} {rs(e.cheapest.net_pack)}
+                      </p>
+                    )}
+                    {e.purchase_history?.length > 0 && (
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <button type="button" className="text-[10px] font-bold text-primary hover:underline" data-testid="shortbook-history">
+                            Purchase history ({e.times_purchased})
+                          </button>
+                        </PopoverTrigger>
+                        <PopoverContent align="start" className="w-80 p-3">
+                          <p className="mb-2 text-xs font-black">{e.product_name}: last purchases</p>
+                          <div className="space-y-1">
+                            {e.purchase_history.map((h, i) => (
+                              <div key={i} className="flex justify-between gap-2 border-b border-border/40 pb-1 text-[11px] last:border-0">
+                                <span className="min-w-0 truncate">
+                                  {h.purchase_date ? new Date(h.purchase_date).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "2-digit" }) : "—"} · {h.supplier_name}
+                                  {h.invoice_no ? ` · ${h.invoice_no}` : ""}
+                                </span>
+                                <span className="shrink-0 font-mono">
+                                  {rs(h.rate_pack)} <span className="text-muted-foreground">net {rs(h.net_pack)}</span>
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </PopoverContent>
+                      </Popover>
+                    )}
+                  </TableCell>
                   <TableCell>
                     <div className="flex flex-wrap gap-1">
+                      {e.need_by && e.status === "pending" && (
+                        <span
+                          className={`w-full text-[10px] font-black ${e.need_by <= new Date().toISOString().slice(0, 10) ? "text-rose-600 dark:text-rose-400" : "text-amber-600 dark:text-amber-400"}`}
+                          data-testid="shortbook-need-by"
+                        >
+                          Order by {new Date(`${e.need_by}T00:00:00`).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
+                        </span>
+                      )}
                       {(e.sources || []).slice(-3).map((s, i) => (
-                        <span key={i} className="rounded-md border border-border bg-muted/50 px-1.5 py-0.5 font-mono text-[10px]" title={`${s.customer_name || ""} · sold ${s.sold_units} · +${s.quantity} ${s.unit}`}>
+                        <span key={i} className="rounded-md border border-border bg-muted/50 px-1.5 py-0.5 font-mono text-[10px]" title={`${s.customer_name || ""} · sold ${s.sold_units} · +${s.quantity} ${s.unit}${s.need_by ? ` · needed by ${s.need_by}` : ""}`}>
                           {s.bill_no}
+                          {s.customer_name ? <span className="font-sans text-muted-foreground"> · {s.customer_name}{s.need_by ? ` (by ${new Date(`${s.need_by}T00:00:00`).toLocaleDateString("en-IN", { day: "numeric", month: "short" })})` : ""}</span> : null}
                         </span>
                       ))}
                       {(e.sources || []).length > 3 && <span className="text-[10px] text-muted-foreground">+{e.sources.length - 3}</span>}
@@ -264,24 +344,26 @@ export default function ShortBookPage() {
                   </TableCell>
                   <TableCell className="text-right">
                     <div className="flex flex-wrap items-center justify-end gap-1">
-                      {e.status === "pending" && (
+                      {acc.update && e.status === "pending" && (
                         <Button variant="outline" size="sm" onClick={() => update(e, { status: "ordered" }, `${e.product_name} marked ordered`)} className="h-8 rounded-lg px-2 text-[11px] font-bold" data-row-key="o" title="Mark ordered (O)">
                           <Truck className="mr-1 h-3.5 w-3.5" /> Ordered
                         </Button>
                       )}
-                      {(e.status === "pending" || e.status === "ordered") && (
+                      {acc.update && (e.status === "pending" || e.status === "ordered") && (
                         <Button variant="outline" size="sm" onClick={() => update(e, { status: "received" }, `${e.product_name} received`)} className="h-8 rounded-lg px-2 text-[11px] font-bold text-emerald-600" data-row-key="r" title="Mark received (R)">
                           <PackageCheck className="mr-1 h-3.5 w-3.5" /> Received
                         </Button>
                       )}
-                      {e.status !== "pending" && (
+                      {acc.update && e.status !== "pending" && (
                         <Button variant="ghost" size="sm" onClick={() => update(e, { status: "pending" }, `${e.product_name} is back on the list`)} className="h-8 rounded-lg px-2 text-[11px] font-bold" title="Back to the list">
                           <RotateCcw className="mr-1 h-3.5 w-3.5" /> Reopen
                         </Button>
                       )}
-                      <Button variant="ghost" size="icon" onClick={() => setToDelete(e)} className="h-8 w-8 rounded-lg text-rose-500 hover:bg-rose-500/10" data-row-key="delete" aria-label={`Remove ${e.product_name}`} title="Remove (Del)">
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
+                      {acc.delete && (
+                        <Button variant="ghost" size="icon" onClick={() => setToDelete(e)} className="h-8 w-8 rounded-lg text-rose-500 hover:bg-rose-500/10" data-row-key="delete" aria-label={`Remove ${e.product_name}`} title="Remove (Del)">
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      )}
                     </div>
                   </TableCell>
                 </TableRow>
@@ -311,7 +393,7 @@ export default function ShortBookPage() {
                 <Label className="text-xs font-bold">In</Label>
                 <div className="mt-1 grid h-10 grid-cols-2 gap-1 rounded-xl border border-border p-1" role="radiogroup">
                   {["packs", "units"].map((u) => (
-                    <button key={u} type="button" role="radio" aria-checked={form.unit === u} onClick={() => setForm((f) => ({ ...f, unit: u }))} className={`rounded-lg text-xs font-bold ${form.unit === u ? "bg-orange-600 text-white" : "text-muted-foreground"}`}>
+                    <button key={u} type="button" role="radio" aria-checked={form.unit === u} onClick={() => setForm((f) => ({ ...f, unit: u }))} className={`rounded-lg text-xs font-bold ${form.unit === u ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}>
                       {u === "packs" ? "Packs" : "Units"}
                     </button>
                   ))}
@@ -326,7 +408,7 @@ export default function ShortBookPage() {
               <Button type="button" variant="outline" onClick={() => setAddOpen(false)} className="rounded-xl text-xs font-bold">
                 Cancel
               </Button>
-              <Button type="submit" disabled={saving} className="rounded-xl bg-orange-600 text-xs font-bold text-white hover:bg-orange-700" data-shortcut="save">
+              <Button type="submit" disabled={saving} className="rounded-xl bg-primary text-xs font-bold text-primary-foreground hover:bg-primary/90" data-shortcut="save">
                 {saving ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-1.5 h-4 w-4" />}
                 Add
               </Button>

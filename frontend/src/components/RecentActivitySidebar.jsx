@@ -213,7 +213,7 @@ export default function RecentActivitySidebar({ open, onClose }) {
         ) : (
           <div className="relative">
             {/* Timeline Vertical Thread Line */}
-            <div className="absolute top-4 bottom-4 left-4 w-[1.5px] bg-gradient-to-b from-primary/30 via-border/60 to-transparent pointer-events-none"></div>
+            <div className="absolute top-4 bottom-4 left-4 w-[1.5px] pointer-events-none bg-primary/10"></div>
 
             <div className="space-y-5 relative">
               {activities.map((activity) => {

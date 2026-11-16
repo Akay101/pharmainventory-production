@@ -19,7 +19,7 @@ const router = express.Router();
 router.use(resolveDbEnv);
 
 const OFFER_DAYS = 50;
-const PLAN_CODES = ["BASIC", "ADVANCED", "AGENTIC"];
+const PLAN_CODES = ["COMPLETE", "BASIC", "ADVANCED", "AGENTIC"];
 const appUrl = (env) =>
   (env === "prod" ? process.env.OFFER_APP_URL_PROD || "https://store.davadesk.in" : process.env.OFFER_APP_URL_DEV || "https://store-dev.davadesk.in").replace(/\/+$/, "");
 
@@ -186,7 +186,7 @@ router.get("/:leadId", async (req, res, next) => {
 });
 
 const codeSchema = z.object({
-  plan: z.enum(PLAN_CODES).default("AGENTIC"),
+  plan: z.enum(PLAN_CODES).default("COMPLETE"),
   valid_days: z.number().int().min(1).max(365).default(30), // days to apply the code
   regenerate: z.boolean().default(false),
 });

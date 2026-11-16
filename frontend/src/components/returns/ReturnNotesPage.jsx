@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import axios from "axios";
 import { API } from "../../App";
+import { useAccess } from "../access/Can";
 import { toast } from "sonner";
 import {
   CalendarX,
@@ -47,6 +48,7 @@ import { Label } from "../ui/label";
 import Loader from "../Loader";
 import { formatExpiry } from "../../pages/utils";
 import { formatCombo } from "../../lib/shortcuts";
+import Glider from "../motion/Glider";
 
 // Returns and Expiry share one workflow; only the stock they deal with differs.
 const KINDS = {
@@ -147,6 +149,8 @@ const toDraftItem = (b) => {
 
 export default function ReturnNotesPage({ kind }) {
   const K = KINDS[kind];
+  // Hide what this user's access doesn't allow (the server enforces it too)
+  const acc = useAccess(kind === "expiry" ? "expiry" : "returns");
   const base = `${API}/${K.api}`;
 
   const [activeTab, setActiveTab] = useState("notes");
@@ -548,7 +552,7 @@ export default function ReturnNotesPage({ kind }) {
             <RefreshCw className="w-3.5 h-3.5 sm:mr-1.5" />
             <span className="hidden sm:inline">Refresh</span>
           </Button>
-          <Button size="sm" onClick={() => openCreate()} className="h-9 rounded-xl bg-orange-600 hover:bg-orange-700 text-white font-bold text-xs shadow-md shadow-orange-600/20" data-shortcut="new" data-kbd={formatCombo("alt+n")}>
+          <Button size="sm" hidden={!acc.create} onClick={() => openCreate()} className="h-9 rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground font-bold text-xs shadow-md" data-shortcut="new" data-kbd={formatCombo("alt+n")}>
             <Plus className="w-4 h-4 mr-1.5" />
             New Return Note
           </Button>
@@ -611,7 +615,7 @@ export default function ReturnNotesPage({ kind }) {
                     {g.batches.length} batch{g.batches.length === 1 ? "" : "es"} · <span className="text-orange-500 font-bold">{inr(g.value)}</span>
                   </p>
                 </div>
-                <Button size="sm" onClick={() => openCreate(g.supplier_id, g.batches)} className="h-8 text-[11px] font-bold rounded-lg bg-orange-600 hover:bg-orange-700 text-white shrink-0">
+                <Button size="sm" hidden={!acc.create} onClick={() => openCreate(g.supplier_id, g.batches)} className="h-8 text-[11px] font-bold rounded-lg bg-primary hover:bg-primary/90 text-primary-foreground shrink-0">
                   Create note
                   <ArrowUpRight className="w-3 h-3 ml-1" />
                 </Button>
@@ -622,7 +626,8 @@ export default function ReturnNotesPage({ kind }) {
       )}
 
       {/* Tabs */}
-      <div className="flex items-center gap-1 border-b border-border/60 overflow-x-auto" role="tablist">
+      <div className="dd-glide-row relative flex items-center gap-1 border-b border-border/60 overflow-x-auto" role="tablist">
+        <Glider variant="tab" />
         {[
           ["notes", `Return Notes (${pagination.total || 0})`, Layers],
           ["stock", K.stockTab, Package],
@@ -645,7 +650,7 @@ export default function ReturnNotesPage({ kind }) {
 
       {/* Notes tab */}
       {activeTab === "notes" && (
-        <div className="space-y-3">
+        <div data-panel className="space-y-3">
           <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-2 p-3 rounded-2xl bg-card/60 border border-border/70">
             <div className="relative flex-1 min-w-0 sm:min-w-[240px]">
               <Search className="w-4 h-4 absolute left-3 top-2.5 text-muted-foreground" />
@@ -714,7 +719,7 @@ export default function ReturnNotesPage({ kind }) {
                       <p className="text-xs font-bold uppercase tracking-widest">
                         {search || statusFilter !== "all" || supplierFilter !== "all" ? "No notes match these filters" : "No return notes yet"}
                       </p>
-                      <Button size="sm" onClick={() => openCreate()} className="mt-3 h-8 text-xs font-bold rounded-xl bg-orange-600 hover:bg-orange-700 text-white">
+                      <Button size="sm" hidden={!acc.create} onClick={() => openCreate()} className="mt-3 h-8 text-xs font-bold rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground">
                         <Plus className="w-3.5 h-3.5 mr-1" />
                         New Return Note
                       </Button>
@@ -749,19 +754,19 @@ export default function ReturnNotesPage({ kind }) {
                         <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
                           <div className="flex items-center justify-end gap-1">
                             {b.status === DRAFT && (
-                              <Button variant="ghost" size="icon" disabled={busy} onClick={() => changeStatus(b, PICKED, `${b.bundle_no} handed over`)} className="h-8 w-8 rounded-lg text-amber-600 hover:bg-amber-500/10" title="Mark handed over to supplier (H)" aria-label="Mark handed over" data-row-key="h">
+                              <Button variant="ghost" size="icon" disabled={busy} hidden={!acc.update} onClick={() => changeStatus(b, PICKED, `${b.bundle_no} handed over`)} className="h-8 w-8 rounded-lg text-amber-600 hover:bg-amber-500/10" title="Mark handed over to supplier (H)" aria-label="Mark handed over" data-row-key="h">
                                 <Truck className="w-4 h-4" />
                               </Button>
                             )}
                             {b.status !== SETTLED && (
-                              <Button variant="ghost" size="icon" onClick={() => openPayment(b)} className="h-8 w-8 rounded-lg text-blue-600 hover:bg-blue-500/10" title="Record credit (C)" aria-label="Record credit" data-row-key="c">
+                              <Button variant="ghost" size="icon" hidden={!acc.update} onClick={() => openPayment(b)} className="h-8 w-8 rounded-lg text-blue-600 hover:bg-blue-500/10" title="Record credit (C)" aria-label="Record credit" data-row-key="c">
                                 <CreditCard className="w-4 h-4" />
                               </Button>
                             )}
                             <Button variant="ghost" size="icon" onClick={() => openNotePdf(b)} disabled={pdfBusy === b.id} className="h-8 w-8 rounded-lg text-muted-foreground hover:text-foreground" title="Note PDF to print or save (P)" aria-label="Note PDF" data-row-key="p">
                               {pdfBusy === b.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Printer className="w-4 h-4" />}
                             </Button>
-                            {deletable && (
+                            {deletable && acc.delete && (
                               <Button
                                 variant="ghost"
                                 size="icon"
@@ -812,7 +817,7 @@ export default function ReturnNotesPage({ kind }) {
 
       {/* Stock tab */}
       {activeTab === "stock" && (
-        <div className="space-y-3">
+        <div data-panel className="space-y-3">
           <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-2 p-3 rounded-2xl bg-card/60 border border-border/70">
             <div className="relative flex-1 min-w-0 sm:min-w-[240px]">
               <Search className="w-4 h-4 absolute left-3 top-2.5 text-muted-foreground" />
@@ -849,13 +854,13 @@ export default function ReturnNotesPage({ kind }) {
               <span className="text-xs font-black text-foreground pl-1">{selected.size} selected</span>
               <div className="flex flex-wrap gap-2">
                 {kind === "expiry" && selectedMovable.length > 0 && (
-                  <Button size="sm" variant="outline" onClick={() => moveBatches(selectedMovable)} className="h-8 rounded-xl text-xs font-bold">
+                  <Button size="sm" variant="outline" hidden={!acc.update} onClick={() => moveBatches(selectedMovable)} className="h-8 rounded-xl text-xs font-bold">
                     <CalendarX className="w-3.5 h-3.5 mr-1.5" />
                     Mark {selectedMovable.length} expired
                   </Button>
                 )}
                 {selectedReturnable.length > 0 && (
-                  <Button size="sm" onClick={() => openCreate("", selectedReturnable)} className="h-8 rounded-xl bg-orange-600 hover:bg-orange-700 text-white text-xs font-bold">
+                  <Button size="sm" hidden={!acc.create} onClick={() => openCreate("", selectedReturnable)} className="h-8 rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground text-xs font-bold">
                     <Layers className="w-3.5 h-3.5 mr-1.5" />
                     Return {selectedReturnable.length} to supplier
                   </Button>
@@ -946,17 +951,17 @@ export default function ReturnNotesPage({ kind }) {
                         <TableCell className="text-right">
                           <div className="flex items-center justify-end gap-1 flex-wrap">
                             {canMark && kind === "expiry" && (
-                              <Button variant="outline" size="sm" onClick={() => moveBatches([b])} className="h-8 px-2 text-[11px] font-bold border-rose-500/30 text-rose-600 dark:text-rose-400 hover:bg-rose-500/10" title="Take these expired units off the shelf into the expiry list">
+                              <Button variant="outline" size="sm" hidden={!acc.update} onClick={() => moveBatches([b])} className="h-8 px-2 text-[11px] font-bold border-rose-500/30 text-rose-600 dark:text-rose-400 hover:bg-rose-500/10" title="Take these expired units off the shelf into the expiry list">
                                 Mark expired
                               </Button>
                             )}
                             {canReturn && (
-                              <Button size="sm" onClick={() => openCreate(b.supplier_id || "", [b])} className="h-8 px-2 text-[11px] font-bold bg-orange-600 hover:bg-orange-700 text-white" title="Create a return note for this batch">
+                              <Button size="sm" hidden={!acc.create} onClick={() => openCreate(b.supplier_id || "", [b])} className="h-8 px-2 text-[11px] font-bold bg-primary hover:bg-primary/90 text-primary-foreground" title="Create a return note for this batch">
                                 Return
                               </Button>
                             )}
                             {canRestore && (
-                              <Button variant="ghost" size="sm" onClick={() => restoreBatch(b)} className="h-8 px-2 text-[11px] font-bold text-muted-foreground" title={kind === "expiry" ? "Undo: put the units back on the shelf" : "Remove the return flag"}>
+                              <Button variant="ghost" size="sm" hidden={!acc.update} onClick={() => restoreBatch(b)} className="h-8 px-2 text-[11px] font-bold text-muted-foreground" title={kind === "expiry" ? "Undo: put the units back on the shelf" : "Remove the return flag"}>
                                 <RotateCcw className="w-3.5 h-3.5 mr-1" />
                                 Undo
                               </Button>
@@ -1072,7 +1077,7 @@ export default function ReturnNotesPage({ kind }) {
                             {b.batch_no} · Exp {formatExpiry(b.expiry_date)} · {b.returnable_units}u{pickerAll && b.supplier_name ? ` · ${b.supplier_name}` : ""}
                           </span>
                         </span>
-                        <span className={`text-[10px] font-black px-1.5 py-0.5 rounded shrink-0 ${added ? "bg-orange-500 text-white" : "bg-muted text-muted-foreground"}`}>{added ? "Added" : "+ Add"}</span>
+                        <span className={`text-[10px] font-black px-1.5 py-0.5 rounded shrink-0 ${added ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>{added ? "Added" : "+ Add"}</span>
                       </button>
                     );
                   })}
@@ -1177,7 +1182,7 @@ export default function ReturnNotesPage({ kind }) {
             <Button variant="outline" onClick={() => setCreateOpen(false)} className="rounded-xl text-xs font-bold">
               Cancel
             </Button>
-            <Button disabled={creating || !draftItems.length || !draftSupplier} onClick={submitCreate} className="rounded-xl bg-orange-600 hover:bg-orange-700 text-white font-bold text-xs" data-shortcut="save">
+            <Button disabled={creating || !draftItems.length || !draftSupplier} onClick={submitCreate} className="rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground font-bold text-xs" data-shortcut="save">
               {creating ? "Saving…" : `Save note · ${inr(draftTotal)}`}
             </Button>
           </DialogFooter>
@@ -1223,17 +1228,17 @@ export default function ReturnNotesPage({ kind }) {
               {detail.status !== SETTLED && (
                 <div className="flex flex-wrap gap-2">
                   {detail.status === DRAFT && (
-                    <Button size="sm" disabled={busy} onClick={() => changeStatus(detail, PICKED, `${detail.bundle_no} handed over`)} className="h-9 rounded-xl text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white">
+                    <Button size="sm" disabled={busy} hidden={!acc.update} onClick={() => changeStatus(detail, PICKED, `${detail.bundle_no} handed over`)} className="h-9 rounded-xl text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white">
                       <Truck className="w-4 h-4 mr-1.5" />
                       Mark handed over
                     </Button>
                   )}
-                  <Button size="sm" onClick={() => openPayment(detail)} className="h-9 rounded-xl text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white">
+                  <Button size="sm" hidden={!acc.update} onClick={() => openPayment(detail)} className="h-9 rounded-xl text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white">
                     <CreditCard className="w-4 h-4 mr-1.5" />
                     Record credit
                   </Button>
                   {detail.status === PICKED && !(detail.payments || []).length && (
-                    <Button size="sm" variant="outline" disabled={busy} onClick={() => changeStatus(detail, DRAFT, `${detail.bundle_no} back to draft`)} className="h-9 rounded-xl text-xs font-bold">
+                    <Button size="sm" variant="outline" disabled={busy} hidden={!acc.update} onClick={() => changeStatus(detail, DRAFT, `${detail.bundle_no} back to draft`)} className="h-9 rounded-xl text-xs font-bold">
                       Undo hand-over
                     </Button>
                   )}
@@ -1241,6 +1246,7 @@ export default function ReturnNotesPage({ kind }) {
                     size="sm"
                     variant="outline"
                     disabled={busy}
+                    hidden={!acc.update}
                     onClick={() =>
                       setConfirm({
                         title: `Close ${detail.bundle_no} as settled?`,
@@ -1341,7 +1347,7 @@ export default function ReturnNotesPage({ kind }) {
               {detail.notes && <p className="text-xs text-muted-foreground"><span className="font-bold text-foreground">Notes:</span> {detail.notes}</p>}
 
               <DialogFooter className="gap-2">
-                {detail.status !== SETTLED && !(detail.payments || []).length && (
+                {detail.status !== SETTLED && !(detail.payments || []).length && acc.delete && (
                   <Button
                     variant="ghost"
                     size="sm"

@@ -5,16 +5,16 @@ import { cva } from "class-variance-authority";
 import { cn } from "@/lib/utils"
 
 const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-all duration-200 ease-out active:scale-[0.97] cursor-pointer select-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0",
+  "dd-btn inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-[color,background-color,border-color,box-shadow,opacity,translate,scale] duration-300 ease-out cursor-pointer select-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0",
   {
     variants: {
       variant: {
         default:
-          "bg-primary text-primary-foreground shadow hover:bg-primary/90 hover:shadow-md active:shadow-sm",
+          "dd-solid bg-primary text-primary-foreground shadow-sm hover:bg-primary/90 hover:-translate-y-px hover:shadow-[0_10px_24px_-10px_hsl(var(--primary)/0.55)] active:translate-y-0 active:shadow-sm",
         destructive:
-          "bg-destructive text-destructive-foreground shadow-sm hover:bg-destructive/90 hover:shadow-md",
+          "dd-solid bg-destructive text-destructive-foreground shadow-sm hover:bg-destructive/90 hover:-translate-y-px hover:shadow-[0_10px_24px_-10px_hsl(var(--destructive)/0.6)] active:translate-y-0",
         outline:
-          "border border-input shadow-xs hover:bg-accent hover:text-accent-foreground hover:border-accent",
+          "border border-input shadow-xs hover:bg-accent hover:text-accent-foreground hover:border-foreground/20 hover:-translate-y-px active:translate-y-0",
         secondary:
           "bg-secondary text-secondary-foreground shadow-xs hover:bg-secondary/80",
         ghost: "hover:bg-accent hover:text-accent-foreground",

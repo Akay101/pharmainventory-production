@@ -6,7 +6,7 @@ export default function CornerPattern({ className = "" }) {
       className={`absolute bottom-0 right-0 w-72 h-72 pointer-events-none overflow-hidden z-0 select-none ${className}`}
     >
       {/* Soft Ambient Radial Blur Orb */}
-      <div className="absolute bottom-[-30%] right-[-30%] w-64 h-64 rounded-full bg-gradient-to-tl from-orange-500/15 via-amber-500/10 to-transparent blur-3xl" />
+      <div className="absolute bottom-[-30%] right-[-30%] w-64 h-64 rounded-full blur-3xl bg-orange-500/10" />
 
       {/* Decorative Dot Matrix SVG */}
       <svg

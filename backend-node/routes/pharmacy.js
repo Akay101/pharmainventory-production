@@ -1,29 +1,23 @@
 const express = require("express");
 const router = express.Router();
 const mongoose = require("mongoose");
-const multer = require("multer");
 const { auth, adminOnly } = require("../middleware/auth");
-const { uploadToR2 } = require("../services/r2");
+const { uploadToR2, deleteFromR2 } = require("../services/r2");
+const { acceptImage, imageExtension, storeImageError } = require("../utils/imageUpload");
 const { normalizeUpiId, isValidUpiId, pharmacyUpiQr } = require("../utils/upi");
 
 const { requireSubscription } = require("../middleware/subscription");
 
-// Logos are public files: only small raster images, never HTML/SVG
-const LOGO_TYPES = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" };
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 2 * 1024 * 1024, files: 1 },
-  fileFilter: (req, file, cb) => cb(null, !file.mimetype || !!LOGO_TYPES[file.mimetype]),
-});
-
-// PUT /api/pharmacy - Update pharmacy
+// PUT /api/pharmacy - Save the details and the logo together: if the image can't
+// be stored, none of the details are saved either.
 router.put(
   "/",
   auth,
   requireSubscription(),
   adminOnly,
-  upload.none(),
+  acceptImage("logo"),
   async (req, res, next) => {
+    let logoKey = null;
     try {
       const {
         name,
@@ -40,6 +34,10 @@ router.put(
         gst_no,
       } = req.body;
       const db = mongoose.connection.db;
+
+      if (!String(name || "").trim()) {
+        return res.status(400).json({ detail: "Pharmacy name is required" });
+      }
 
       const upi = normalizeUpiId(upi_id);
       if (upi && !isValidUpiId(upi)) {
@@ -61,6 +59,19 @@ router.put(
         gst_no: gst_no || null,
       };
 
+      if (req.file) {
+        logoKey = `logos/${req.user.pharmacy_id}-${Date.now()}.${imageExtension(req.file)}`;
+        try {
+          updateFields.logo_url = await uploadToR2(logoKey, req.file.buffer, req.file.mimetype);
+        } catch (uploadError) {
+          console.error("Logo upload failed:", uploadError.message);
+          logoKey = null;
+          return storeImageError(res);
+        }
+      } else if (req.body.remove_logo === "true") {
+        updateFields.logo_url = null;
+      }
+
       await db
         .collection("pharmacies")
         .updateOne(
@@ -74,6 +85,7 @@ router.put(
 
       res.json({ message: "Pharmacy updated", pharmacy });
     } catch (error) {
+      if (logoKey) deleteFromR2(logoKey).catch(() => {});
       next(error);
     }
   }
@@ -91,33 +103,5 @@ router.get("/upi-qr", auth, requireSubscription(), async (req, res, next) => {
     next(error);
   }
 });
-
-// POST /api/pharmacy/logo - Upload logo
-router.post(
-  "/logo",
-  auth,
-  requireSubscription(),
-  adminOnly,
-  upload.single("file"),
-  async (req, res, next) => {
-    try {
-      if (!req.file || !LOGO_TYPES[req.file.mimetype]) {
-        return res.status(400).json({ detail: "Upload a PNG, JPEG or WebP image (max 2 MB)" });
-      }
-
-      const key = `logos/${req.user.pharmacy_id}-${Date.now()}.${LOGO_TYPES[req.file.mimetype]}`;
-      const url = await uploadToR2(key, req.file.buffer, req.file.mimetype);
-
-      const db = mongoose.connection.db;
-      await db
-        .collection("pharmacies")
-        .updateOne({ id: req.user.pharmacy_id }, { $set: { logo_url: url } });
-
-      res.json({ url, message: "Logo uploaded" });
-    } catch (error) {
-      next(error);
-    }
-  }
-);
 
 module.exports = router;

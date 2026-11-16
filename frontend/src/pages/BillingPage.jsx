@@ -1,10 +1,12 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import { useOnlineFeatures } from "../lib/desktop";
+import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from "react";
 import { useSearchParams, useLocation, useNavigate } from "react-router-dom";
 import { v4 as uuidv4 } from "uuid";
 import { createPortal } from "react-dom";
 import axios from "axios";
 import RecordDates from "../components/RecordDates";
 import { API, useAuth } from "../App";
+import { useAccess } from "../components/access/Can";
 import {
   Card,
   CardContent,
@@ -107,12 +109,14 @@ import { fmtDay, parseDose, refillPlan, reminderOn } from "../lib/refill";
 import { useShortcuts, useShortcutLayer } from "../components/shortcuts/Shortcuts";
 import UpiQrDialog from "../components/UpiQr";
 import { useWhatsAppShare, WhatsAppIcon } from "../components/ShareBillWhatsApp";
+import { openWhatsApp } from "../utils/whatsapp";
 import { ItemQrScanDialog, findItemLabel, resolveItemLabel } from "../components/ItemQr";
 import { marginLine, marginApplied, marginLabel } from "../lib/margin";
 import { isScheduleH1, h1Names } from "../lib/scheduleH1";
 import PrescriptionAttach, { openPrescription } from "../components/billing/PrescriptionAttach";
 import PdfFormatPicker, { usePdfFormat } from "../components/PdfFormatPicker";
 import { SuggestionList, ProductDetailsSheet, SUGGESTION_FILTERS, filterSuggestions } from "../components/billing/ProductSuggestions";
+import { GuideButton } from "../components/guide/GuideProvider";
 
 const LOCAL_STORAGE_KEY_BILL = "pharmalogy_bill_draft";
 
@@ -173,14 +177,119 @@ const getPaymentModeIcon = (mode, sizeClass = "w-3.5 h-3.5") => {
 };
 
 // Udhar payments: never more than what's still due on the bill
-const billPaymentError = ({ amount, remainingUnpaid }) => {
+const billPaymentError = ({ amount, remainingUnpaid, keepExtra, paymentMode, advanceLeft }) => {
   if (amount === "" || amount === null || amount === undefined) return "";
   const amt = Math.round(Number(amount) * 100) / 100;
   const left = Math.round((Number(remainingUnpaid) || 0) * 100) / 100;
   if (!Number.isFinite(amt) || amt <= 0) return "Enter an amount more than ₹0";
   if (left <= 0) return "This bill is already fully paid";
-  if (amt > left) return `Only ₹${left.toFixed(2)} is due. Enter ₹${left.toFixed(2)} or less.`;
+  if (paymentMode === "Advance" && amt > (Number(advanceLeft) || 0)) return `Only ₹${(Number(advanceLeft) || 0).toFixed(2)} advance is left`;
+  if (amt > left && !(keepExtra && paymentMode !== "Advance")) return `Only ₹${left.toFixed(2)} is due. Enter ₹${left.toFixed(2)} or less, or keep the extra as advance.`;
   return "";
+};
+
+// A bill line's final amount you can type: below the line's full value it
+// becomes the line discount, above it the rate per unit goes up
+function LineTotalInput({ total, gross, qty, onDiscount, onRate, accent = "primary", testId }) {
+  const [draft, setDraft] = useState(null);
+  const apply = (raw) => {
+    const v = Math.round((parseFloat(raw) || 0) * 100) / 100;
+    if (!(v > 0) || !(qty > 0)) return;
+    if (gross > 0 && v <= gross + 0.004) onDiscount(discountForTotal(gross, v));
+    else {
+      onDiscount("");
+      onRate(String(Math.round((v / qty) * 10000) / 10000));
+    }
+  };
+  return (
+    <Input
+      type="number"
+      step="0.01"
+      min="0"
+      inputMode="decimal"
+      value={draft ?? total.toFixed(2)}
+      onFocus={(e) => {
+        setDraft(total.toFixed(2));
+        e.target.select();
+      }}
+      onChange={(e) => {
+        setDraft(e.target.value);
+        apply(e.target.value);
+      }}
+      onBlur={() => setDraft(null)}
+      onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+      title="Type the final amount for this line: less than the full value becomes its discount"
+      data-testid={testId}
+      className={`h-8 w-24 text-right font-mono text-sm font-semibold rounded-lg border-border/80 focus-visible:ring-1 ${accent === "amber" ? "focus-visible:ring-amber-500 focus-visible:border-amber-500" : "focus-visible:ring-primary focus-visible:border-primary"}`}
+    />
+  );
+}
+
+// Lines to check before a bill is saved: priced above the batch's MRP, or
+// from an expired batch. [{ name, issue }]
+const saleWarnings = (lines) => {
+  const today = new Date().toISOString().slice(0, 10);
+  const out = [];
+  for (const it of lines) {
+    if (!it.product_name || it.is_manual) continue;
+    const batch = (it.available_batches || []).find((b) => b.id === it.inventory_id);
+    const mrp = Number(batch?.mrp ?? batch?.mrp_per_unit) || 0;
+    const price = Number(it.unit_price) || 0;
+    if (mrp > 0 && price > mrp + 0.005) out.push({ name: it.product_name, issue: `Rate ₹${price.toFixed(2)} is above the MRP ₹${mrp.toFixed(2)}` });
+    const exp = String(it.expiry_date || batch?.expiry_date || "").slice(0, 10);
+    if (/^\d{4}-\d{2}/.test(exp)) {
+      // Month-only expiries run to the end of that month
+      const end = exp.length === 7 ? `${exp}-31` : exp;
+      if (end < today) out.push({ name: it.product_name, issue: `Batch ${it.batch_no || ""} expired (${exp.slice(5, 7)}/${exp.slice(2, 4)})` });
+    }
+  }
+  return out;
+};
+
+// Stock already taken by the earlier lines of the same bill: a batch on two
+// lines can't sell the same units twice, so each line sees what is left
+const heldBefore = (rows, idx) => {
+  const id = rows[idx]?.inventory_id;
+  if (!id || rows[idx]?.is_manual) return 0;
+  let t = 0;
+  for (let i = 0; i < idx; i++) if (rows[i]?.inventory_id === id && !rows[i]?.is_manual) t += parseInt(rows[i].quantity) || 0;
+  return t;
+};
+const rowAvailable = (rows, idx) => Math.max(0, (parseInt(rows[idx]?.available) || 0) - heldBefore(rows, idx));
+// Units of each batch on the bill's lines (except one line): inventory_id -> units
+const heldByBatch = (rows, exceptId = null) => {
+  const m = new Map();
+  for (const r of rows) {
+    if (!r?.inventory_id || r.is_manual || r.id === exceptId) continue;
+    m.set(r.inventory_id, (m.get(r.inventory_id) || 0) + (parseInt(r.quantity) || 0));
+  }
+  return m;
+};
+// Search results with the stock left after what this bill already holds
+const withBillHolds = (list, rows, exceptId) => {
+  const held = heldByBatch(rows, exceptId);
+  if (!held.size) return list;
+  return list.map((it) => {
+    if (!Array.isArray(it.batches) || !it.batches.some((b) => held.has(b.id))) return it;
+    const batches = it.batches.map((b) => (held.has(b.id) ? { ...b, available_quantity: Math.max(0, (Number(b.available_quantity) || 0) - held.get(b.id)), in_bill: held.get(b.id) } : b));
+    const left = batches.reduce((t, b) => t + Math.max(0, Number(b.available_quantity) || 0), 0);
+    return { ...it, batches, available_quantity: left, available_units: left, stock_status: left > 0 ? "In Stock" : "Out of Stock", in_bill: [...held.entries()].filter(([id]) => it.batches.some((b) => b.id === id)).reduce((t, [, q]) => t + q, 0) };
+  });
+};
+
+// What a saved bill has been paid and what is still due, in rupees and paise
+const billDue = (bill) => {
+  const total = Number(bill?.grand_total || bill?.total_amount) || 0;
+  const paid = bill?.total_paid !== undefined ? Number(bill.total_paid) || 0 : bill?.is_paid ? total : Number(bill?.advance_amount) || 0;
+  return { total, paid: Math.round(paid * 100) / 100, due: bill?.is_paid ? 0 : Math.max(0, Math.round((total - paid) * 100) / 100) };
+};
+// Every payment on a bill, oldest first. Bills paid at the counter before
+// payments were listed show that one payment.
+const billPayments = (bill) => {
+  const list = Array.isArray(bill?.payments) ? bill.payments : [];
+  if (list.length) return list;
+  const { paid } = billDue(bill);
+  return paid > 0 ? [{ amount: paid, payment_mode: bill.payment_mode && bill.payment_mode !== "none" ? bill.payment_mode : "Cash", paid_at: bill.paid_at || bill.created_at || bill.billing_date }] : [];
 };
 
 // Bill discount % that turns `subtotal` into the typed grand total. Two
@@ -227,13 +336,18 @@ function MarginTag({ item, onRestore }) {
 }
 
 export default function BillingPage() {
+  const onlineFeatures = useOnlineFeatures();
   const location = useLocation();
   // Data state
   const navigate = useNavigate();
   const [bills, setBills] = useState([]);
   const [totalBills, setTotalBills] = useState(0);
   const [loading, setLoading] = useState(true);
-  const { user, settings } = useAuth();
+  const { user, settings, rule } = useAuth();
+  // Hide what this user's access doesn't allow (the server enforces it too)
+  const billAcc = useAccess("billing");
+  const reportsAcc = useAccess("dashboard"); // Reports pages sit under the "dashboard" permission
+  const canTakePayments = billAcc.update && !rule("no_customer_debt_clear");
   const [tabs, setTabs] = useState([]);
   const [activeTabId, setActiveTabId] = useState(null);
   const [submitting, setSubmitting] = useState(false);
@@ -258,6 +372,8 @@ export default function BillingPage() {
   // Tier of the customer picked for this bill (badge + automatic discount)
   const [pickedCustomerTier, setPickedCustomerTier] = useState(null);
   const [paidNow, setPaidNow] = useState("");
+  // Udhar / unpaid: remind the customer to pay after this many days ("" = no reminder)
+  const [payRemindDays, setPayRemindDays] = useState("7");
   const [recordPaymentDialog, setRecordPaymentDialog] = useState({
     open: false,
     billId: "",
@@ -390,6 +506,8 @@ export default function BillingPage() {
     itemId: null,
   });
   const [showMrpWarning, setShowMrpWarning] = useState(false);
+  // Rate above MRP / expired batch, asked before the bill is saved
+  const [saleCheck, setSaleCheck] = useState(null); // { mode: "new" | "edit", force, list }
   const [isEditModeWarning, setIsEditModeWarning] = useState(false);
   const [scannerModalOpen, setScannerModalOpen] = useState(false);
 
@@ -648,7 +766,7 @@ export default function BillingPage() {
     if (!(Number(sb.quantity) > 0)) return toast.error("Enter the quantity to reorder");
     setShortBookSaving(true);
     try {
-      const res = await axios.post(`${API}/shortbook`, { bill_id: sb.bill.id, line: sb.line, quantity: Number(sb.quantity), unit: sb.unit, notes: sb.notes });
+      const res = await axios.post(`${API}/shortbook`, { bill_id: sb.bill.id, line: sb.line, quantity: Number(sb.quantity), unit: sb.unit, notes: sb.notes, need_by: sb.need_by || undefined });
       toast.success(res.data.merged ? `${sb.item.product_name} was already in the short book: now ${res.data.entry.quantity} ${res.data.entry.unit}` : `${sb.item.product_name} added to the short book`, {
         action: { label: "Open", onClick: () => navigate("/short-book") },
       });
@@ -800,7 +918,15 @@ export default function BillingPage() {
   const [page, setPage] = useState(1);
   const [limit] = useState(10);
   const [totalPages, setTotalPages] = useState(1);
-  const [filterBillType, setFilterBillType] = useState("all");
+  // all | regular | advance | unpaid | paid  (/billing?show=unpaid opens the unpaid list)
+  const [filterBillType, setFilterBillType] = useState(() => {
+    try {
+      const v = new URLSearchParams(window.location.search).get("show");
+      return ["unpaid", "overdue", "norate", "paid", "advance", "regular"].includes(v) ? v : "all";
+    } catch {
+      return "all";
+    }
+  });
 
   // Search
   const [searchQuery, setSearchQuery] = useState("");
@@ -989,6 +1115,16 @@ export default function BillingPage() {
     setTimeout(() => productInputRef.current?.focus(), 150);
   };
 
+  // Each bill tab starts with its own search boxes: what was typed for the
+  // last bill (customer, product, doctor) never carries over to the next one
+  useEffect(() => {
+    setCustomerSearch(customerInfo.customer_name || "");
+    setShowCustomerSuggestions(false);
+    setInventorySearch("");
+    setDoctorSearch(doctorName || "");
+    setShowDoctorSuggestions(false);
+  }, [activeTabId]);
+
   const switchTab = (tabId) => {
     const target = tabs.find((t) => t.id === tabId);
     if (!target) return;
@@ -1094,7 +1230,7 @@ export default function BillingPage() {
     (showDoctorSuggestions && doctorSuggestions.length > 0);
   useShortcuts(
     [
-      { combo: "alt+n", label: "New bill", run: () => handleStartNewBill() },
+      { combo: "alt+n", label: "New bill", when: () => billAcc.create, run: () => handleStartNewBill() },
       { combo: "alt+a", label: "Add an item line", when: () => showNewBill, run: () => handleAddNewRow() },
       { combo: "mod+enter", label: "Save the bill", when: billFormOpen, run: () => saveOpenBill() },
       { combo: "alt+s", label: "Save the bill (while one is open)", when: billFormOpen, run: () => saveOpenBill() },
@@ -1599,6 +1735,9 @@ export default function BillingPage() {
           search: debouncedSearchQuery || undefined,
           highlight_id: hlId || undefined,
           is_advance_paid: filterBillType === "advance" ? "true" : (filterBillType === "regular" ? "false" : undefined),
+          is_paid: filterBillType === "unpaid" || filterBillType === "overdue" ? "false" : filterBillType === "paid" ? "true" : undefined,
+          overdue: filterBillType === "overdue" ? "true" : undefined,
+          missing_rate: filterBillType === "norate" ? "true" : undefined,
         },
       });
 
@@ -1611,6 +1750,8 @@ export default function BillingPage() {
 
       setBills(finalBills);
       setTotalBills(billsRes?.data?.pagination?.total);
+      // Revenue / profit / unpaid cards follow every bill created, edited or paid
+      if (!isInitial && (startDate || endDate)) fetchInsights();
 
       if (hlId && billsRes.data.pagination?.page) {
         setPage(billsRes.data.pagination.page);
@@ -1645,6 +1786,7 @@ export default function BillingPage() {
   // ============ NEW BILL - INLINE TABLE ============
 
   const handleStartNewBill = () => {
+    if (!billAcc.create) return;
     if (!showNewBill && tabs.length === 0) {
       createNewTab();
     } else {
@@ -1701,11 +1843,16 @@ export default function BillingPage() {
       !inventoryItem.batches ||
       inventoryItem.batches.length === 0;
 
-    let availableBatches = (inventoryItem.batches || []).filter(
-      (b) => (b.available_quantity || 0) > 0
-    );
+    // Units the bill's other lines already take from each batch
+    // (search results already show stock less the bill's lines: undo that,
+    // the line keeps the batch's real stock and the table subtracts)
+    const held = heldByBatch(billItems, itemId);
+    const realBatch = (b) => (b.in_bill ? { ...b, available_quantity: (Number(b.available_quantity) || 0) + b.in_bill } : b);
+    let availableBatches = (inventoryItem.batches || [])
+      .map(realBatch)
+      .filter((b) => (b.available_quantity || 0) - (held.get(b.id) || 0) > 0);
     if (availableBatches.length === 0) {
-      availableBatches = inventoryItem.batches || [];
+      availableBatches = (inventoryItem.batches || []).map(realBatch);
     }
 
     if (nearExpiryBatchFilter && availableBatches.length > 0) {
@@ -1850,7 +1997,7 @@ export default function BillingPage() {
   };
 
   const expiryWarningDays = Number(settings?.expiry_warning_days) || 90;
-  const visibleSuggestions = filterSuggestions(inventorySuggestions, suggestionFilter, expiryWarningDays);
+  const visibleSuggestions = filterSuggestions(withBillHolds(inventorySuggestions, billItems, activeBillItemId), suggestionFilter, expiryWarningDays);
   const visibleEditingSuggestions = filterSuggestions(editingInventorySuggestions, suggestionFilter, expiryWarningDays);
   // Alt+1/2/3: suggestion filter; Alt+D: details of the highlighted medicine
   const suggestionHotkey = (e, list, highlighted, setHighlighted, rowId, mode) => {
@@ -2223,7 +2370,7 @@ export default function BillingPage() {
     setTimeout(() => document.querySelector('[data-testid="customer-mobile"]')?.focus(), 50);
   };
 
-  const handleSubmitBill = async (force = false) => {
+  const handleSubmitBill = async (force = false, checked = false) => {
     if (!customerInfo.customer_name) {
       toast.error("Please select a customer", { description: "Pick one with ↑/↓ and Enter, or type a new name" });
       openCustomerPicker();
@@ -2272,6 +2419,11 @@ export default function BillingPage() {
       setShowMrpWarning(true);
       return;
     }
+    const warnings = checked ? [] : saleWarnings(validItems);
+    if (warnings.length) {
+      setSaleCheck({ mode: "new", force, list: warnings });
+      return;
+    }
 
     setSubmitting(true);
     try {
@@ -2283,6 +2435,10 @@ export default function BillingPage() {
         customer_email: customerInfo.customer_email || null,
         billing_date: billingDate,
         doctor: doctorName || null,
+        // Payment reminder: the bill falls due this many days after the bill date
+        ...(!isPaid && !isAdvancePaid && payRemindDays
+          ? { due_date: new Date(new Date(`${billingDate}T00:00:00`).getTime() + Number(payRemindDays) * 864e5 + 12 * 36e5).toISOString().slice(0, 10) }
+          : {}),
         items: validItems.map(
           ({
             id,
@@ -2363,6 +2519,7 @@ export default function BillingPage() {
   // ============ EDIT BILL - FULL INLINE TABLE EDITING ============
 
   const handleStartEditBill = async (bill) => {
+    if (!billAcc.update) return;
     setEditingBillId(bill.id);
     setEditingBillData({
       ...bill,
@@ -2687,7 +2844,7 @@ export default function BillingPage() {
     }
   };
 
-  const handleSaveEditBill = async (force = false) => {
+  const handleSaveEditBill = async (force = false, checked = false) => {
     if (!editingBillData) return;
 
     const validItems = editingBillItems.filter(
@@ -2725,6 +2882,24 @@ export default function BillingPage() {
     if (editBillH1.length && !editPrescription) {
       toast.error(`Attach the prescription: ${editBillH1.join(", ")} ${editBillH1.length > 1 ? "are" : "is"} Schedule H1`);
       document.getElementById("rx-attach-edit")?.focus();
+      return;
+    }
+    const editWarnings = checked ? [] : saleWarnings(validItems);
+    // Lines taken off a saved bill: confirm before the bill is saved without them
+    if (!checked) {
+      const left = new Map();
+      for (const it of validItems) {
+        const k = it.inventory_id || it.product_name;
+        left.set(k, (left.get(k) || 0) + 1);
+      }
+      for (const it of editingBillData.items || []) {
+        const k = it.inventory_id || it.product_name;
+        if ((left.get(k) || 0) > 0) left.set(k, left.get(k) - 1);
+        else editWarnings.push({ name: it.product_name, issue: `will be removed from this bill (${it.quantity} units back to stock). It stays in the bill's history and can be restored.` });
+      }
+    }
+    if (editWarnings.length) {
+      setSaleCheck({ mode: "edit", force, list: editWarnings });
       return;
     }
 
@@ -2814,6 +2989,20 @@ export default function BillingPage() {
     }
   };
 
+  // The bill's customer's advance credit, for "pay from advance"
+  useEffect(() => {
+    const id = recordPaymentDialog.open ? recordPaymentDialog.customerId : null;
+    if (!id) return;
+    let live = true;
+    axios
+      .get(`${API}/customers/${id}`)
+      .then((r) => live && setRecordPaymentDialog((prev) => (prev.customerId === id ? { ...prev, advanceLeft: Math.round((Number(r.data?.customer?.advance_credit) || 0) * 100) / 100 } : prev)))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [recordPaymentDialog.open, recordPaymentDialog.customerId]);
+
   const handleRecordPaymentSubmit = async () => {
     try {
       const err = billPaymentError(recordPaymentDialog);
@@ -2822,11 +3011,12 @@ export default function BillingPage() {
         return;
       }
       const amt = Math.round(parseFloat(recordPaymentDialog.amount) * 100) / 100;
-      await axios.post(`${API}/bills/${recordPaymentDialog.billId}/record-payment`, {
+      const res = await axios.post(`${API}/bills/${recordPaymentDialog.billId}/record-payment`, {
         amount: amt,
-        payment_mode: recordPaymentDialog.paymentMode
+        payment_mode: recordPaymentDialog.paymentMode,
+        keep_extra: !!recordPaymentDialog.keepExtra && amt > recordPaymentDialog.remainingUnpaid,
       });
-      toast.success("Payment recorded successfully");
+      toast.success(res.data?.message || "Payment recorded successfully");
       setRecordPaymentDialog({
         open: false,
         billId: "",
@@ -2940,12 +3130,34 @@ export default function BillingPage() {
   };
 
   // Toggle expanded bill row
+  // Opening or closing a bill keeps the clicked row where it was on screen
+  // (the rows above don't move, the page doesn't jump)
+  const expandAnchorRef = useRef(null);
   const toggleBillExpand = (billId) => {
+    const el = document.getElementById(`record-${billId}`);
+    expandAnchorRef.current = el ? { id: billId, top: el.getBoundingClientRect().top } : null;
     setExpandedBills((prev) => ({
       ...prev,
       [billId]: !prev[billId],
     }));
   };
+  useLayoutEffect(() => {
+    const a = expandAnchorRef.current;
+    expandAnchorRef.current = null;
+    if (!a) return;
+    const el = document.getElementById(`record-${a.id}`);
+    if (!el) return;
+    const delta = el.getBoundingClientRect().top - a.top;
+    if (Math.abs(delta) < 1) return;
+    let sc = el.parentElement;
+    while (sc && sc !== document.body) {
+      const oy = getComputedStyle(sc).overflowY;
+      if ((oy === "auto" || oy === "scroll") && sc.scrollHeight > sc.clientHeight) break;
+      sc = sc.parentElement;
+    }
+    if (sc && sc !== document.body) sc.scrollTop += delta;
+    else window.scrollBy(0, delta);
+  }, [expandedBills]);
 
   // Helper to format quantity as packs + units
   const formatQuantityAsPacks = (quantity, unitsPerPack) => {
@@ -3042,16 +3254,16 @@ export default function BillingPage() {
   const totalProfit = grandTotal - totalCost;
 
   // Calculate inventory vs negative billing totals for new bill
-  const inventoryBilledQty = validItems.reduce((sum, item) => {
+  const inventoryBilledQty = validItems.reduce((sum, item, i) => {
     if (item.is_manual) return sum;
     const qty = parseInt(item.quantity) || 0;
-    const available = parseInt(item.available) || 0;
+    const available = rowAvailable(validItems, i);
     return sum + Math.min(qty, available);
   }, 0);
-  const negativeBilledQty = validItems.reduce((sum, item) => {
+  const negativeBilledQty = validItems.reduce((sum, item, i) => {
     if (item.is_manual) return sum + (parseInt(item.quantity) || 0);
     const qty = parseInt(item.quantity) || 0;
-    const available = parseInt(item.available) || 0;
+    const available = rowAvailable(validItems, i);
     return sum + Math.max(0, qty - available);
   }, 0);
 
@@ -3102,13 +3314,34 @@ export default function BillingPage() {
               <h1 className="text-2xl font-black tracking-tight text-foreground m-page-title">
                 Billing
               </h1>
-              <span className="px-2.5 py-0.5 rounded-full bg-orange-500/10 border border-orange-500/30 text-orange-600 dark:text-orange-400 font-mono font-bold text-xs max-md:whitespace-nowrap">
+              <span data-guide="bill-count" className="px-2.5 py-0.5 rounded-full bg-orange-500/10 border border-orange-500/30 text-orange-600 dark:text-orange-400 font-mono font-bold text-xs max-md:whitespace-nowrap">
                 <span className="max-md:hidden">{`${totalBills} bill${totalBills !== 1 ? "s" : ""} generated`}</span>
                 <span className="md:hidden">{`${totalBills} bill${totalBills !== 1 ? "s" : ""}`}</span>
               </span>
+              {/* One click to the matching report */}
+              {reportsAcc.read && (
+                <div className="flex items-center gap-1 max-md:hidden" data-testid="billing-report-links">
+                  {[
+                    ["Revenue", "/reports?tab=financial&focus=revenue", "text-sky-600 dark:text-sky-400 border-sky-500/30 bg-sky-500/10"],
+                    ["Profit", "/reports?tab=financial&focus=profit", "text-emerald-600 dark:text-emerald-400 border-emerald-500/30 bg-emerald-500/10"],
+                    ["Unpaid", "/reports?tab=dues", "text-rose-600 dark:text-rose-400 border-rose-500/30 bg-rose-500/10"],
+                  ].map(([label, to, cls]) => (
+                    <button
+                      key={label}
+                      type="button"
+                      onClick={() => navigate(to)}
+                      title={`Open the ${label.toLowerCase()} report`}
+                      className={`h-6 px-2 rounded-full border text-[10px] font-bold flex items-center gap-1 hover:opacity-80 ${cls}`}
+                    >
+                      <BarChart3 className="w-3 h-3" /> {label}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
 
             <div className="flex items-center gap-2 flex-wrap max-md:flex-nowrap max-md:shrink-0">
+              <GuideButton tour="billing" compact />
               <Button
                 variant="outline"
                 size="sm"
@@ -3134,7 +3367,8 @@ export default function BillingPage() {
               </Button>
               <Button
                 size="sm"
-                className="h-8 px-3.5 text-xs font-extrabold bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white rounded-xl shadow-xs border-none max-md:h-10 max-md:shadow-md max-md:shadow-orange-500/25"
+                hidden={!billAcc.create}
+                className="h-8 px-3.5 text-xs font-extrabold text-primary-foreground rounded-xl shadow-xs border-none max-md:h-10 max-md:shadow-md bg-primary hover:bg-primary/90"
                 onClick={handleStartNewBill}
                 data-testid="new-bill-btn"
                 data-shortcut="new"
@@ -3454,6 +3688,7 @@ export default function BillingPage() {
                 </Label>
                 <Input
                   type="date"
+                  data-guide="bill-date"
                   value={billingDate}
                   onChange={(e) => setBillingDate(e.target.value)}
                   className="h-9 text-xs font-semibold rounded-xl border-border bg-background text-foreground shadow-2xs focus-visible:ring-2 focus-visible:ring-primary/30 focus-visible:border-primary"
@@ -3711,7 +3946,7 @@ export default function BillingPage() {
             {/* Right: Customer Stats + Units / Total Summary Pill + Close */}
             <div className="flex items-center gap-2 shrink-0 self-end lg:self-center max-md:w-full max-md:flex-wrap max-md:self-stretch">
               {selectedCustomerStats && (
-                <div className="flex items-center gap-2 bg-primary/5 px-3 py-1 rounded-xl border border-primary/15 h-9 text-xs font-semibold animate-in fade-in">
+                <div data-guide="customer-stats" className="flex items-center gap-2 bg-primary/5 px-3 py-1 rounded-xl border border-primary/15 h-9 text-xs font-semibold animate-in fade-in">
                   <div className="flex items-center gap-1">
                     <span className="text-[10px] text-muted-foreground uppercase font-extrabold">Debt:</span>
                     <span className="text-xs font-black font-mono text-red-500">₹{selectedCustomerStats.totalDebt.toFixed(2)}</span>
@@ -3729,7 +3964,7 @@ export default function BillingPage() {
                 </div>
               )}
 
-              <div className="flex items-center gap-2 bg-muted px-3 py-1 rounded-xl border border-border shadow-2xs h-9">
+              <div data-guide="bill-summary" className="flex items-center gap-2 bg-muted px-3 py-1 rounded-xl border border-border shadow-2xs h-9">
                 <div className="flex items-center gap-1 border-r border-border pr-2.5">
                   <span className="text-[10px] uppercase font-extrabold text-muted-foreground">
                     Units:
@@ -3761,7 +3996,7 @@ export default function BillingPage() {
           </div>
 
             {/* Items Table - Inline Editable */}
-            <div className="border border-border/70 rounded-xl overflow-hidden shadow-sm bg-background/50 backdrop-blur-md mt-4">
+            <div data-guide="bill-items" className="border border-border/70 rounded-xl overflow-hidden shadow-sm bg-background/50 backdrop-blur-md mt-4">
               <Table mobileCards className="m-item-cards m-bill-cards" wrapperClassName="max-h-[300px]">
                 <TableHeader className="sticky top-0 bg-muted/90 backdrop-blur-md z-[50] border-b border-border/80">
                   <TableRow className="hover:bg-transparent border-b border-border/80">
@@ -3816,7 +4051,8 @@ export default function BillingPage() {
                       ? parseFloat(item.exclusive_price)
                       : (unitPrice / (1 + (cgstVal + sgstVal) / 100));
                     const itemTotal = qty * exclPrice * (1 - discPercent / 100) * (1 + (cgstVal + sgstVal) / 100);
-                    const available = parseInt(item.available) || 0;
+                    // What is left of the batch after the bill's earlier lines
+                    const available = rowAvailable(billItems, index);
 
                     const fromInventory = item.is_manual
                       ? 0
@@ -3877,7 +4113,7 @@ export default function BillingPage() {
                               );
                             }}
                             onKeyDown={(e) => handleDropdownKeyDown(e, item.id)}
-                            placeholder="Search product or salt..."
+                            placeholder="Search product, salt, batch or MRP (e.g. dolo 30)"
                             className="h-8 text-xs border-border/80 focus-visible:ring-1 focus-visible:ring-primary focus-visible:border-primary rounded-lg transition-all duration-200"
                             data-testid={`item-product-${index}`}
                             autoComplete="off"
@@ -3936,7 +4172,7 @@ export default function BillingPage() {
                               className="h-8 text-xs border-border/80 focus-visible:ring-1 focus-visible:ring-primary focus-visible:border-primary rounded-lg transition-all duration-200 w-28"
                             />
                           ) : (
-                            <span className="text-xs text-muted-foreground font-medium line-clamp-2 break-words" title={item.salt_composition || ""}>
+                            <span data-guide="salt" className="text-xs text-muted-foreground font-medium line-clamp-2 break-words" title={item.salt_composition || ""}>
                               {item.salt_composition || "-"}
                             </span>
                           )}
@@ -4019,7 +4255,7 @@ export default function BillingPage() {
                               Manual
                             </span>
                           ) : hasOverflow ? (
-                            <div className="text-center">
+                            <div className="text-center" data-guide="avail-neg">
                               <span className="text-xs font-bold text-amber-500">
                                 {available > 0 ? available : "0"}
                               </span>
@@ -4028,7 +4264,7 @@ export default function BillingPage() {
                               </p>
                             </div>
                           ) : (
-                            <span className="text-xs font-semibold text-emerald-500">
+                            <span data-guide="avail" className="text-xs font-semibold text-emerald-500">
                               {available > 0 ? available : "Out of Stock"}
                             </span>
                           )}
@@ -4042,6 +4278,7 @@ export default function BillingPage() {
                                   : null
                               }
                               type="number"
+                              data-guide="qty"
                               data-qty-for={item.id}
                               value={item.quantity || ""}
                               onFocus={(e) => e.target.select()}
@@ -4073,7 +4310,7 @@ export default function BillingPage() {
                               }`}
                             />
                             {!item.is_manual && item.units_per_pack && (
-                              <label className="flex items-center gap-1 cursor-pointer select-none text-[11px] font-bold text-muted-foreground/90 hover:text-foreground shrink-0 transition-colors">
+                              <label data-guide="pack" className="flex items-center gap-1 cursor-pointer select-none text-[11px] font-bold text-muted-foreground/90 hover:text-foreground shrink-0 transition-colors">
                                 <input
                                   type="checkbox"
                                   checked={
@@ -4109,7 +4346,7 @@ export default function BillingPage() {
                               className="h-8 text-xs text-center border-primary/30 bg-primary/5 text-primary font-bold focus-visible:ring-1 focus-visible:ring-primary focus-visible:border-primary rounded-lg transition-all duration-200 w-16"
                             />
                           ) : (
-                            <span className="text-xs text-primary font-mono font-bold">
+                            <span data-guide="cost" className="text-xs text-primary font-mono font-bold">
                               ₹{purchasePrice.toFixed(2)}
                             </span>
                           )}
@@ -4117,6 +4354,7 @@ export default function BillingPage() {
                         <TableCell>
                           <Input
                             id={`mrp-${item.id}`}
+                            data-guide="mrp"
                             type="number"
                             step="0.01"
                             value={item.unit_price || ""}
@@ -4143,6 +4381,7 @@ export default function BillingPage() {
                         <TableCell>
                           <Input
                             id={`discount-${item.id}`}
+                            data-guide="disc"
                             type="number"
                             value={item.discount_percent || ""}
                             onChange={(e) =>
@@ -4169,6 +4408,7 @@ export default function BillingPage() {
                         <TableCell>
                           <Input
                             id={`cgst-${item.id}`}
+                            data-guide="cgst"
                             type="number"
                             step="0.01"
                             value={item.cgst !== undefined ? item.cgst : ""}
@@ -4196,6 +4436,7 @@ export default function BillingPage() {
                         <TableCell>
                           <Input
                             id={`sgst-${item.id}`}
+                            data-guide="sgst"
                             type="number"
                             step="0.01"
                             value={item.sgst !== undefined ? item.sgst : ""}
@@ -4226,14 +4467,26 @@ export default function BillingPage() {
                             className="h-8 text-xs text-center border-border/80 focus-visible:ring-1 focus-visible:ring-primary focus-visible:border-primary rounded-lg transition-all duration-200 w-14"
                           />
                         </TableCell>
-                        <TableCell className="text-right font-mono text-sm font-semibold text-foreground">
-                          ₹{itemTotal.toFixed(2)}
+                        <TableCell data-guide="line-total" className="text-right font-mono text-sm font-semibold text-foreground">
+                          {item.product_name ? (
+                            <LineTotalInput
+                              total={itemTotal}
+                              gross={qty * exclPrice * (1 + (cgstVal + sgstVal) / 100)}
+                              qty={qty}
+                              onDiscount={(pct) => handleItemFieldChange(item.id, "discount_percent", pct)}
+                              onRate={(price) => handleItemFieldChange(item.id, "unit_price", price)}
+                              testId={`line-total-${index}`}
+                            />
+                          ) : (
+                            <>₹{itemTotal.toFixed(2)}</>
+                          )}
                         </TableCell>
                         <TableCell className="text-center">
                           <Button
                             size="icon"
                             variant="ghost"
                             className="h-8 w-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-lg transition-all"
+                            data-guide="remove-line"
                             onClick={() => handleRemoveItem(item.id)}
                           >
                             <Trash2 className="h-4 w-4" />
@@ -4259,7 +4512,7 @@ export default function BillingPage() {
             </div>
 
             {/* Tip */}
-            <p className="text-xs text-muted-foreground bg-muted/45 p-3 rounded-xl border border-border/50 backdrop-blur-sm flex items-center gap-1.5">
+            <p data-guide="bill-tip" className="text-xs text-muted-foreground bg-muted/45 p-3 rounded-xl border border-border/50 backdrop-blur-sm flex items-center gap-1.5">
               <Sparkles className="w-4 h-4 text-primary shrink-0" />
               <span><strong>Tip:</strong> Search by product name or salt composition. All fields are editable. Enter moves to the next field; {formatCombo("alt+a")} adds a row, {formatCombo("mod+enter")} saves.</span>
             </p>
@@ -4282,6 +4535,7 @@ export default function BillingPage() {
                     size="sm"
                     onClick={() => setScannerModalOpen(true)}
                     data-testid="scan-for-bill-btn"
+                    style={onlineFeatures ? undefined : { display: "none" }}
                     className="h-9 px-4 border-amber-500/40 text-amber-600 dark:text-amber-400 bg-amber-500/10 hover:bg-amber-500/20 rounded-xl transition-all duration-200 shadow-2xs font-extrabold cursor-pointer"
                   >
                     <Camera className="h-4 w-4 mr-1.5" /> Scan for Bill
@@ -4390,6 +4644,22 @@ export default function BillingPage() {
                       {(parseFloat(paidNow) || 0) > grandTotal && grandTotal > 0 && (
                         <span className="text-[11px] font-semibold text-red-500">More than the bill total ₹{grandTotal.toFixed(2)}</span>
                       )}
+                      <label className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground" title="The bill shows as overdue after this, with a WhatsApp reminder button">
+                        Remind to pay after
+                        <select
+                          value={payRemindDays}
+                          onChange={(e) => setPayRemindDays(e.target.value)}
+                          className="h-8 rounded-lg border border-border bg-background px-1.5 text-xs font-bold text-foreground"
+                          data-testid="pay-remind-days"
+                        >
+                          <option value="">No reminder</option>
+                          {[3, 7, 15, 30].map((d) => (
+                            <option key={d} value={String(d)}>
+                              {d} days
+                            </option>
+                          ))}
+                        </select>
+                      </label>
                     </div>
                   )}
 
@@ -4411,7 +4681,7 @@ export default function BillingPage() {
                       onValueChange={setPaymentMode}
                       disabled={!isPaid && !isAdvancePaid && !(isCredit && parseFloat(paidNow) > 0)}
                     >
-                      <SelectTrigger className="h-9 w-36 bg-muted/20 border border-border/50 rounded-xl text-xs font-semibold" disabled={!isPaid && !isAdvancePaid && !(isCredit && parseFloat(paidNow) > 0)}>
+                      <SelectTrigger data-guide="payment-mode" className="h-9 w-36 bg-muted/20 border border-border/50 rounded-xl text-xs font-semibold" disabled={!isPaid && !isAdvancePaid && !(isCredit && parseFloat(paidNow) > 0)}>
                         <SelectValue placeholder="Payment Mode">
                           {paymentMode && paymentMode !== "none" ? (
                             <div className="flex items-center gap-1.5">
@@ -4462,9 +4732,9 @@ export default function BillingPage() {
                 <PrescriptionAttach h1Items={newBillH1} value={prescription} onChange={setPrescription} inputId="rx-attach-new" />
 
                 {/* Patient Restock / Refill Reminder Card */}
-                <div className={`p-3.5 rounded-2xl border transition-all duration-200 ${
+                <div data-guide="refill" className={`p-3.5 rounded-2xl border transition-all duration-200 ${
                   refillReminder.enabled 
-                    ? "bg-gradient-to-br from-indigo-500/10 via-purple-500/5 to-primary/5 border-indigo-500/30 shadow-sm" 
+                    ? "border-indigo-500/30 shadow-sm bg-indigo-500/5" 
                     : "bg-muted/15 border-border/60 hover:border-border"
                 }`}>
                   <div className="flex flex-wrap items-center justify-between gap-3">
@@ -4670,11 +4940,12 @@ export default function BillingPage() {
                 </div>
               </div>
 
-              <div className="space-y-3.5">
+              <div className="space-y-3.5" data-guide="bill-totals">
                 <div className="flex justify-between items-center gap-4 text-sm">
                   <span className="font-bold text-muted-foreground/85">Bill Discount %</span>
                   <Input
                     type="number"
+                    data-guide="bill-discount"
                     value={billDiscount}
                     placeholder="0"
                     onChange={(e) => {
@@ -4709,6 +4980,7 @@ export default function BillingPage() {
                     <Input
                       type="number"
                       step="0.01"
+                      data-guide="grand-total"
                       value={grandTotalInput}
                       onFocus={() => setIsEditingGrandTotal(true)}
                       onChange={(e) => {
@@ -4732,9 +5004,18 @@ export default function BillingPage() {
                     />
                   </div>
                 </div>
+                {settings?.billing_round_off && Math.abs(Math.round(grandTotal) - grandTotal) > 0.004 && (
+                  <div className="flex justify-between text-xs font-semibold text-muted-foreground" data-testid="bill-round-off" title="Settings → Preferences → Round Off Bill Total">
+                    <span>Round off (saved as)</span>
+                    <span className="font-mono">
+                      {Math.round(grandTotal) - grandTotal > 0 ? "+" : "-"}₹{Math.abs(Math.round(grandTotal) - grandTotal).toFixed(2)} → ₹{Math.round(grandTotal).toFixed(2)}
+                    </span>
+                  </div>
+                )}
                 <div className="flex justify-between items-center pt-1">
                   <span className="text-xs font-bold text-muted-foreground/80">Estimated Profit</span>
                   <div
+                    data-guide="bill-profit"
                     className={`text-xs font-bold px-2.5 py-1 rounded-full border ${totalProfit >= 0 ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/25" : "bg-destructive/10 text-destructive border-destructive/20"}`}
                   >
                     ₹{totalProfit.toFixed(2)}
@@ -5196,7 +5477,7 @@ export default function BillingPage() {
                             onKeyDown={(e) =>
                               handleEditDropdownKeyDown(e, item.id)
                             }
-                            placeholder="Search product or salt..."
+                            placeholder="Search product, salt, batch or MRP (e.g. dolo 30)"
                             className="h-8 text-xs border-border/80 focus-visible:ring-1 focus-visible:ring-amber-500 focus-visible:border-amber-500 rounded-lg transition-all duration-200"
                             autoComplete="off"
                           />
@@ -5467,7 +5748,19 @@ export default function BillingPage() {
                           />
                         </TableCell>
                         <TableCell className="text-right font-mono text-sm font-semibold text-foreground">
-                          ₹{itemTotal.toFixed(2)}
+                          {item.product_name ? (
+                            <LineTotalInput
+                              total={itemTotal}
+                              gross={qty * exclPrice * (1 + (cgstVal + sgstVal) / 100)}
+                              qty={qty}
+                              accent="amber"
+                              onDiscount={(pct) => handleEditItemFieldChange(item.id, "discount_percent", pct)}
+                              onRate={(price) => handleEditItemFieldChange(item.id, "unit_price", price)}
+                              testId={`edit-line-total-${index}`}
+                            />
+                          ) : (
+                            <>₹{itemTotal.toFixed(2)}</>
+                          )}
                         </TableCell>
                         <TableCell className="text-center">
                           <Button
@@ -5721,6 +6014,14 @@ export default function BillingPage() {
                     />
                   </div>
                 </div>
+                {settings?.billing_round_off && Math.abs(Math.round(editGrandTotal) - editGrandTotal) > 0.004 && (
+                  <div className="flex justify-between text-xs font-semibold text-muted-foreground" title="Settings → Preferences → Round Off Bill Total">
+                    <span>Round off (saved as)</span>
+                    <span className="font-mono">
+                      {Math.round(editGrandTotal) - editGrandTotal > 0 ? "+" : "-"}₹{Math.abs(Math.round(editGrandTotal) - editGrandTotal).toFixed(2)} → ₹{Math.round(editGrandTotal).toFixed(2)}
+                    </span>
+                  </div>
+                )}
                 <div className="flex justify-between items-center pt-1">
                   <span className="text-xs font-bold text-muted-foreground/80">Estimated Profit</span>
                   <div
@@ -5753,9 +6054,11 @@ export default function BillingPage() {
               <Button
                 variant="outline"
                 size="sm"
-                className="h-9 text-xs font-bold rounded-xl bg-gradient-to-r from-amber-500/10 to-orange-500/10 border-amber-500/30 text-amber-600 dark:text-amber-400 hover:border-amber-500/50 cursor-pointer shadow-2xs"
+                className="h-9 text-xs font-bold rounded-xl border-amber-500/30 text-amber-600 dark:text-amber-400 hover:border-amber-500/50 cursor-pointer shadow-2xs bg-amber-500/5"
                 onClick={() => openScanner("/scan-bill")}
+                hidden={!billAcc.create}
                 data-testid="scan-bill-list-btn"
+                style={onlineFeatures ? undefined : { display: "none" }}
               >
                 <Camera className="w-4 h-4 mr-1.5 text-amber-500" />
                 <span>Scan for Bill</span>
@@ -5772,13 +6075,17 @@ export default function BillingPage() {
                   setFilterBillType(val);
                 }}
               >
-                <SelectTrigger className="w-32 h-9 text-xs font-semibold border-border/70 rounded-xl bg-card/60 backdrop-blur-md">
+                <SelectTrigger data-guide="bill-type" className="w-32 h-9 text-xs font-semibold border-border/70 rounded-xl bg-card/60 backdrop-blur-md">
                   <SelectValue placeholder="All Bills" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Bills</SelectItem>
                   <SelectItem value="regular">Regular Bills</SelectItem>
                   <SelectItem value="advance">Advance Bills</SelectItem>
+                  <SelectItem value="unpaid">Unpaid Bills</SelectItem>
+                  <SelectItem value="overdue">Overdue (Udhar)</SelectItem>
+                  <SelectItem value="norate">Items without rate</SelectItem>
+                  <SelectItem value="paid">Paid Bills</SelectItem>
                 </SelectContent>
               </Select>
 
@@ -5791,7 +6098,7 @@ export default function BillingPage() {
                 }}
                 className={`h-9 text-xs font-bold rounded-xl transition-all cursor-pointer ${
                   activeViewTab === "drafts"
-                    ? "bg-orange-600 hover:bg-orange-700 text-white shadow-md"
+                    ? "bg-primary hover:bg-primary/90 text-primary-foreground shadow-md"
                     : "border-orange-500/30 text-orange-600 dark:text-orange-400 bg-orange-500/10 hover:bg-orange-500/20"
                 }`}
               >
@@ -5804,6 +6111,56 @@ export default function BillingPage() {
                 )}
               </Button>
 
+              {/* One day at a time, always in view: pick a date, step back / next */}
+              {(() => {
+                const day = startDate && startDate === endDate ? startDate : "";
+                const step = (n) => {
+                  const base = day || new Date(Date.now() + 5.5 * 36e5).toISOString().slice(0, 10);
+                  const d = new Date(`${base}T12:00:00`);
+                  d.setDate(d.getDate() + (day ? n : 0)); // first press: today
+                  const ymd = d.toISOString().slice(0, 10);
+                  setPage(1);
+                  setStartDate(ymd);
+                  setEndDate(ymd);
+                };
+                return (
+                  <div className="flex items-center h-9 rounded-xl border border-border/70 bg-card/60 overflow-hidden" data-testid="bill-day-filter">
+                    <button type="button" onClick={() => step(-1)} className="h-full px-2 hover:bg-muted text-muted-foreground" title="Previous day" aria-label="Previous day">
+                      <ChevronLeft className="w-4 h-4" />
+                    </button>
+                    <input
+                      type="date"
+                      value={day}
+                      onChange={(e) => {
+                        setPage(1);
+                        setStartDate(e.target.value);
+                        setEndDate(e.target.value);
+                      }}
+                      className="h-full bg-transparent px-1 text-xs font-semibold outline-none w-[118px]"
+                      aria-label="Bills of this day"
+                      title="Show the bills of one day"
+                    />
+                    <button type="button" onClick={() => step(1)} className="h-full px-2 hover:bg-muted text-muted-foreground" title="Next day" aria-label="Next day">
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                    {day && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPage(1);
+                          setStartDate("");
+                          setEndDate("");
+                        }}
+                        className="h-full px-2 text-[10px] font-bold text-muted-foreground hover:text-foreground border-l border-border/60"
+                        title="Show all days"
+                      >
+                        All
+                      </button>
+                    )}
+                  </div>
+                );
+              })()}
+
               {/* More Filters Popover Menu */}
               <Popover>
                 <PopoverTrigger asChild>
@@ -5812,7 +6169,7 @@ export default function BillingPage() {
                     size="sm"
                     className={`h-9 text-xs font-bold rounded-xl transition-all cursor-pointer ${
                       startDate || endDate
-                        ? "bg-orange-600 hover:bg-orange-700 text-white shadow-md"
+                        ? "bg-primary hover:bg-primary/90 text-primary-foreground shadow-md"
                         : "border-border/70 hover:bg-muted"
                     }`}
                   >
@@ -5941,7 +6298,7 @@ export default function BillingPage() {
 
             {/* Premium Insights Dashboard */}
             {(startDate || endDate) && (
-              <div className="mt-4 border border-border/70 rounded-2xl overflow-hidden glass bg-card/35 backdrop-blur-xl shadow-lg transition-all duration-700 ease-in-out">
+              <div data-guide="bill-insights" className="mt-4 border border-border/70 rounded-2xl overflow-hidden glass bg-card/35 backdrop-blur-xl shadow-lg transition-all duration-700 ease-in-out">
                 {insightsLoading ? (
                   <div className="p-10 flex flex-col items-center justify-center space-y-4 bg-muted/20 animate-pulse min-h-[250px]">
                     <div className="relative">
@@ -5954,7 +6311,7 @@ export default function BillingPage() {
                   </div>
                 ) : insightsData ? (
                   <div className="animate-in fade-in slide-in-from-top-4 duration-700">
-                    <div className="p-6 border-b border-border/50 flex justify-between items-center bg-gradient-to-r from-primary/5 to-transparent">
+                    <div className="p-6 border-b border-border/50 flex justify-between items-center bg-primary/5">
                       <div className="flex items-center gap-3">
                         <div className="p-2.5 bg-primary/10 rounded-xl">
                           <BarChart3 className="w-5 h-5 text-primary" />
@@ -5997,7 +6354,7 @@ export default function BillingPage() {
                           </p>
                         </div>
 
-                        <div className="p-5 rounded-2xl border border-emerald-500/20 bg-gradient-to-br from-emerald-500/5 to-transparent shadow-sm relative overflow-hidden group hover:border-emerald-500/40 transition-all duration-300">
+                        <div className="p-5 rounded-2xl border border-emerald-500/20 shadow-sm relative overflow-hidden group hover:border-emerald-500/40 transition-all duration-300 bg-emerald-500/5">
                           <div className="absolute top-0 right-0 w-20 h-20 bg-emerald-500/10 rounded-full -mr-10 -mt-10 blur-xl group-hover:bg-emerald-500/20 transition-colors"></div>
                           <p className="text-xs font-bold text-emerald-700/80 dark:text-emerald-400/80 tracking-widest uppercase mb-1.5">
                             Net Profit
@@ -6018,7 +6375,7 @@ export default function BillingPage() {
                           </p>
                         </div>
 
-                        <div className="p-5 rounded-2xl border border-red-500/20 bg-gradient-to-br from-red-500/5 to-transparent shadow-sm relative overflow-hidden group hover:border-red-500/40 transition-all duration-300">
+                        <div className="p-5 rounded-2xl border border-red-500/20 shadow-sm relative overflow-hidden group hover:border-red-500/40 transition-all duration-300 bg-red-500/5">
                           <div className="absolute top-0 right-0 w-20 h-20 bg-red-500/10 rounded-full -mr-10 -mt-10 blur-xl group-hover:bg-red-500/20 transition-colors"></div>
                           <p className="text-xs font-bold text-red-700/80 dark:text-red-400/80 tracking-widest uppercase mb-1.5">
                             Unpaid Debt
@@ -6034,7 +6391,7 @@ export default function BillingPage() {
                           </p>
                         </div>
 
-                        <div className="p-5 rounded-2xl border border-blue-500/20 bg-gradient-to-br from-blue-500/5 to-transparent shadow-sm relative overflow-hidden group hover:border-blue-500/40 transition-all duration-300">
+                        <div className="p-5 rounded-2xl border border-blue-500/20 shadow-sm relative overflow-hidden group hover:border-blue-500/40 transition-all duration-300 bg-blue-500/5">
                           <div className="absolute top-0 right-0 w-20 h-20 bg-blue-500/10 rounded-full -mr-10 -mt-10 blur-xl group-hover:bg-blue-500/20 transition-colors"></div>
                           <p className="text-xs font-bold text-blue-700/80 dark:text-blue-400/80 tracking-widest uppercase mb-1.5">
                             Total Bills
@@ -6185,14 +6542,16 @@ export default function BillingPage() {
                           <div className="flex items-center justify-end gap-2">
                             <Button
                               size="sm"
+                              hidden={!billAcc.create}
                               onClick={() => handleLoadDraftToBill(d)}
-                              className="h-8 px-3 text-xs font-black bg-orange-600 hover:bg-orange-700 text-white rounded-xl shadow-xs cursor-pointer"
+                              className="h-8 px-3 text-xs font-black bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl shadow-xs cursor-pointer"
                             >
                               <ChevronRight className="w-3.5 h-3.5 mr-1" /> Complete Bill
                             </Button>
                             <Button
                               size="icon"
                               variant="ghost"
+                              hidden={!billAcc.delete}
                               onClick={() => handleDeleteDraft(d.id)}
                               className="h-8 w-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-xl"
                               title="Delete Draft"
@@ -6308,6 +6667,17 @@ export default function BillingPage() {
                             <Badge variant="outline" className="bg-primary/5 text-primary border-primary/20 rounded-md font-bold text-xs">
                               {bill.items?.length || 0} {bill.items?.length === 1 ? "item" : "items"}
                             </Badge>
+                            <p className="mt-1 text-[10px] font-semibold text-muted-foreground" data-testid={`bill-total-qty-${bill.id}`} title="Total quantity on this bill (units)">
+                              {(bill.items || []).reduce((t, it) => t + (Number(it.quantity) || 0), 0)} qty
+                            </p>
+                            {(() => {
+                              const n = (bill.items || []).filter((it) => !(Number(it.unit_price) > 0)).length;
+                              return n > 0 ? (
+                                <p className="mt-0.5 text-[10px] font-bold text-amber-600 dark:text-amber-400" title="Lines saved without a rate. Edit the bill to add it." data-testid={`bill-no-rate-${bill.id}`}>
+                                  {n} without rate
+                                </p>
+                              ) : null;
+                            })()}
                           </TableCell>
                           <TableCell className="text-right font-mono text-foreground font-extrabold">
                             ₹{billTotal.toFixed(2)}
@@ -6326,12 +6696,39 @@ export default function BillingPage() {
                                 <Badge className="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20 rounded-full font-bold px-2.5 py-0.5 text-xs transition-colors">
                                   Paid
                                 </Badge>
-                              ) : (
-                                <Badge className="bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20 hover:bg-amber-500/20 rounded-full font-bold px-2.5 py-0.5 text-xs transition-colors">
-                                  Unpaid
-                                </Badge>
-                              )}
-                              {bill.is_advance_paid && (
+                              ) : (() => {
+                                const { paid, due } = billDue(bill);
+                                return (
+                                  <>
+                                    <Badge className="bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20 hover:bg-amber-500/20 rounded-full font-bold px-2.5 py-0.5 text-xs transition-colors">
+                                      {paid > 0 && !bill.is_advance_paid ? "Part paid" : bill.is_credit ? "Unpaid · Udhar" : "Unpaid"}
+                                    </Badge>
+                                    {due > 0 && (
+                                      <span className="text-[10px] font-mono font-bold text-rose-600 dark:text-rose-400 whitespace-nowrap" data-testid={`bill-due-${bill.id}`} title={`Paid ₹${paid.toFixed(2)} of ₹${billTotal.toFixed(2)}`}>
+                                        Due ₹{due.toFixed(2)}
+                                      </span>
+                                    )}
+                                    {due > 0 && bill.due_date && bill.due_date <= new Date().toISOString().slice(0, 10) && (
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          openWhatsApp({
+                                            phone: bill.customer_mobile,
+                                            message: `Namaste ${bill.customer_name || ""}, a gentle reminder: ₹${due.toFixed(2)} is pending on bill ${bill.bill_no} dated ${new Date(bill.billing_date || bill.created_at).toLocaleDateString("en-IN")}. Please pay at your convenience. Thank you!`,
+                                          });
+                                        }}
+                                        className="inline-flex items-center gap-1 rounded-full border border-rose-500/40 bg-rose-500/10 px-2 py-0.5 text-[10px] font-black text-rose-600 dark:text-rose-400 hover:bg-rose-500/20 whitespace-nowrap"
+                                        title={`Payment was due on ${bill.due_date}. Send a WhatsApp reminder`}
+                                        data-testid={`pay-reminder-${bill.id}`}
+                                      >
+                                        <WhatsAppIcon className="w-3 h-3" /> Overdue · remind
+                                      </button>
+                                    )}
+                                  </>
+                                );
+                              })()}
+                              {bill.is_advance_paid && !bill.is_paid && (
                                 <Badge className="bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20 rounded-full font-bold px-2.5 py-0.5 text-[10px] whitespace-nowrap">
                                   Advance Paid
                                 </Badge>
@@ -6350,6 +6747,7 @@ export default function BillingPage() {
                                 variant="ghost"
                                 size="icon"
                                 onClick={() => handleStartEditBill(bill)}
+                                hidden={!billAcc.update}
                                 title="Edit Bill (E)"
                                 data-row-key="e"
                                 className="h-8 w-8 rounded-xl hover:bg-amber-500/10 text-muted-foreground hover:text-amber-600 transition-all duration-200"
@@ -6399,7 +6797,7 @@ export default function BillingPage() {
                                   </Button>
                                 ) : null;
                               })()}
-                              {!bill.is_paid && (
+                              {!bill.is_paid && canTakePayments && (
                                 <Button
                                   variant="ghost"
                                   size="icon"
@@ -6418,6 +6816,7 @@ export default function BillingPage() {
                                 onClick={() =>
                                   setDeleteDialog({ open: true, bill })
                                 }
+                                hidden={!billAcc.delete}
                                 title="Delete Bill (Del)"
                                 data-row-key="delete"
                                 className="h-8 w-8 rounded-xl hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-all duration-200"
@@ -6432,7 +6831,7 @@ export default function BillingPage() {
                         {isExpanded && bill.items && bill.items.length > 0 && (
                           <TableRow className="bg-muted/15 border-b border-border/40">
                             <TableCell colSpan={8} className="p-0">
-                              <div className="p-6 pl-12 max-md:p-3">
+                              <div data-guide="bill-expanded" className="p-6 pl-12 max-md:p-3">
                                 <p className="text-xs font-bold text-muted-foreground/80 uppercase tracking-wider mb-3">
                                   Items Sold
                                 </p>
@@ -6646,6 +7045,14 @@ export default function BillingPage() {
                                         </span>
                                       </span>
                                     )}
+                                    {Math.abs(Number(bill.round_off) || 0) > 0.004 && (
+                                      <span>
+                                        Round off:{" "}
+                                        <span className="font-mono text-foreground text-sm font-bold normal-case">
+                                          {bill.round_off > 0 ? "+" : "-"}₹{Math.abs(bill.round_off).toFixed(2)}
+                                        </span>
+                                      </span>
+                                    )}
                                     <span>
                                       Grand Total:{" "}
                                       <span className="font-mono text-primary text-sm font-extrabold normal-case">
@@ -6684,13 +7091,15 @@ export default function BillingPage() {
                                             ₹{remainingUnpaid.toFixed(2)}
                                           </p>
                                         </div>
-                                        {remainingUnpaid > 0 && (
+                                        {remainingUnpaid > 0 && canTakePayments && (
                                           <Button
                                             size="sm"
                                             onClick={() => setRecordPaymentDialog({
                                               open: true,
                                               billId: bill.id,
                                               billNo: bill.bill_no,
+                                              customerId: bill.customer_id || null,
+                                              customerName: bill.customer_name || "",
                                               remainingUnpaid: remainingUnpaid,
                                               amount: remainingUnpaid.toFixed(2),
                                               paymentMode: "Cash"
@@ -6701,6 +7110,69 @@ export default function BillingPage() {
                                           </Button>
                                         )}
                                       </div>
+                                    </div>
+                                  );
+                                })()}
+
+                                {/* Payments for ordinary bills: what is paid, what is due, and every payment */}
+                                {!bill.is_advance_paid && (() => {
+                                  const { paid, due } = billDue(bill);
+                                  const list = billPayments(bill);
+                                  if (!list.length && due <= 0) return null;
+                                  return (
+                                    <div className="mt-4 p-4 rounded-xl bg-card border border-border/50 shadow-sm space-y-3" data-testid={`bill-payments-${bill.id}`}>
+                                      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                                        <h4 className="font-bold text-xs text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+                                          <CreditCard className="w-3.5 h-3.5 text-primary" />
+                                          Payments ({list.length})
+                                          <span className="normal-case tracking-normal font-semibold text-foreground/80">
+                                            · paid ₹{paid.toFixed(2)} of ₹{billTotal.toFixed(2)}
+                                          </span>
+                                        </h4>
+                                        {due > 0 && (
+                                          <div className="flex items-center gap-2 flex-wrap">
+                                            <span className="text-xs font-bold text-muted-foreground uppercase">Due</span>
+                                            <span className="text-base font-mono font-extrabold text-red-500">₹{due.toFixed(2)}</span>
+                                            {canTakePayments && (
+                                              <>
+                                                <Button
+                                                  size="sm"
+                                                  variant="outline"
+                                                  data-testid={`record-part-payment-${bill.id}`}
+                                                  onClick={() => setRecordPaymentDialog({ open: true, billId: bill.id, billNo: bill.bill_no, customerId: bill.customer_id || null, customerName: bill.customer_name || "", remainingUnpaid: due, amount: "", paymentMode: "Cash" })}
+                                                  className="rounded-xl h-8 text-xs font-bold"
+                                                >
+                                                  Record part payment
+                                                </Button>
+                                                <Button
+                                                  size="sm"
+                                                  data-testid={`mark-due-paid-${bill.id}`}
+                                                  onClick={() => setRecordPaymentDialog({ open: true, billId: bill.id, billNo: bill.bill_no, customerId: bill.customer_id || null, customerName: bill.customer_name || "", remainingUnpaid: due, amount: due.toFixed(2), paymentMode: "Cash" })}
+                                                  className="rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white font-bold h-8 text-xs"
+                                                >
+                                                  Mark ₹{due.toFixed(2)} as paid
+                                                </Button>
+                                              </>
+                                            )}
+                                          </div>
+                                        )}
+                                      </div>
+                                      {list.length > 0 && (
+                                        <div className="divide-y divide-border/40">
+                                          {list.map((pmt, i) => (
+                                            <div key={i} className="flex justify-between items-center py-1.5 text-[11px] font-semibold text-muted-foreground">
+                                              <span>
+                                                <span className="text-foreground font-bold">#{i + 1}</span> · {pmt.payment_mode || "Cash"}
+                                                {pmt.by ? ` · by ${pmt.by}` : ""}
+                                              </span>
+                                              <span className="flex items-center gap-3">
+                                                <span className="font-mono">{pmt.paid_at ? new Date(pmt.paid_at).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: true }) : "—"}</span>
+                                                <span className="font-mono font-bold text-foreground text-xs">₹{(Number(pmt.amount) || 0).toFixed(2)}</span>
+                                              </span>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      )}
                                     </div>
                                   );
                                 })()}
@@ -6734,7 +7206,7 @@ export default function BillingPage() {
                                       </div>
 
                                       {/* Subsequent Payments */}
-                                      {bill.payments && bill.payments.map((pmt, pIdx) => (
+                                      {bill.payments && bill.payments.filter((pmt, pIdx) => !(pIdx === 0 && Math.abs((Number(pmt.amount) || 0) - (Number(bill.advance_amount) || 0)) < 0.01 && pmt.paid_at === (bill.created_at || bill.billing_date))).map((pmt, pIdx) => (
                                         <div key={pIdx} className="flex relative pl-5 before:absolute before:left-[7px] before:top-2 before:bottom-[-20px] last:before:hidden before:w-[2px] before:bg-muted-foreground/20 text-xs">
                                           <div className="absolute left-0 top-1.5 w-[16px] h-[16px] rounded-full bg-primary/20 flex items-center justify-center ring-4 ring-background">
                                             <div className="w-[8px] h-[8px] rounded-full bg-primary"></div>
@@ -6796,6 +7268,31 @@ export default function BillingPage() {
                                                   })}
                                                 </span>
                                               </div>
+                                              {(hist.removed_items || []).length > 0 && (
+                                                <div className="rounded-xl border border-rose-500/30 bg-rose-500/5 px-3 py-2 space-y-1" data-testid="removed-items">
+                                                  {hist.removed_items.map((ri, rIdx) => (
+                                                    <div key={rIdx} className="flex items-center justify-between gap-2 text-[11px]">
+                                                      <span>
+                                                        <b className="text-rose-600 dark:text-rose-400">Removed</b> {ri.product_name} · {ri.quantity} units · ₹{(Number(ri.item_total) || 0).toFixed(2)}
+                                                        {ri.batch_no ? ` · ${ri.batch_no}` : ""} by {name}
+                                                      </span>
+                                                      {billAcc.update && (
+                                                        <button
+                                                          type="button"
+                                                          className="shrink-0 rounded-lg border border-primary/40 px-2 py-0.5 text-[10px] font-bold text-primary hover:bg-primary/10"
+                                                          onClick={() => {
+                                                            handleStartEditBill({ ...bill, items: [...(bill.items || []), { ...ri }] });
+                                                            toast.info(`${ri.product_name} is back on the bill. Check it and press Update to save.`);
+                                                          }}
+                                                          data-testid="restore-removed-item"
+                                                        >
+                                                          Restore
+                                                        </button>
+                                                      )}
+                                                    </div>
+                                                  ))}
+                                                </div>
+                                              )}
                                               <div className="space-y-1 text-foreground/80 font-medium">
                                                 {hist.changes.map((ch, cIdx) => (
                                                   <div key={cIdx} className="bg-background/50 px-3 py-1.5 rounded-xl border border-border/40 text-[11px]">
@@ -6957,7 +7454,7 @@ export default function BillingPage() {
               Skip
             </AlertDialogCancel>
             <AlertDialogAction
-              className="rounded-xl bg-gradient-to-r from-primary to-primary/90 hover:from-primary/95 hover:to-primary text-primary-foreground shadow-md shadow-primary/20 h-10 px-4 font-semibold transition-all hover:scale-[1.02] active:scale-[0.98]"
+              className="rounded-xl text-primary-foreground shadow-md h-10 px-4 font-semibold transition-all hover:scale-[1.02] active:scale-[0.98] bg-primary hover:bg-primary/90"
               onClick={async () => {
                 if (!pdfConfirmDialog.billId) return;
                 await generateBillPdf(pdfConfirmDialog.billId, pdfWithQr);
@@ -7036,6 +7533,42 @@ export default function BillingPage() {
         </AlertDialogContent>
       </AlertDialog>
 
+      {/* Rate above MRP / expired batch: confirm before saving */}
+      <AlertDialog open={!!saleCheck} onOpenChange={(o) => !o && setSaleCheck(null)}>
+        <AlertDialogContent className="glass bg-card/95 backdrop-blur-xl border border-amber-500/40 shadow-2xl rounded-2xl p-6" data-testid="sale-check-dialog">
+          <AlertDialogHeader className="space-y-3">
+            <AlertDialogTitle className="text-xl font-bold flex items-center gap-2 text-amber-600 dark:text-amber-500">
+              <AlertTriangle className="w-5 h-5 text-amber-500" />
+              Check before saving
+            </AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-1.5 text-sm text-muted-foreground/90">
+                {(saleCheck?.list || []).map((w, i) => (
+                  <p key={i}>
+                    <b className="text-foreground">{w.name}</b>: {w.issue}
+                  </p>
+                ))}
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="gap-2 mt-4">
+            <AlertDialogCancel className="rounded-xl border-border/80 h-10 px-4">Go back and fix</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                const c = saleCheck;
+                setSaleCheck(null);
+                if (c?.mode === "edit") handleSaveEditBill(c.force, true);
+                else handleSubmitBill(c?.force, true);
+              }}
+              className="rounded-xl bg-amber-600 hover:bg-amber-700 text-white h-10 px-4 font-semibold"
+              data-testid="sale-check-continue"
+            >
+              Save anyway
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       {/* Record Payment Dialog */}
       <AlertDialog
         open={recordPaymentDialog.open}
@@ -7078,6 +7611,19 @@ export default function BillingPage() {
                   Pay all
                 </button>
               </div>
+              {recordPaymentDialog.customerId && recordPaymentDialog.paymentMode !== "Advance" && Number(recordPaymentDialog.amount) > recordPaymentDialog.remainingUnpaid && (
+                <label className="flex items-start gap-2 text-xs font-semibold text-foreground cursor-pointer rounded-lg border border-blue-500/30 bg-blue-500/5 p-2" data-testid="keep-extra-advance">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5"
+                    checked={!!recordPaymentDialog.keepExtra}
+                    onChange={(e) => setRecordPaymentDialog((prev) => ({ ...prev, keepExtra: e.target.checked }))}
+                  />
+                  <span>
+                    Keep the extra ₹{(Math.round((Number(recordPaymentDialog.amount) - recordPaymentDialog.remainingUnpaid) * 100) / 100).toFixed(2)} as advance for {recordPaymentDialog.customerName || "the customer"} (used on a later bill)
+                  </span>
+                </label>
+              )}
               {billPaymentError(recordPaymentDialog) && (
                 <p className="text-xs font-semibold text-red-500" data-testid="record-payment-error">{billPaymentError(recordPaymentDialog)}</p>
               )}
@@ -7117,6 +7663,14 @@ export default function BillingPage() {
                       <span>Card</span>
                     </div>
                   </SelectItem>
+                  {recordPaymentDialog.advanceLeft > 0 && (
+                    <SelectItem value="Advance">
+                      <div className="flex items-center gap-2">
+                        <CreditCard className="w-3.5 h-3.5" />
+                        <span>From advance (₹{recordPaymentDialog.advanceLeft.toFixed(2)} left)</span>
+                      </div>
+                    </SelectItem>
+                  )}
                 </SelectContent>
               </Select>
             </div>
@@ -7138,7 +7692,7 @@ export default function BillingPage() {
 
       {/* TABS & ACTION NAVBAR */}
       {(showNewBill || editingBillId) && createPortal(
-        <div className="fixed bottom-0 left-0 right-0 z-[100] flex items-center justify-between bg-card/95 backdrop-blur-xl border-t-2 border-border shadow-2xl px-6 py-3.5 gap-4 overflow-x-auto scroller-hide overflow-y-hidden mb-0 transition-all duration-300 mobile-action-bar max-md:flex-wrap max-md:gap-2 max-md:px-3 max-md:pt-2.5 max-md:pb-[calc(0.625rem+env(safe-area-inset-bottom))]">
+        <div data-guide="bill-bar" className="fixed bottom-0 left-0 right-0 z-[100] flex items-center justify-between bg-card/95 backdrop-blur-xl border-t-2 border-border shadow-2xl px-6 py-3.5 gap-4 overflow-x-auto scroller-hide overflow-y-hidden mb-0 transition-all duration-300 mobile-action-bar max-md:flex-wrap max-md:gap-2 max-md:px-3 max-md:pt-2.5 max-md:pb-[calc(0.625rem+env(safe-area-inset-bottom))]">
           <div className="flex items-center gap-2 overflow-x-auto scroller-hide max-md:w-full empty:hidden">
             {showNewBill &&
               tabs.map((tab, idx) => {
@@ -7160,7 +7714,7 @@ export default function BillingPage() {
                         e.preventDefault();
                         switchTab(tab.id);
                       }}
-                      className={`pr-8 h-9 rounded-full transition-all duration-200 ${isActive ? "bg-orange-500 text-white shadow-md shadow-orange-500/20 font-bold" : "bg-slate-100 hover:bg-slate-200 dark:bg-muted/65 dark:hover:bg-muted/90 text-slate-700 dark:text-muted-foreground border border-slate-200/80 dark:border-border/50 font-semibold"}`}
+                      className={`pr-8 h-9 rounded-full transition-all duration-200 ${isActive ? "bg-primary text-primary-foreground shadow-md font-bold" : "bg-slate-100 hover:bg-slate-200 dark:bg-muted/65 dark:hover:bg-muted/90 text-slate-700 dark:text-muted-foreground border border-slate-200/80 dark:border-border/50 font-semibold"}`}
                     >
                       <FileText className="w-3.5 h-3.5 mr-1.5 opacity-70" />
                       <span className="max-w-[120px] truncate">{tabName}</span>
@@ -7311,12 +7865,26 @@ export default function BillingPage() {
                   <Label className="text-xs font-bold">In</Label>
                   <div className="mt-1 grid h-10 grid-cols-2 gap-1 rounded-xl border border-border p-1" role="radiogroup">
                     {["packs", "units"].map((u) => (
-                      <button key={u} type="button" role="radio" aria-checked={shortBookFor.unit === u} onClick={() => setShortBookFor((s) => ({ ...s, unit: u }))} className={`rounded-lg text-xs font-bold ${shortBookFor.unit === u ? "bg-orange-600 text-white" : "text-muted-foreground"}`}>
+                      <button key={u} type="button" role="radio" aria-checked={shortBookFor.unit === u} onClick={() => setShortBookFor((s) => ({ ...s, unit: u }))} className={`rounded-lg text-xs font-bold ${shortBookFor.unit === u ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}>
                         {u === "packs" ? `Packs${shortBookFor.item.units_per_pack > 1 ? ` of ${shortBookFor.item.units_per_pack}` : ""}` : "Units"}
                       </button>
                     ))}
                   </div>
                 </div>
+              </div>
+              <div>
+                <Label htmlFor="sb-need-by" className="text-xs font-bold">
+                  Customer needs it by <span className="font-normal text-muted-foreground">(optional, for {shortBookFor.bill.customer_name || "the customer"})</span>
+                </Label>
+                <Input
+                  id="sb-need-by"
+                  type="date"
+                  value={shortBookFor.need_by || ""}
+                  min={new Date().toISOString().slice(0, 10)}
+                  onChange={(e) => setShortBookFor((s) => ({ ...s, need_by: e.target.value }))}
+                  className="mt-1 h-10 rounded-xl"
+                  data-testid="shortbook-need-by"
+                />
               </div>
               <div>
                 <Label htmlFor="sb-note" className="text-xs font-bold">Note</Label>
@@ -7326,7 +7894,7 @@ export default function BillingPage() {
                 <Button type="button" variant="outline" onClick={() => setShortBookFor(null)} className="rounded-xl text-xs font-bold">
                   Cancel
                 </Button>
-                <Button type="submit" disabled={shortBookSaving} className="rounded-xl bg-orange-600 text-xs font-bold text-white hover:bg-orange-700" data-shortcut="save">
+                <Button type="submit" disabled={shortBookSaving} className="rounded-xl bg-primary text-xs font-bold text-primary-foreground hover:bg-primary/90" data-shortcut="save">
                   {shortBookSaving ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Plus className="mr-1.5 h-4 w-4" />}
                   Add to short book
                 </Button>
@@ -7358,7 +7926,7 @@ export default function BillingPage() {
                 setPdfFor(null);
                 generateBillPdf(id, pdfWithQr);
               }}
-              className="rounded-xl bg-orange-600 text-xs font-bold text-white hover:bg-orange-700"
+              className="rounded-xl bg-primary text-xs font-bold text-primary-foreground hover:bg-primary/90"
             >
               <FileText className="mr-1.5 h-4 w-4" /> Generate PDF
             </Button>
@@ -7379,6 +7947,7 @@ export default function BillingPage() {
         onOpenChange={(o) => !o && setDetailsFor(null)}
         onUse={pickDetailsItem}
         warningDays={expiryWarningDays}
+        nearExpiryMonths={settings?.alternates_near_expiry === false ? null : Math.max(1, Number(settings?.alternates_near_expiry_months) || 3)}
       />
       <UpiQrDialog open={!!upiQr} onOpenChange={(o) => !o && setUpiQr(null)} initialAmount={upiQr?.amount ?? ""} note={upiQr?.note || ""} autoGenerate={!!upiQr?.auto} />
       {whatsApp.dialog}

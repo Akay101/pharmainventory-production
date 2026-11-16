@@ -1,0 +1,10 @@
+node_modules/
+backend/
+web/
+dist/
+dist-test/
+dist-dev/
+dist-production/
+.test-cloud/
+.dev-licence-key
+app-config.json

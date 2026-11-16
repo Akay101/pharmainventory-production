@@ -5,12 +5,13 @@ const { auth } = require("../middleware/auth");
 
 const { requireSubscription } = require("../middleware/subscription");
 const { catalogLimiter, GLOBAL_MAX_PAGES } = require("../middleware/security");
-const { medicineKey } = require("../services/search/normalize");
+const { medicineKey, normalizeText } = require("../services/search/normalize");
 const { flagScheduleH1 } = require("../utils/scheduleH1");
 
 const {
   searchGlobalMedicines,
   tenantTokenMatch,
+  searchSalts,
   scoreMatch,
   batchMatchScore,
 } = require("../services/search/medicineSearch");
@@ -39,6 +40,16 @@ router.all("/enrich", auth, requireSubscription(), catalogLimiter, async (req, r
     const product_name = (productNameRaw || "").trim();
     if (!product_name) {
       return res.status(400).json({ detail: "Product name required" });
+    }
+
+    // Answers are kept and reused for every pharmacy: the same medicine is
+    // asked of the AI once, not on every click (saves AI/API credits)
+    const cacheKey = `enrich:${normalizeText(product_name)}`;
+    const cacheCol = mongoose.connection.db.collection("ai_answer_cache");
+    const cached = await cacheCol.findOne({ _id: cacheKey }).catch(() => null);
+    if (cached?.answer && (cached.answer.salt_composition || cached.answer.manufacturer)) {
+      cacheCol.updateOne({ _id: cacheKey }, { $inc: { hits: 1 }, $set: { last_hit_at: new Date() } }).catch(() => {});
+      return res.json({ ...cached.answer, cached: true });
     }
 
     const { GoogleGenerativeAI } = require("@google/generative-ai");
@@ -90,13 +101,20 @@ Respond ONLY in JSON format:
       console.error("Failed to parse Gemini JSON:", jsonStr);
     }
 
-    res.json({
+    const answer = {
       salt_composition: parsed.salt_composition || "",
       manufacturer: parsed.manufacturer || "",
       dosage_form: parsed.dosage_form || "",
       pack_type: parsed.pack_type || "",
       units_per_pack: parsed.units_per_pack || null,
-    });
+    };
+    // Only real answers are kept (an empty one is asked again next time)
+    if (answer.salt_composition || answer.manufacturer) {
+      cacheCol
+        .updateOne({ _id: cacheKey }, { $set: { answer, name: product_name, updated_at: new Date() }, $setOnInsert: { created_at: new Date(), hits: 0 } }, { upsert: true })
+        .catch(() => {});
+    }
+    res.json(answer);
   } catch (error) {
     console.error("Gemini enrichment error:", error);
     res.json({ salt_composition: "", manufacturer: "" }); // Safe fallback
@@ -104,6 +122,17 @@ Respond ONLY in JSON format:
 });
 
 // GET /api/medicines/search
+// GET /api/medicines/salts?q=parac : compositions for the salt field
+router.get("/salts", auth, requireSubscription(), catalogLimiter, async (req, res, next) => {
+  try {
+    const q = String(req.query.q || "").trim().slice(0, 100);
+    if (q.length < 2) return res.json({ salts: [] });
+    res.json({ salts: await searchSalts(mongoose.connection.db, req.user.pharmacy_id, q) });
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.get("/search", auth, requireSubscription(), catalogLimiter, async (req, res, next) => {
   try {
     const { q, limit = 20, fuzzy = "true", page = 1 } = req.query;

@@ -1,4 +1,8 @@
-import { useState, useEffect, createContext, useContext } from "react";
+import { IS_DESKTOP, useOnlineFeatures } from "./lib/desktop";
+import DesktopAuthorizePage from "./pages/DesktopAuthorizePage";
+import DownloadPage from "./pages/DownloadPage";
+import SyncCenterPage from "./pages/SyncCenterPage";
+import { useState, useEffect, useRef, createContext, useContext } from "react";
 import {
   BrowserRouter,
   Routes,
@@ -9,6 +13,8 @@ import {
 } from "react-router-dom";
 import axios from "axios";
 import { Toaster } from "./components/ui/sonner";
+import MotionRuntime from "./components/motion/MotionRuntime";
+import IntroFilm, { playIntro } from "./components/motion/IntroFilm";
 import { toast } from "sonner";
 
 // Pages
@@ -33,6 +39,7 @@ import ReturnsPage from "./pages/ReturnsPage";
 import SupportPage from "./pages/SupportPage";
 import ShortBookPage from "./pages/ShortBookPage";
 import RestockPage from "./pages/RestockPage";
+import LimitedHome from "./components/access/LimitedHome";
 
 // Layout
 import DashboardLayout from "./components/DashboardLayout";
@@ -41,7 +48,10 @@ import EarlyAccessTermsPage, { needsEarlyAccessTerms } from "./pages/EarlyAccess
 import PaymentSuccessPage from "./pages/PaymentSuccessPage";
 import Loader from "./components/Loader";
 import ErrorBoundary from "./components/ErrorBoundary";
+import { GuideProvider, GuideStage } from "./components/guide/GuideProvider";
 import { getPageTitle } from "./hooks/useDocumentTitle";
+import { deviceProof, proofActionFor, setServerTime } from "./lib/deviceIdentity";
+import { RequireAccess } from "./components/access/Can";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 export const API = `${BACKEND_URL}/api`;
@@ -49,6 +59,49 @@ export const API = `${BACKEND_URL}/api`;
 // The refresh token lives in an httpOnly cookie scoped to /api/auth, so the
 // browser must send credentials on those calls.
 axios.defaults.withCredentials = true;
+
+// A random id for this browser, used only when it can't hold a device key
+// (lib/deviceIdentity.js). Not a secret; the server only stores its hash.
+const DEVICE_KEY = "dd_device_id";
+export const getDeviceId = () => {
+  try {
+    let id = localStorage.getItem(DEVICE_KEY);
+    if (!id || !/^[A-Za-z0-9_-]{16,64}$/.test(id)) {
+      const bytes = new Uint8Array(18);
+      (window.crypto || {}).getRandomValues?.(bytes);
+      id = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("") || `d${Date.now()}${Math.random().toString(36).slice(2)}`;
+      localStorage.setItem(DEVICE_KEY, id);
+    }
+    return id;
+  } catch {
+    return null;
+  }
+};
+const clientTimeZone = () => {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "";
+  } catch {
+    return "";
+  }
+};
+
+// Why the last session ended, shown once on the sign-in page
+export const SIGNED_OUT_REASON_KEY = "dd_signed_out_reason";
+const rememberSignOutReason = (text) => {
+  try {
+    if (text) sessionStorage.setItem(SIGNED_OUT_REASON_KEY, text);
+  } catch {
+    /* private mode */
+  }
+};
+const SESSION_END_TEXT = {
+  SIGNED_IN_ELSEWHERE: "You were signed out because your account was signed in on another device of the same kind.",
+  DEVICE_MISMATCH: "This sign-in belongs to another device. Please sign in again.",
+  SEAT_EXPIRED: "Your user licence has expired. Ask the pharmacy owner to renew it.",
+  SEAT_REQUIRED: "Your user account doesn't have a licence. Ask the pharmacy owner.",
+  USER_DISABLED: "Your user has been switched off by the pharmacy owner.",
+  NO_PHARMACY_ACCESS: "You don't have access to any pharmacy on this account. Ask the owner.",
+};
 
 // ---------------------------------------------------------------------------
 // Session tokens
@@ -98,6 +151,8 @@ const refreshSession = () => {
       })
       .catch((err) => {
         setAccessToken(null);
+        const code = err.response?.data?.code;
+        if (SESSION_END_TEXT[code]) rememberSignOutReason(err.response.data.detail || SESSION_END_TEXT[code]);
         throw err;
       })
       .finally(() => {
@@ -114,6 +169,18 @@ export const refreshAccessToken = () => refreshSession();
 ["pharmalogy_token", "pharmalogy_refresh_token"].forEach((k) => localStorage.removeItem(k));
 
 let navigateGlobal = null;
+
+// On the desktop app: sign-in lives in the browser, and pages that need the cloud
+// wait for internet, including when reached through shortcuts
+const DESKTOP_ONLINE_PATHS = ["/assistant", "/scan", "/scan-bill", "/support"];
+const DESKTOP_NEVER_PATHS = ["/login", "/register", "/forgot-password", "/upgrade", "/download", "/desktop/authorize"];
+const DesktopRouteGuard = () => {
+  const { pathname } = useLocation();
+  const online = useOnlineFeatures();
+  if (!IS_DESKTOP) return null;
+  if (DESKTOP_NEVER_PATHS.includes(pathname) || (!online && DESKTOP_ONLINE_PATHS.includes(pathname))) return <Navigate to="/dashboard" replace />;
+  return null;
+};
 
 const NavigationHandler = () => {
   const navigate = useNavigate();
@@ -143,14 +210,23 @@ export const useAuth = () => useContext(AuthContext);
 const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [pharmacy, setPharmacy] = useState(null);
+  const [pharmacies, setPharmacies] = useState([]);
+  const [activePharmacyId, setActivePharmacyId] = useState(null);
   const [loading, setLoading] = useState(true);
   const [settings, setSettings] = useState({});
   const [settingsDefinitions, setSettingsDefinitions] = useState([]);
+
+  const applyPharmacies = (data) => {
+    if (Array.isArray(data?.pharmacies)) setPharmacies(data.pharmacies);
+    if (data?.active_pharmacy_id) setActivePharmacyId(data.active_pharmacy_id);
+  };
 
   const clearSession = () => {
     setAccessToken(null);
     setUser(null);
     setPharmacy(null);
+    setPharmacies([]);
+    setActivePharmacyId(null);
     setSettings({});
     setSettingsDefinitions([]);
   };
@@ -159,10 +235,12 @@ const AuthProvider = ({ children }) => {
     const handleLogoutEvent = () => clearSession();
     window.addEventListener("auth-logout", handleLogoutEvent);
 
-    // Sign-out in another tab signs this tab out too
+    // Sign-out in another tab signs this tab out too; a pharmacy switch
+    // reloads the other tabs so no page keeps another pharmacy's data
     const onMessage = (e) => {
       if (e.data === "logout") clearSession();
       if (e.data === "login") restoreSession();
+      if (e.data === "pharmacy-switched") window.location.reload();
     };
     authChannel?.addEventListener("message", onMessage);
 
@@ -174,11 +252,12 @@ const AuthProvider = ({ children }) => {
 
   useEffect(() => {
     restoreSession();
+    // Light by default; dark only when the user picked it
     const savedTheme = localStorage.getItem("theme");
-    if (savedTheme === "light") {
-      document.documentElement.classList.add("light");
-    } else if (savedTheme === "dark") {
+    if (savedTheme === "dark") {
       document.documentElement.classList.remove("light");
+    } else {
+      document.documentElement.classList.add("light");
     }
   }, []);
 
@@ -234,7 +313,39 @@ const AuthProvider = ({ children }) => {
     const response = await axios.get(`${API}/auth/me`);
     setUser(response.data.user);
     setPharmacy(response.data.pharmacy);
+    applyPharmacies(response.data);
     return response.data.user;
+  };
+
+  // Access changes made by the owner reach an open app: when the server says
+  // no, and when the tab comes back after a while, re-read this user's access
+  const lastAccessCheck = useRef(Date.now());
+  useEffect(() => {
+    if (!user || user.access?.full) return undefined;
+    const recheck = (force) => {
+      if (!force && Date.now() - lastAccessCheck.current < 60 * 1000) return;
+      lastAccessCheck.current = Date.now();
+      fetchUser().catch(() => {});
+    };
+    const onDenied = () => recheck(true);
+    const onVisible = () => document.visibilityState === "visible" && recheck(false);
+    window.addEventListener("access-changed", onDenied);
+    document.addEventListener("visibilitychange", onVisible);
+    const t = setInterval(() => recheck(false), 2 * 60 * 1000);
+    return () => {
+      window.removeEventListener("access-changed", onDenied);
+      document.removeEventListener("visibilitychange", onVisible);
+      clearInterval(t);
+    };
+  }, [user?.id, user?.access?.full]); // eslint-disable-line
+
+  // Work in another pharmacy of the account. The page reloads so nothing on
+  // screen belongs to the previous pharmacy.
+  const switchPharmacy = async (pharmacyId) => {
+    const res = await axios.post(`${API}/auth/switch-pharmacy`, { pharmacy_id: pharmacyId });
+    setAccessToken(res.data.token);
+    authChannel?.postMessage("pharmacy-switched");
+    window.location.assign("/dashboard");
   };
 
   const restoreSession = async () => {
@@ -258,14 +369,41 @@ const AuthProvider = ({ children }) => {
     setAccessToken(data.token);
     setUser(data.user);
     setPharmacy(data.pharmacy || null);
+    applyPharmacies(data);
+    try {
+      sessionStorage.removeItem(SIGNED_OUT_REASON_KEY);
+    } catch {
+      /* private mode */
+    }
     fetchSettings();
     authChannel?.postMessage("login");
+    // The logo film plays while the dashboard loads underneath
+    playIntro();
     return data.user;
   };
 
+  // Throws with code SESSION_ACTIVE_ELSEWHERE (and a ticket) when another
+  // device holds the session; continueLogin(ticket) then takes it over.
   const login = async (email, password) => {
     const response = await axios.post(`${API}/auth/login`, { email, password });
     return completeLogin(response.data);
+  };
+  const continueLogin = async (ticket) => {
+    const response = await axios.post(`${API}/auth/login/continue`, { ticket });
+    return completeLogin(response.data);
+  };
+
+  // Permission check for showing/hiding UI (the server enforces the same)
+  const can = (module, action = "read") => {
+    const a = user?.access;
+    if (!a || a.full) return true;
+    return a.modules?.[module]?.[action] === true;
+  };
+  // A behaviour rule on this user (no_credit_billing, max_discount_percent, ...), or null
+  const rule = (key) => {
+    const a = user?.access;
+    if (!a || a.full) return null;
+    return a.restrictions?.[key] ?? null;
   };
 
   const logout = async (notifyBackend = true) => {
@@ -286,8 +424,15 @@ const AuthProvider = ({ children }) => {
     token: accessToken,
     loading,
     login,
+    continueLogin,
     completeLogin,
     logout,
+    pharmacies,
+    activePharmacyId,
+    switchPharmacy,
+    can,
+    rule,
+    isOwner: !!user?.is_primary_admin,
     fetchUser,
     setUser,
     setPharmacy,
@@ -326,15 +471,31 @@ const ProtectedRoute = ({ children, adminOnly = false }) => {
   return children;
 };
 
+// Pharmacists without access to the figures get a page of shortcuts instead
+const DashboardGate = () => {
+  const { can } = useAuth();
+  return can("dashboard", "read") ? <DashboardPage /> : <LimitedHome />;
+};
+
 let isRedirecting = false;
 
 const isApiUrl = (url = "") => url.startsWith(API) || url.startsWith("/api");
 
 axios.interceptors.request.use(
-  (config) => {
+  async (config) => {
     // Only ever attach the token to our own API
-    if (accessToken && isApiUrl(config.url)) {
-      config.headers.Authorization = `Bearer ${accessToken}`;
+    if (isApiUrl(config.url)) {
+      if (accessToken) config.headers.Authorization = `Bearer ${accessToken}`;
+      const device = getDeviceId();
+      if (device) config.headers["X-Device-Id"] = device;
+      const tz = clientTimeZone();
+      if (tz) config.headers["X-Client-Timezone"] = tz;
+      // Sign-in and refresh prove they come from this device's key
+      const action = proofActionFor(config.url);
+      if (action) {
+        const proof = await deviceProof(action);
+        if (proof) config.headers["X-Device-Proof"] = proof;
+      }
     }
     return config;
   },
@@ -354,8 +515,21 @@ axios.interceptors.response.use(
     const status = error.response?.status;
     const code = error.response?.data?.code;
 
+    // Desktop app with no internet: one clear message, whichever feature asked
+    if (code === "NEEDS_INTERNET") {
+      toast.info(error.response.data.detail, { id: "needs-internet" });
+      return Promise.reject(error);
+    }
+
     if (!originalRequest) {
       return Promise.reject(error);
+    }
+
+    // This device's clock is off: learn the server time and sign again once
+    if (code === "DEVICE_CLOCK" && !originalRequest._clockRetry) {
+      setServerTime(Number(error.response.data.server_time));
+      originalRequest._clockRetry = true;
+      return axios(originalRequest);
     }
 
     // Rate limited (by the API or nginx, whose 429 has no JSON detail):
@@ -364,6 +538,22 @@ axios.interceptors.response.use(
       const detail = error.response?.data?.detail || "Too many requests. Please wait a few seconds and try again.";
       if (error.response && typeof error.response.data !== "object") error.response.data = { detail, code: "RATE_LIMITED" };
       toast.warning(detail, { id: "rate-limited" });
+      return Promise.reject(error);
+    }
+
+    // This user can't use the app any more (licence ended, switched off)
+    if (status === 403 && ["SEAT_EXPIRED", "SEAT_REQUIRED", "USER_DISABLED", "NO_PHARMACY_ACCESS"].includes(code)) {
+      rememberSignOutReason(error.response.data.detail || SESSION_END_TEXT[code]);
+      toast.error(error.response.data.detail || SESSION_END_TEXT[code], { id: "session-ended" });
+      window.dispatchEvent(new Event("auth-logout"));
+      return Promise.reject(error);
+    }
+
+    // Access management: one clear message, whichever page asked
+    if (status === 403 && (code === "PERMISSION_DENIED" || code === "ACTION_BLOCKED")) {
+      toast.error(error.response.data.detail, { id: `perm-${code}` });
+      error.permissionToastShown = true;
+      if (code === "PERMISSION_DENIED") window.dispatchEvent(new Event("access-changed"));
       return Promise.reject(error);
     }
 
@@ -380,6 +570,8 @@ axios.interceptors.response.use(
         originalRequest.headers.Authorization = `Bearer ${newToken}`;
         return axios(originalRequest);
       } catch (refreshErr) {
+        const why = refreshErr.response?.data?.code;
+        if (SESSION_END_TEXT[why]) toast.error(SESSION_END_TEXT[why], { id: "session-ended", duration: 8000 });
         window.dispatchEvent(new Event("auth-logout"));
         return Promise.reject(error);
       }
@@ -427,7 +619,9 @@ function App() {
       </div> */}
       <BrowserRouter>
         <NavigationHandler />
+        <DesktopRouteGuard />
         <PageTitleHandler />
+        <GuideProvider>
         <ErrorBoundary>
         <Routes>
           {/* Public Routes */}
@@ -436,6 +630,15 @@ function App() {
           <Route path="/forgot-password" element={<ForgotPasswordPage />} />
           <Route path="/reset-password/link" element={<ResetLinkPage />} />
           <Route path="/upgrade" element={<UpgradePage />} />
+          <Route path="/download" element={<DownloadPage />} />
+          <Route
+            path="/desktop/authorize"
+            element={
+              <ProtectedRoute>
+                <DesktopAuthorizePage />
+              </ProtectedRoute>
+            }
+          />
           <Route path="/early-access/terms" element={<EarlyAccessTermsPage />} />
           <Route path="/payment-success" element={<PaymentSuccessPage />} />
 
@@ -444,7 +647,9 @@ function App() {
             path="/scan"
             element={
               <ProtectedRoute>
-                <ScannerPage />
+                <RequireAccess module="purchases" action="create">
+                  <ScannerPage />
+                </RequireAccess>
               </ProtectedRoute>
             }
           />
@@ -452,7 +657,11 @@ function App() {
             path="/assistant"
             element={
               <ProtectedRoute>
-                <AssistantPage />
+                <RequireAccess module="assistant">
+                  <GuideStage>
+                    <AssistantPage />
+                  </GuideStage>
+                </RequireAccess>
               </ProtectedRoute>
             }
           />
@@ -460,7 +669,9 @@ function App() {
             path="/scan-bill"
             element={
               <ProtectedRoute>
-                <BillingScannerPage />
+                <RequireAccess module="billing" action="create">
+                  <BillingScannerPage />
+                </RequireAccess>
               </ProtectedRoute>
             }
           />
@@ -475,35 +686,39 @@ function App() {
             }
           >
             <Route index element={<Navigate to="/dashboard" replace />} />
-            <Route path="dashboard" element={<DashboardPage />} />
-            <Route path="inventory" element={<InventoryPage />} />
-            <Route path="purchases" element={<PurchasesPage />} />
-            <Route path="billing" element={<BillingPage />} />
-            <Route path="suppliers" element={<SuppliersPage />} />
-            <Route path="customers" element={<CustomersPage />} />
-            <Route path="expiry" element={<ExpiryPage />} />
-            <Route path="returns" element={<ReturnsPage />} />
+            <Route path="dashboard" element={<DashboardGate />} />
+            <Route path="inventory" element={<RequireAccess module="inventory"><InventoryPage /></RequireAccess>} />
+            <Route path="purchases" element={<RequireAccess module="purchases"><PurchasesPage /></RequireAccess>} />
+            <Route path="billing" element={<RequireAccess module="billing"><BillingPage /></RequireAccess>} />
+            <Route path="suppliers" element={<RequireAccess module="suppliers"><SuppliersPage /></RequireAccess>} />
+            <Route path="customers" element={<RequireAccess module="customers"><CustomersPage /></RequireAccess>} />
+            <Route path="expiry" element={<RequireAccess module="expiry"><ExpiryPage /></RequireAccess>} />
+            <Route path="returns" element={<RequireAccess module="returns"><ReturnsPage /></RequireAccess>} />
             <Route
               path="users"
               element={
-                <ProtectedRoute adminOnly>
+                <RequireAccess adminOnly>
                   <UsersPage />
-                </ProtectedRoute>
+                </RequireAccess>
               }
             />
             <Route path="settings" element={<SettingsPage />} />
-            <Route path="reports" element={<ReportsPage />} />
+            <Route path="reports" element={<RequireAccess module="dashboard"><ReportsPage /></RequireAccess>} />
             <Route path="support" element={<SupportPage />} />
-            <Route path="short-book" element={<ShortBookPage />} />
-            <Route path="restock" element={<RestockPage />} />
+            <Route path="short-book" element={<RequireAccess module="short_book"><ShortBookPage /></RequireAccess>} />
+            <Route path="restock" element={<RequireAccess module="restock"><RestockPage /></RequireAccess>} />
+            {IS_DESKTOP && <Route path="sync" element={<SyncCenterPage />} />}
           </Route>
 
           {/* Catch all */}
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>
         </ErrorBoundary>
+        </GuideProvider>
       </BrowserRouter>
       <Toaster position="top-right" richColors />
+      <MotionRuntime />
+      <IntroFilm />
     </AuthProvider>
   );
 }

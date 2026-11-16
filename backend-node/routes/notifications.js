@@ -9,6 +9,10 @@ const { checkAndProcessDueReminders } = require("../services/notifications");
  * GET /api/notifications
  * Fetch notifications for current pharmacy with pagination, type filter, and unread counts
  */
+// Notices meant for the owner and admins (billing, access requests) are
+// hidden from pharmacists
+const scope = (req) => ({ pharmacy_id: req.user.pharmacy_id, ...(req.user.role === "ADMIN" ? {} : { admins_only: { $ne: true } }) });
+
 router.get("/", auth, requireSubscription(), async (req, res, next) => {
   try {
     const db = mongoose.connection.db;
@@ -21,7 +25,7 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
       console.error("Error auto-checking due reminders:", checkErr);
     }
 
-    const query = { pharmacy_id: req.user.pharmacy_id };
+    const query = scope(req);
 
     if (type && type !== "ALL") {
       query.type = type;
@@ -45,7 +49,7 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
 
     const total = await db.collection("notifications").countDocuments(query);
     const unreadCount = await db.collection("notifications").countDocuments({
-      pharmacy_id: req.user.pharmacy_id,
+      ...scope(req),
       is_read: false,
     });
 
@@ -72,7 +76,7 @@ router.get("/unread-count", auth, requireSubscription(), async (req, res, next) 
   try {
     const db = mongoose.connection.db;
     const unreadCount = await db.collection("notifications").countDocuments({
-      pharmacy_id: req.user.pharmacy_id,
+      ...scope(req),
       is_read: false,
     });
 
@@ -92,7 +96,7 @@ router.put("/:id/read", auth, requireSubscription(), async (req, res, next) => {
     const { id } = req.params;
 
     const result = await db.collection("notifications").updateOne(
-      { id, pharmacy_id: req.user.pharmacy_id },
+      { id, ...scope(req) },
       {
         $set: {
           is_read: true,
@@ -120,7 +124,7 @@ router.put("/mark-all-read", auth, requireSubscription(), async (req, res, next)
     const db = mongoose.connection.db;
 
     await db.collection("notifications").updateMany(
-      { pharmacy_id: req.user.pharmacy_id, is_read: false },
+      { ...scope(req), is_read: false },
       {
         $set: {
           is_read: true,
@@ -146,7 +150,7 @@ router.delete("/:id", auth, requireSubscription(), async (req, res, next) => {
 
     const result = await db.collection("notifications").deleteOne({
       id,
-      pharmacy_id: req.user.pharmacy_id,
+      ...scope(req),
     });
 
     if (result.deletedCount === 0) {
@@ -168,7 +172,7 @@ router.delete("/clear-all", auth, requireSubscription(), async (req, res, next) 
     const db = mongoose.connection.db;
 
     await db.collection("notifications").deleteMany({
-      pharmacy_id: req.user.pharmacy_id,
+      ...scope(req),
       is_read: true,
     });
 

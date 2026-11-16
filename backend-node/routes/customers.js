@@ -7,11 +7,44 @@ const { logActivity } = require("../utils/activityLogger");
 
 const { requireSubscription } = require("../middleware/subscription");
 const tiers = require("../services/customerTiers");
+const { generateCustomerStatementPDF, billMoney, totalsOf } = require("../services/customerStatementPdf");
 
 const escapeRegex = (str) => {
   if (!str) return "";
   return String(str).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 };
+
+// Customer search that matches what was typed: every word typed must start
+// a word of the name ("ram ku" finds "Ram Kumar", not "Shriram"), digits
+// match the mobile. Only when nothing matches that way does it fall back to
+// the letters anywhere in the name.
+function customerSearchQuery(search, loose = false) {
+  const raw = String(search || "").trim().slice(0, 100);
+  if (!raw) return null;
+  const digits = raw.replace(/[\s+-]/g, "");
+  if (/^\d{3,}$/.test(digits)) return { mobile: { $regex: escapeRegex(digits), $options: "i" } };
+  if (loose) return { $or: [{ name: { $regex: escapeRegex(raw), $options: "i" } }, { mobile: { $regex: escapeRegex(raw), $options: "i" } }] };
+  const words = raw.toLowerCase().split(/\s+/).filter(Boolean).slice(0, 6);
+  return { $and: words.map((w) => ({ name: { $regex: `(^|[^a-z0-9])${escapeRegex(w)}`, $options: "i" } })) };
+}
+// Best match first: exact name, then name starting with it, then word starts
+function customerMatchScore(c, search) {
+  const q = String(search || "").trim().toLowerCase();
+  const name = String(c.name || "").toLowerCase();
+  if (!q) return 0;
+  if (name === q) return 100;
+  if (String(c.mobile || "").startsWith(q.replace(/[\s+-]/g, ""))) return 90;
+  if (name.startsWith(q)) return 80;
+  return 50;
+}
+async function findCustomers(db, pharmacyId, search, extra = {}) {
+  const base = { pharmacy_id: pharmacyId, ...extra };
+  const strict = customerSearchQuery(search);
+  if (!strict) return db.collection("customers").find(base, { projection: { _id: 0 } }).sort({ created_at: -1 }).toArray();
+  let rows = await db.collection("customers").find({ ...base, ...strict }, { projection: { _id: 0 } }).sort({ created_at: -1 }).toArray();
+  if (!rows.length) rows = await db.collection("customers").find({ ...base, ...customerSearchQuery(search, true) }, { projection: { _id: 0 } }).sort({ created_at: -1 }).toArray();
+  return rows.sort((a, b) => customerMatchScore(b, search) - customerMatchScore(a, search));
+}
 
 // GET /api/customers[?search&has_debt&tier&sort=recent|visits|spend|name&page&limit&highlight_id]
 // Every customer comes with its tier, discount and visit stats.
@@ -21,18 +54,8 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
     const { search, has_debt, tier, sort, page = 1, limit = 50, highlight_id } = req.query;
     const lim = Math.min(Math.max(parseInt(limit) || 50, 1), 200);
 
-    const query = { pharmacy_id: req.user.pharmacy_id };
-    if (search) {
-      const escapedSearch = escapeRegex(String(search).slice(0, 100));
-      query.$or = [
-        { name: { $regex: escapedSearch, $options: "i" } },
-        { mobile: { $regex: escapedSearch, $options: "i" } },
-      ];
-    }
-    if (has_debt === "true") query.total_debt = { $gt: 0 };
-
     const config = await tiers.getConfig(db, req.user.pharmacy_id);
-    const all = await db.collection("customers").find(query, { projection: { _id: 0 } }).sort({ created_at: -1 }).toArray();
+    const all = await findCustomers(db, req.user.pharmacy_id, search, has_debt === "true" ? { total_debt: { $gt: 0 } } : {});
     let list = await tiers.withTiers(db, req.user.pharmacy_id, all, config);
 
     // Counts per tier for the filter chips (before the tier filter)
@@ -160,22 +183,7 @@ router.get("/search", auth, requireSubscription(), async (req, res, next) => {
   try {
     const { q, limit = 10 } = req.query;
     const db = mongoose.connection.db;
-    const escapedQ = escapeRegex(q || "");
-
-    const customers = await db
-      .collection("customers")
-      .find(
-        {
-          pharmacy_id: req.user.pharmacy_id,
-          $or: [
-            { name: { $regex: escapedQ, $options: "i" } },
-            { mobile: { $regex: escapedQ, $options: "i" } },
-          ],
-        },
-        { projection: { _id: 0 } }
-      )
-      .limit(Math.min(parseInt(limit) || 10, 50))
-      .toArray();
+    const customers = (await findCustomers(db, req.user.pharmacy_id, q)).slice(0, Math.min(parseInt(limit) || 10, 50));
 
     res.json({ customers: await tiers.withTiers(db, req.user.pharmacy_id, customers) });
   } catch (error) {
@@ -205,7 +213,7 @@ router.get(
       // Get bills
       const bills = await db
         .collection("bills")
-        .find({ customer_id: req.params.customer_id })
+        .find({ customer_id: req.params.customer_id, pharmacy_id: req.user.pharmacy_id })
         .sort({ created_at: -1 })
         .project({ _id: 0 })
         .toArray();
@@ -214,7 +222,7 @@ router.get(
       const stats = await db
         .collection("bills")
         .aggregate([
-          { $match: { customer_id: req.params.customer_id } },
+          { $match: { customer_id: req.params.customer_id, pharmacy_id: req.user.pharmacy_id } },
           {
             $group: {
               _id: null,
@@ -236,6 +244,86 @@ router.get(
           total_purchases: totalPurchases,
           total_profit: totalProfit
         }
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+// Month YYYY-MM -> { from, to, label }; "" / "all" = every bill
+function statementPeriod(month) {
+  const m = /^(\d{4})-(\d{2})$/.exec(String(month || ""));
+  if (!m) return { from: null, to: null, label: "All bills" };
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  const last = new Date(Date.UTC(y, mo, 0)).getUTCDate();
+  const label = new Date(Date.UTC(y, mo - 1, 1)).toLocaleDateString("en-GB", { month: "long", year: "numeric", timeZone: "UTC" });
+  return { from: `${m[1]}-${m[2]}-01`, to: `${m[1]}-${m[2]}-${String(last).padStart(2, "0")}`, label };
+}
+
+// GET /api/customers/:customer_id/statement?month=YYYY-MM&status=all|paid|pending
+//   &format=json|detailed|summary&mrp=1&balance=1
+// The customer's account for a month: every bill, paid and pending, with
+// month totals. format=detailed|summary returns the statement PDF.
+router.get(
+  "/:customer_id/statement",
+  auth,
+  requireSubscription(),
+  async (req, res, next) => {
+    try {
+      const db = mongoose.connection.db;
+      const customer = await db
+        .collection("customers")
+        .findOne({ id: req.params.customer_id, pharmacy_id: req.user.pharmacy_id }, { projection: { _id: 0 } });
+      if (!customer) return res.status(404).json({ detail: "Customer not found" });
+
+      const period = statementPeriod(req.query.month);
+      const query = { pharmacy_id: req.user.pharmacy_id, customer_id: customer.id };
+      if (period.from) query.billing_date = { $gte: period.from, $lte: period.to };
+      const all = await db
+        .collection("bills")
+        .find(query, { projection: { _id: 0, history: 0 } })
+        .sort({ billing_date: 1, created_at: 1 })
+        .toArray();
+
+      const status = ["paid", "pending"].includes(req.query.status) ? req.query.status : "all";
+      const bills = all.filter((b) => status === "all" || (status === "paid") === (billMoney(b).due <= 0));
+
+      // Months that have bills, newest first, for the month picker
+      const months = await db
+        .collection("bills")
+        .aggregate([
+          { $match: { pharmacy_id: req.user.pharmacy_id, customer_id: customer.id, billing_date: { $type: "string" } } },
+          { $group: { _id: { $substrBytes: ["$billing_date", 0, 7] }, count: { $sum: 1 } } },
+          { $sort: { _id: -1 } },
+        ])
+        .toArray();
+
+      const format = req.query.format;
+      if (format === "detailed" || format === "summary") {
+        const pharmacy = await db.collection("pharmacies").findOne({ id: req.user.pharmacy_id }, { projection: { _id: 0 } });
+        const pdf = await generateCustomerStatementPDF(customer, pharmacy || {}, bills, {
+          format,
+          showMrp: req.query.mrp === "1" || req.query.mrp === "true",
+          showBalance: !(req.query.balance === "0" || req.query.balance === "false"),
+          periodLabel: period.label,
+          statusLabel: status === "all" ? "All" : status === "paid" ? "Paid" : "Pending",
+        });
+        const safe = String(customer.name || "customer").replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "") || "customer";
+        res.setHeader("Content-Type", "application/pdf");
+        res.setHeader("Content-Disposition", `attachment; filename="${safe}-${req.query.month || "all"}-${format}.pdf"`);
+        return res.send(pdf);
+      }
+
+      res.json({
+        customer: { id: customer.id, name: customer.name, mobile: customer.mobile || null },
+        period,
+        status,
+        months: months.map((m) => ({ month: m._id, bills: m.count })),
+        totals: totalsOf(bills),
+        month_totals: totalsOf(all),
+        bills: bills.map((b) => ({ ...b, ...billMoney(b) })),
       });
     } catch (error) {
       next(error);
@@ -387,6 +475,44 @@ router.post(
         .updateOne({ id: req.params.customer_id }, { $set: { total_debt: totalDebt, total_advance: totalAdvance } });
 
       res.json({ message: "Debt cleared", previous_debt: customer.total_debt, remaining_debt: totalDebt });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+// POST /api/customers/:customer_id/advance { amount, payment_mode, note }
+// Money a customer leaves with the pharmacy before any bill (medicines not
+// arrived yet, or extra paid to carry forward). Kept as the customer's
+// advance credit (advance_credit) with every movement in advance_ledger;
+// later bills can be paid from it (Billing → Record payment → "Advance").
+router.post(
+  "/:customer_id/advance",
+  auth,
+  requireSubscription(),
+  async (req, res, next) => {
+    try {
+      const db = mongoose.connection.db;
+      const amount = Math.round((Number(req.body?.amount) || 0) * 100) / 100;
+      if (!(amount > 0) || amount > 10000000) return res.status(400).json({ detail: "Enter the advance amount" });
+      const mode = ["Cash", "UPI", "Card"].includes(req.body?.payment_mode) ? req.body.payment_mode : "Cash";
+      const entry = {
+        id: uuidv4(),
+        type: "deposit",
+        amount,
+        payment_mode: mode,
+        note: String(req.body?.note || "").trim().slice(0, 200) || null,
+        at: new Date().toISOString(),
+        by: req.user.name || null,
+      };
+      const updated = await db.collection("customers").findOneAndUpdate(
+        { id: req.params.customer_id, pharmacy_id: req.user.pharmacy_id },
+        { $inc: { advance_credit: amount }, $push: { advance_ledger: { $each: [entry], $slice: -500 } } },
+        { returnDocument: "after", projection: { _id: 0, id: 1, name: 1, advance_credit: 1, advance_ledger: 1 } }
+      );
+      if (!updated) return res.status(404).json({ detail: "Customer not found" });
+      await logActivity(db, req.user.pharmacy_id, req.user.id, req.user.name, "UPDATE", "CUSTOMERS", updated.id, `Advance of ₹${amount} (${mode}) from ${updated.name}`, `/customers`);
+      res.status(201).json({ customer: updated, entry });
     } catch (error) {
       next(error);
     }

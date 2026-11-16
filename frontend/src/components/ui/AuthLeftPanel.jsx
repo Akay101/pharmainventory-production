@@ -181,7 +181,7 @@ export default function AuthLeftPanel({
                       isCompleted
                         ? "bg-emerald-500 text-white"
                         : isActive
-                        ? "bg-orange-500 text-white shadow-md shadow-orange-500/30"
+                        ? "bg-primary text-primary-foreground shadow-md"
                         : "bg-white/10 text-zinc-300"
                     }`}
                   >
@@ -233,7 +233,7 @@ export default function AuthLeftPanel({
                 onClick={() => setCurrentIndex(idx)}
                 className={`h-1.5 rounded-full transition-all duration-300 ${
                   idx === currentIndex
-                    ? "w-8 bg-orange-500 shadow-md shadow-orange-500/50"
+                    ? "w-8 bg-orange-500 shadow-md"
                     : "w-2 bg-white/30 hover:bg-white/60"
                 }`}
                 aria-label={`Go to slide ${idx + 1}`}

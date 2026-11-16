@@ -1,8 +1,14 @@
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Manrope:wght@300;400;500;600;700;800&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;600&family=Manrope:wght@300..800&display=swap");
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* The hidden attribute always wins over display utilities (used to hide
+   actions a user's access doesn't allow) */
+[hidden]:not([hidden="until-found"]) {
+  display: none !important;
+}
 
 /* Hide Emergent watermark badge */
 #emergent-badge,
@@ -16,61 +22,72 @@ div[style*="Made with Emergent"] {
 }
 
 @layer base {
-  /* Dark Mode - Pitch Black & Electric Orange */
+  /* Dark mode: pitch black, orange highlights, warm off-white text.
+     Primary actions are orange with black text (white on orange fails contrast). */
   :root {
     --background: 0 0% 4%;
-    --foreground: 0 0% 98%;
-    --card: 0 0% 8%;
-    --card-foreground: 0 0% 98%;
+    --foreground: 34 40% 93%;
+    --card: 0 0% 7%;
+    --card-foreground: 34 40% 93%;
     --popover: 0 0% 8%;
-    --popover-foreground: 0 0% 98%;
-    --primary: 24 100% 50%;
-    --primary-foreground: 0 0% 100%;
-    --secondary: 0 0% 13%;
-    --secondary-foreground: 0 0% 98%;
-    --muted: 0 0% 13%;
-    --muted-foreground: 240 5% 65%;
-    --accent: 0 0% 15%;
-    --accent-foreground: 0 0% 98%;
-    --destructive: 0 84% 60%;
+    --popover-foreground: 34 40% 93%;
+    --primary: 25 100% 52%;
+    --primary-foreground: 0 0% 4%;
+    --secondary: 0 0% 12%;
+    --secondary-foreground: 34 40% 93%;
+    --muted: 0 0% 11%;
+    --muted-foreground: 30 8% 62%;
+    --accent: 22 40% 11%;
+    --accent-foreground: 27 100% 64%;
+    --destructive: 2 78% 58%;
     --destructive-foreground: 0 0% 100%;
-    --border: 0 0% 16%;
-    --input: 0 0% 16%;
-    --ring: 24 100% 50%;
-    --chart-1: 24 100% 50%;
-    --chart-2: 36 100% 50%;
-    --chart-3: 16 100% 55%;
-    --chart-4: 45 100% 50%;
-    --chart-5: 0 84% 60%;
-    --radius: 0.75rem;
+    --border: 0 0% 15%;
+    --input: 0 0% 18%;
+    --ring: 25 100% 52%;
+    --brand: 25 100% 52%;
+    --brand-foreground: 0 0% 4%;
+    --brand-soft: 27 100% 64%;
+    --chart-1: 25 100% 52%;
+    --chart-2: 34 40% 88%;
+    --chart-3: 36 85% 55%;
+    --chart-4: 158 55% 45%;
+    --chart-5: 30 8% 50%;
+    --radius: 0.875rem;
+    color-scheme: dark;
   }
 
-  /* Light Mode - Crisp Vibrant Slate & Orange Theme */
+  /* Light mode: the landing page. Paper, ink, a little orange. */
   .light {
-    --background: 210 20% 98%;
-    --foreground: 222 47% 11%;
+    --background: 43 27% 95%;
+    --foreground: 0 0% 9%;
     --card: 0 0% 100%;
-    --card-foreground: 222 47% 11%;
+    --card-foreground: 0 0% 9%;
     --popover: 0 0% 100%;
-    --popover-foreground: 222 47% 11%;
-    --primary: 24 95% 50%;
+    --popover-foreground: 0 0% 9%;
+    /* Orange leads; black (--ink) is kept for contrast accents */
+    --primary: 22 100% 47%;
     --primary-foreground: 0 0% 100%;
-    --secondary: 210 30% 95%;
-    --secondary-foreground: 222 47% 11%;
-    --muted: 210 25% 94%;
-    --muted-foreground: 215 16% 45%;
-    --accent: 210 25% 92%;
-    --accent-foreground: 222 47% 11%;
-    --destructive: 0 84% 60%;
+    --ink: 0 0% 9%;
+    --secondary: 43 22% 92%;
+    --secondary-foreground: 0 0% 9%;
+    --muted: 43 22% 92%;
+    --muted-foreground: 60 2% 39%;
+    --accent: 38 33% 93%;
+    --accent-foreground: 0 0% 9%;
+    --destructive: 4 64% 46%;
     --destructive-foreground: 0 0% 100%;
-    --border: 214.3 31.8% 85%;
-    --input: 214.3 31.8% 85%;
-    --ring: 24 95% 50%;
-    --chart-1: 24 95% 50%;
-    --chart-2: 32 95% 54%;
-    --chart-3: 16 90% 55%;
-    --chart-4: 42 96% 53%;
-    --chart-5: 0 84% 60%;
+    --border: 42 18% 87%;
+    --input: 43 15% 80%;
+    --ring: 25 100% 50%;
+    --brand: 25 100% 50%;
+    --brand-foreground: 0 0% 9%;
+    --brand-soft: 21 90% 40%;
+    --chart-1: 25 100% 50%;
+    --chart-2: 0 0% 9%;
+    --chart-3: 36 71% 42%;
+    --chart-4: 158 80% 30%;
+    --chart-5: 48 4% 59%;
+    color-scheme: light;
   }
 }
 
@@ -93,7 +110,13 @@ div[style*="Made with Emergent"] {
 
   body {
     @apply bg-background text-foreground antialiased;
-    font-family: "Inter", sans-serif;
+    font-family: "Manrope", system-ui, sans-serif;
+    font-feature-settings: "ss01", "cv11";
+  }
+
+  ::selection {
+    background: hsl(var(--brand));
+    color: hsl(var(--brand-foreground));
   }
 
   html[data-scroll-locked],
@@ -110,13 +133,18 @@ div[style*="Made with Emergent"] {
   h4,
   h5,
   h6 {
-    font-family: "Manrope", sans-serif;
+    font-family: "Manrope", system-ui, sans-serif;
+    letter-spacing: -0.02em;
+  }
+
+  h1 {
+    letter-spacing: -0.035em;
   }
 
   .font-mono,
   code,
   .mono-text {
-    font-family: "JetBrains Mono", monospace;
+    font-family: "Geist Mono", ui-monospace, monospace;
   }
 }
 
@@ -169,7 +197,7 @@ div[style*="Made with Emergent"] {
 
 /* Stat card glow effect */
 .stat-card {
-  @apply bg-gradient-to-br from-card to-background border border-border rounded-xl p-6 relative overflow-hidden;
+  @apply bg-card border border-border rounded-xl p-6 relative overflow-hidden;
 }
 
 .stat-card::before {
@@ -179,12 +207,7 @@ div[style*="Made with Emergent"] {
   left: 0;
   right: 0;
   height: 1px;
-  background: linear-gradient(
-    90deg,
-    transparent,
-    hsl(var(--primary) / 0.5),
-    transparent
-  );
+  background: transparent;
 }
 
 /* Table styles */
@@ -233,7 +256,7 @@ input[type="month"]:not(.wave-input) {
 .light input[type="date"]:not(.wave-input),
 .light input[type="datetime-local"]:not(.wave-input),
 .light input[type="month"]:not(.wave-input) {
-  border-bottom-color: #cbd5e1 !important;
+  border-bottom-color: hsl(var(--input)) !important;
 }
 
 input[type="text"]:focus:not(.wave-input),
@@ -245,8 +268,8 @@ input[type="date"]:focus:not(.wave-input),
 input[type="datetime-local"]:focus:not(.wave-input),
 input[type="month"]:focus:not(.wave-input) {
   outline: none !important;
-  border-bottom-color: #ff751f !important;
-  box-shadow: 0 1px 0 #ff751f, 0 0 8px rgba(255, 117, 31, 0.4) !important;
+  border-bottom-color: hsl(var(--brand)) !important;
+  box-shadow: 0 1px 0 hsl(var(--brand)) !important;
 }
 
 /* Select & Dropdown Trigger Styles - Borderless with bottom line */
@@ -264,7 +287,7 @@ button[role="combobox"] {
 .light select,
 .light [data-radix-select-trigger],
 .light button[role="combobox"] {
-  border-bottom-color: #cbd5e1 !important;
+  border-bottom-color: hsl(var(--input)) !important;
 }
 
 select:focus,
@@ -273,8 +296,8 @@ select:focus,
 button[role="combobox"]:focus,
 button[role="combobox"][data-state="open"] {
   outline: none !important;
-  border-bottom-color: #ff751f !important;
-  box-shadow: 0 1px 0 #ff751f, 0 0 8px rgba(255, 117, 31, 0.4) !important;
+  border-bottom-color: hsl(var(--brand)) !important;
+  box-shadow: 0 1px 0 hsl(var(--brand)) !important;
 }
 
 input[type="date"],
@@ -342,12 +365,12 @@ input[type="month"]::-webkit-calendar-picker-indicator {
 
 /* Sidebar styles */
 .sidebar-link {
-  @apply flex items-center gap-3 px-4 py-3 rounded-lg text-muted-foreground hover:text-foreground hover:bg-white/5 transition-colors duration-200 cursor-pointer select-none;
+  @apply flex items-center gap-3 px-4 py-3 rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent transition-colors duration-200 cursor-pointer select-none;
 }
 
 /* 🎯 Unified Active State - Bold Solid Background Box */
 .nav-item-active {
-  @apply bg-primary text-primary-foreground shadow-lg shadow-primary/20 font-bold opacity-100 !important;
+  @apply bg-primary text-primary-foreground shadow-sm font-semibold opacity-100 !important;
 }
 
 .nav-item-active svg,
@@ -401,7 +424,7 @@ input[type="month"]::-webkit-calendar-picker-indicator {
 
 /* Currency styling */
 .currency {
-  font-family: "JetBrains Mono", monospace;
+  font-family: "Geist Mono", ui-monospace, monospace;
   @apply tabular-nums;
 }
 
@@ -423,9 +446,9 @@ input[type="month"]::-webkit-calendar-picker-indicator {
   background: linear-gradient(
     90deg,
     hsl(var(--muted) / 0.5) 0%,
-    hsl(var(--primary) / 0.15) 35%,
-    hsl(var(--muted) / 0.8) 50%,
-    hsl(var(--primary) / 0.15) 65%,
+    hsl(var(--muted)) 35%,
+    hsl(var(--accent)) 50%,
+    hsl(var(--muted)) 65%,
     hsl(var(--muted) / 0.5) 100%
   ) !important;
   background-size: 200% 100% !important;
@@ -1069,7 +1092,7 @@ input:-webkit-autofill:active {
 }
 
 .light .wave-group .wave-input {
-  border-bottom-color: #cbd5e1 !important;
+  border-bottom-color: hsl(var(--input)) !important;
 }
 
 .wave-group.has-left-icon .wave-input {
@@ -1088,7 +1111,7 @@ input:-webkit-autofill:active {
 }
 
 .light .wave-group .wave-input:focus {
-  border-bottom-color: #cbd5e1 !important;
+  border-bottom-color: hsl(var(--input)) !important;
 }
 
 .wave-group .wave-label {
@@ -1114,7 +1137,7 @@ input:-webkit-autofill:active {
 }
 
 .wave-group .wave-required-star {
-  color: #ff751f !important;
+  color: hsl(var(--brand)) !important;
   font-weight: 800;
   display: inline-block;
 }
@@ -1128,7 +1151,7 @@ input:-webkit-autofill:active {
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.02em;
-  color: #ff751f;
+  color: hsl(var(--brand));
 }
 
 .wave-group.has-value:not(.is-focused):not(:focus-within) .wave-label .wave-char {
@@ -1136,7 +1159,7 @@ input:-webkit-autofill:active {
 }
 
 .wave-group.has-value:not(.is-focused):not(:focus-within) .wave-label .wave-required-star {
-  color: #ff751f !important;
+  color: hsl(var(--brand)) !important;
 }
 
 .wave-group .wave-bar {
@@ -1152,10 +1175,10 @@ input:-webkit-autofill:active {
   width: 0;
   bottom: 0px;
   position: absolute;
-  background: #ff751f;
+  background: hsl(var(--brand));
   transition: 0.25s cubic-bezier(0.4, 0, 0.2, 1) all;
   -webkit-transition: 0.25s cubic-bezier(0.4, 0, 0.2, 1) all;
-  box-shadow: 0 0 8px rgba(255, 117, 31, 0.6);
+  box-shadow: none;
 }
 
 .wave-group .wave-bar:before {
@@ -1236,8 +1259,8 @@ input:-webkit-autofill:active {
   right: 0;
   top: 0;
   height: 10%;
-  background: linear-gradient(180deg, transparent, rgba(249, 115, 22, 0.55) 70%, rgba(168, 85, 247, 0.9));
-  box-shadow: 0 6px 18px rgba(168, 85, 247, 0.55);
+  background: linear-gradient(180deg, transparent, rgba(255, 107, 0, 0.35) 70%, rgba(255, 107, 0, 0.9));
+  box-shadow: 0 6px 18px rgba(255, 107, 0, 0.45);
   animation: ai-scan-sweep 1.6s cubic-bezier(0.45, 0, 0.55, 1) infinite;
 }
 .ai-glow-border {
@@ -1250,7 +1273,7 @@ input:-webkit-autofill:active {
   inset: -1.5px;
   border-radius: inherit;
   padding: 1.5px;
-  background: conic-gradient(from var(--ai-angle), #f97316, #ec4899, #a855f7, #3b82f6, #f97316);
+  background: conic-gradient(from var(--ai-angle), #ff6b00, #ffb27a, hsl(var(--foreground)), #ffb27a, #ff6b00);
   -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
   -webkit-mask-composite: xor;
   mask-composite: exclude;
@@ -1258,7 +1281,7 @@ input:-webkit-autofill:active {
   z-index: -1;
 }
 .ai-shimmer-text {
-  background: linear-gradient(90deg, #f97316, #ec4899, #a855f7, #f97316);
+  background: linear-gradient(90deg, hsl(var(--foreground)), #ff6b00, hsl(var(--foreground)));
   background-size: 200% 100%;
   -webkit-background-clip: text;
   background-clip: text;
@@ -2020,8 +2043,8 @@ html.kbd-hints [data-kbd]::after {
   z-index: 60;
   padding: 3px 5px;
   border-radius: 6px;
-  background: #ea580c;
-  color: #fff;
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
   font: 700 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
   letter-spacing: 0.02em;
   white-space: nowrap;
@@ -2032,4 +2055,427 @@ html.kbd-hints [data-kbd]::after {
 [data-row]:focus-visible {
   outline: 2px solid rgb(249 115 22 / 0.7);
   outline-offset: -2px;
+}
+
+/* Guided tours: the glowing frame around what the tour is explaining. The
+   rainbow ring is a large conic gradient spun with a transform (GPU) inside a
+   static ring mask, so nothing is repainted per frame. */
+.guide-halo {
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.85), 0 0 28px 6px rgba(249, 115, 22, 0.45), 0 0 80px 18px rgba(168, 85, 247, 0.25);
+}
+.guide-halo-ring {
+  position: absolute;
+  inset: -3px;
+  border-radius: inherit;
+  padding: 3px;
+  overflow: hidden;
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+.guide-halo-spin {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  background: conic-gradient(#f97316, #ec4899, #a855f7, #6366f1, #f97316);
+  animation: guide-spin 3.2s linear infinite;
+  will-change: transform;
+}
+@keyframes guide-spin {
+  from {
+    transform: translate(-50%, -50%) rotate(0deg);
+  }
+  to {
+    transform: translate(-50%, -50%) rotate(360deg);
+  }
+}
+.guide-halo-still {
+  animation: none;
+  transform: translate(-50%, -50%);
+}
+@media (prefers-reduced-motion: reduce) {
+  .guide-halo-spin {
+    animation: none;
+    transform: translate(-50%, -50%);
+  }
+}
+/* The floating assistant button steps aside while a guided tour plays */
+html[data-guide-demo] [data-tour="assistant"] {
+  visibility: hidden;
+}
+/* While a tour plays, the page's own ambient motion holds still (the tour
+   blurs the page, and blurring moving layers every frame is costly on phones) */
+html[data-guide-demo] .ai-blob,
+html[data-guide-demo] .ai-shimmer-text {
+  animation-play-state: paused;
+}
+
+
+/* ==========================================================================
+   Landing-page design language: eyebrow labels, arrow pills
+   ========================================================================== */
+.eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-size: 0.6875rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: hsl(var(--muted-foreground));
+}
+.eyebrow::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background: hsl(var(--brand));
+  flex-shrink: 0;
+}
+:root:not(.light) .eyebrow {
+  color: hsl(var(--brand));
+}
+/* Orange arrow chip used inside black (light) / orange (dark) pills */
+.arrow-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  background: hsl(var(--brand));
+  color: hsl(var(--brand-foreground));
+  overflow: hidden;
+  flex-shrink: 0;
+}
+:root:not(.light) .arrow-chip {
+  background: hsl(var(--background));
+  color: hsl(var(--brand));
+}
+.group:hover .arrow-chip svg {
+  transform: translateX(2px);
+}
+.arrow-chip svg {
+  transition: transform 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+}
+/* Tabular numbers in the mono face */
+.num {
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Light mode contrast: bright 400/500 hues are fine for icons and dots but
+   too faint as text on paper/white, so text (not svg) uses the deeper shade. */
+.light :not(svg).text-orange-400,
+.light :not(svg).text-orange-500 { color: #c2410c; }
+.light :not(svg).text-amber-400,
+.light :not(svg).text-amber-500,
+.light :not(svg).text-yellow-500 { color: #b45309; }
+.light :not(svg).text-emerald-400,
+.light :not(svg).text-emerald-500,
+.light :not(svg).text-green-500 { color: #047857; }
+.light :not(svg).text-sky-400,
+.light :not(svg).text-sky-500 { color: #0369a1; }
+.light :not(svg).text-rose-400,
+.light :not(svg).text-rose-500,
+.light :not(svg).text-red-400 { color: #be123c; }
+.light :not(svg).text-violet-400,
+.light :not(svg).text-violet-500 { color: #6d28d9; }
+
+/* ==========================================================================
+   Motion system. One curve (expo-out) for things arriving, a quick ease-in
+   for things leaving, a slight spring for presses. Only transform/opacity
+   move, so it stays smooth on the counter PC. Off for reduced motion.
+   ========================================================================== */
+:root {
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+}
+
+/* Gliding tab indicator (components/motion/Glider) */
+.dd-glider {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0;
+  transition: transform 520ms var(--ease-out), width 520ms var(--ease-out), height 520ms var(--ease-out), opacity 200ms;
+  will-change: transform, width;
+}
+.dd-glider-tab {
+  border-radius: 0 !important;
+  background: hsl(var(--brand) / 0.07);
+  box-shadow: inset 0 -2px 0 hsl(var(--brand));
+}
+.dd-glide-row > :not(.dd-glider)[aria-selected="true"],
+.dd-glide-row > :not(.dd-glider)[data-active="true"] {
+  border-bottom-color: transparent !important;
+}
+.dd-glider-line {
+  height: 2px;
+  border-radius: 2px;
+  background: hsl(var(--brand));
+}
+.dd-glide-row > :not(.dd-glider) {
+  position: relative;
+  z-index: 1;
+}
+/* Tabs in a glide row don't paint their own active fill; the glider does */
+.dd-glide-row > :not(.dd-glider)[aria-current="page"],
+.dd-glide-row > :not(.dd-glider)[data-state="active"],
+.dd-glide-row > :not(.dd-glider)[data-active="true"],
+.dd-glide-row > :not(.dd-glider)[aria-pressed="true"],
+.dd-glide-row > :not(.dd-glider)[aria-selected="true"] {
+  background-color: transparent !important;
+  box-shadow: none !important;
+}
+
+/* Every pressable thing gives under the finger and springs back.
+   `scale` composes with any positioning transform the element already has. */
+:where(button, [role="button"], [role="tab"], a[href], summary, label[for]):not(:disabled) {
+  transition-property: color, background-color, border-color, box-shadow, opacity, scale, translate, rotate;
+  transition-duration: 220ms;
+  transition-timing-function: var(--ease-out);
+}
+:where(button, [role="button"], [role="tab"], summary):not(:disabled):active {
+  scale: 0.97;
+  transition-duration: 90ms;
+}
+
+/* Buttons: cursor-following glow on solid buttons, ripple on press */
+.dd-btn {
+  position: relative;
+  isolation: isolate;
+}
+.dd-solid::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: radial-gradient(120px circle at var(--mx, 50%) var(--my, 50%), rgba(255, 255, 255, 0.22), transparent 60%);
+  opacity: 0;
+  transition: opacity 300ms var(--ease-out);
+  pointer-events: none;
+}
+@media (hover: hover) {
+  .dd-solid:hover::before {
+    opacity: 1;
+  }
+}
+.dd-ripple-host {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+}
+.dd-ripple {
+  position: absolute;
+  border-radius: 9999px;
+  pointer-events: none;
+  background: currentColor;
+  opacity: 0.18;
+  transform: translate(-50%, -50%) scale(0);
+  animation: dd-ripple 620ms var(--ease-out) forwards;
+  z-index: 0;
+}
+@keyframes dd-ripple {
+  to {
+    transform: translate(-50%, -50%) scale(1);
+    opacity: 0;
+  }
+}
+.dd-btn:focus-visible {
+  box-shadow: 0 0 0 2px hsl(var(--background)), 0 0 0 4px hsl(var(--brand) / 0.7);
+}
+
+/* Icons that act out their meaning when their button is hovered */
+@media (hover: hover) {
+  :is(button, a, [role="button"]):hover > .lucide-arrow-right,
+  :is(button, a, [role="button"]):hover .arrow-chip .lucide-arrow-right {
+    translate: 3px 0;
+  }
+  :is(button, a, [role="button"]):hover > .lucide-arrow-left,
+  :is(button, a, [role="button"]):hover > .lucide-chevron-left {
+    translate: -2px 0;
+  }
+  :is(button, a, [role="button"]):hover > .lucide-chevron-right {
+    translate: 2px 0;
+  }
+  :is(button, a, [role="button"]):hover > .lucide-plus {
+    rotate: 90deg;
+  }
+  :is(button, a, [role="button"]):hover > :is(.lucide-refresh-cw, .lucide-rotate-cw, .lucide-refresh-ccw) {
+    rotate: 180deg;
+  }
+  :is(button, a, [role="button"]):hover > :is(.lucide-x) {
+    rotate: 90deg;
+  }
+  :is(button, a, [role="button"]):hover > :is(.lucide-bell) {
+    animation: bellWiggle 0.7s ease-in-out;
+  }
+  :is(button, a, [role="button"]):hover > :is(.lucide-sparkles, .lucide-wand-sparkles) {
+    scale: 1.15;
+    rotate: -8deg;
+  }
+  :is(button, a, [role="button"]):hover > :is(.lucide-download, .lucide-arrow-down) {
+    translate: 0 2px;
+  }
+  :is(button, a, [role="button"]):hover > :is(.lucide-trash-2, .lucide-trash) {
+    rotate: -10deg;
+  }
+}
+:is(button, a, [role="button"]) > .lucide,
+.arrow-chip .lucide {
+  transition: translate 380ms var(--ease-spring), rotate 450ms var(--ease-spring), scale 300ms var(--ease-spring);
+}
+
+/* Cards: a soft light follows the cursor and the edge warms toward it */
+:where(.dd-spot) {
+  position: relative;
+}
+.dd-spot::after {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  pointer-events: none;
+  padding: 1px;
+  background: radial-gradient(260px circle at var(--mx, 50%) var(--my, 50%), hsl(var(--brand) / 0.55), transparent 65%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  opacity: 0;
+  transition: opacity 400ms var(--ease-out);
+}
+@media (hover: hover) {
+  .dd-spot:hover::after {
+    opacity: 1;
+  }
+  .dd-spot:hover {
+    box-shadow: 0 18px 40px -24px rgba(22, 22, 22, 0.28);
+  }
+}
+
+/* Menus and lists: the highlight eases in, the leading icon leans in */
+[role="menuitem"],
+[role="option"],
+[role="menuitemcheckbox"],
+[role="menuitemradio"] {
+  transition: background-color 160ms var(--ease-out), color 160ms var(--ease-out);
+}
+[role="menuitem"] > svg:first-child,
+[role="option"] > svg:first-child {
+  transition: translate 260ms var(--ease-spring);
+}
+[role="menuitem"][data-highlighted] > svg:first-child,
+[role="option"][data-highlighted] > svg:first-child {
+  translate: 2px 0;
+}
+
+/* Table rows warm up under the pointer */
+tbody tr {
+  transition: background-color 180ms var(--ease-out);
+}
+
+/* Checks pop in */
+[role="checkbox"][data-state="checked"] svg,
+[role="radio"][data-state="checked"] svg {
+  animation: dd-check-pop 360ms var(--ease-spring);
+}
+@keyframes dd-check-pop {
+  from {
+    scale: 0.3;
+    opacity: 0;
+  }
+}
+
+/* Fields: borders and glows ease instead of snapping */
+:where(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), textarea, select) {
+  transition: border-color 220ms var(--ease-out), box-shadow 260ms var(--ease-out), background-color 220ms var(--ease-out);
+}
+
+/* Pages arrive: a quick fade for the whole page, then its sections rise in
+   one after another. No transform on the page wrapper itself, so fixed bars
+   inside pages stay pinned to the screen. */
+.dd-page {
+  animation: dd-page-fade 360ms var(--ease-out) backwards;
+}
+.dd-page > * > :not(.fixed):not(.sticky):not([data-no-rise]):not(:has(.fixed)):nth-child(-n + 8) {
+  animation: dd-rise 640ms var(--ease-out) backwards;
+}
+.dd-page > * > :nth-child(2) { animation-delay: 50ms; }
+.dd-page > * > :nth-child(3) { animation-delay: 100ms; }
+.dd-page > * > :nth-child(4) { animation-delay: 150ms; }
+.dd-page > * > :nth-child(5) { animation-delay: 200ms; }
+.dd-page > * > :nth-child(6) { animation-delay: 240ms; }
+.dd-page > * > :nth-child(7) { animation-delay: 280ms; }
+.dd-page > * > :nth-child(8) { animation-delay: 320ms; }
+@keyframes dd-page-fade {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes dd-rise {
+  from {
+    opacity: 0;
+    translate: 0 14px;
+  }
+}
+
+/* Content that swaps in place (tab panels, steps) */
+[data-panel],
+.dd-panel {
+  animation: panel-in 420ms var(--ease-out) backwards;
+}
+@keyframes panel-in {
+  from {
+    opacity: 0;
+    translate: 0 8px;
+  }
+}
+
+/* Dialog backdrops blur in together with the fade */
+.dd-overlay {
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
+}
+
+/* Phone bottom sheets: a longer, softer arrival */
+@media (max-width: 767.98px) {
+  .mobile-sheet {
+    animation: mobile-sheet-up 0.52s var(--ease-out) both !important;
+  }
+  .mobile-sheet[data-state="closed"] {
+    animation: mobile-sheet-down 0.22s var(--ease-in) both !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dd-page,
+  .dd-page > * > *,
+  .dd-panel,
+  [data-panel],
+  .dd-ripple,
+  [role="checkbox"][data-state="checked"] svg {
+    animation: none !important;
+  }
+  .dd-glider,
+  :is(button, a, [role="button"]) > .lucide {
+    transition: none !important;
+  }
+}
+
+/* Light mode keeps a few signature pills in ink, like the landing page's
+   "Start today", so black adds contrast without taking over */
+.light .ink-pill {
+  background-color: hsl(var(--ink)) !important;
+  color: #fff !important;
+}
+.light .ink-pill:hover {
+  background-color: hsl(var(--ink) / 0.88) !important;
+  box-shadow: 0 10px 24px -10px hsl(var(--ink) / 0.5) !important;
 }

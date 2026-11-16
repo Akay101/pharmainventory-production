@@ -1,4 +1,6 @@
 import { useState, useEffect, useRef } from "react";
+import { useSearchParams } from "react-router-dom";
+import ProductPerformance from "../components/reports/ProductPerformance";
 import { createPortal } from "react-dom";
 import axios from "axios";
 import { API } from "../App";
@@ -56,11 +58,17 @@ import {
 import { toast } from "sonner";
 import Loader from "../components/Loader";
 import { formatExpiry } from "./utils";
+import Glider from "../components/motion/Glider";
 
 const COLORS = ["#10B981", "#8B5CF6", "#3B82F6", "#F59E0B", "#EF4444"];
 
 export default function ReportsPage() {
-  const [activeTab, setActiveTab] = useState("financial");
+  // ?tab=financial|inventory|sourcing|dues opens that report (links from Billing)
+  const [searchParams] = useSearchParams();
+  const [activeTab, setActiveTab] = useState(() => {
+    const t = searchParams.get("tab");
+    return ["financial", "products", "inventory", "sourcing", "dues"].includes(t) ? t : "financial";
+  });
 
   // Original states (strictly preserved)
   const [loading, setLoading] = useState(true);
@@ -274,7 +282,7 @@ export default function ReportsPage() {
       {/* Elegantly Designed Header */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 border-b border-white/5 pb-5">
         <div>
-          <h1 className="text-3xl font-extrabold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-foreground via-foreground to-muted-foreground">
+          <h1 className="text-3xl font-extrabold tracking-tight text-foreground">
             Reports & Analytics
           </h1>
           <p className="text-muted-foreground text-sm mt-1">
@@ -284,7 +292,7 @@ export default function ReportsPage() {
 
         {/* Global Days Selector */}
         {activeTab === "financial" && (
-          <div className="flex items-center gap-3 bg-card/40 border border-white/5 rounded-xl px-3 py-1.5 backdrop-blur-sm self-start md:self-auto">
+          <div data-panel className="flex items-center gap-3 bg-card/40 border border-white/5 rounded-xl px-3 py-1.5 backdrop-blur-sm self-start md:self-auto">
             <Calendar className="w-4 h-4 text-primary" />
             <Select value={days} onValueChange={setDays}>
               <SelectTrigger className="w-40 border-0 bg-transparent focus:ring-0 focus:ring-offset-0 text-sm font-medium p-0 h-auto" data-testid="days-select">
@@ -302,9 +310,11 @@ export default function ReportsPage() {
       </div>
 
       {/* Modern Pill-Shaped Tab Switcher */}
-      <div className="flex overflow-x-auto space-x-1 p-1 bg-card/40 border border-white/5 rounded-xl max-w-2xl backdrop-blur-md">
+      <div className="dd-glide-row relative flex overflow-x-auto space-x-1 p-1 bg-card border border-border rounded-xl max-w-3xl">
+        <Glider className="bg-primary shadow-sm" />
         {[
           { id: "financial", label: "Financial Metrics", icon: BarChart3 },
+          { id: "products", label: "Product Performance", icon: TrendingUp },
           { id: "inventory", label: "Inventory Health", icon: ShieldAlert },
           { id: "sourcing", label: "Sourcing Price Auditor", icon: Sparkles },
           { id: "dues", label: "Debt & liabilities", icon: Users },
@@ -313,11 +323,12 @@ export default function ReportsPage() {
           return (
             <button
               key={tab.id}
+              data-active={activeTab === tab.id ? "true" : undefined}
               onClick={() => setActiveTab(tab.id)}
-              className={`flex items-center gap-2 px-4 py-2 text-xs md:text-sm font-medium rounded-lg whitespace-nowrap transition-all duration-200 ${
+              className={`flex items-center gap-2 px-4 py-2 text-xs md:text-sm font-medium rounded-lg whitespace-nowrap transition-colors duration-300 ${
                 activeTab === tab.id
-                  ? "bg-primary text-primary-foreground shadow-lg shadow-primary/20 scale-[1.02]"
-                  : "text-muted-foreground hover:text-foreground hover:bg-white/5"
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:text-foreground"
               }`}
             >
               <Icon className="w-4 h-4" />
@@ -327,12 +338,14 @@ export default function ReportsPage() {
         })}
       </div>
 
+      {activeTab === "products" && <ProductPerformance />}
+
       {/* TAB 1: FINANCIAL PERFORMANCE */}
       {activeTab === "financial" && (
-        <div className="space-y-6">
+        <div data-panel className="space-y-6">
           {/* Summary Cards */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mobile-stat-grid">
-            <Card className="stat-card bg-gradient-to-br from-primary/5 to-transparent hover:border-primary/30 transition-all duration-300">
+            <Card className="stat-card hover:border-primary/30 transition-all duration-300 bg-primary/5">
               <CardContent className="p-6">
                 <div className="flex items-center justify-between">
                   <div>
@@ -346,7 +359,7 @@ export default function ReportsPage() {
               </CardContent>
             </Card>
 
-            <Card className="stat-card bg-gradient-to-br from-emerald-500/5 to-transparent hover:border-emerald-500/30 transition-all duration-300">
+            <Card className="stat-card hover:border-emerald-500/30 transition-all duration-300 bg-emerald-500/5">
               <CardContent className="p-6">
                 <div className="flex items-center justify-between">
                   <div>
@@ -366,7 +379,7 @@ export default function ReportsPage() {
               </CardContent>
             </Card>
 
-            <Card className="stat-card bg-gradient-to-br from-orange-500/5 to-transparent hover:border-orange-500/30 transition-all duration-300">
+            <Card className="stat-card hover:border-orange-500/30 transition-all duration-300 bg-orange-500/5">
               <CardContent className="p-6">
                 <div className="flex items-center justify-between">
                   <div>
@@ -380,7 +393,7 @@ export default function ReportsPage() {
               </CardContent>
             </Card>
 
-            <Card className="stat-card bg-gradient-to-br from-amber-500/5 to-transparent hover:border-amber-500/30 transition-all duration-300">
+            <Card className="stat-card hover:border-amber-500/30 transition-all duration-300 bg-amber-500/5">
               <CardContent className="p-6">
                 <div className="flex items-center justify-between">
                   <div>
@@ -613,7 +626,7 @@ export default function ReportsPage() {
 
       {/* TAB 2: INVENTORY & EXPIRY HEALTH */}
       {activeTab === "inventory" && (
-        <div className="space-y-6">
+        <div data-panel className="space-y-6">
           {loadingInventory ? (
             <div className="flex flex-col items-center justify-center py-20 gap-4">
               <div className="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
@@ -623,7 +636,7 @@ export default function ReportsPage() {
             <div className="space-y-6 animate-fade-in">
               {/* Summary Cards */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <Card className="stat-card bg-gradient-to-br from-rose-500/10 to-transparent border-rose-500/20 hover:border-rose-500/30">
+                <Card className="stat-card border-rose-500/20 hover:border-rose-500/30 bg-rose-500/5">
                   <CardContent className="p-6">
                     <div className="flex items-center justify-between">
                       <div>
@@ -639,7 +652,7 @@ export default function ReportsPage() {
                   </CardContent>
                 </Card>
 
-                <Card className="stat-card bg-gradient-to-br from-amber-500/10 to-transparent border-amber-500/20 hover:border-amber-500/30">
+                <Card className="stat-card border-amber-500/20 hover:border-amber-500/30 bg-amber-500/5">
                   <CardContent className="p-6">
                     <div className="flex items-center justify-between">
                       <div>
@@ -655,7 +668,7 @@ export default function ReportsPage() {
                   </CardContent>
                 </Card>
 
-                <Card className="stat-card bg-gradient-to-br from-blue-500/10 to-transparent border-blue-500/20 hover:border-blue-500/30">
+                <Card className="stat-card border-blue-500/20 hover:border-blue-500/30 bg-blue-500/5">
                   <CardContent className="p-6">
                     <div className="flex items-center justify-between">
                       <div>
@@ -813,7 +826,7 @@ export default function ReportsPage() {
 
       {/* TAB 3: SOURCING PRICE AUDITOR */}
       {activeTab === "sourcing" && (
-        <div className="space-y-6">
+        <div data-panel className="space-y-6">
           <Card className="glass border-white/5 shadow-md overflow-visible">
             <CardHeader className="border-b border-white/5 bg-white/[0.01] px-6 py-4">
               <CardTitle className="text-lg font-bold flex items-center gap-2">
@@ -1009,7 +1022,7 @@ export default function ReportsPage() {
             <div className="space-y-6 animate-fade-in">
               {/* Sourcing Summary Metric Cards */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <Card className="stat-card bg-gradient-to-br from-emerald-500/5 to-transparent">
+                <Card className="stat-card bg-emerald-500/5">
                   <CardContent className="p-6 flex items-center justify-between">
                     <div>
                       <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1">Cheapest Historical Rate</p>
@@ -1025,7 +1038,7 @@ export default function ReportsPage() {
                   </CardContent>
                 </Card>
 
-                <Card className="stat-card bg-gradient-to-br from-blue-500/5 to-transparent">
+                <Card className="stat-card bg-blue-500/5">
                   <CardContent className="p-6 flex items-center justify-between">
                     <div>
                       <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1">Matched Product Name</p>
@@ -1039,7 +1052,7 @@ export default function ReportsPage() {
                   </CardContent>
                 </Card>
 
-                <Card className="stat-card bg-gradient-to-br from-orange-500/5 to-transparent">
+                <Card className="stat-card bg-orange-500/5">
                   <CardContent className="p-6 flex items-center justify-between">
                     <div>
                       <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1">Total Purchases Logs</p>
@@ -1207,14 +1220,14 @@ export default function ReportsPage() {
 
       {/* TAB 4: DEBT & CREDIT RISKS */}
       {activeTab === "dues" && (
-        <div className="space-y-6">
+        <div data-panel className="space-y-6">
           {loadingDebtDues ? (
             <Loader size="md" text="Calculating outstanding accounts receivables and payables..." />
           ) : (
             <div className="space-y-6 animate-fade-in">
               {/* Summary Dashboard Grid */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <Card className="stat-card bg-gradient-to-br from-amber-500/10 to-transparent border-amber-500/20">
+                <Card className="stat-card border-amber-500/20 bg-amber-500/5">
                   <CardContent className="p-6 flex items-center justify-between">
                     <div>
                       <p className="text-xs font-semibold text-amber-400 uppercase tracking-wider mb-1">Customer Receivables (Outstanding)</p>
@@ -1229,7 +1242,7 @@ export default function ReportsPage() {
                   </CardContent>
                 </Card>
 
-                <Card className="stat-card bg-gradient-to-br from-rose-500/10 to-transparent border-rose-500/20">
+                <Card className="stat-card border-rose-500/20 bg-rose-500/5">
                   <CardContent className="p-6 flex items-center justify-between">
                     <div>
                       <p className="text-xs font-semibold text-rose-400 uppercase tracking-wider mb-1">Supplier Liabilities (Payables)</p>

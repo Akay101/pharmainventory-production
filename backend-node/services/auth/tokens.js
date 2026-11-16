@@ -30,11 +30,22 @@ class TokenError extends Error {
   }
 }
 
-const signAccess = (user) =>
-  jwt.sign({ user_id: user.id, token_type: "access", token_version: user.token_version || 0 }, accessSecret(), {
-    expiresIn: ACCESS_TTL,
-    audience: AUDIENCE,
-  });
+// sid: the login session (web); pid: the pharmacy being worked in;
+// kind "desktop" + did: a desktop app's cloud token (see routes/desktop.js)
+const signAccess = (user, { sid = null, pid = null, kind = null, did = null } = {}) =>
+  jwt.sign(
+    {
+      user_id: user.id,
+      token_type: "access",
+      token_version: user.token_version || 0,
+      ...(sid ? { sid } : {}),
+      ...(pid ? { pid } : {}),
+      ...(kind ? { kind } : {}),
+      ...(did ? { did } : {}),
+    },
+    accessSecret(),
+    { expiresIn: ACCESS_TTL, audience: AUDIENCE }
+  );
 
 const verifyAccess = (token) => {
   const decoded = jwt.verify(token, accessSecret(), { audience: AUDIENCE });
@@ -70,10 +81,14 @@ async function issueRefresh(db, user, req, { family = null, familyCreatedAt = nu
   return { token, jti, family: fam };
 }
 
-// New session: access + refresh in a fresh family.
-async function startSession(db, user, req) {
+// New session: access + refresh in a fresh family, recorded as the user's
+// live session in this device's slot (computer or phone).
+async function startSession(db, user, req, { pharmacyId = null, ident = null } = {}) {
+  const sessions = require("./sessions");
+  if (!ident) ident = await require("./deviceProof").identify(db, req, "login");
   const refresh = await issueRefresh(db, user, req);
-  return { accessToken: signAccess(user), refreshToken: refresh.token };
+  const session = await sessions.create(db, user, req, { family: refresh.family, pharmacyId: pharmacyId || user.pharmacy_id, ident });
+  return { accessToken: signAccess(user, { sid: session.id, pid: session.active_pharmacy_id }), refreshToken: refresh.token, session };
 }
 
 async function revokeFamily(db, family, reason) {
@@ -88,6 +103,7 @@ async function revokeAllForUser(db, userId, reason) {
     { user_id: userId, revoked_at: null },
     { $set: { revoked_at: new Date(), revoke_reason: reason } }
   );
+  await require("./sessions").endAllForUser(db, userId, String(reason || "REVOKED").toUpperCase());
 }
 
 /**
@@ -111,6 +127,9 @@ async function rotate(db, refreshToken, req) {
     throw new TokenError("REFRESH_INVALID", "Session expired. Please sign in again.");
   }
   if (record.revoked_at) {
+    if (record.revoke_reason === "session_replaced") {
+      throw new TokenError("SIGNED_IN_ELSEWHERE", "You were signed out because your account was signed in on another device.");
+    }
     throw new TokenError("REFRESH_REVOKED", "Session ended. Please sign in again.");
   }
   if (Date.now() - new Date(record.family_created_at).getTime() > FAMILY_MAX_AGE_MS) {
@@ -128,17 +147,54 @@ async function rotate(db, refreshToken, req) {
 
   const user = await db
     .collection("users")
-    .findOne({ id: record.user_id }, { projection: { _id: 0, id: 1, token_version: 1, verified: 1 } });
+    .findOne({ id: record.user_id }, { projection: { _id: 0, id: 1, token_version: 1, verified: 1, active_session_id: 1, active_sessions: 1, pharmacy_id: 1, role: 1, permissions: 1, last_pharmacy_id: 1 } });
   if (!user || (user.token_version || 0) !== (record.token_version || 0) || user.verified === false) {
     await revokeFamily(db, record.family, "user_invalidated");
     throw new TokenError("REFRESH_REVOKED", "Session ended. Please sign in again.");
   }
 
+  // The family must still be one of the user's live sessions
+  const sessions = require("./sessions");
+  const deviceProof = require("./deviceProof");
+  let session = await sessions.byFamily(db, record.family);
+  // Signed in before sessions existed: the first device to refresh keeps it
+  if (!session && !sessions.liveIds(user).length) {
+    const ident = await deviceProof.identify(db, req, "refresh");
+    session = await sessions.create(db, user, req, { family: record.family, pharmacyId: user.last_pharmacy_id || user.pharmacy_id, ident });
+    user.active_sessions = { [session.slot]: session.id };
+    user.active_session_id = null;
+  } else if (session && session.device_kid) {
+    // A session bound to a device key refreshes only from that device
+    const proof = await deviceProof.verify(db, req, "refresh");
+    if (!proof.ok && proof.code === "DEVICE_PROOF_STALE") {
+      throw new TokenError("DEVICE_CLOCK", "This device's clock is off. Retrying with the server time.");
+    }
+    if (!proof.ok || proof.kid !== session.device_kid) {
+      throw new TokenError("DEVICE_MISMATCH", "This sign-in belongs to another device. Please sign in again.");
+    }
+  }
+  if (!session || session.ended_at || !sessions.liveIds(user).includes(session.id) || !sessions.isLive(session)) {
+    await revokeFamily(db, record.family, "session_ended");
+    if (session && session.end_reason === "REPLACED") {
+      throw new TokenError("SIGNED_IN_ELSEWHERE", "You were signed out because your account was signed in on another device.");
+    }
+    throw new TokenError("REFRESH_REVOKED", "Session ended. Please sign in again.");
+  }
+  // The pharmacy may have been taken away since the last refresh
+  const { resolveActivePharmacy } = require("../account");
+  const active = await resolveActivePharmacy(db, user, session.active_pharmacy_id);
+  if (!active.pharmacyId) {
+    await sessions.end(db, session.id, "NO_PHARMACY_ACCESS");
+    throw new TokenError("NO_PHARMACY_ACCESS", "You don't have access to any pharmacy on this account. Ask the owner.");
+  }
+  if (active.pharmacyId !== session.active_pharmacy_id) await sessions.setActivePharmacy(db, session.id, active.pharmacyId, user.id);
+
   if (!record.replaced_at) {
     await col.updateOne({ jti: record.jti, replaced_at: null }, { $set: { replaced_at: new Date() } });
   }
   const next = await issueRefresh(db, user, req, { family: record.family, familyCreatedAt: record.family_created_at });
-  return { accessToken: signAccess(user), refreshToken: next.token, userId: user.id };
+  await sessions.touch(db, session, req);
+  return { accessToken: signAccess(user, { sid: session.id, pid: active.pharmacyId }), refreshToken: next.token, userId: user.id };
 }
 
 // Revoke the family of the presented refresh token (single-device logout).
@@ -146,7 +202,11 @@ async function revokeByToken(db, refreshToken) {
   try {
     const decoded = jwt.verify(refreshToken, refreshSecret(), { audience: AUDIENCE, ignoreExpiration: true });
     const record = await db.collection("refresh_tokens").findOne({ jti: decoded.jti });
-    if (record) await revokeFamily(db, record.family, "logout");
+    if (record) {
+      await revokeFamily(db, record.family, "logout");
+      const session = await require("./sessions").byFamily(db, record.family);
+      if (session) await require("./sessions").end(db, session.id, "LOGOUT");
+    }
   } catch (e) {
     // Invalid token: nothing to revoke
   }

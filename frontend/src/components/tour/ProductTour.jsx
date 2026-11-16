@@ -401,7 +401,7 @@ function Progress({ index, total }) {
       {Array.from({ length: n }, (_, i) => (
         <span
           key={i}
-          className={`h-1.5 rounded-full transition-all duration-300 ${i + 1 === at ? "w-5 bg-gradient-to-r from-orange-500 to-amber-500" : i + 1 < at ? "w-1.5 bg-orange-400/70" : "w-1.5 bg-muted-foreground/25"}`}
+          className={`h-1.5 rounded-full transition-all duration-300 ${i + 1 === at ? "w-5 bg-primary" : i + 1 < at ? "w-1.5 bg-orange-400/70" : "w-1.5 bg-muted-foreground/25"}`}
         />
       ))}
     </div>
@@ -423,7 +423,7 @@ function Arrow({ arrow }) {
 }
 
 const primaryBtn =
-  "inline-flex h-10 items-center justify-center gap-1.5 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 px-4 text-sm font-bold text-white shadow-lg shadow-orange-500/25 transition-all hover:from-orange-600 hover:to-amber-600 active:scale-[0.97] focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-400 focus-visible:ring-offset-2 focus-visible:ring-offset-card";
+  "inline-flex h-10 items-center justify-center gap-1.5 rounded-xl px-4 text-sm font-bold text-primary-foreground shadow-lg transition-all active:scale-[0.97] focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-400 focus-visible:ring-offset-2 focus-visible:ring-offset-card bg-primary hover:bg-primary/90";
 const ghostBtn =
   "inline-flex h-10 items-center justify-center gap-1.5 rounded-xl border border-border px-3 text-sm font-bold text-foreground transition-colors hover:bg-muted active:scale-[0.97] focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-400";
 
@@ -439,7 +439,7 @@ function StepCard({ step, hint, index, total, onNext, onBack, onSkip, arrow, isP
         {step.ai ? (
           <img src={AI_LOGO_SRC} alt="" className="h-11 w-11 shrink-0 rounded-2xl" />
         ) : (
-          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-orange-500 to-amber-500 text-white shadow-md shadow-orange-500/30">
+          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-primary-foreground shadow-md bg-primary">
             {Icon ? <Icon className="h-5 w-5" /> : <Sparkles className="h-5 w-5" />}
           </span>
         )}
@@ -505,7 +505,7 @@ const HIGHLIGHTS = [
 function WelcomeCard({ firstName, total, onStart, onSkip, isPhone }) {
   return (
     <div className="relative overflow-hidden rounded-3xl border border-border bg-card text-card-foreground shadow-2xl shadow-black/40">
-      <div className="relative bg-gradient-to-br from-orange-500 via-orange-500 to-amber-500 px-6 pb-7 pt-7 text-white">
+      <div className="relative px-6 pb-7 pt-7 text-primary-foreground bg-primary">
         <span aria-hidden="true" className="absolute -right-10 -top-12 h-40 w-40 rounded-full bg-white/15 blur-2xl" />
         <span aria-hidden="true" className="absolute -bottom-16 -left-10 h-40 w-40 rounded-full bg-amber-300/30 blur-2xl" />
         <div className="relative flex items-center gap-3">
@@ -560,9 +560,9 @@ const NEXT_STEPS = [
 function FinishCard({ onFinish, onBack, isPhone }) {
   return (
     <div className="relative overflow-hidden rounded-3xl border border-border bg-card p-6 text-card-foreground shadow-2xl shadow-black/40">
-      <span aria-hidden="true" className="absolute -right-16 -top-16 h-44 w-44 rounded-full bg-gradient-to-br from-orange-500/25 to-amber-400/10 blur-2xl" />
+      <span aria-hidden="true" className="absolute -right-16 -top-16 h-44 w-44 rounded-full blur-2xl bg-orange-500/10" />
       <div className="relative flex items-center gap-3">
-        <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-500 text-white shadow-lg shadow-emerald-500/30">
+        <span className="flex h-14 w-14 items-center justify-center rounded-2xl text-primary-foreground shadow-lg shadow-emerald-500/30 bg-primary">
           <Check className="h-7 w-7" strokeWidth={3} />
         </span>
         <div>

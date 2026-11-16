@@ -14,7 +14,7 @@ const W = require("../services/credits/wallet");
 
 router.use(resolveDbEnv);
 
-const PLAN_CODES = ["BASIC", "ADVANCED", "AGENTIC"];
+const PLAN_CODES = ["COMPLETE", "BASIC", "ADVANCED", "AGENTIC"];
 const money = z.number().finite();
 const priceRow = z.object({ from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), input: money.min(0), cached: money.min(0), output: money.min(0) });
 
@@ -25,9 +25,9 @@ const configSchema = z.object({
   gst_percent: z.number().min(0).max(40),
   min_charge_credits: z.number().min(0).max(100),
   ai_mode: z.enum(C.AI_MODES),
-  plan_budget_inr: z.object(Object.fromEntries(PLAN_CODES.map((p) => [p, z.number().min(0).max(1_000_000)]))),
+  plan_budget_inr: z.object(Object.fromEntries(PLAN_CODES.map((p) => [p, z.number().min(0).max(1_000_000).default(0)]))),
   budget_daily_cap_factor: z.number().min(1).max(30),
-  daily_credits: z.object(Object.fromEntries(PLAN_CODES.map((p) => [p, z.number().min(0).max(100000)]))).optional(),
+  daily_credits: z.object(Object.fromEntries(PLAN_CODES.map((p) => [p, z.number().min(0).max(100000).optional()]))).optional(),
   trial_daily_credits: z.number().min(0).max(100000),
   free_mode: z.object({ enabled: z.boolean(), messages_per_day: z.number().int().min(0).max(1000) }),
   packs: z

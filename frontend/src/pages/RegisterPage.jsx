@@ -28,12 +28,14 @@ import {
 import ThemeToggle from "../components/ui/ThemeToggle";
 import FluidLinePattern from "../components/ui/FluidLinePattern";
 import AuthLeftPanel from "../components/ui/AuthLeftPanel";
+import { warmIntro } from "../components/motion/IntroFilm";
 
 const STEPS = ["Personal Info", "Pharmacy Details", "Verify Email"];
 
 const RESEND_COOLDOWN_S = 60;
 
 export default function RegisterPage() {
+  useEffect(() => warmIntro(), []);
   const location = useLocation();
   const navigate = useNavigate();
   const { completeLogin } = useAuth();
@@ -546,7 +548,7 @@ export default function RegisterPage() {
                 </div>
 
                 <Button
-                  className="w-full h-12 font-bold text-sm bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white shadow-lg shadow-orange-500/25 transition-all duration-200 hover:-translate-y-0.5 active:translate-y-0 rounded-xl border-none mt-4"
+                  className="w-full h-12 font-bold text-sm text-primary-foreground shadow-lg transition-all duration-200 hover:-translate-y-0.5 active:translate-y-0 rounded-xl border-none mt-4 bg-primary hover:bg-primary/90"
                   onClick={handleVerifyOTP}
                   disabled={loading || otp.length !== 6}
                   data-testid="verify-otp-btn"
@@ -583,7 +585,7 @@ export default function RegisterPage() {
                 <Button
                   onClick={handleNext}
                   disabled={loading}
-                  className="h-11 px-6 font-bold text-sm bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white shadow-lg shadow-orange-500/25 transition-all duration-200 hover:-translate-y-0.5 active:translate-y-0 rounded-xl border-none ml-auto"
+                  className="h-11 px-6 font-bold text-sm text-primary-foreground shadow-lg transition-all duration-200 hover:-translate-y-0.5 active:translate-y-0 rounded-xl border-none ml-auto bg-primary hover:bg-primary/90"
                   data-testid="next-btn"
                 >
                   {loading ? (

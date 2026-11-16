@@ -24,10 +24,12 @@ import AnalyticsFunnelPage from "./pages/AnalyticsFunnelPage";
 import TeamManagementPage from "./pages/TeamManagementPage";
 import PricingPage from "./pages/PricingPage";
 import SubscriptionsPage from "./pages/SubscriptionsPage";
+import InvoicesPage from "./pages/InvoicesPage";
 import CreditsPage from "./pages/CreditsPage";
 import SupportPage from "./pages/SupportPage";
 import OfferLeadsPage from "./pages/OfferLeadsPage";
 import GlobalDataPage from "./pages/GlobalDataPage";
+import DataImportPage from "./pages/DataImportPage";
 import BroadcastsPage from "./pages/BroadcastsPage";
 
 function MainDashboard() {
@@ -380,11 +382,15 @@ function MainDashboard() {
 
           {activeTab === "subscriptions" && <SubscriptionsPage activeEnv={activeEnv} />}
 
+          {activeTab === "invoices" && <InvoicesPage activeEnv={activeEnv} />}
+
           {activeTab === "pricing" && <PricingPage activeEnv={activeEnv} />}
 
           {activeTab === "credits" && <CreditsPage activeEnv={activeEnv} />}
 
           {activeTab === "globaldata" && <GlobalDataPage activeEnv={activeEnv} />}
+
+          {activeTab === "imports" && <DataImportPage activeEnv={activeEnv} />}
 
           {activeTab === "broadcasts" && <BroadcastsPage activeEnv={activeEnv} />}
         </main>

@@ -4,6 +4,7 @@ const SibApiV3Sdk = require("sib-api-v3-sdk");
 const {
   SESClient,
   SendEmailCommand,
+  SendRawEmailCommand,
 } = require("@aws-sdk/client-ses");
 const {
   S3Client,
@@ -542,15 +543,62 @@ const sendViaSES = async ({ toEmail, toName, subject, htmlContent }) => {
   return await sesClient.send(command);
 };
 
+// Header values are never allowed to carry line breaks
+const headerSafe = (v) => String(v || "").replace(/[\r\n]+/g, " ");
+const encodeHeader = (v) => `=?UTF-8?B?${Buffer.from(headerSafe(v), "utf8").toString("base64")}?=`;
+const wrap76 = (b64) => b64.replace(/.{1,76}/g, "$&\r\n");
+
+// MIME message with an HTML body and file attachments, for SES raw sending
+function buildMime({ from, to, subject, htmlContent, attachments }) {
+  const boundary = `dd_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
+  const parts = [
+    `From: ${headerSafe(from)}`,
+    `To: ${headerSafe(to)}`,
+    `Subject: ${encodeHeader(subject)}`,
+    "MIME-Version: 1.0",
+    `Content-Type: multipart/mixed; boundary="${boundary}"`,
+    "",
+    `--${boundary}`,
+    "Content-Type: text/html; charset=UTF-8",
+    "Content-Transfer-Encoding: base64",
+    "",
+    wrap76(Buffer.from(htmlContent, "utf8").toString("base64")),
+  ];
+  for (const a of attachments) {
+    const name = headerSafe(a.filename).replace(/"/g, "");
+    parts.push(
+      `--${boundary}`,
+      `Content-Type: ${a.contentType || "application/octet-stream"}; name="${name}"`,
+      "Content-Transfer-Encoding: base64",
+      `Content-Disposition: attachment; filename="${name}"`,
+      "",
+      wrap76(Buffer.from(a.content).toString("base64"))
+    );
+  }
+  parts.push(`--${boundary}--`, "");
+  return parts.join("\r\n");
+}
+
+const sendViaSESRaw = async ({ toEmail, toName, subject, htmlContent, attachments }) => {
+  if (!sesClient) throw new Error("AWS SES client is not configured (missing credentials/region)");
+  const from = SENDER_NAME ? `${SENDER_NAME} <${SENDER_EMAIL}>` : SENDER_EMAIL;
+  const to = toName ? `${encodeHeader(toName)} <${toEmail}>` : toEmail;
+  const raw = buildMime({ from, to, subject, htmlContent, attachments });
+  return sesClient.send(new SendRawEmailCommand({ RawMessage: { Data: Buffer.from(raw) } }));
+};
+
 /**
  * Helper: Send via Brevo
  */
-const sendViaBrevo = async ({ toEmail, toName, subject, htmlContent }) => {
+const sendViaBrevo = async ({ toEmail, toName, subject, htmlContent, attachments = [] }) => {
   const sendSmtpEmail = new SibApiV3Sdk.SendSmtpEmail();
   sendSmtpEmail.subject = subject;
   sendSmtpEmail.htmlContent = htmlContent;
   sendSmtpEmail.sender = { name: SENDER_NAME, email: SENDER_EMAIL };
   sendSmtpEmail.to = [{ email: toEmail, name: toName || toEmail }];
+  if (attachments.length) {
+    sendSmtpEmail.attachment = attachments.map((a) => ({ name: a.filename, content: Buffer.from(a.content).toString("base64") }));
+  }
 
   return await apiInstance.sendTransacEmail(sendSmtpEmail);
 };
@@ -560,19 +608,20 @@ const sendViaBrevo = async ({ toEmail, toName, subject, htmlContent }) => {
  * 1. Primary: Amazon SES
  * 2. Fallback: Brevo
  */
-const sendEmail = async ({ toEmail, toName, subject, htmlContent }) => {
+const sendEmail = async ({ toEmail, toName, subject, htmlContent, attachments = [] }) => {
   // Local/dev test transport: store instead of sending. Never in production.
   if (process.env.EMAIL_TRANSPORT === "outbox" && process.env.NODE_ENV !== "production") {
     const mongoose = require("mongoose");
     await mongoose.connection.db
       .collection("dev_outbox")
-      .insertOne({ to: toEmail, subject, html: htmlContent, created_at: new Date() });
+      .insertOne({ to: toEmail, subject, html: htmlContent, attachments: attachments.map((a) => ({ filename: a.filename, size: Buffer.byteLength(a.content) })), created_at: new Date() });
     return true;
   }
 
   // 1. Primary Attempt: Amazon SES
   try {
-    await sendViaSES({ toEmail, toName, subject, htmlContent });
+    if (attachments.length) await sendViaSESRaw({ toEmail, toName, subject, htmlContent, attachments });
+    else await sendViaSES({ toEmail, toName, subject, htmlContent });
     console.log(
       `[DavaDesk Email] Sent "${subject}" to ${toEmail} via Amazon SES ✅`
     );
@@ -585,7 +634,7 @@ const sendEmail = async ({ toEmail, toName, subject, htmlContent }) => {
 
   // 2. Fallback Attempt: Brevo
   try {
-    await sendViaBrevo({ toEmail, toName, subject, htmlContent });
+    await sendViaBrevo({ toEmail, toName, subject, htmlContent, attachments });
     console.log(
       `[DavaDesk Email] Sent "${subject}" to ${toEmail} via Brevo Fallback ✅`
     );
@@ -893,6 +942,8 @@ const sendSubscriptionEmail = async (toEmail, toName, { subject, title, badge, m
 };
 
 module.exports = {
+  sendEmail,
+  buildMime,
   escapeHtml,
   sendTrialStartedEmail,
   sendSubscriptionEmail,

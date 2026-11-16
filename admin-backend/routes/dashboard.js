@@ -96,6 +96,7 @@ router.get("/metrics", async (req, res, next) => {
       BASIC: 0,
       ADVANCED: 0,
       AGENTIC: 0,
+      COMPLETE: 0,
       PRO: 0,
       NONE: 0,
     };

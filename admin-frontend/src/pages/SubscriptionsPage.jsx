@@ -1,30 +1,35 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { CalendarClock, CalendarPlus, Gift, Loader2, Search, ShieldOff, Receipt, History, ArrowUpDown } from "lucide-react";
+import { CalendarClock, CalendarPlus, Gift, Loader2, Search, ShieldOff, Receipt, History, ArrowUpDown, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { AdminAPI, apiError } from "../api";
 import BottomDrawer from "../components/BottomDrawer";
 import SubscriptionActionDrawer, { StatusPill, STATUS_LABEL, fmtDate, fmtDateTime } from "../components/SubscriptionActionDrawer";
+import AddonsPanel from "../components/AddonsPanel";
 
 const inr = (paise) => `₹${((paise || 0) / 100).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
 
 function HistoryDrawer({ row, onClose }) {
   const [detail, setDetail] = useState(null);
-  useEffect(() => {
+  const reload = useCallback(() => {
     if (!row) return;
-    setDetail(null);
     AdminAPI.getSubscription(row.pharmacy_id)
       .then((r) => setDetail(r.data))
       .catch((err) => toast.error(apiError(err, "Couldn't load history")));
   }, [row]);
+  useEffect(() => {
+    setDetail(null);
+    reload();
+  }, [reload]);
   if (!row) return null;
   return (
-    <BottomDrawer isOpen onClose={onClose} title="Subscription history" subtitle={row.pharmacy_name} maxWidth="max-w-2xl">
+    <BottomDrawer isOpen onClose={onClose} title="Subscription, add-ons & invoices" subtitle={row.pharmacy_name} maxWidth="max-w-2xl">
       {!detail ? (
         <div className="py-10 flex justify-center">
           <Loader2 className="w-5 h-5 animate-spin text-slate-400" />
         </div>
       ) : (
         <div className="space-y-5 text-xs">
+          <AddonsPanel detail={detail} onChanged={reload} />
           <section>
             <h4 className="font-black text-slate-900 mb-2 flex items-center gap-1.5">
               <History className="w-3.5 h-3.5" /> Plan changes
@@ -60,7 +65,8 @@ function HistoryDrawer({ row, onClose }) {
                 <div key={o.order_id} className="p-3 flex items-start justify-between gap-3">
                   <div>
                     <div className="font-bold text-slate-800">
-                      {o.plan} · <span className="font-mono">{o.order_id}</span>
+                      {o.plan || (o.purpose === "ADDON" ? `Add-on: ${o.addon?.type === "PHARMACY" ? "linked pharmacy" : `${o.addon?.quantity || 1} user(s)`}${o.addon?.renew_addon_id ? " renewal" : ""}` : o.purpose === "CREDITS" ? "AI credits" : "—")} · <span className="font-mono">{o.order_id}</span>
+                      {o.invoice_no ? <span className="ml-1 text-slate-500">· {o.invoice_no}</span> : null}
                     </div>
                     <div className="text-slate-500">
                       {fmtDateTime(o.created_at)} · {o.status}
@@ -82,18 +88,19 @@ function HistoryDrawer({ row, onClose }) {
 export default function SubscriptionsPage({ activeEnv }) {
   const [data, setData] = useState(null);
   const [status, setStatus] = useState("ALL");
+  const [earlyOnly, setEarlyOnly] = useState(false);
   const [search, setSearch] = useState("");
   const [action, setAction] = useState(null); // { type, row }
   const [historyRow, setHistoryRow] = useState(null);
 
   const load = useCallback(async () => {
     try {
-      const res = await AdminAPI.getSubscriptions({ status });
+      const res = await AdminAPI.getSubscriptions({ status, ...(earlyOnly ? { early_access: "1" } : {}) });
       setData(res.data);
     } catch (err) {
       toast.error(apiError(err, "Couldn't load subscriptions"));
     }
-  }, [status]);
+  }, [status, earlyOnly]);
 
   useEffect(() => {
     load();
@@ -119,7 +126,7 @@ export default function SubscriptionsPage({ activeEnv }) {
         </p>
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
         {["TRIAL", "ACTIVE", "EXPIRED", "NONE"].map((s) => (
           <button
             key={s}
@@ -132,12 +139,23 @@ export default function SubscriptionsPage({ activeEnv }) {
             <div className="text-xl font-black text-slate-900 mt-0.5">{data?.summary?.[s] ?? "—"}</div>
           </button>
         ))}
+        <button
+          onClick={() => setEarlyOnly((v) => !v)}
+          data-testid="filter-early-access"
+          className={`p-3.5 text-left rounded-xl border shadow-2xs transition-all ${earlyOnly ? "bg-violet-50 border-violet-600 ring-1 ring-violet-600" : "bg-white border-violet-200 hover:border-violet-300"}`}
+        >
+          <span className="text-[10px] font-bold text-violet-500 uppercase flex items-center gap-1">
+            <Sparkles className="w-3 h-3" /> Early access
+          </span>
+          <div className="text-xl font-black text-violet-900 mt-0.5">{data?.summary?.EARLY_ACCESS ?? "—"}</div>
+        </button>
       </div>
 
       <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs overflow-hidden">
         <div className="p-4 bg-slate-50/70 border-b border-slate-200 flex items-center justify-between gap-3">
           <span className="text-xs font-bold text-slate-500">
-            {status === "ALL" ? "All pharmacies" : STATUS_LABEL[status]} · {rows.length}
+            {status === "ALL" ? "All pharmacies" : STATUS_LABEL[status]}
+            {earlyOnly ? " · early access only" : ""} · {rows.length}
           </span>
           <div className="relative flex-1 max-w-sm">
             <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -182,7 +200,14 @@ export default function SubscriptionsPage({ activeEnv }) {
                   return (
                     <tr key={r.pharmacy_id} className="hover:bg-slate-50/80">
                       <td className="py-3.5 px-4">
-                        <div className="font-bold text-slate-900">{r.pharmacy_name}</div>
+                        <div className="font-bold text-slate-900 flex flex-wrap items-center gap-1.5">
+                          {r.pharmacy_name}
+                          {r.early_access && (
+                            <span title={`Early access with ${r.early_access.code} on ${fmtDate(r.early_access.at)}`} className="inline-flex items-center gap-0.5 rounded-md border border-violet-200 bg-violet-50 px-1.5 py-0.5 text-[9px] font-black uppercase text-violet-700" data-testid="early-access-badge">
+                              <Sparkles className="w-2.5 h-2.5" /> Early access
+                            </span>
+                          )}
+                        </div>
                         <div className="text-[10px] text-slate-400">{r.location || "—"}</div>
                       </td>
                       <td className="py-3.5 px-4">
@@ -194,6 +219,13 @@ export default function SubscriptionsPage({ activeEnv }) {
                         {r.trial_claimed_at && s.status !== "TRIAL" && (
                           <div className="text-[10px] text-slate-400 mt-1">Trial used {fmtDate(r.trial_claimed_at)}</div>
                         )}
+                        {r.addons && (r.addons.users || r.addons.pharmacies || r.addons.expired) ? (
+                          <button onClick={() => setHistoryRow(r)} className="block text-[10px] font-bold text-slate-500 mt-1 hover:text-brand-600" data-testid="row-addons">
+                            +{r.addons.users} user{r.addons.users === 1 ? "" : "s"} · +{r.addons.pharmacies} pharmac{r.addons.pharmacies === 1 ? "y" : "ies"}
+                            {r.addons.next_end ? ` · next ends ${fmtDate(r.addons.next_end)}` : ""}
+                            {r.addons.expired ? ` · ${r.addons.expired} expired` : ""}
+                          </button>
+                        ) : null}
                       </td>
                       <td className="py-3.5 px-4">
                         <div className={`font-semibold ${soon ? "text-rose-600" : "text-slate-700"}`}>{fmtDate(s.ends_at)}</div>
@@ -234,7 +266,7 @@ export default function SubscriptionsPage({ activeEnv }) {
                           <button
                             onClick={() => setHistoryRow(r)}
                             className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100"
-                            title="History"
+                            title="Add-ons, invoices & history"
                           >
                             <History className="w-3.5 h-3.5" />
                           </button>

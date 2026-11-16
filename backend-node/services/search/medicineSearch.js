@@ -228,19 +228,41 @@ const findCandidates = async (col, q, grams) => {
  * n-gram semantics. Combine with a pharmacy_id equality so the tenant index
  * bounds the scan.
  */
-const tenantTokenMatch = (q, fields, { wholeQueryFields = [] } = {}) => {
+const tokenClause = (t, fields) => {
+  // Tokens split at letter/digit changes, so either kind may be glued
+  // to the other in the stored name ("Dolo650", "650mg").
+  const boundary = /^\d/.test(t) ? "(^|[^0-9])" : "(^|[^a-z])";
+  const re = { $regex: boundary + escapeRegex(t), $options: "i" };
+  return { $or: fields.map((f) => ({ [f]: re })) };
+};
+
+// Words people type around a price: "dolo mrp 30", "dolo rs 30".
+const PRICE_WORDS = new Set(["mrp", "rs", "inr", "price"]);
+
+/**
+ * `mrpFields` lets a number in the query match the MRP instead of the name:
+ * "dolo 30" finds Dolo whose MRP is about ₹30 (₹29.50 to ₹30.99), the rest of
+ * the words still matching the name.
+ */
+const tenantTokenMatch = (q, fields, { wholeQueryFields = [], mrpFields = [] } = {}) => {
   const tokens = tokenize(q);
   const clauses = [];
   if (tokens.length) {
-    clauses.push({
-      $and: tokens.map((t) => {
-        // Tokens split at letter/digit changes, so either kind may be glued
-        // to the other in the stored name ("Dolo650", "650mg").
-        const boundary = /^\d/.test(t) ? "(^|[^0-9])" : "(^|[^a-z])";
-        const re = { $regex: boundary + escapeRegex(t), $options: "i" };
-        return { $or: fields.map((f) => ({ [f]: re })) };
-      }),
-    });
+    clauses.push({ $and: tokens.map((t) => tokenClause(t, fields)) });
+  }
+  if (mrpFields.length) {
+    const prices = [...new Set(String(q || "").match(/\d+(?:\.\d+)?/g) || [])].filter((n) => Number(n) > 0);
+    if (prices.length) {
+      const words = tokens.filter((t) => !/^\d/.test(t) && !PRICE_WORDS.has(t));
+      const priceOr = [];
+      for (const p of prices) {
+        const n = Number(p);
+        // "30" means ₹29.50 to ₹30.99 (people drop the paise); "30.9" is exact to 5 paise
+        const range = p.includes(".") ? { $gte: n - 0.05, $lte: n + 0.05 } : { $gte: n - 0.5, $lt: n + 1 };
+        for (const f of mrpFields) priceOr.push({ [f]: range });
+      }
+      clauses.push({ $and: [...words.map((t) => tokenClause(t, fields)), { $or: priceOr }] });
+    }
   }
   const raw = String(q || "").trim();
   if (raw) {
@@ -264,8 +286,54 @@ const batchMatchScore = (q, batches = []) => {
   return best;
 };
 
+// Salt / composition search for the catalogue form: distinct compositions
+// from the global catalogue (salt n-gram index) and the pharmacy's own
+// products, every typed word matching the start of a word.
+const searchSalts = async (db, pharmacyId, q, { limit = 15 } = {}) => {
+  const words = tokenize(q).filter((t) => t.length >= 2);
+  if (!words.length) return [];
+  const wordRe = words.map((w) => new RegExp(`(^|[^a-z0-9])${escapeRegex(w)}`, "i"));
+  const fits = (txt) => !!txt && wordRe.every((re) => re.test(txt));
+  const seen = new Map();
+  const add = (txt, source) => {
+    const t = String(txt || "").trim();
+    if (!t || t.length > 300 || !fits(t)) return;
+    const k = normalizeText(t);
+    const cur = seen.get(k);
+    if (cur) cur.count += 1;
+    else seen.set(k, { salt: t, source, count: 1 });
+  };
+  const own = await db
+    .collection("products")
+    .find({ pharmacy_id: pharmacyId, ...tenantTokenMatch(q, ["salt_composition"]) }, { projection: { _id: 0, salt_composition: 1 } })
+    .limit(200)
+    .toArray()
+    .catch(() => []);
+  own.forEach((p) => add(p.salt_composition, "catalog"));
+  const cacheKey = `salt:${words.join(" ")}`;
+  let global = cacheGet(cacheKey);
+  if (!global) {
+    try {
+      const col = await getGlobalMedicinesCollection();
+      const grams = queryGrams(words.filter((w) => !/^\d/.test(w)).join(" "));
+      global = grams.length ? await findByGrams(col, "s_salt_grams", grams, {}, 300) : [];
+    } catch {
+      global = [];
+    }
+    cacheSet(cacheKey, global);
+  }
+  for (const d of global) {
+    const comp = d.salt_composition || [d.short_composition1, d.short_composition2].filter(Boolean).join(" + ") || d.active_ingredients;
+    add(comp, "global");
+  }
+  return [...seen.values()]
+    .sort((a, b) => (a.source === b.source ? 0 : a.source === "catalog" ? -1 : 1) || b.count - a.count || a.salt.length - b.salt.length)
+    .slice(0, limit);
+};
+
 module.exports = {
   searchGlobalMedicines,
+  searchSalts,
   tenantTokenMatch,
   scoreMatch,
   batchMatchScore,

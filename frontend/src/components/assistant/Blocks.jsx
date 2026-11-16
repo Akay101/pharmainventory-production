@@ -136,7 +136,7 @@ export function StatsBlock({ block }) {
 function ActionButton({ a, onAction, busy, done, locked }) {
   const style =
     a.style === "primary"
-      ? "bg-gradient-to-r from-orange-500 to-pink-500 text-white shadow-md shadow-orange-500/20"
+      ? "text-primary-foreground shadow-md bg-primary"
       : a.style === "danger"
       ? "bg-rose-500 text-white"
       : a.style === "secondary"
@@ -201,7 +201,7 @@ export function DraftBlock({ block, onAction, busy, settled, locked }) {
   const Icon = block.kind === "bill" ? Receipt : ShoppingCart;
   return (
     <Shell className="ai-glow-border">
-      <div className="flex items-center gap-2 border-b border-border bg-gradient-to-r from-orange-500/10 via-pink-500/5 to-transparent px-3.5 py-2.5">
+      <div className="flex items-center gap-2 border-b border-border px-3.5 py-2.5 bg-orange-500/5">
         <Icon className="h-4 w-4 text-orange-500" />
         <p className="text-sm font-semibold">{block.title}</p>
         <span className={`ml-auto rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${settled === "Saved" || settled === "Saved as draft" ? "border-emerald-500/30 text-emerald-500" : "border-border text-muted-foreground"}`}>
@@ -378,7 +378,7 @@ export function ChoicesBlock({ block, onReply, disabled }) {
           type="button"
           disabled={disabled || pick === ""}
           onClick={() => onReply(block.options[pick].reply, block.options[pick].label)}
-          className="h-9 rounded-xl bg-gradient-to-r from-orange-500 to-pink-500 px-3.5 text-sm font-semibold text-white disabled:opacity-40"
+          className="h-9 rounded-xl px-3.5 text-sm font-semibold text-primary-foreground disabled:opacity-40 bg-primary"
         >
           Send
         </button>
@@ -469,7 +469,7 @@ export function PickerBlock({ block, onAction, busy, settled, locked }) {
 
   return (
     <Shell>
-      <div className="flex items-center gap-2 border-b border-border bg-gradient-to-r from-sky-500/10 via-violet-500/5 to-transparent px-3.5 py-2.5">
+      <div className="flex items-center gap-2 border-b border-border px-3.5 py-2.5 bg-sky-500/5">
         <Search className="h-4 w-4 shrink-0 text-sky-500" />
         <p className="min-w-0 flex-1 truncate text-sm font-semibold" title={block.title}>{block.title}</p>
         {done && (

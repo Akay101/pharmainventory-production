@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import axios from "axios";
 import { API, useAuth } from "../App";
+import { useAccess } from "../components/access/Can";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -39,19 +40,28 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "../components/ui/alert-dialog";
-import { Search, Plus, Package, AlertTriangle, ChevronLeft, ChevronRight, ArrowUpDown, Trash2, Loader2, BellOff, Info, X, CalendarX, RotateCcw, CheckCircle2, Clock, FileText } from "lucide-react";
+import { Search, Plus, Package, AlertTriangle, ChevronLeft, ChevronRight, ArrowUpDown, Trash2, Loader2, BellOff, Info, X, CalendarX, RotateCcw, CheckCircle2, Clock, FileText, Pencil } from "lucide-react";
 import { toast } from "sonner";
 import Loader from "../components/Loader";
 import RightSidebarDrawer from "../components/RightSidebarDrawer";
 import ProductSearchDropdown from "../components/ProductSearchDropdown";
 import ProductCatalogModal from "../components/ProductCatalogModal";
+import DuplicateProductsDialog, { useDuplicateCount } from "../components/DuplicateProducts";
+import MissingDetailsDialog from "../components/MissingDetails";
 import { formatExpiry } from "./utils";
 import ScheduleH1Badge, { H1_ROW_CLASS } from "../components/ScheduleH1Badge";
 
 export default function InventoryPage() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { settings } = useAuth();
+  const { settings, rule } = useAuth();
+  // Hide what this user's access doesn't allow (the server enforces it too)
+  const acc = useAccess("inventory");
+  const canEditStock = acc.update && !rule("no_stock_edit");
+  // Same medicine under different names: shown as a prompt to merge
+  const [dupCount, refreshDupCount] = useDuplicateCount(canEditStock);
+  const [dupOpen, setDupOpen] = useState(false);
+  const [missingOpen, setMissingOpen] = useState(false); // products without salt / company / ...
   const isInitialMount = useRef(true);
   const [inventory, setInventory] = useState([]);
   const [products, setProducts] = useState([]);
@@ -75,6 +85,15 @@ export default function InventoryPage() {
   const [deleteDialog, setDeleteDialog] = useState({ open: false, item: null, type: null });
   const [removeShortageDialog, setRemoveShortageDialog] = useState({ open: false, item: null, newThreshold: "" });
   const [addStockDialog, setAddStockDialog] = useState({ open: false, item: null, quantityToAdd: "" });
+  const [editingProduct, setEditingProduct] = useState(null); // catalog product being edited
+  const openEditProduct = async (p) => {
+    try {
+      const res = await axios.get(`${API}/products/one`, { params: { id: p.product_id || p.id || undefined, name: p.name || p.product_name || undefined } });
+      setEditingProduct(res.data.product);
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Couldn't open this product");
+    }
+  };
   const [productDialog, setProductDialog] = useState(false);
   const [newProduct, setNewProduct] = useState({
     name: "",
@@ -460,15 +479,26 @@ export default function InventoryPage() {
   };
 
   const handleAddStock = async () => {
-    if (!addStockDialog.quantityToAdd || Number(addStockDialog.quantityToAdd) <= 0) {
+    const mode = addStockDialog.mode || "add";
+    const v = addStockDialog.quantityToAdd;
+    if (mode === "add" && (!v || Number(v) <= 0)) {
       toast.error("Please enter a valid quantity greater than 0");
       return;
     }
+    if (mode === "set" && (v === "" || !Number.isInteger(Number(v)))) {
+      toast.error("Enter the stock in whole units; it can be below zero, e.g. -5");
+      return;
+    }
     try {
-      await axios.patch(`${API}/inventory/${addStockDialog.item.id}/add-quantity`, {
-        add_quantity: Number(addStockDialog.quantityToAdd)
-      });
-      toast.success("Stock increased successfully");
+      if (mode === "set") {
+        await axios.patch(`${API}/inventory/${addStockDialog.item.id}/set-quantity`, { quantity: Number(v), reason: addStockDialog.reason || "" });
+        toast.success(`Stock set to ${Number(v)} units`);
+      } else {
+        await axios.patch(`${API}/inventory/${addStockDialog.item.id}/add-quantity`, {
+          add_quantity: Number(v)
+        });
+        toast.success("Stock increased successfully");
+      }
       setAddStockDialog({ open: false, item: null, quantityToAdd: "" });
       await fetchInventory(pagination.page);
       if (detailProduct?.name) {
@@ -562,7 +592,7 @@ export default function InventoryPage() {
         </div>
 
         <div className="flex items-center gap-2">
-          {selectedItemIds.length > 0 && (
+          {acc.delete && selectedItemIds.length > 0 && (
             <Button
               onClick={() => setBulkDeleteDialogOpen(true)}
               variant="outline"
@@ -574,31 +604,82 @@ export default function InventoryPage() {
             </Button>
           )}
 
-          {selectedItemIds.length >= 2 && (
+          {acc.update && selectedItemIds.length >= 2 && (
             <Button
               onClick={handleOpenMergeDialog}
-              className="bg-amber-500 hover:bg-amber-600 text-white h-9 text-xs font-extrabold shadow-sm rounded-xl px-3 flex items-center gap-1.5 cursor-pointer"
+              className="bg-primary hover:bg-primary/90 text-primary-foreground h-9 text-xs font-extrabold shadow-sm rounded-xl px-3 flex items-center gap-1.5 cursor-pointer"
               data-testid="merge-products-btn"
             >
               Merge Selected ({selectedItemIds.length})
             </Button>
           )}
 
+          {canEditStock && dupCount > 0 && (
+            <Button
+              variant="outline"
+              onClick={() => setDupOpen(true)}
+              className="h-9 px-3 text-xs font-bold rounded-xl border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400 hover:bg-amber-500/20"
+              title="Medicines saved under slightly different names. Review and merge them."
+              data-testid="duplicates-btn"
+            >
+              {dupCount} possible duplicate{dupCount === 1 ? "" : "s"}: merge
+            </Button>
+          )}
           <Button
-            onClick={() => setProductDialog(true)}
-            className="h-9 px-3.5 text-xs font-extrabold bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white rounded-xl shadow-xs border-none flex items-center gap-1.5 cursor-pointer"
-            data-testid="add-product-btn"
-            data-shortcut="new"
+            variant="outline"
+            onClick={() => setMissingOpen(true)}
+            className="h-9 px-3 text-xs font-bold rounded-xl"
+            title="Products with salt, company, HSN, GST, MRP or pack size missing"
+            data-testid="missing-details-btn"
           >
-            <Plus className="w-3.5 h-3.5 stroke-[3]" />
-            <span className="max-md:hidden">Add Product</span>
-            <span className="md:hidden">Add</span>
+            Missing details
           </Button>
+          <MissingDetailsDialog
+            open={missingOpen}
+            onOpenChange={setMissingOpen}
+            canEdit={acc.update}
+            onEdit={(p) => {
+              setMissingOpen(false);
+              setEditingProduct(p);
+            }}
+          />
+          <DuplicateProductsDialog
+            open={dupOpen}
+            onOpenChange={setDupOpen}
+            onMerged={() => {
+              refreshDupCount();
+              fetchData();
+            }}
+          />
+
+          {acc.create && (
+            <Button
+              onClick={() => setProductDialog(true)}
+              className="h-9 px-3.5 text-xs font-extrabold text-primary-foreground rounded-xl shadow-xs border-none flex items-center gap-1.5 cursor-pointer bg-primary hover:bg-primary/90"
+              data-testid="add-product-btn"
+              data-shortcut="new"
+            >
+              <Plus className="w-3.5 h-3.5 stroke-[3]" />
+              <span className="max-md:hidden">Add Product</span>
+              <span className="md:hidden">Add</span>
+            </Button>
+          )}
 
           <ProductCatalogModal
             isOpen={productDialog}
             onClose={() => setProductDialog(false)}
             onSuccess={() => fetchData()}
+          />
+          {/* Edit a catalog product's details (name, salt, company, pack, GST, MRP...) */}
+          <ProductCatalogModal
+            isOpen={!!editingProduct}
+            editProduct={editingProduct}
+            title="Edit Product Details"
+            onClose={() => setEditingProduct(null)}
+            onSuccess={() => {
+              setDetailProduct(null);
+              fetchData();
+            }}
           />
         </div>
       </div>
@@ -627,13 +708,13 @@ export default function InventoryPage() {
             }}
             className={`h-9 text-xs font-extrabold px-3.5 rounded-xl border transition-all duration-200 cursor-pointer ${
               showLowStock 
-                ? "bg-amber-500 text-white border-amber-500 hover:bg-amber-600 shadow-xs" 
+                ? "bg-primary text-primary-foreground border-amber-500 hover:bg-primary/90 shadow-xs" 
                 : "bg-card/60 border-border/70 text-foreground hover:bg-muted"
             }`}
             data-testid="low-stock-filter-btn"
           >
             {showLowStock && filtering ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <AlertTriangle className={`w-3.5 h-3.5 mr-1.5 ${showLowStock ? "text-white" : "text-amber-500"}`} />}
-            Low Stock {counts?.low > 0 && <Badge className={`ml-1.5 border-0 text-[10px] px-1.5 py-0.5 font-black rounded-full ${showLowStock ? "bg-white text-amber-600" : "bg-amber-500 text-white"}`}>{counts.low}</Badge>}
+            Low Stock {counts?.low > 0 && <Badge className={`ml-1.5 border-0 text-[10px] px-1.5 py-0.5 font-black rounded-full ${showLowStock ? "bg-white text-amber-600" : "bg-primary text-primary-foreground"}`}>{counts.low}</Badge>}
           </Button>
 
           <Button
@@ -645,13 +726,13 @@ export default function InventoryPage() {
             }}
             className={`h-9 text-xs font-extrabold px-3.5 rounded-xl border transition-all duration-200 cursor-pointer ${
               showShortage 
-                ? "bg-orange-500 text-white border-orange-500 hover:bg-orange-600 shadow-xs" 
+                ? "bg-primary text-primary-foreground border-orange-500 hover:bg-primary/90 shadow-xs" 
                 : "bg-card/60 border-border/70 text-foreground hover:bg-muted"
             }`}
             data-testid="shortage-filter-btn"
           >
             {showShortage && filtering ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <AlertTriangle className={`w-3.5 h-3.5 mr-1.5 ${showShortage ? "text-white" : "text-orange-500"}`} />}
-            Shortage List {shortageCount > 0 && <Badge className={`ml-1.5 border-0 text-[10px] px-1.5 py-0.5 font-black rounded-full ${showShortage ? "bg-white text-orange-600" : "bg-orange-500 text-white"}`}>{shortageCount}</Badge>}
+            Shortage List {shortageCount > 0 && <Badge className={`ml-1.5 border-0 text-[10px] px-1.5 py-0.5 font-black rounded-full ${showShortage ? "bg-white text-orange-600" : "bg-primary text-primary-foreground"}`}>{shortageCount}</Badge>}
           </Button>
 
           <Button
@@ -663,13 +744,13 @@ export default function InventoryPage() {
             }}
             className={`h-9 text-xs font-extrabold px-3.5 rounded-xl border transition-all duration-200 cursor-pointer ${
               showExpiringSoon 
-                ? "bg-amber-500 text-white border-amber-500 hover:bg-amber-600 shadow-xs" 
+                ? "bg-primary text-primary-foreground border-amber-500 hover:bg-primary/90 shadow-xs" 
                 : "bg-card/60 border-border/70 text-foreground hover:bg-muted"
             }`}
             data-testid="expiring-filter-btn"
           >
             {showExpiringSoon && filtering ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <AlertTriangle className={`w-3.5 h-3.5 mr-1.5 ${showExpiringSoon ? "text-white" : "text-amber-500"}`} />}
-            Expiring Soon {counts?.expiring > 0 && <Badge className={`ml-1.5 border-0 text-[10px] px-1.5 py-0.5 font-black rounded-full ${showExpiringSoon ? "bg-white text-amber-600" : "bg-amber-500 text-white"}`}>{counts.expiring}</Badge>}
+            Expiring Soon {counts?.expiring > 0 && <Badge className={`ml-1.5 border-0 text-[10px] px-1.5 py-0.5 font-black rounded-full ${showExpiringSoon ? "bg-white text-amber-600" : "bg-primary text-primary-foreground"}`}>{counts.expiring}</Badge>}
           </Button>
 
           <Button
@@ -916,16 +997,18 @@ export default function InventoryPage() {
                           >
                             <Package className="w-3.5 h-3.5" />
                           </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="text-rose-500 hover:text-rose-400 hover:bg-rose-500/15 rounded-lg h-7 w-7 shrink-0 cursor-pointer"
-                            onClick={() => setDeleteDialog({ open: true, item, type: "product" })}
-                            title="Delete Whole Catalog"
-                            data-testid={`delete-catalog-${itemId}`}
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </Button>
+                          {acc.delete && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="text-rose-500 hover:text-rose-400 hover:bg-rose-500/15 rounded-lg h-7 w-7 shrink-0 cursor-pointer"
+                              onClick={() => setDeleteDialog({ open: true, item, type: "product" })}
+                              title="Delete Whole Catalog"
+                              data-testid={`delete-catalog-${itemId}`}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </Button>
+                          )}
                         </div>
                       </TableCell>
                     </TableRow>
@@ -1140,7 +1223,7 @@ export default function InventoryPage() {
           <DialogHeader className="border-b border-border/40 pb-4">
             <DialogTitle className="font-extrabold text-base tracking-tight text-foreground flex items-center gap-2">
               <Plus className="w-5 h-5 text-primary" />
-              Quick Add Stock
+              {addStockDialog.mode === "set" ? "Set Stock" : "Quick Add Stock"}
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4 pt-4">
@@ -1151,17 +1234,50 @@ export default function InventoryPage() {
                 <span>Current Stock: {addStockDialog.item?.available_quantity} units</span>
               </div>
             </div>
+            <div className="grid grid-cols-2 gap-1 rounded-xl border border-border p-1" role="radiogroup" aria-label="Stock change">
+              {[["add", "Add units"], ["set", "Set exact stock"]].map(([m, label]) => (
+                <button
+                  key={m}
+                  type="button"
+                  role="radio"
+                  aria-checked={(addStockDialog.mode || "add") === m}
+                  onClick={() => setAddStockDialog({ ...addStockDialog, mode: m, quantityToAdd: "" })}
+                  className={`h-8 rounded-lg text-xs font-bold ${(addStockDialog.mode || "add") === m ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}
+                  data-testid={`stock-mode-${m}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
             <div className="space-y-2">
-              <Label className="text-xs font-bold text-muted-foreground/80">Quantity to Add (Units) *</Label>
+              <Label className="text-xs font-bold text-muted-foreground/80">
+                {addStockDialog.mode === "set" ? "New stock (units, can be below zero) *" : "Quantity to Add (Units) *"}
+              </Label>
               <Input
                 type="number"
-                placeholder="e.g. 50"
+                placeholder={addStockDialog.mode === "set" ? "e.g. -5 or 20" : "e.g. 50"}
                 value={addStockDialog.quantityToAdd}
                 onChange={(e) => setAddStockDialog({ ...addStockDialog, quantityToAdd: e.target.value })}
-                min="1"
+                min={addStockDialog.mode === "set" ? undefined : "1"}
+                step="1"
                 autoFocus
                 className="h-10 text-sm font-bold border-border/80 focus:border-primary bg-card/25"
+                data-testid="stock-qty"
               />
+              {addStockDialog.mode === "set" && (
+                <>
+                  <Input
+                    placeholder="Reason (optional), e.g. sold before the purchase was entered"
+                    value={addStockDialog.reason || ""}
+                    maxLength={200}
+                    onChange={(e) => setAddStockDialog({ ...addStockDialog, reason: e.target.value })}
+                    className="h-9 text-xs"
+                  />
+                  <p className="text-[11px] text-muted-foreground">
+                    Below zero means units were sold that are not in stock yet; the next purchase of this batch brings it back up.
+                  </p>
+                </>
+              )}
             </div>
             <Button onClick={handleAddStock} className="w-full bg-primary hover:bg-primary/95 text-primary-foreground h-10 text-xs font-bold shadow-md shadow-primary/10 rounded-xl mt-2">
               Update Stock
@@ -1242,7 +1358,7 @@ export default function InventoryPage() {
             <Button
               onClick={handleMergeSubmit}
               disabled={merging}
-              className="w-full bg-amber-500 hover:bg-amber-600 text-white h-10 text-xs font-bold shadow-md rounded-xl mt-2 flex items-center justify-center gap-2"
+              className="w-full bg-primary hover:bg-primary/90 text-primary-foreground h-10 text-xs font-bold shadow-md rounded-xl mt-2 flex items-center justify-center gap-2"
             >
               {merging ? (
                 <>
@@ -1278,7 +1394,21 @@ export default function InventoryPage() {
         }
         icon={Package}
         headerAction={
-          detailProduct ? (
+          detailProduct && (acc.update || acc.delete) ? (
+            <div className="flex items-center gap-1.5">
+            {acc.update && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 px-2.5 text-xs font-bold rounded-lg flex items-center gap-1.5 cursor-pointer"
+                onClick={() => openEditProduct(detailProduct)}
+                title="Edit this product's catalog details"
+                data-testid="edit-product-btn"
+              >
+                <Pencil className="w-3.5 h-3.5" /> Edit details
+              </Button>
+            )}
+            {acc.delete && (
             <Button
               variant="outline"
               size="sm"
@@ -1289,6 +1419,8 @@ export default function InventoryPage() {
               <Trash2 className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">Delete Catalog</span>
             </Button>
+            )}
+            </div>
           ) : null
         }
         tabs={[
@@ -1319,15 +1451,17 @@ export default function InventoryPage() {
                       <p className="text-muted-foreground text-xs font-semibold">
                         No active batches found in inventory for this catalog product.
                       </p>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="text-rose-500 border-rose-500/30 hover:bg-rose-500/10 text-xs font-bold rounded-lg cursor-pointer inline-flex items-center"
-                        onClick={() => setDeleteDialog({ open: true, item: detailProduct, type: "product" })}
-                      >
-                        <Trash2 className="w-3.5 h-3.5 mr-1.5" />
-                        Delete Catalog Entry
-                      </Button>
+                      {acc.delete && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="text-rose-500 border-rose-500/30 hover:bg-rose-500/10 text-xs font-bold rounded-lg cursor-pointer inline-flex items-center"
+                          onClick={() => setDeleteDialog({ open: true, item: detailProduct, type: "product" })}
+                        >
+                          <Trash2 className="w-3.5 h-3.5 mr-1.5" />
+                          Delete Catalog Entry
+                        </Button>
+                      )}
                     </div>
                   ) : (
                     detailBatches.map((batch) => {
@@ -1461,24 +1595,40 @@ export default function InventoryPage() {
                                 </Button>
                               )}
 
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="text-orange-500 hover:text-orange-400 hover:bg-orange-500/15 rounded-lg h-6 w-6 cursor-pointer"
-                                onClick={() => setAddStockDialog({ open: true, item: batch, quantityToAdd: "" })}
-                                title="Add Stock"
-                              >
-                                <Plus className="w-3.5 h-3.5" />
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="text-rose-400 hover:text-rose-300 hover:bg-rose-500/15 rounded-lg h-6 w-6 cursor-pointer"
-                                onClick={() => setDeleteDialog({ open: true, item: batch, type: "inventory" })}
-                                title="Delete Batch"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </Button>
+                              {canEditStock && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="text-orange-500 hover:text-orange-400 hover:bg-orange-500/15 rounded-lg h-6 w-6 cursor-pointer"
+                                  onClick={() => setAddStockDialog({ open: true, item: batch, quantityToAdd: "", mode: "add" })}
+                                  title="Add Stock"
+                                >
+                                  <Plus className="w-3.5 h-3.5" />
+                                </Button>
+                              )}
+                              {canEditStock && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="text-sky-500 hover:text-sky-400 hover:bg-sky-500/15 rounded-lg h-6 w-6 cursor-pointer"
+                                  onClick={() => setAddStockDialog({ open: true, item: batch, quantityToAdd: String(batch.available_quantity ?? ""), mode: "set" })}
+                                  title="Set stock (can be below zero)"
+                                  data-testid="set-stock-btn"
+                                >
+                                  <Pencil className="w-3.5 h-3.5" />
+                                </Button>
+                              )}
+                              {acc.delete && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="text-rose-400 hover:text-rose-300 hover:bg-rose-500/15 rounded-lg h-6 w-6 cursor-pointer"
+                                  onClick={() => setDeleteDialog({ open: true, item: batch, type: "inventory" })}
+                                  title="Delete Batch"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </Button>
+                              )}
                             </div>
                           </div>
                         </div>
@@ -1516,7 +1666,7 @@ export default function InventoryPage() {
                       : ` · global setting`}
                     {detailProduct?.sellable_stock !== undefined && ` · ${detailProduct.sellable_stock} sellable now`}
                   </p>
-                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <div className={`mt-2 flex flex-wrap items-center gap-2 ${acc.update ? "" : "hidden"}`}>
                     <input
                       type="number"
                       min="0"
@@ -1555,7 +1705,7 @@ export default function InventoryPage() {
                   <p className="text-xs font-mono font-semibold text-foreground mt-0.5">{detailProduct?.hsn_no || detailBatches[0]?.hsn_no || "-"}</p>
                 </div>
 
-                <div className="col-span-2 pt-3 border-t border-border/30">
+                <div className={`col-span-2 pt-3 border-t border-border/30 ${acc.delete ? "" : "hidden"}`}>
                   <div className="border border-rose-500/20 bg-rose-500/5 rounded-xl p-3 flex items-center justify-between gap-3">
                     <div>
                       <p className="text-xs font-black text-rose-500">Delete Product Catalog</p>
@@ -1604,7 +1754,7 @@ export default function InventoryPage() {
                   <Button
                     onClick={handleExecuteOtherMerge}
                     disabled={mergingOther || productsToMerge.length === 0}
-                    className="bg-amber-500 hover:bg-amber-600 text-white h-9 text-xs font-bold px-4 rounded-lg shadow-sm flex items-center gap-2 cursor-pointer"
+                    className="bg-primary hover:bg-primary/90 text-primary-foreground h-9 text-xs font-bold px-4 rounded-lg shadow-sm flex items-center gap-2 cursor-pointer"
                   >
                     {mergingOther ? (
                       <>

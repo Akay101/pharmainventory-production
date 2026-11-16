@@ -3,6 +3,7 @@ import { NavLink, useNavigate } from "react-router-dom";
 import { MoreHorizontal } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "./ui/dropdown-menu";
+import Glider from "./motion/Glider";
 import { formatCombo } from "../lib/shortcuts";
 
 // Desktop top menu that always fits on one line, without scrolling. It
@@ -87,8 +88,8 @@ export default function TopNav({ items, isActive }) {
   }, [sizes, width, items, activeIndex]);
 
   const tabClass = (active) =>
-    `group relative flex h-8 items-center gap-1.5 rounded-xl px-2.5 text-xs font-bold whitespace-nowrap transition-colors duration-200 active:scale-95 ${
-      active ? "bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-sm shadow-orange-500/30" : "text-muted-foreground hover:bg-background hover:text-foreground dark:hover:bg-muted/60"
+    `group relative flex h-8 items-center gap-1.5 rounded-xl px-2.5 text-xs font-bold whitespace-nowrap transition-colors duration-300 ${
+      active ? "text-primary-foreground shadow-sm bg-primary" : "text-muted-foreground hover:bg-background hover:text-foreground dark:hover:bg-muted/60"
     }`;
 
   const navigate = useNavigate();
@@ -114,7 +115,8 @@ export default function TopNav({ items, isActive }) {
         </span>
       </div>
 
-      <nav aria-label="Main" data-tour="topnav" className="flex max-w-full items-center gap-0.5 rounded-2xl border border-border/60 bg-muted/50 p-1 shadow-xs dark:border-border/40 dark:bg-muted/20">
+      <nav aria-label="Main" data-tour="topnav" className="dd-glide-row relative flex max-w-full items-center gap-0.5 rounded-2xl border border-border/60 bg-muted/50 p-1 shadow-xs dark:border-border/40 dark:bg-muted/20">
+        <Glider className="bg-primary shadow-[0_6px_16px_-8px_hsl(var(--primary)/0.6)]" />
         {layout.visible.map((i) => {
           const item = items[i];
           const active = i === activeIndex;
@@ -147,7 +149,7 @@ export default function TopNav({ items, isActive }) {
         {layout.hidden.length > 0 && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <button type="button" className={tabClass(hiddenActive)} aria-label="More pages" data-tour="nav-more">
+              <button type="button" className={tabClass(hiddenActive)} data-active={hiddenActive ? "true" : undefined} aria-label="More pages" data-tour="nav-more">
                 <MoreHorizontal className="h-4 w-4" />
                 <span>More</span>
               </button>

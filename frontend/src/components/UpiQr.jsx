@@ -196,7 +196,7 @@ export default function UpiQrDialog({ open, onOpenChange, initialAmount = "", no
               {error && <p className="mt-1 text-xs text-rose-500">{error}</p>}
               <p className="mt-1 text-[11px] text-muted-foreground">Paid to {upiId}</p>
             </div>
-            <Button type="submit" disabled={loading} className="h-11 w-full rounded-xl bg-orange-600 font-bold text-white hover:bg-orange-700">
+            <Button type="submit" disabled={loading} className="h-11 w-full rounded-xl bg-primary font-bold text-primary-foreground hover:bg-primary/90">
               {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <QrCode className="mr-2 h-4 w-4" />}
               Generate QR
             </Button>

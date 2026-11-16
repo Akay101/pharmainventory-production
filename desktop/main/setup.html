@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'unsafe-inline'; script-src 'self'">
+<title>Counters and network</title>
+<style>
+:root { --bg:#f5f7f7; --card:#fff; --fg:#17282a; --muted:#5a6c6f; --line:#d6dfdf; --accent:#0b6e62; --accent-soft:#dcefeb; --bad:#a3322b; --bad-soft:#f9e4e2; color-scheme: light dark; }
+@media (prefers-color-scheme: dark) { :root { --bg:#111b1c; --card:#182526; --fg:#e4eeee; --muted:#9db0b2; --line:#30433f; --accent:#5fd0bf; --accent-soft:#173a36; --bad:#f09a92; --bad-soft:#3d1f1c; } }
+* { box-sizing: border-box; }
+body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.5 -apple-system, "Segoe UI", system-ui, sans-serif; }
+main { padding:24px; display:grid; gap:16px; max-width:620px; margin:0 auto; }
+h1 { font-size:20px; margin:0; } h2 { font-size:15px; margin:0; }
+p { margin:0; } .muted { color:var(--muted); font-size:13.5px; }
+.card { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:16px; display:grid; gap:12px; }
+.status { background:var(--accent-soft); border-color:transparent; }
+.problem { background:var(--bad-soft); border-color:transparent; color:var(--bad); }
+button { font:inherit; font-weight:600; padding:8px 14px; border-radius:6px; border:1px solid var(--accent); background:transparent; color:var(--accent); cursor:pointer; }
+button.primary { background:var(--accent); color:var(--card); }
+button.danger { border-color:var(--bad); color:var(--bad); }
+button:disabled { opacity:.55; cursor:default; }
+button:focus-visible, input:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+.row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+label { display:grid; gap:4px; font-weight:600; font-size:13.5px; flex:1 1 180px; }
+input { font:inherit; font-weight:400; padding:8px 10px; border:1px solid var(--line); border-radius:6px; background:var(--bg); color:var(--fg); width:100%; }
+.code { font:700 34px/1 ui-monospace, Menlo, Consolas, monospace; letter-spacing:.14em; }
+.mono { font-family:ui-monospace, Menlo, Consolas, monospace; }
+ul { list-style:none; margin:0; padding:0; display:grid; gap:8px; }
+li { display:flex; justify-content:space-between; gap:12px; align-items:center; }
+.error { color:var(--bad); font-weight:600; }
+[hidden] { display:none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Counters and network</h1>
+  <p class="muted">Optional. DavaDesk works fully on one computer without any of this. Use it only if you want several counters to share the same stock and bills.</p>
+
+  <div class="card problem" id="problem" hidden>
+    <strong>Can't reach the main computer.</strong>
+    <p>Check that it's switched on, DavaDesk is open on it, and both computers are on the same network.</p>
+    <div class="row"><button id="retry">Try again</button></div>
+  </div>
+
+  <div class="card status" id="status"></div>
+
+  <!-- This computer on its own, or as the main computer -->
+  <section class="card" id="mainPanel" hidden>
+    <h2 id="mainTitle">Make this the main computer</h2>
+    <p class="muted">The shop's data stays on this computer, and other counters connect to it. It needs to stay on while they work.</p>
+    <div class="row" id="enableRow"><button class="primary" id="enableMain">Make this the main computer</button></div>
+    <div id="mainOn" hidden style="display:grid;gap:12px">
+      <div>
+        <p class="muted">On the other computer, choose "Connect to a main computer" and enter this code. It works once, for 10 minutes.</p>
+        <p class="code" id="code"></p>
+      </div>
+      <p class="muted">This computer's address: <span class="mono" id="address"></span></p>
+      <div class="row"><button id="newCode">New code</button><button class="danger" id="disableMain">Stop being the main computer</button></div>
+      <div id="devicesBlock" hidden style="display:grid;gap:8px"><h2>Connected counters</h2><ul id="devices"></ul></div>
+    </div>
+  </section>
+
+  <section class="card" id="connectPanel" hidden>
+    <h2>Connect to a main computer</h2>
+    <p class="muted">This computer will use the main computer's stock and bills. Anything already saved here stays safe, and comes back if you disconnect.</p>
+    <div class="row"><button id="search">Search the network</button><span class="muted" id="searchNote"></span></div>
+    <ul id="found"></ul>
+    <div class="row">
+      <label>Main computer's address<input id="host" class="mono" placeholder="192.168.1.20" autocomplete="off" spellcheck="false"></label>
+      <label>Code<input id="pin" class="mono" inputmode="numeric" maxlength="6" placeholder="6 digits" autocomplete="off"></label>
+    </div>
+    <div class="row"><button class="primary" id="connect">Connect</button></div>
+    <p class="error" id="connectError" role="alert" hidden></p>
+  </section>
+
+  <section class="card" id="counterPanel" hidden>
+    <h2>Use this computer on its own</h2>
+    <p class="muted">Disconnects from the main computer and goes back to the data saved on this computer.</p>
+    <div class="row"><button class="danger" id="disconnect">Disconnect</button></div>
+  </section>
+</main>
+<script src="setup.js"></script>
+</body>
+</html>

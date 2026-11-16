@@ -1,3 +1,4 @@
+import { useOnlineFeatures } from "../lib/desktop";
 import { useState, useEffect, useCallback, useRef, Fragment } from "react";
 import { useSearchParams, useLocation } from "react-router-dom";
 import { v4 as uuidv4 } from "uuid";
@@ -5,6 +6,7 @@ import { createPortal } from "react-dom";
 import axios from "axios";
 import RecordDates from "../components/RecordDates";
 import { API, useAuth } from "../App";
+import { useAccess } from "../components/access/Can";
 import {
   Card,
   CardContent,
@@ -58,6 +60,7 @@ import {
   Search,
   Plus,
   Trash2,
+  Copy,
   Globe,
   Loader2,
   Upload,
@@ -99,15 +102,46 @@ import { formatCombo } from "../lib/shortcuts";
 import { parseMargin, marginPrice } from "../lib/margin";
 import { isScheduleH1 } from "../lib/scheduleH1";
 import { rowCatalogGaps } from "../lib/catalogDetails";
+import { GuideButton } from "../components/guide/GuideProvider";
 import ScheduleH1Badge, { H1_ROW_CLASS } from "../components/ScheduleH1Badge";
 import SchemeDiscountField from "../components/purchases/SchemeDiscountField";
 import MatchChooser from "../components/purchases/MatchChooser";
 import NewProductsDialog from "../components/purchases/NewProductsDialog";
 import PdfFormatPicker, { usePdfFormat } from "../components/PdfFormatPicker";
 import { lineNet, packCount, rateFromTotal, schemeDiscountOf, stockUnits, unitsAreWhole } from "../lib/purchaseLine";
+
+// Net cost of one pack received on a purchase line: trade and scheme discount
+// off, GST on, free packs spread over the packs paid for. Rate alerts compare
+// this with past purchases, not the PTR.
+const lineNetPerPack = (item) => {
+  const qty = packCount(item.quantity ?? item.pack_quantity);
+  const free = packCount(item.scheme);
+  const rate = parseFloat(item.rate_pack || item.pack_price) || 0;
+  if (!(qty > 0) || !(rate > 0)) return 0;
+  const gst = (parseFloat(item.cgst) || 0) + (parseFloat(item.sgst) || 0);
+  const net = lineNet(qty, rate, parseFloat(item.discount) || 0, item).net * (1 + gst / 100);
+  return net / (qty + free);
+};
+// "Last bought from X on 12 Aug 2026 (inv 445): net ₹30.10/pack, PTR ₹28, MRP ₹45"
+const lastBoughtTitle = (alert, lead) => {
+  const lp = alert?.last_purchase;
+  if (!lp) return `${lead} Click to view the price history.`;
+  const d = lp.purchase_date ? new Date(lp.purchase_date) : null;
+  const when = d && !isNaN(d) ? d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) : "";
+  const money = (v) => `₹${(Number(v) || 0).toFixed(2)}`;
+  return `${lead} Last bought from ${lp.supplier_name || "a supplier"}${when ? ` on ${when}` : ""}${lp.invoice_no && lp.invoice_no !== "N/A" ? ` (inv ${lp.invoice_no})` : ""}: net ${money(lp.net_pack)}/pack, PTR ${money(lp.rate_pack)}, MRP ${money(lp.mrp_pack)}. Click to view the price history.`;
+};
+// Extra paid (+) or saved (-) on a line against its last purchase
+const lineRateImpact = (item, alert) => {
+  if (!alert || alert.compared_on !== "net" || !alert.latest_rate) return 0;
+  const packs = packCount(item.quantity ?? item.pack_quantity) + packCount(item.scheme);
+  return (lineNetPerPack(item) - alert.latest_rate) * packs;
+};
 import { useShortcuts, useShortcutLayer } from "../components/shortcuts/Shortcuts";
 import { ItemLabelsDialog } from "../components/ItemQr";
 import ProductCatalogModal from "../components/ProductCatalogModal";
+import DuplicateProductsDialog, { useDuplicateCount } from "../components/DuplicateProducts";
+import Glider from "../components/motion/Glider";
 
 const PACK_TYPES = ["Strip", "Bottle", "Tube", "Packet", "Box", "Unit"];
 
@@ -936,7 +970,7 @@ const PriceTrendChart = ({
                 title={`${item.supplier}\nRate: ₹${item.rate.toFixed(2)}\nMRP: ₹${item.mrp.toFixed(2)}`}
                 className={`flex flex-col items-center gap-1.5 group cursor-pointer px-2.5 py-2 rounded-2xl min-w-[85px] shrink-0 transition-all ${
                   item.isCurrent
-                    ? "ring-2 ring-orange-500 bg-orange-500/10 shadow-md shadow-orange-500/20"
+                    ? "ring-2 ring-orange-500 bg-orange-500/10 shadow-md"
                     : item.isLowest
                       ? "ring-2 ring-sky-400 bg-sky-400/10 shadow-md shadow-sky-400/20"
                       : "hover:bg-muted/40 border border-transparent hover:border-border/60"
@@ -960,7 +994,7 @@ const PriceTrendChart = ({
                       style={{ height: `${rateHeight}%` }}
                       className={`w-full rounded-t-md transition-all duration-300 ${
                         item.isCurrent
-                          ? "bg-gradient-to-t from-orange-600 to-amber-400"
+                          ? "bg-primary"
                           : item.isLowest
                             ? "bg-sky-400"
                             : "bg-orange-500/80 group-hover:bg-orange-500"
@@ -981,7 +1015,7 @@ const PriceTrendChart = ({
                 <span
                   className={`text-[10px] font-extrabold tracking-tight px-2 py-0.5 rounded-full mt-1 ${
                     item.isCurrent
-                      ? "bg-orange-500 text-white shadow-xs"
+                      ? "bg-primary text-primary-foreground shadow-xs"
                       : item.isLowest
                         ? "bg-sky-400 text-slate-950 font-black shadow-xs"
                         : "text-muted-foreground bg-muted/60"
@@ -1016,13 +1050,17 @@ const partPaymentError = (p, raw) => {
 };
 
 export default function PurchasesPage() {
+  const onlineFeatures = useOnlineFeatures();
   // Data state
   const [purchases, setPurchases] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
   const [medicineSuggestions, setMedicineSuggestions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
-  const { user, settings } = useAuth();
+  const { user, settings, can, rule } = useAuth();
+  // Hide what this user's access doesn't allow (the server enforces it too)
+  const purAcc = useAccess("purchases");
+  const canPaySuppliers = purAcc.update && can("suppliers", "update") && !rule("no_supplier_payments");
   const [tabs, setTabs] = useState([]);
   const [activeTabId, setActiveTabId] = useState(null);
 
@@ -1933,6 +1971,12 @@ export default function PurchasesPage() {
   const [filterSupplier, setFilterSupplier] = useState(
     searchParams.get("supplier_id") || "all"
   );
+  // All / Paid / Unpaid (Unpaid includes part-paid bills)
+  const [filterPayment, setFilterPayment] = useState("all");
+  const [editCatalogProduct, setEditCatalogProduct] = useState(null); // catalog product being edited
+  // Same medicine under different names, merged from here without going to Inventory
+  const [dupFor, setDupFor] = useState(null); // null closed, "" all, or a product name
+  const [dupCount, refreshDupCount] = useDuplicateCount(true);
 
   const handleSupplierFilterChange = (val) => {
     setFilterSupplier(val);
@@ -2397,7 +2441,7 @@ export default function PurchasesPage() {
   const purchaseFormOpen = () => showNewPurchase || !!editingPurchaseId;
   useShortcuts(
     [
-      { combo: "alt+n", label: "New purchase", run: () => handleStartNewPurchase() },
+      { combo: "alt+n", label: "New purchase", when: () => purAcc.create, run: () => handleStartNewPurchase() },
       { combo: "alt+a", label: "Add an item line", when: () => showNewPurchase, run: () => handleAddNewRow() },
       { combo: "mod+enter", label: "Save the purchase", when: purchaseFormOpen, run: () => (showNewPurchase ? handleSubmitPurchase() : handleSaveEditPurchase()) },
       { combo: "alt+s", label: "Save the purchase (while one is open)", when: purchaseFormOpen, run: () => (showNewPurchase ? handleSubmitPurchase() : handleSaveEditPurchase()) },
@@ -2431,6 +2475,7 @@ export default function PurchasesPage() {
         if (searchQuery) params.append("search", searchQuery);
         if (filterSupplier && filterSupplier !== "all")
           params.append("supplier_id", filterSupplier);
+        if (filterPayment !== "all") params.append("payment_status", filterPayment);
         if (startDate) params.append("start_date", startDate);
         if (endDate) params.append("end_date", endDate);
         if (highlightId) params.append("highlight_id", highlightId);
@@ -2468,6 +2513,7 @@ export default function PurchasesPage() {
     [
       searchQuery,
       filterSupplier,
+      filterPayment,
       startDate,
       endDate,
       sortBy,
@@ -2491,7 +2537,7 @@ export default function PurchasesPage() {
       fetchPurchases(1);
     }, 300);
     return () => clearTimeout(debounce);
-  }, [searchQuery, filterSupplier, startDate, endDate, sortBy, sortOrder]);
+  }, [searchQuery, filterSupplier, filterPayment, startDate, endDate, sortBy, sortOrder]);
 
   // Search medicines for suggestions with high-speed ranking & instant client cache
   useEffect(() => {
@@ -2656,6 +2702,7 @@ export default function PurchasesPage() {
   // ============ NEW PURCHASE - INLINE TABLE ============
 
   const handleStartNewPurchase = () => {
+    if (!purAcc.create) return;
     if (!showNewPurchase && tabs.length === 0) {
       createNewTab();
     } else {
@@ -2899,6 +2946,20 @@ export default function PurchasesPage() {
     }
   };
 
+  // Copy a line right below it: same product and prices, new batch / expiry
+  // to fill (a second batch of the same medicine on the invoice)
+  const handleDuplicateItem = (itemId) => {
+    setPurchaseItems((prev) => {
+      const i = prev.findIndex((r) => r.id === itemId);
+      if (i === -1) return prev;
+      const copy = { ...prev[i], id: `dup-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, batch_no: "", expiry_date: "", checked: false };
+      const next = [...prev];
+      next.splice(i + 1, 0, copy);
+      setTimeout(() => document.getElementById(`batch-${copy.id}`)?.focus({ preventScroll: false }), 80);
+      return next;
+    });
+  };
+
   const handleRemoveItem = (itemId) => {
     setRemoveConfirmDialog({ open: true, itemId });
   };
@@ -3101,7 +3162,11 @@ export default function PurchasesPage() {
         } else if (field === "total_amount" && isTarget) {
           const newTotal = parseFloat(value) || 0;
           const discountVal = parseFloat(updated.discount) || 0;
-          updated.rate_pack = rateFromTotal(newTotal, qty, discountVal, cgstVal + sgstVal, updated).toFixed(2);
+          // 2 decimals when they give back the same total, else 4: a rate
+          // rounded to paise must not move the saved amount off the invoice
+          const exactRate = rateFromTotal(newTotal, qty, discountVal, cgstVal + sgstVal, updated);
+          const lineAt = (r) => lineNet(qty, r, discountVal, updated).net * (1 + (cgstVal + sgstVal) / 100);
+          updated.rate_pack = Math.abs(lineAt(Number(exactRate.toFixed(2))) - newTotal) < 0.005 ? exactRate.toFixed(2) : String(Math.round(exactRate * 10000) / 10000);
         }
 
         return updated;
@@ -3113,10 +3178,12 @@ export default function PurchasesPage() {
     itemId,
     productName,
     currentRateParam,
-    currentMrpParam
+    currentMrpParam,
+    currentNetParam
   ) => {
     const currentRate = parseFloat(currentRateParam);
     const currentMrp = parseFloat(currentMrpParam);
+    const currentNet = parseFloat(currentNetParam) || 0;
     if (!productName || !currentRate || currentRate <= 0) return;
 
     try {
@@ -3125,11 +3192,15 @@ export default function PurchasesPage() {
           product_name: productName,
           current_rate: currentRate,
           current_mrp: currentMrp || 0,
+          // compare on net cost per pack (discounts, scheme, free, GST), not PTR
+          ...(currentNet > 0 ? { current_net: currentNet.toFixed(4) } : {}),
         },
       });
 
       const data = response.data;
       if (
+        data.rate_increased ||
+        data.rate_lowered ||
         data.is_higher_price_alert ||
         data.mrp_increased ||
         data.is_mrp_lowered_alert ||
@@ -3168,7 +3239,7 @@ export default function PurchasesPage() {
           item.product_name.trim().length > 0 &&
           rate > 0
         ) {
-          checkPriceHistorySilent(item.id, item.product_name, rate, mrp);
+          checkPriceHistorySilent(item.id, item.product_name, rate, mrp, lineNetPerPack(item));
         }
       });
     }, 300);
@@ -3523,6 +3594,10 @@ export default function PurchasesPage() {
   };
 
   const handleAutofillWithAI = async () => {
+    if (!onlineFeatures) {
+      toast.info("AI autofill needs internet. You can type the details by hand.");
+      return;
+    }
     const candidates = purchaseItems.filter(
       (item) =>
         item.product_name &&
@@ -3887,6 +3962,7 @@ export default function PurchasesPage() {
   // };
 
   const handleStartEditPurchase = (purchase) => {
+    if (!purAcc.update) return;
     setShowNewPurchase(true);
     setEditingPurchaseId(purchase.id);
 
@@ -4516,7 +4592,7 @@ export default function PurchasesPage() {
     >
       <style>{`
         .ai-loading-row {
-          background: linear-gradient(270deg, rgba(99, 102, 241, 0.08), rgba(168, 85, 247, 0.08), rgba(236, 72, 153, 0.08)) !important;
+          background: rgba(255, 107, 0, 0.06) !important;
           background-size: 600% 600% !important;
           animation: gradientScroll 3s ease infinite !important;
           border-left: 3px solid #6366f1 !important;
@@ -4739,7 +4815,7 @@ export default function PurchasesPage() {
                 <Label className="text-[11px] font-extrabold text-foreground/80">
                   Payment Status
                 </Label>
-                <div className="flex bg-muted p-1 rounded-xl h-9 border border-border">
+                <div data-guide="pay-status" className="flex bg-muted p-1 rounded-xl h-9 border border-border">
                   {["Unpaid", "Partial", "Paid"]
                     .filter(
                       (status) =>
@@ -4762,7 +4838,7 @@ export default function PurchasesPage() {
                               ? "bg-emerald-500 text-white shadow-xs"
                               : status === "Unpaid"
                                 ? "bg-rose-500 text-white shadow-xs"
-                                : "bg-amber-500 text-white shadow-xs"
+                                : "bg-primary text-primary-foreground shadow-xs"
                             : "text-muted-foreground hover:bg-card"
                         }`}
                       >
@@ -4815,7 +4891,7 @@ export default function PurchasesPage() {
                     processingRowId !== null || paymentStatus === "Unpaid"
                   }
                 >
-                  <SelectTrigger className="h-9 w-full bg-background border border-border rounded-xl text-xs font-semibold text-foreground">
+                  <SelectTrigger data-guide="pay-mode" className="h-9 w-full bg-background border border-border rounded-xl text-xs font-semibold text-foreground">
                     <SelectValue placeholder="Mode" />
                   </SelectTrigger>
                   <SelectContent>
@@ -4852,7 +4928,15 @@ export default function PurchasesPage() {
             {/* Right: Stats Summary + AI Autofill + Close */}
             <div className="flex items-center gap-2 shrink-0 self-end lg:self-center max-md:w-full max-md:flex-wrap max-md:self-stretch">
               {/* Total Stats Pill */}
-              <div className="flex items-center gap-2 bg-muted px-3 py-1 rounded-xl border border-border shadow-2xs h-9">
+              <div data-guide="purchase-summary" className="flex items-center gap-2 bg-muted px-3 py-1 rounded-xl border border-border shadow-2xs h-9">
+                {purchaseItems.some((i) => i.checked) && (
+                  <div className="flex items-center gap-1 border-r border-border pr-2.5" title="Lines marked as checked against the invoice" data-testid="checked-progress">
+                    <span className="text-[10px] uppercase font-extrabold text-emerald-600">Checked:</span>
+                    <span className="text-xs font-black font-mono text-emerald-600">
+                      {purchaseItems.filter((i) => i.product_name && i.checked).length}/{purchaseItems.filter((i) => i.product_name).length}
+                    </span>
+                  </div>
+                )}
                 <div className="flex items-center gap-1 border-r border-border pr-2.5">
                   <span className="text-[10px] uppercase font-extrabold text-muted-foreground">
                     Units:
@@ -4880,6 +4964,60 @@ export default function PurchasesPage() {
                   </div>
                 )}
               </div>
+              {/* Bill-level rate changes against each line's last purchase */}
+              {(() => {
+                const rows = purchaseItems
+                  .map((it) => ({ it, a: priceAlerts[it.id], impact: lineRateImpact(it, priceAlerts[it.id]) }))
+                  .filter((r) => r.a && (r.a.rate_increased || r.a.rate_lowered) && Math.abs(r.impact) >= 0.01);
+                if (!rows.length) return null;
+                const extra = rows.filter((r) => r.impact > 0).reduce((t, r) => t + r.impact, 0);
+                const saved = rows.filter((r) => r.impact < 0).reduce((t, r) => t - r.impact, 0);
+                const costlier = rows.filter((r) => r.impact > 0).length;
+                return (
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <button
+                        type="button"
+                        data-testid="rate-change-summary"
+                        className={`h-9 px-3 rounded-xl border text-[11px] font-extrabold flex items-center gap-1.5 cursor-pointer ${extra > saved ? "border-amber-500/40 bg-amber-500/10 text-amber-500" : "border-emerald-500/40 bg-emerald-500/10 text-emerald-500"}`}
+                        title="Rate changes on this bill against each product's last purchase (net cost per pack)"
+                      >
+                        {extra > saved ? <TrendingUp className="w-3.5 h-3.5" /> : <TrendingDown className="w-3.5 h-3.5" />}
+                        {costlier > 0 && <span>{costlier} costlier +₹{extra.toFixed(2)}</span>}
+                        {costlier > 0 && saved > 0 && <span className="opacity-50">·</span>}
+                        {saved > 0 && <span className="text-emerald-500">-₹{saved.toFixed(2)}</span>}
+                      </button>
+                    </PopoverTrigger>
+                    <PopoverContent align="end" className="w-[360px] p-3">
+                      <p className="text-xs font-black mb-1">Rate changes on this bill</p>
+                      <p className="text-[10px] text-muted-foreground mb-2">
+                        Net cost per pack (discounts, scheme, free packs and GST) against the last purchase of each product.
+                      </p>
+                      <div className="space-y-1.5 max-h-64 overflow-y-auto">
+                        {rows.map(({ it, a, impact }) => (
+                          <div key={it.id} className="flex items-start justify-between gap-2 text-[11px] border-b border-border/50 pb-1.5 last:border-0">
+                            <div className="min-w-0">
+                              <p className="font-bold truncate">{it.product_name}</p>
+                              <p className="text-[10px] text-muted-foreground">
+                                ₹{(a.latest_rate || 0).toFixed(2)} → ₹{lineNetPerPack(it).toFixed(2)}/pack
+                                {a.last_purchase?.supplier_name ? ` · last from ${a.last_purchase.supplier_name}` : ""}
+                                {a.last_purchase?.mrp_pack ? ` · MRP ₹${Number(a.last_purchase.mrp_pack).toFixed(2)} → ₹${(parseFloat(it.mrp_pack) || 0).toFixed(2)}` : ""}
+                              </p>
+                            </div>
+                            <span className={`font-mono font-black shrink-0 ${impact > 0 ? "text-amber-500" : "text-emerald-500"}`}>
+                              {impact > 0 ? "+" : "-"}₹{Math.abs(impact).toFixed(2)}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="flex justify-between text-xs font-black mt-2 pt-2 border-t border-border">
+                        <span>{extra >= saved ? "Extra paid (loss)" : "Saved"}</span>
+                        <span className={extra >= saved ? "text-amber-500" : "text-emerald-500"}>₹{Math.abs(extra - saved).toFixed(2)}</span>
+                      </div>
+                    </PopoverContent>
+                  </Popover>
+                );
+              })()}
               {/* Re-map CSV Columns Button */}
               {csvColumns.length > 0 && (
                 <Button
@@ -4904,12 +5042,12 @@ export default function PurchasesPage() {
                     !item.manufacturer ||
                     !asText(item.manufacturer).trim())
               ) && (
-                <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-1.5" style={onlineFeatures ? undefined : { display: "none" }}>
                   <Button
                     variant="default"
                     onClick={handleAutofillWithAI}
                     data-kbd={formatCombo("alt+g")}
-                    className="relative overflow-hidden group bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white shadow-md border-none font-extrabold text-xs h-9 rounded-xl px-3 flex items-center gap-1.5"
+                    className="relative overflow-hidden group text-primary-foreground shadow-md border-none font-extrabold text-xs h-9 rounded-xl px-3 flex items-center gap-1.5 bg-primary hover:bg-primary/90"
                     size="sm"
                   >
                     <Sparkles className="w-3.5 h-3.5 text-white" />
@@ -4946,7 +5084,7 @@ export default function PurchasesPage() {
           {/* Items Table Container */}
 
           {/* Items Table - Inline Editable with enhanced fields */}
-          <div className="border-2 border-border rounded-2xl relative overflow-hidden bg-card shadow-sm">
+          <div data-guide="purchase-items" className="border-2 border-border rounded-2xl relative overflow-hidden bg-card shadow-sm">
             <Table mobileCards className="table-fixed min-w-[1344px] w-full m-purchase-cards" wrapperClassName="h-[420px]">
               <TableHeader className="sticky top-0 bg-muted/95 backdrop-blur z-[50] border-b-2 border-border shadow-xs">
                 <TableRow className="hover:bg-transparent">
@@ -5052,7 +5190,8 @@ export default function PurchasesPage() {
                         hasScheme
                           ? "bg-emerald-500/[0.04] hover:bg-emerald-500/[0.08]"
                           : "bg-card hover:bg-muted/40"
-                      }`}
+                      } ${item.checked ? "shadow-[inset_3px_0_0_0_rgb(16_185_129)] opacity-80" : ""}`}
+                      data-checked={item.checked ? "true" : undefined}
                     >
                       <TableCell
                         className="min-w-[260px] p-2 align-top relative"
@@ -5277,7 +5416,7 @@ export default function PurchasesPage() {
                             item.salt_composition) && (
                             <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground flex-wrap leading-tight mt-0.5">
                               {item.product_name && isScheduleH1(item) && (
-                                <ScheduleH1Badge testId="purchase-row-h1" title="Schedule H1 medicine" />
+                                <ScheduleH1Badge testId="purchase-row-h1" label="S-H1" title="Schedule H1 medicine" />
                               )}
                               {item.manufacturer ? (
                                 <span className="font-medium text-foreground/85">
@@ -5490,15 +5629,34 @@ export default function PurchasesPage() {
                                 )
                               }
                               className="flex items-center gap-1 bg-amber-500/15 text-amber-500 hover:bg-amber-500/25 border border-amber-500/40 px-2 py-0.5 rounded-lg text-[10px] font-extrabold transition-all cursor-pointer shadow-2xs shrink-0 self-start mt-1"
-                              title="Higher rate than past purchases for the same MRP. Click to view history graph."
+                              title={lastBoughtTitle(priceAlerts[item.id], "Costlier than the last purchase for the same MRP.")}
                             >
                               <AlertTriangle className="w-3 h-3 text-amber-500 shrink-0" />
                               <span>
-                                Paying +₹
+                                {priceAlerts[item.id].compared_on === "net" ? "Net +₹" : "Paying +₹"}
                                 {priceAlerts[item.id].rate_difference?.toFixed(
                                   2
-                                )}{" "}
-                                Extra (Same MRP)
+                                )}
+                                {priceAlerts[item.id].compared_on === "net" ? "/pack" : " Extra"} (Same MRP)
+                              </span>
+                            </button>
+                          )}
+                          {priceAlerts[item.id]?.rate_lowered &&
+                            !priceAlerts[item.id]?.mrp_lowered &&
+                            !priceAlerts[item.id]?.mrp_increased && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleOpenProductSidebar(item.product_name, item.id, "history", ratePack, mrpPack)
+                              }
+                              className="flex items-center gap-1 bg-emerald-500/15 text-emerald-500 hover:bg-emerald-500/25 border border-emerald-500/40 px-2 py-0.5 rounded-lg text-[10px] font-extrabold transition-all cursor-pointer shadow-2xs shrink-0 self-start mt-1"
+                              title={lastBoughtTitle(priceAlerts[item.id], "Cheaper than the last purchase.")}
+                            >
+                              <TrendingDown className="w-3 h-3 shrink-0" />
+                              <span>
+                                Net -₹
+                                {(priceAlerts[item.id].latest_rate - lineNetPerPack(item)).toFixed(2)}
+                                /pack
                               </span>
                             </button>
                           )}
@@ -5734,7 +5892,7 @@ export default function PurchasesPage() {
                                           {medicine.product_name || medicine.name}
                                         </span>
                                         {isScheduleH1(medicine) && (
-                                          <ScheduleH1Badge testId="purchase-suggestion-h1" title="Schedule H1: sold only on prescription" />
+                                          <ScheduleH1Badge testId="purchase-suggestion-h1" label="S-H1" title="Schedule H1: sold only on prescription" />
                                         )}
                                         {medicine.dosage_form && (
                                           <span className="text-[10px] px-2 py-0.5 bg-purple-500/10 text-purple-400 border border-purple-500/30 rounded-full font-semibold capitalize">
@@ -5950,7 +6108,7 @@ export default function PurchasesPage() {
                                           searchMedicine
                                         );
                                       }}
-                                      className="mt-3 inline-flex items-center gap-2 px-3.5 py-1.5 bg-orange-500 hover:bg-orange-600 text-white rounded-lg text-xs font-bold shadow-sm transition-all cursor-pointer"
+                                      className="mt-3 inline-flex items-center gap-2 px-3.5 py-1.5 bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg text-xs font-bold shadow-sm transition-all cursor-pointer"
                                     >
                                       <PackagePlus className="w-3.5 h-3.5" />
                                       Create in Product Catalog
@@ -6760,17 +6918,28 @@ export default function PurchasesPage() {
                             }`}
                           />
                           {(() => {
-                            if (parseMargin(item.margin) === null) {
-                              return (
-                                <div className="text-[10px] text-muted-foreground leading-none whitespace-nowrap" title="No margin set: billing sells at MRP">
-                                  Bills at MRP
-                                </div>
-                              );
-                            }
                             // Same landed cost the server stores: GST in, free units spread
                             const lineTotal =
                               lineNet(qty, ratePack, parseFloat(item.discount) || 0, item).net *
                               (1 + ((parseFloat(item.cgst) || 0) + (parseFloat(item.sgst) || 0)) / 100);
+                            if (parseMargin(item.margin) === null) {
+                              // Worked out from the net amount: what selling at MRP earns
+                              const landed = totalUnits > 0 ? lineTotal / totalUnits : 0;
+                              const auto = mrpUnit > 0 && landed > 0 ? ((mrpUnit - landed) / mrpUnit) * 100 : null;
+                              return (
+                                <div
+                                  data-testid={`auto-margin-${index}`}
+                                  className={`text-[10px] leading-none whitespace-nowrap font-mono font-semibold ${auto === null ? "text-muted-foreground" : auto < 0 ? "text-rose-500" : "text-emerald-600 dark:text-emerald-400"}`}
+                                  title={
+                                    auto === null
+                                      ? "No margin set: billing sells at MRP. Enter rate and MRP to see the margin."
+                                      : `Selling at MRP earns ${auto.toFixed(1)}% of MRP: net cost ₹${landed.toFixed(2)}/unit (GST, discounts and free packs counted) against MRP ₹${mrpUnit.toFixed(2)}/unit. Type a margin to sell below MRP.`
+                                  }
+                                >
+                                  {auto === null ? "Bills at MRP" : `MRP ${auto.toFixed(1)}%`}
+                                </div>
+                              );
+                            }
                             const mp = marginPrice({
                               purchase_price: totalUnits > 0 ? lineTotal / totalUnits : 0,
                               mrp: mrpUnit,
@@ -6791,7 +6960,7 @@ export default function PurchasesPage() {
 
                       {/* 12. ACTION */}
                       <TableCell className="w-[40px] p-1 align-top text-center">
-                        <div className="h-8 flex items-center justify-center">
+                        <div className="flex flex-col items-center justify-center gap-0.5">
                           <Button
                             size="icon"
                             variant="ghost"
@@ -6801,6 +6970,33 @@ export default function PurchasesPage() {
                           >
                             <Trash2 className="h-4 w-4" />
                           </Button>
+                          {item.product_name && (
+                            <label
+                              className="flex h-6 w-8 items-center justify-center cursor-pointer"
+                              title={item.checked ? "Checked against the invoice. Click to unmark" : "Mark this line as checked against the invoice"}
+                            >
+                              <input
+                                type="checkbox"
+                                className="h-3.5 w-3.5 cursor-pointer accent-emerald-600"
+                                checked={!!item.checked}
+                                onChange={(e) => setPurchaseItems((prev) => prev.map((r) => (r.id === item.id ? { ...r, checked: e.target.checked } : r)))}
+                                aria-label={`Mark ${item.product_name} as checked`}
+                                data-testid={`row-checked-${index}`}
+                              />
+                            </label>
+                          )}
+                          {item.product_name && (
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-6 w-8 text-muted-foreground hover:text-primary hover:bg-primary/10 rounded-lg cursor-pointer"
+                              onClick={() => handleDuplicateItem(item.id)}
+                              title="Copy this line below (same product, new batch)"
+                              data-testid={`duplicate-row-${index}`}
+                            >
+                              <Copy className="h-3.5 w-3.5" />
+                            </Button>
+                          )}
                         </div>
                       </TableCell>
                     </TableRow>
@@ -6823,7 +7019,7 @@ export default function PurchasesPage() {
           </div>
 
           {/* Hint for unit-based system */}
-          <p className="text-xs text-muted-foreground bg-muted/30 p-2 rounded flex items-center gap-1.5">
+          <p data-guide="purchase-tip" className="text-xs text-muted-foreground bg-muted/30 p-2 rounded flex items-center gap-1.5">
             <Info className="w-3.5 h-3.5 text-orange-500 shrink-0" />
             <span>
               <strong>Tip:</strong> Enter Qty and either Rate(Pack) OR Total -
@@ -7150,7 +7346,7 @@ export default function PurchasesPage() {
                 <h1 className="text-2xl font-black tracking-tight text-foreground m-page-title">
                   Purchases
                 </h1>
-                <span className="px-2.5 py-0.5 rounded-full bg-orange-500/10 border border-orange-500/30 text-orange-600 dark:text-orange-400 font-mono font-bold text-xs">
+                <span data-guide="purchase-count" className="px-2.5 py-0.5 rounded-full bg-orange-500/10 border border-orange-500/30 text-orange-600 dark:text-orange-400 font-mono font-bold text-xs">
                   {pagination.total} recorded
                 </span>
                 <span className="hidden md:inline-block text-xs font-semibold text-muted-foreground">
@@ -7159,6 +7355,7 @@ export default function PurchasesPage() {
               </div>
 
               <div className="flex items-center gap-2 flex-wrap max-md:contents">
+                <GuideButton tour="purchases" compact />
                 <Button
                   variant="outline"
                   size="sm"
@@ -7174,9 +7371,11 @@ export default function PurchasesPage() {
                 <Button
                   variant="outline"
                   size="sm"
-                  className="h-8 text-xs font-bold rounded-xl bg-gradient-to-r from-orange-500/10 to-amber-500/10 border-orange-500/30 text-orange-600 dark:text-orange-400 hover:border-orange-500/50 max-md:order-3 max-md:h-10"
+                  className="h-8 text-xs font-bold rounded-xl border-orange-500/30 text-orange-600 dark:text-orange-400 hover:border-orange-500/50 max-md:order-3 max-md:h-10 bg-orange-500/5"
                   onClick={() => openScanner("/scan")}
+                  hidden={!purAcc.create}
                   data-testid="scan-products-btn"
+                  style={onlineFeatures ? undefined : { display: "none" }}
                 >
                   <Upload className="w-3.5 h-3.5 mr-1.5" />
                   Scan
@@ -7187,6 +7386,7 @@ export default function PurchasesPage() {
                   size="sm"
                   className="h-8 text-xs font-bold rounded-xl border-border/70 cursor-pointer max-md:order-3 max-md:h-10 max-md:px-2"
                   onClick={() => setCsvDialog(true)}
+                  hidden={!purAcc.create}
                   data-testid="csv-import-btn"
                 >
                   <FileSpreadsheet className="w-3.5 h-3.5 mr-1.5 text-orange-500" />
@@ -7198,19 +7398,21 @@ export default function PurchasesPage() {
                   size="sm"
                   className={`h-8 text-xs font-bold rounded-xl cursor-pointer max-md:order-3 max-md:h-10 ${showPurchaseDrafts ? "border-orange-500/50 bg-orange-500/10 text-orange-600 dark:text-orange-400" : "border-border/70"}`}
                   onClick={() => setShowPurchaseDrafts((v) => !v)}
+                  hidden={!purAcc.create}
                   data-testid="purchase-drafts-btn"
                 >
                   <FileText className="w-3.5 h-3.5 mr-1.5 text-orange-500" />
                   Drafts
                   {purchaseDrafts.length > 0 && (
-                    <span className="ml-1.5 rounded-full bg-orange-500 px-1.5 text-[10px] font-black text-white">{purchaseDrafts.length}</span>
+                    <span className="ml-1.5 rounded-full bg-primary px-1.5 text-[10px] font-black text-primary-foreground">{purchaseDrafts.length}</span>
                   )}
                 </Button>
 
                 <Button
                   size="sm"
-                  className="h-8 px-3.5 text-xs font-extrabold bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white rounded-xl shadow-xs border-none max-md:order-2 max-md:h-10 max-md:shadow-md max-md:shadow-orange-500/25"
+                  className="h-8 px-3.5 text-xs font-extrabold text-primary-foreground rounded-xl shadow-xs border-none max-md:order-2 max-md:h-10 max-md:shadow-md bg-primary hover:bg-primary/90"
                   onClick={handleStartNewPurchase}
+                  hidden={!purAcc.create}
                   data-testid="add-purchase-btn"
                   data-shortcut="new"
                   data-kbd={formatCombo("alt+n")}
@@ -7271,7 +7473,7 @@ export default function PurchasesPage() {
                               <Button size="sm" className="h-8 rounded-xl btn-primary text-xs font-bold" onClick={() => handleOpenPurchaseDraft(d)}>
                                 Review &amp; save
                               </Button>
-                              <Button variant="ghost" size="icon" className="h-8 w-8 rounded-xl text-muted-foreground hover:text-destructive hover:bg-destructive/10" onClick={() => handleDeletePurchaseDraft(d)} title="Delete draft">
+                              <Button variant="ghost" size="icon" hidden={!purAcc.delete} className="h-8 w-8 rounded-xl text-muted-foreground hover:text-destructive hover:bg-destructive/10" onClick={() => handleDeletePurchaseDraft(d)} title="Delete draft">
                                 <Trash2 className="h-4 w-4" />
                               </Button>
                             </div>
@@ -7298,7 +7500,7 @@ export default function PurchasesPage() {
                   />
                 </div>
               </div>
-              <div className="flex items-center gap-2 w-full md:w-auto flex-wrap m-grid-2">
+              <div data-guide="purchase-filters" className="flex items-center gap-2 w-full md:w-auto flex-wrap m-grid-2">
                 <SupplierSelector
                   selectedId={filterSupplier}
                   knownSuppliers={suppliers}
@@ -7314,6 +7516,20 @@ export default function PurchasesPage() {
                     }
                   }}
                 />
+                <div className="dd-glide-row relative flex h-9 rounded-xl border border-border/70 bg-card/60 p-0.5 m-span-2" role="group" aria-label="Payment">
+                  <Glider className="bg-primary" />
+                  {[["all", "All bills"], ["Paid", "Paid"], ["Unpaid", "Unpaid"]].map(([v, label]) => (
+                    <button
+                      key={v}
+                      type="button"
+                      onClick={() => setFilterPayment(v)}
+                      aria-pressed={filterPayment === v}
+                      className={`px-3 text-xs font-bold rounded-lg transition-colors duration-300 ${filterPayment === v ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
                 <Input
                   type="date"
                   placeholder="Start date"
@@ -7328,8 +7544,21 @@ export default function PurchasesPage() {
                   onChange={(e) => setEndDate(e.target.value)}
                   className="w-36 h-9 text-xs rounded-xl border-border/70 bg-card/60 backdrop-blur-md"
                 />
+                {dupCount > 0 && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setDupFor("")}
+                    className="h-9 px-3 text-xs font-bold rounded-xl border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                    title="Medicines saved under slightly different names. Review and merge them here."
+                    data-testid="purchase-duplicates-btn"
+                  >
+                    {dupCount} duplicate name{dupCount === 1 ? "" : "s"}: merge
+                  </Button>
+                )}
                 {(searchQuery ||
                   (filterSupplier && filterSupplier !== "all") ||
+                  filterPayment !== "all" ||
                   startDate ||
                   endDate) && (
                   <Button
@@ -7339,6 +7568,7 @@ export default function PurchasesPage() {
                     onClick={() => {
                       setSearchQuery("");
                       setFilterSupplier("all");
+                      setFilterPayment("all");
                       setStartDate("");
                       setEndDate("");
                     }}
@@ -7438,12 +7668,9 @@ export default function PurchasesPage() {
                           <span className="whitespace-nowrap">
                             {purchase.items?.length || 0} {purchase.items?.length === 1 ? "item" : "items"}
                           </span>
-                          {purchase.has_schedule_h1 && (
-                            <ScheduleH1Badge
-                              testId="purchase-h1"
-                              title={`Schedule H1: ${(purchase.schedule_h1_items || []).join(", ")}`}
-                            />
-                          )}
+                          <span className="whitespace-nowrap text-[11px] text-muted-foreground" data-testid="purchase-total-qty" title="Total quantity on this bill (packs, free packs included)">
+                            · {+(purchase.items || []).reduce((t, it) => t + (Number(it.pack_quantity ?? it.quantity) || 0) + (Number(it.scheme) || 0), 0).toFixed(2)} qty
+                          </span>
                           {purchase.has_returns && (
                             <span
                               className="inline-flex items-center whitespace-nowrap rounded-md border border-blue-500/30 bg-blue-500/10 px-1.5 py-[3px] text-[10px] font-bold leading-none text-blue-600 dark:text-blue-400"
@@ -7513,6 +7740,7 @@ export default function PurchasesPage() {
                             variant="ghost"
                             className="h-7 w-7"
                             onClick={() => handleStartEditPurchase(purchase)}
+                            hidden={!purAcc.update}
                             data-testid={`edit-purchase-${purchase.id}`}
                             data-row-key="e"
                           >
@@ -7525,6 +7753,7 @@ export default function PurchasesPage() {
                             onClick={() =>
                               setDeleteDialog({ open: true, purchase })
                             }
+                            hidden={!purAcc.delete}
                             data-testid={`delete-purchase-${purchase.id}`}
                             data-row-key="delete"
                           >
@@ -7609,7 +7838,16 @@ export default function PurchasesPage() {
                                       <TableCell className="font-medium">
                                         <div className="flex items-center gap-1.5 flex-wrap">
                                           <span>{item.product_name}</span>
-                                          {(purchase.schedule_h1_items || []).includes(item.product_name) && <ScheduleH1Badge title="Schedule H1 medicine" />}
+                                          {(purchase.schedule_h1_items || []).includes(item.product_name) && <ScheduleH1Badge label="S-H1" title="Schedule H1 medicine" />}
+                                          {item.stock_removed && (
+                                            <span
+                                              className="inline-flex items-center rounded-md border border-rose-500/30 bg-rose-500/10 px-1.5 py-[3px] text-[10px] font-bold leading-none text-rose-600 dark:text-rose-400"
+                                              title="This batch was deleted in Inventory, so it is not in stock. Edit this purchase and save it to add the batch back, or remove the line."
+                                              data-testid="line-stock-removed"
+                                            >
+                                              Not in stock (deleted)
+                                            </span>
+                                          )}
                                           {item.status && /Return/.test(item.status) && (
                                             <Badge
                                               className={`px-1.5 py-0 text-[9px] font-black ${
@@ -7778,7 +8016,7 @@ export default function PurchasesPage() {
                               </div>
 
                               <div className="flex gap-2">
-                                {purchase.payment_status !== "Paid" && (
+                                {purchase.payment_status !== "Paid" && canPaySuppliers && (
                                   <>
                                     <Button
                                       size="sm"
@@ -8213,7 +8451,7 @@ export default function PurchasesPage() {
                 setPdfFor(null);
                 handleGeneratePurchasePdf(id);
               }}
-              className="rounded-xl bg-orange-600 text-xs font-bold text-white hover:bg-orange-700"
+              className="rounded-xl bg-primary text-xs font-bold text-primary-foreground hover:bg-primary/90"
             >
               <FileText className="mr-1.5 h-4 w-4" /> Generate PDF
             </Button>
@@ -8462,7 +8700,7 @@ export default function PurchasesPage() {
       {/* TABS & ACTION NAVBAR */}
       {(showNewPurchase || editingPurchaseId) &&
         createPortal(
-          <div className="fixed bottom-0 left-0 right-0 z-[100] flex items-center justify-between bg-card/95 backdrop-blur-xl border-t-2 border-border shadow-2xl px-6 py-3.5 gap-4 overflow-x-auto scroller-hide overflow-y-hidden mb-0 transition-all duration-300 mobile-action-bar max-md:flex-wrap max-md:gap-2 max-md:px-3 max-md:pt-2.5 max-md:pb-[calc(0.625rem+env(safe-area-inset-bottom))]">
+          <div data-guide="purchase-bar" className="fixed bottom-0 left-0 right-0 z-[100] flex items-center justify-between bg-card/95 backdrop-blur-xl border-t-2 border-border shadow-2xl px-6 py-3.5 gap-4 overflow-x-auto scroller-hide overflow-y-hidden mb-0 transition-all duration-300 mobile-action-bar max-md:flex-wrap max-md:gap-2 max-md:px-3 max-md:pt-2.5 max-md:pb-[calc(0.625rem+env(safe-area-inset-bottom))]">
             <div className="flex items-center gap-2 overflow-x-auto scroller-hide max-md:w-full empty:hidden">
               {showNewPurchase &&
                 tabs.map((tab, idx) => {
@@ -8484,7 +8722,7 @@ export default function PurchasesPage() {
                           e.preventDefault();
                           switchTab(tab.id);
                         }}
-                        className={`pr-8 h-9 rounded-full transition-all duration-200 ${isActive ? "bg-orange-500 text-white shadow-md shadow-orange-500/20 font-bold" : "bg-slate-100 hover:bg-slate-200 dark:bg-muted/65 dark:hover:bg-muted/90 text-slate-700 dark:text-muted-foreground border border-slate-200/80 dark:border-border/50 font-semibold"}`}
+                        className={`pr-8 h-9 rounded-full transition-all duration-200 ${isActive ? "bg-primary text-primary-foreground shadow-md font-bold" : "bg-slate-100 hover:bg-slate-200 dark:bg-muted/65 dark:hover:bg-muted/90 text-slate-700 dark:text-muted-foreground border border-slate-200/80 dark:border-border/50 font-semibold"}`}
                       >
                         <FileText className="w-3.5 h-3.5 mr-1.5 opacity-70" />
                         <span className="max-w-[120px] truncate">
@@ -8613,6 +8851,33 @@ export default function PurchasesPage() {
                   </div>
                 </div>
                 <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={async () => {
+                    try {
+                      const res = await axios.get(`${API}/products/one`, { params: { name: productSidebar.productName } });
+                      setEditCatalogProduct(res.data.product);
+                    } catch (err) {
+                      toast.error(err.response?.data?.detail || "Couldn't open this product");
+                    }
+                  }}
+                  className="h-8 px-2.5 rounded-xl text-xs font-bold shrink-0 ml-auto"
+                  title="Edit this product's catalog details (salt, company, pack, GST, MRP)"
+                  data-testid="purchase-edit-catalog"
+                >
+                  Edit catalog
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setDupFor(productSidebar.productName)}
+                  className="h-8 px-2.5 rounded-xl text-xs font-bold shrink-0"
+                  title="Find this medicine saved under other names and merge them"
+                  data-testid="purchase-merge-same-name"
+                >
+                  Merge same names
+                </Button>
+                <Button
                   variant="ghost"
                   size="sm"
                   onClick={() =>
@@ -8738,7 +9003,7 @@ export default function PurchasesPage() {
                             <Button
                               size="sm"
                               onClick={() => handleApplyBatchToRow(batch)}
-                              className="h-8 px-3 text-xs font-extrabold bg-orange-500 hover:bg-orange-600 active:scale-95 text-white shadow-sm hover:shadow-orange-500/20 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 shrink-0"
+                              className="h-8 px-3 text-xs font-extrabold bg-primary hover:bg-primary/90 active:scale-95 text-primary-foreground shadow-sm rounded-xl transition-all cursor-pointer flex items-center gap-1.5 shrink-0"
                             >
                               <CheckCircle2 className="w-3.5 h-3.5" />
                               <span>Use Batch</span>
@@ -9057,7 +9322,7 @@ export default function PurchasesPage() {
                               <Button
                                 size="sm"
                                 onClick={() => handleApplyHistoryToRow(record)}
-                                className="h-8 px-3 text-xs font-extrabold bg-orange-500 hover:bg-orange-600 active:scale-95 text-white shadow-sm hover:shadow-orange-500/20 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 shrink-0"
+                                className="h-8 px-3 text-xs font-extrabold bg-primary hover:bg-primary/90 active:scale-95 text-primary-foreground shadow-sm rounded-xl transition-all cursor-pointer flex items-center gap-1.5 shrink-0"
                               >
                                 <Sparkles className="w-3.5 h-3.5" />
                                 <span>Apply Rate</span>
@@ -9316,7 +9581,7 @@ export default function PurchasesPage() {
             <Button
               onClick={handlePreviewPurchaseFromCsv}
               disabled={submitting || csvColumns.length === 0 || csvReading}
-              className="w-full sm:w-auto h-9 px-5 bg-orange-500 hover:bg-orange-600 text-white font-extrabold text-xs rounded-xl shadow-md cursor-pointer flex items-center justify-center gap-1.5"
+              className="w-full sm:w-auto h-9 px-5 bg-primary hover:bg-primary/90 text-primary-foreground font-extrabold text-xs rounded-xl shadow-md cursor-pointer flex items-center justify-center gap-1.5"
             >
               <Eye className="w-4 h-4" />
               <span>Preview Purchase Draft</span>
@@ -9330,6 +9595,25 @@ export default function PurchasesPage() {
         onPick={pickNewProductMatch}
         onSave={saveNewProducts}
         onCancel={() => setNewProductsPrompt(null)}
+      />
+
+      <DuplicateProductsDialog
+        open={dupFor !== null}
+        name={dupFor || ""}
+        onOpenChange={(o) => !o && setDupFor(null)}
+        onMerged={() => {
+          refreshDupCount();
+          fetchPurchases(pagination.page);
+        }}
+      />
+
+      {/* Edit an existing catalog product */}
+      <ProductCatalogModal
+        isOpen={!!editCatalogProduct}
+        editProduct={editCatalogProduct}
+        title="Edit Product Details"
+        onClose={() => setEditCatalogProduct(null)}
+        onSuccess={() => toast.info("Catalog updated. Lines already on this purchase keep what they show; pick the product again to refresh them.")}
       />
 
       {/* Product Catalog Modal */}

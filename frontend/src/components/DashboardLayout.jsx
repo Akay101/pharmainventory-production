@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
-import { Outlet, NavLink, useNavigate, useLocation } from "react-router-dom";
+import { NavLink, useNavigate, useLocation } from "react-router-dom";
 import axios from "axios";
 import { API, useAuth } from "../App";
 import { Button } from "./ui/button";
@@ -19,6 +19,9 @@ import {
   TooltipTrigger,
 } from "./ui/tooltip";
 import {
+  Download,
+  Cloud,
+  CloudOff,
   LayoutDashboard,
   Package,
   ShoppingCart,
@@ -43,11 +46,15 @@ import {
   Compass,
   FileText,
   PackageCheck,
+  Clapperboard,
 } from "lucide-react";
 
 import RecentActivitySidebar from "./RecentActivitySidebar";
 import { formatCombo, isVisible } from "../lib/shortcuts";
 import { ShortcutProvider } from "./shortcuts/Shortcuts";
+import { toast } from "sonner";
+import { DOWNLOADS_ENABLED, IS_DESKTOP, signOutDesktop, useDesktopStatus, useOnlineFeatures } from "../lib/desktop";
+import DesktopChoiceDialog from "./DesktopChoiceDialog";
 import AssistantLauncher from "./assistant/AssistantLauncher";
 import PlanBadge from "./PlanBadge";
 import NotificationCenter from "./NotificationCenter";
@@ -56,55 +63,85 @@ import { MobileBottomNav } from "./MobileNav";
 import TopNav from "./TopNav";
 import { AI_LOGO_SRC } from "./scan/ScanUI";
 import { TourProvider, useTour } from "./tour/ProductTour";
+import { GuideOutlet, useGuide } from "./guide/GuideProvider";
 import { CreditsPill, CreditsSheet, useCredits } from "./assistant/Credits";
+import PharmacySwitcher from "./billing/PharmacySwitcher";
+import { PLAN_NAMES } from "../lib/checkout";
 
 const navItems = [
   { path: "/dashboard", label: "Dashboard", icon: LayoutDashboard, shortcut: "alt+h" },
   {
     path: "/inventory",
+    module: "inventory",
     label: "Inventory",
     icon: Package,
     shortcut: "alt+i",
   },
   {
     path: "/purchases",
+    module: "purchases",
     label: "Purchases",
     icon: ShoppingCart,
     shortcut: "alt+p",
   },
-  { path: "/billing", label: "Billing", icon: Receipt, shortcut: "alt+b" },
+  { path: "/billing", label: "Billing", icon: Receipt, shortcut: "alt+b", module: "billing" },
   {
     path: "/suppliers",
+    module: "suppliers",
     label: "Suppliers",
     icon: Truck,
     shortcut: "alt+s",
   },
   {
     path: "/customers",
+    module: "customers",
     label: "Customers",
     icon: Users,
     shortcut: "alt+c",
   },
   {
     path: "/expiry",
+    module: "expiry",
     label: "Expiry",
     icon: CalendarX,
     shortcut: "alt+e",
   },
   {
     path: "/returns",
+    module: "returns",
     label: "Returns",
     icon: RotateCcw,
     shortcut: "alt+r",
   },
-  { path: "/short-book", label: "Short Book", icon: ClipboardList, shortcut: "alt+o" },
-  { path: "/restock", label: "Restock", icon: PackageCheck, shortcut: "alt+t" },
+  { path: "/short-book", label: "Short Book", icon: ClipboardList, shortcut: "alt+o", module: "short_book" },
+  { path: "/restock", label: "Restock", icon: PackageCheck, shortcut: "alt+t", module: "restock" },
   { path: "/users", label: "Users", icon: UserCog, adminOnly: true },
-  { path: "/reports", label: "Reports", icon: BarChart3, shortcut: "alt+y" },
+  { path: "/reports", label: "Reports", icon: BarChart3, shortcut: "alt+y", module: "dashboard" },
   { path: "/settings", label: "Settings", icon: Settings, shortcut: "alt+," },
   // In the user menu and the phone's More sheet, not the top bar
   { path: "/support", label: "Help & Support", icon: LifeBuoy, menuOnly: true },
 ];
+
+// Desktop only: always shows whether work is saved to the cloud; opens the Sync Center
+function DesktopSyncChip() {
+  const s = useDesktopStatus();
+  const navigate = useNavigate();
+  if (!s) return null;
+  // Changes the cloud held back wait for a person, so they outrank everything else
+  const review = (s.reviews?.length || 0) + (s.conflicts?.length || 0);
+  const text = review ? `${review} to review` : !s.online ? `Offline${s.pending ? ` · ${s.pending} waiting` : ""}` : s.pending ? `Syncing ${s.pending}` : "Synced";
+  return (
+    <button
+      type="button"
+      onClick={() => navigate("/sync")}
+      data-testid="sync-chip"
+      className={`flex items-center gap-1.5 h-9 px-3 rounded-xl border border-border/60 text-xs font-bold whitespace-nowrap ${review ? "text-rose-600 dark:text-rose-400" : !s.online ? "text-amber-600 dark:text-amber-400" : s.pending ? "text-orange-600 dark:text-orange-400" : "text-emerald-600 dark:text-emerald-400"}`}
+    >
+      {s.online ? <Cloud className="w-3.5 h-3.5" aria-hidden="true" /> : <CloudOff className="w-3.5 h-3.5" aria-hidden="true" />}
+      {text}
+    </button>
+  );
+}
 
 // AI credits left (shared by the pharmacy); opens balance, top-ups and history.
 // Refreshes on page change and whenever a scan or chat reply uses credits.
@@ -139,16 +176,35 @@ function TakeTourItem() {
   );
 }
 
-// "AGENTIC Plan", or "AGENTIC Trial · 3d left" while on the free trial
+// Profile menu entry that lists the guided tours of every module
+function GuidedToursItem() {
+  const { openHub } = useGuide();
+  return (
+    <DropdownMenuItem
+      onClick={openHub}
+      data-testid="guided-tours"
+      className="cursor-pointer font-bold py-2 px-3 rounded-xl group hover:bg-orange-500/10 focus:bg-orange-500/10 text-foreground hover:text-orange-600 focus:text-orange-600 dark:hover:text-orange-400 dark:focus:text-orange-400 transition-colors"
+    >
+      <Clapperboard className="w-4 h-4 mr-2.5 text-orange-500 group-hover:-rotate-6 transition-transform duration-200" />
+      Guided tours
+    </DropdownMenuItem>
+  );
+}
+
+// "DavaDesk Complete", or "… Trial · 3d left" while on the free trial
+const code_plan = (n) => (/^DavaDesk/.test(n) ? n : `${n} Plan`);
 const planLabel = (user) => {
+  if (IS_DESKTOP) return "Desktop";
   const sub = user?.subscription;
-  if (sub?.status === "TRIAL") return `${sub.plan} Trial · ${sub.days_left}d left`;
-  if (user?.subscription_plan) return `${user.subscription_plan} Plan`;
+  const name = (code) => PLAN_NAMES[code] || code;
+  if (sub?.status === "TRIAL") return `${name(sub.plan)} Trial · ${sub.days_left}d left`;
+  if (user?.subscription_plan) return code_plan(name(user.subscription_plan));
   return "No active plan";
 };
 
 export default function DashboardLayout() {
-  const { user, pharmacy, logout, updateSetting, isAdmin } = useAuth();
+  const onlineFeatures = useOnlineFeatures();
+  const { user, pharmacy, logout, updateSetting, isAdmin, can } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -161,13 +217,14 @@ export default function DashboardLayout() {
     return !document.documentElement.classList.contains("light");
   });
 
-  const filteredItems = navItems.filter((item) => !item.adminOnly || isAdmin);
-  const topNavItems = useMemo(() => filteredItems.filter((item) => !item.menuOnly), [isAdmin]); // eslint-disable-line
+  const filteredItems = navItems.filter((item) => (!item.adminOnly || isAdmin) && (!item.module || can(item.module, "read")) && (onlineFeatures || item.path !== "/support"));
+  const accessKey = JSON.stringify(user?.access?.modules || null);
+  const topNavItems = useMemo(() => filteredItems.filter((item) => !item.menuOnly), [isAdmin, onlineFeatures, accessKey]); // eslint-disable-line
 
   // Support replies not seen yet (badge in the user menu)
   const [supportUnread, setSupportUnread] = useState(0);
   useEffect(() => {
-    let live = true;
+      let live = true;
     const check = () =>
       axios
         .get(`${API}/support/unread`)
@@ -189,14 +246,14 @@ export default function DashboardLayout() {
     ...filteredItems
       .filter((item) => item.shortcut)
       .map((item) => ({ combo: item.shortcut, label: item.label, group: "Go to", run: () => navigate(item.path) })),
-    { combo: "alt+j", label: "DavaDesk AI", group: "Go to", run: () => navigate("/assistant") },
+    ...(can("assistant", "read") ? [{ combo: "alt+j", label: "DavaDesk AI", group: "Go to", run: () => navigate("/assistant") }] : []),
     {
       combo: "alt+n",
       label: "New (bill, purchase, note… on this page; else a new bill)",
       run: () => {
         const btn = visible('[data-shortcut="new"]');
         if (btn) return btn.click();
-        navigate("/billing", { state: { newBill: true } });
+        if (can("billing", "create")) navigate("/billing", { state: { newBill: true } });
       },
     },
     {
@@ -303,7 +360,16 @@ export default function DashboardLayout() {
     localStorage.setItem("activityOpen", "false");
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    if (IS_DESKTOP) {
+      if (!window.confirm("Sign in with a different account? This account's copy on this computer will be removed. Everything already synced stays safe in the account.")) return;
+      try {
+        await signOutDesktop(false);
+      } catch (err) {
+        toast.error(String(err.message || err).replace(/^Error invoking remote method '[^']*': (Error: )?/, ""));
+      }
+      return;
+    }
     logout();
     navigate("/login");
   };
@@ -377,7 +443,7 @@ export default function DashboardLayout() {
                             onClick={() => setMobileOpen(false)}
                             className={`group flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold transition-all ${
                               isItemActive
-                                ? "bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-md shadow-orange-500/25"
+                                ? "text-primary-foreground shadow-md bg-primary"
                                 : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
                             }`}
                           >
@@ -390,7 +456,7 @@ export default function DashboardLayout() {
                   </div>
 
                   {/* Sheet Footer Logout */}
-                  <div className="border-t border-border/50 pt-4">
+                  <div className={`border-t border-border/50 pt-4 ${IS_DESKTOP ? "hidden" : ""}`}>
                     <Button
                       variant="outline"
                       onClick={() => {
@@ -425,6 +491,8 @@ export default function DashboardLayout() {
                     className="w-9 h-9 object-contain group-hover:scale-105 transition-transform"
                   />
                 )}
+                <div onClick={(e) => e.stopPropagation()} className="min-w-0">
+                <PharmacySwitcher>
                 <div className="flex flex-col min-w-0 max-w-[160px] max-md:max-w-[140px] 2xl:max-w-[220px]">
                   <span className="font-black text-sm tracking-tight text-foreground group-hover:text-orange-500 transition-colors leading-tight truncate">
                     {pharmacy?.name || "DavaDesk"}
@@ -433,6 +501,8 @@ export default function DashboardLayout() {
                     <Sparkles className="w-2.5 h-2.5 text-orange-500" />
                     {planLabel(user)}
                   </span>
+                </div>
+                </PharmacySwitcher>
                 </div>
               </div>
             </div>
@@ -443,7 +513,7 @@ export default function DashboardLayout() {
             {/* Right Controls Panel */}
             <div className="flex items-center gap-2.5 max-md:gap-1.5 shrink-0">
               {/* Phone: DavaDesk AI lives in the header instead of a floating bubble */}
-              <button
+              {onlineFeatures && can("assistant", "read") && <button
                 type="button"
                 onClick={() => navigate("/assistant")}
                 aria-label="Open DavaDesk AI"
@@ -451,9 +521,10 @@ export default function DashboardLayout() {
                 className="md:hidden flex h-9 w-9 items-center justify-center rounded-xl border border-border/60 active:scale-95"
               >
                 <img src={AI_LOGO_SRC} alt="" className="h-7 w-7 rounded-full" />
-              </button>
+              </button>}
 
-              <HeaderCredits />
+              {onlineFeatures && <HeaderCredits />}
+              {IS_DESKTOP && <DesktopSyncChip />}
 
               {/* Theme Toggle Button */}
               <Button
@@ -531,7 +602,7 @@ export default function DashboardLayout() {
                     <Settings className="w-4 h-4 mr-2.5 text-orange-500 group-hover:rotate-45 transition-transform duration-200" />
                     Settings
                   </DropdownMenuItem>
-                  <DropdownMenuItem
+                  {onlineFeatures && <DropdownMenuItem
                     onClick={() => navigate("/support", { state: { from: location.pathname } })}
                     data-testid="support-dropdown"
                     className="cursor-pointer font-bold py-2 px-3 rounded-xl group hover:bg-orange-500/10 focus:bg-orange-500/10 text-foreground hover:text-orange-600 focus:text-orange-600 dark:hover:text-orange-400 dark:focus:text-orange-400 transition-colors"
@@ -539,12 +610,19 @@ export default function DashboardLayout() {
                     <LifeBuoy className="w-4 h-4 mr-2.5 text-orange-500" />
                     Help & Support
                     {supportUnread > 0 && (
-                      <span className="ml-auto rounded-full bg-violet-600 px-1.5 py-0.5 text-[10px] font-black text-white" aria-label={`${supportUnread} new replies`}>
+                      <span className="ml-auto rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-black text-primary-foreground" aria-label={`${supportUnread} new replies`}>
                         {supportUnread}
                       </span>
                     )}
-                  </DropdownMenuItem>
-                  <TakeTourItem />
+                  </DropdownMenuItem>}
+                  {!IS_DESKTOP && <TakeTourItem />}
+                  <GuidedToursItem />
+                  {DOWNLOADS_ENABLED && (
+                    <DropdownMenuItem onClick={() => navigate("/download")} data-testid="download-desktop" className="cursor-pointer font-bold py-2 px-3 rounded-xl group hover:bg-orange-500/10 focus:bg-orange-500/10 text-foreground hover:text-orange-600 focus:text-orange-600 dark:hover:text-orange-400 dark:focus:text-orange-400 transition-colors">
+                      <Download className="w-4 h-4 mr-2.5 text-orange-500" />
+                      Download desktop app
+                    </DropdownMenuItem>
+                  )}
                   {user?.subscription?.kind === "PROMO" && (
                     <DropdownMenuItem
                       onClick={() => navigate("/early-access/terms")}
@@ -561,7 +639,7 @@ export default function DashboardLayout() {
                     className="text-destructive hover:bg-destructive/10 focus:bg-destructive/10 focus:text-destructive hover:text-destructive cursor-pointer font-bold py-2 px-3 rounded-xl group transition-colors"
                   >
                     <LogOut className="w-4 h-4 mr-2.5 text-destructive transition-transform group-hover:translate-x-0.5" />
-                    Logout
+                    {IS_DESKTOP ? "Switch account" : "Logout"}
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
@@ -580,13 +658,13 @@ export default function DashboardLayout() {
           >
             <div
               key={location.pathname}
-              className={`flex-1 w-full flex flex-col animate-in fade-in-0 slide-in-from-bottom-2 duration-300 ease-out ${
+              className={`dd-page flex-1 w-full flex flex-col ${
                 location.pathname.startsWith("/purchases") || location.pathname.startsWith("/billing")
                   ? "max-w-none"
                   : "max-w-[1650px] mx-auto"
               }`}
             >
-              <Outlet />
+              <GuideOutlet />
             </div>
           </main>
 
@@ -627,9 +705,10 @@ export default function DashboardLayout() {
         />
 
         {/* DavaDesk AI launcher (phones use the header button) */}
-        <div className="max-md:hidden">
+        {onlineFeatures && can("assistant", "read") && <div className="max-md:hidden">
           <AssistantLauncher />
-        </div>
+        </div>}
+        <DesktopChoiceDialog />
       </div>
     </BroadcastProvider>
     </TooltipProvider>

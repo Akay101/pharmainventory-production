@@ -281,7 +281,70 @@ async function sendTextEmail({ toEmail, toName, subject, text, highlight, replyT
   throw err;
 }
 
+// Email with file attachments (e.g. a GST invoice): SES raw first, then Brevo
+const headerSafe = (v) => String(v || "").replace(/[\r\n]+/g, " ");
+const encodeHeader = (v) => `=?UTF-8?B?${Buffer.from(headerSafe(v), "utf8").toString("base64")}?=`;
+const wrap76 = (b64) => b64.replace(/.{1,76}/g, "$&\r\n");
+async function sendAttachmentEmail({ toEmail, toName, subject, text, highlight, attachments }) {
+  const fromEmail = process.env.MAIL_USER || "team@davadesk.in";
+  const fromName = process.env.MAIL_OFFER_SENDER_NAME || "DavaDesk";
+  const html = buildTextEmail({ text, highlight });
+  const errors = [];
+  const client = ses();
+  if (client) {
+    try {
+      const { SendRawEmailCommand } = require("@aws-sdk/client-ses");
+      const boundary = `dd_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
+      const parts = [
+        `From: ${encodeHeader(fromName)} <${fromEmail}>`,
+        `To: ${toName ? `${encodeHeader(toName)} ` : ""}<${headerSafe(toEmail)}>`,
+        `Subject: ${encodeHeader(subject)}`,
+        "MIME-Version: 1.0",
+        `Content-Type: multipart/mixed; boundary="${boundary}"`,
+        "",
+        `--${boundary}`,
+        "Content-Type: text/html; charset=UTF-8",
+        "Content-Transfer-Encoding: base64",
+        "",
+        wrap76(Buffer.from(html, "utf8").toString("base64")),
+      ];
+      for (const a of attachments) {
+        const name = headerSafe(a.filename).replace(/"/g, "");
+        parts.push(`--${boundary}`, `Content-Type: ${a.contentType || "application/octet-stream"}; name="${name}"`, "Content-Transfer-Encoding: base64", `Content-Disposition: attachment; filename="${name}"`, "", wrap76(Buffer.from(a.content).toString("base64")));
+      }
+      parts.push(`--${boundary}--`, "");
+      const out = await client.send(new SendRawEmailCommand({ RawMessage: { Data: Buffer.from(parts.join("\r\n")) } }));
+      return { provider: "ses", message_id: out?.MessageId || null };
+    } catch (err) {
+      console.warn(`[Admin Email] SES (attachment) failed for ${toEmail}: ${err.message}`);
+      errors.push(`SES: ${err.message}`);
+    }
+  } else {
+    errors.push("SES: AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY not set");
+  }
+  if (process.env.BREVO_API_KEY) {
+    try {
+      const mail = new SibApiV3Sdk.SendSmtpEmail();
+      mail.subject = subject;
+      mail.htmlContent = html;
+      mail.textContent = text;
+      mail.sender = { name: fromName, email: fromEmail };
+      mail.to = [{ email: toEmail, name: toName || undefined }];
+      mail.attachment = attachments.map((a) => ({ name: a.filename, content: Buffer.from(a.content).toString("base64") }));
+      const data = await apiInstance.sendTransacEmail(mail);
+      return { provider: "brevo", message_id: data?.messageId || null };
+    } catch (err) {
+      const detail = err.response?.body?.message || err.message;
+      errors.push(`Brevo: ${detail}`);
+    }
+  }
+  const err = new Error(`Email could not be sent (${errors.join("; ")})`);
+  err.status = client || process.env.BREVO_API_KEY ? 502 : 503;
+  throw err;
+}
+
 module.exports = {
+  sendAttachmentEmail,
   sendAdminOTPEmail,
   sendTextEmail,
   buildTextEmail,

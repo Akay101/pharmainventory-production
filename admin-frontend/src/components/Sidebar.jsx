@@ -18,6 +18,8 @@ import {
   Gift,
   Database,
   Megaphone,
+  Upload,
+  FileText,
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 
@@ -61,6 +63,12 @@ export default function Sidebar({
       section: "MONITORING",
     },
     {
+      id: "imports",
+      label: "Data Import",
+      icon: Upload,
+      section: "MONITORING",
+    },
+    {
       id: "support",
       label: "Support Queries",
       icon: LifeBuoy,
@@ -96,6 +104,12 @@ export default function Sidebar({
       id: "subscriptions",
       label: "Subscriptions",
       icon: CalendarClock,
+      section: "SALES & CRM",
+    },
+    {
+      id: "invoices",
+      label: "Invoices",
+      icon: FileText,
       section: "SALES & CRM",
     },
     {

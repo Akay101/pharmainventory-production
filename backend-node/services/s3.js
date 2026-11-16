@@ -1,7 +1,7 @@
 // Private files on S3 (AWS_PRIVATE_S3_BUCKET, else AWS_S3_BUCKET). Nothing here
 // is public: reads go through short-lived signed links handed out after the API
 // has checked who is asking.
-const { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, DeleteObjectsCommand, ListObjectsV2Command } = require("@aws-sdk/client-s3");
+const { S3Client, PutObjectCommand, GetObjectCommand, HeadObjectCommand, DeleteObjectCommand, DeleteObjectsCommand, ListObjectsV2Command } = require("@aws-sdk/client-s3");
 const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
 
 const BUCKET = () => process.env.AWS_PRIVATE_S3_BUCKET || process.env.AWS_S3_BUCKET || "pharmalogy-media-bucket";
@@ -34,6 +34,23 @@ const signedUrl = (key, { expiresIn = 300, filename, contentType } = {}) =>
     { expiresIn }
   );
 
+// A short-lived link that saves the file instead of opening it
+const downloadUrl = (key, { expiresIn = 900, filename } = {}) =>
+  getSignedUrl(
+    s3(),
+    new GetObjectCommand({ Bucket: BUCKET(), Key: key, ...(filename ? { ResponseContentDisposition: `attachment; filename="${String(filename).replace(/[^\w.\- ]/g, "_")}"` } : {}) }),
+    { expiresIn }
+  );
+
+const exists = (key) =>
+  s3()
+    .send(new HeadObjectCommand({ Bucket: BUCKET(), Key: key }))
+    .then(() => true)
+    .catch((err) => {
+      if (err.$metadata?.httpStatusCode === 404 || err.name === "NotFound") return false;
+      throw err;
+    });
+
 const remove = (key) => s3().send(new DeleteObjectCommand({ Bucket: BUCKET(), Key: key }));
 
 // Delete every object under `prefix`; returns how many
@@ -53,4 +70,4 @@ async function removePrefix(prefix) {
   return deleted;
 }
 
-module.exports = { putPrivate, signedUrl, remove, removePrefix };
+module.exports = { putPrivate, signedUrl, downloadUrl, exists, remove, removePrefix };

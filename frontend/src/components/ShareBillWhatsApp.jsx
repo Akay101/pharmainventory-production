@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useOnlineFeatures } from "../lib/desktop";
 import axios from "axios";
 import { toast } from "sonner";
 import { Copy } from "lucide-react";
@@ -40,11 +41,16 @@ const fmtDay = (d) => (d ? new Date(d).toLocaleDateString("en-IN", { day: "numer
  * bill has a valid mobile; otherwise it asks for a number. Render `dialog`.
  */
 export function useWhatsAppShare() {
+  const online = useOnlineFeatures();
   const [state, setState] = useState(null); // { bill, phone, message, url, expires_at }
   const [busyId, setBusyId] = useState(null);
 
   const share = async (bill) => {
     if (!bill?.id || busyId) return;
+    if (!online) {
+      toast.info("Sharing a bill needs internet. You can print it instead.");
+      return;
+    }
     // Open the tab inside the click, so pop-up blockers allow it
     const direct = !!normalizeMobile(bill.customer_mobile);
     const win = direct ? window.open("", "_blank") : null;

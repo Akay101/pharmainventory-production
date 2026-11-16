@@ -16,10 +16,12 @@ import {
   Compass,
   Sun,
   Moon,
+  Clapperboard,
 } from "lucide-react";
 import { Sheet, SheetContent, SheetTitle, SheetDescription } from "./ui/sheet";
 import { AI_LOGO_SRC } from "./scan/ScanUI";
 import { useTour } from "./tour/ProductTour";
+import { useGuide } from "./guide/GuideProvider";
 
 // Phone-only navigation (below md): a bottom tab bar like a native app, with
 // the rest of the app in a "More" sheet. Desktop keeps the top navigation.
@@ -75,6 +77,7 @@ function useKeyboardOpen() {
 
 export function MobileBottomNav({ items, isActive, onLogout, onOpenActivity, pharmacy, planLabel, isDark, onToggleTheme }) {
   const { start: startTour } = useTour();
+  const { openHub: openGuides } = useGuide();
   const navigate = useNavigate();
   const location = useLocation();
   const [sheet, setSheet] = useState(null); // "scan" | "more" | null
@@ -99,13 +102,13 @@ export function MobileBottomNav({ items, isActive, onLogout, onOpenActivity, pha
       >
         <MotionConfig reducedMotion="user">
           <div className="grid grid-cols-5 h-[3.75rem]">
-            {TABS.map((tab) => {
+            {TABS.filter((t) => !t.path || t.path === "/dashboard" || items.some((i) => i.path === t.path)).map((tab) => {
               const cls = "relative flex flex-col items-center justify-center gap-1 touch-manipulation";
               if (tab.scan) {
                 // Sits inside the bar like the other tabs, so it never covers the page
                 return (
                   <button key="scan" type="button" onClick={() => setSheet("scan")} aria-label="Scan" data-tour="mtab-scan" className={`${cls} group`}>
-                    <span className="flex h-8 w-12 items-center justify-center rounded-[0.9rem] bg-gradient-to-br from-orange-500 to-amber-500 text-white shadow-md shadow-orange-500/30 transition-transform duration-150 group-active:scale-90">
+                    <span className="ink-pill flex h-8 w-12 items-center justify-center rounded-[0.9rem] text-primary-foreground shadow-md transition-transform duration-150 group-active:scale-90 bg-primary">
                       <ScanLine className="h-[1.15rem] w-[1.15rem]" />
                     </span>
                     <span className={`text-[10.5px] font-bold leading-none ${sheet === "scan" ? "text-orange-500" : "text-muted-foreground"}`}>Scan</span>
@@ -151,14 +154,14 @@ export function MobileBottomNav({ items, isActive, onLogout, onOpenActivity, pha
           <div className="mt-4 grid gap-3">
             <SheetAction
               icon={Camera}
-              tone="from-orange-500 to-amber-500"
+              tone="bg-primary text-primary-foreground"
               title="Scan medicine for bill"
               text="Photo of a strip or bottle adds it to a new bill"
               onClick={() => go("/scan-bill")}
             />
             <SheetAction
               icon={FileText}
-              tone="from-violet-500 to-indigo-500"
+              tone="bg-brand/10 text-brand-soft"
               title="Scan purchase invoice"
               text="Photo of a supplier bill creates the purchase"
               onClick={() => go("/scan")}
@@ -188,7 +191,7 @@ export function MobileBottomNav({ items, isActive, onLogout, onOpenActivity, pha
           <button
             type="button"
             onClick={() => go("/assistant")}
-            className="mt-4 flex w-full items-center gap-3 rounded-2xl border border-violet-500/25 bg-gradient-to-r from-orange-500/10 via-pink-500/10 to-violet-500/10 p-3 text-left active:scale-[0.99]"
+            className="mt-4 flex w-full items-center gap-3 rounded-2xl border border-border p-3 text-left active:scale-[0.99] bg-card"
           >
             <img src={AI_LOGO_SRC} alt="" className="h-10 w-10 rounded-full" />
             <span className="min-w-0 flex-1">
@@ -211,7 +214,7 @@ export function MobileBottomNav({ items, isActive, onLogout, onOpenActivity, pha
                     active ? "border-orange-500/40 bg-orange-500/10" : "border-border/60 bg-muted/30"
                   }`}
                 >
-                  <span className={`flex h-10 w-10 items-center justify-center rounded-xl ${active ? "bg-gradient-to-br from-orange-500 to-amber-500 text-white" : "bg-background text-foreground"}`}>
+                  <span className={`flex h-10 w-10 items-center justify-center rounded-xl ${active ? "text-primary-foreground bg-primary" : "bg-background text-foreground"}`}>
                     <Icon className="h-5 w-5" />
                   </span>
                   <span className="w-full text-center text-[10.5px] font-bold leading-tight tracking-tight">{item.label}</span>
@@ -246,6 +249,17 @@ export function MobileBottomNav({ items, isActive, onLogout, onOpenActivity, pha
             className="mt-2 flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-orange-500/30 bg-orange-500/5 text-sm font-bold text-orange-600 active:scale-[0.98] dark:text-orange-400"
           >
             <Compass className="h-4 w-4" /> Take the tour
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setSheet(null);
+              setTimeout(openGuides, 250);
+            }}
+            data-testid="mobile-guided-tours"
+            className="mt-2 flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-border bg-card text-sm font-semibold text-foreground active:scale-[0.98] [&>svg]:text-brand"
+          >
+            <Clapperboard className="h-4 w-4" /> Guided tours
           </button>
 
           <div className="mt-2 grid grid-cols-2 gap-2">
@@ -283,7 +297,7 @@ function SheetAction({ icon: Icon, tone, title, text, onClick }) {
       onClick={onClick}
       className="flex items-center gap-3 rounded-2xl border border-border/60 bg-muted/30 p-3.5 text-left active:scale-[0.99] transition-transform"
     >
-      <span className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br ${tone} text-white shadow-md`}>
+      <span className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl ${tone}`}>
         <Icon className="h-6 w-6" />
       </span>
       <span className="min-w-0 flex-1">

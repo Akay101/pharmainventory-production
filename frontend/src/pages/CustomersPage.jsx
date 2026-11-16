@@ -3,6 +3,8 @@ import { useNavigate, useLocation } from "react-router-dom";
 import axios from "axios";
 import { API, useAuth } from "../App";
 import { TierBadge, TierFilterBar, TierRulesDialog, CustomerTierCard, visitLine } from "../components/customers/CustomerTiers";
+import MonthlyAccount from "../components/customers/MonthlyAccount";
+import AdvanceCredit from "../components/customers/AdvanceCredit";
 import { Card, CardContent } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -68,7 +70,13 @@ export default function CustomersPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const isInitialMount = useRef(true);
-  const { isAdmin } = useAuth();
+  const { isAdmin, can, rule } = useAuth();
+  // Hide what this user's access doesn't allow (the server enforces it too)
+  const canAddReminder = can("restock", "create");
+  const canEditReminder = can("restock", "update");
+  const canDeleteReminder = can("restock", "delete");
+  const canTakePayment = can("billing", "update") && !rule("no_customer_debt_clear");
+  const canClearDebt = can("customers", "update") && !rule("no_customer_debt_clear");
   const [customers, setCustomers] = useState([]);
   // Tiers: filter, counts per tier, sort, rules dialog
   const [tierFilter, setTierFilter] = useState("");
@@ -445,7 +453,7 @@ export default function CustomersPage() {
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-black tracking-tight bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent">Customers</h1>
+          <h1 className="text-3xl font-black tracking-tight text-foreground">Customers</h1>
           <p className="text-sm font-semibold text-muted-foreground">
             {pagination.total} registered customers in database
           </p>
@@ -597,7 +605,7 @@ export default function CustomersPage() {
             <DialogTitle className="text-lg font-bold flex items-center gap-2">
               <Users className="w-5 h-5 text-primary" /> Customer Profile & History
             </DialogTitle>
-            {selectedCustomer && (
+            {selectedCustomer && canAddReminder && (
               <Button
                 size="sm"
                 onClick={() => {
@@ -625,7 +633,7 @@ export default function CustomersPage() {
               {/* Customer Info Card */}
               <div className="flex items-start justify-between gap-4 p-4 rounded-2xl bg-muted/20 border border-border/50">
                 <div className="flex items-center gap-3.5 min-w-0">
-                  <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-primary/15 to-indigo-500/15 border border-primary/20 flex items-center justify-center shrink-0">
+                  <div className="w-12 h-12 rounded-xl border border-primary/20 flex items-center justify-center shrink-0 bg-primary/10">
                     <Users className="w-6 h-6 text-primary" />
                   </div>
                   <div className="min-w-0">
@@ -717,8 +725,17 @@ export default function CustomersPage() {
                 </div>
               </div>
 
+              {/* Advance credit: take an advance, see what's left and its history */}
+              {selectedCustomer && (
+                <AdvanceCredit
+                  customer={selectedCustomer}
+                  canTake={canTakePayment}
+                  onChanged={(c) => setSelectedCustomer((prev) => (prev?.id === c.id ? { ...prev, ...c } : prev))}
+                />
+              )}
+
               {/* Tabs Navigation */}
-              <div className="flex items-center gap-2 border-b border-border/60 pb-2">
+              <div className="flex items-center gap-2 flex-wrap border-b border-border/60 pb-2">
                 <Button
                   type="button"
                   variant={activeDetailTab === "reminders" ? "default" : "ghost"}
@@ -746,6 +763,21 @@ export default function CustomersPage() {
                 >
                   <Receipt className="w-3.5 h-3.5 mr-1.5" />
                   Purchase Bills ({customerBills.length})
+                </Button>
+                <Button
+                  type="button"
+                  variant={activeDetailTab === "monthly" ? "default" : "ghost"}
+                  size="sm"
+                  onClick={() => setActiveDetailTab("monthly")}
+                  data-testid="customer-monthly-tab"
+                  className={`h-8 px-3.5 font-bold text-xs rounded-xl transition-all ${
+                    activeDetailTab === "monthly"
+                      ? "bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <Calendar className="w-3.5 h-3.5 mr-1.5" />
+                  Monthly Account
                 </Button>
                 {unpaidBills.length > 0 && (
                   <Button
@@ -786,6 +818,7 @@ export default function CustomersPage() {
                       </div>
                       <Button
                         size="sm"
+                        className={canAddReminder ? undefined : "hidden"}
                         onClick={() => {
                           const dates = computeReminderDates(30, 5);
                           setAddReminderDialog({
@@ -894,7 +927,7 @@ export default function CustomersPage() {
                                   <button
                                     type="button"
                                     onClick={() => handleToggleReminder(rem.id)}
-                                    disabled={actionLoading[rem.id]}
+                                    disabled={actionLoading[rem.id] || !canEditReminder}
                                     className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden ${
                                       rem.is_active ? "bg-indigo-600" : "bg-muted-foreground/30"
                                     }`}
@@ -943,6 +976,7 @@ export default function CustomersPage() {
                                 <Button
                                   size="sm"
                                   variant="outline"
+                                  hidden={!can("purchases", "create")}
                                   onClick={() => {
                                     setDetailsOpen(false);
                                     navigate("/purchases", {
@@ -957,7 +991,7 @@ export default function CustomersPage() {
                                   <Package className="w-3 h-3" /> Purchase Now
                                 </Button>
 
-                                {!isCompleted && (
+                                {!isCompleted && canEditReminder && (
                                   <Button
                                     size="sm"
                                     variant="outline"
@@ -973,6 +1007,7 @@ export default function CustomersPage() {
                               <Button
                                 size="sm"
                                 variant="ghost"
+                                hidden={!canDeleteReminder}
                                 onClick={() => handleDeleteReminder(rem.id)}
                                 disabled={actionLoading[rem.id]}
                                 className="h-7 w-7 p-0 text-destructive/70 hover:text-destructive hover:bg-destructive/10 rounded-lg"
@@ -1038,6 +1073,18 @@ export default function CustomersPage() {
                 </div>
               )}
 
+              {/* TAB: MONTHLY ACCOUNT (bills, paid / pending, statement PDFs) */}
+              {activeDetailTab === "monthly" && selectedCustomer && (
+                <MonthlyAccount
+                  customerId={selectedCustomer.id}
+                  customerName={selectedCustomer.name}
+                  onOpenBill={(b) => {
+                    setDetailsOpen(false);
+                    navigate("/billing", { state: { highlightId: b.id } });
+                  }}
+                />
+              )}
+
               {/* TAB 3: UNPAID BILLS */}
               {activeDetailTab === "unpaid" && unpaidBills.length > 0 && (
                 <div className="space-y-2 animate-in fade-in duration-200">
@@ -1074,6 +1121,7 @@ export default function CustomersPage() {
                                   <Button
                                     size="sm"
                                     variant="outline"
+                                    hidden={!canTakePayment}
                                     className="border-primary/50 text-primary hover:bg-primary/5 h-8 font-bold text-xs"
                                     onClick={() => {
                                       setDetailsOpen(false);
@@ -1097,6 +1145,7 @@ export default function CustomersPage() {
                             </span>
                             <Button
                               size="sm"
+                              hidden={!canTakePayment}
                               className="btn-primary h-8 font-bold text-xs"
                               onClick={() => handlePayBill(bill)}
                             >
@@ -1352,7 +1401,7 @@ export default function CustomersPage() {
                   >
                     <TableCell>
                       <div className="flex items-center gap-3">
-                        <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-primary/10 to-accent/10 border border-primary/20 flex items-center justify-center">
+                        <div className="w-9 h-9 rounded-lg border border-primary/20 flex items-center justify-center bg-primary/5">
                           <span className="font-bold text-primary">
                             {customer.name ? customer.name.charAt(0).toUpperCase() : "?"}
                           </span>
@@ -1426,13 +1475,14 @@ export default function CustomersPage() {
                         <Button
                           size="sm"
                           variant="outline"
+                          hidden={!can("billing", "read")}
                           className="border-primary/50 text-primary hover:bg-primary/5 h-8 font-semibold rounded-lg text-xs"
                           onClick={() => navigate(`/billing?customer_id=${customer.id}`)}
                         >
                           See Bills
                         </Button>
                         
-                        {customer.total_debt > 0 && (
+                        {customer.total_debt > 0 && canClearDebt && (
                           <Button
                             size="sm"
                             variant="outline"
