@@ -27,7 +27,8 @@ const until = async (fn, what, ms = 20000) => {
   }
 };
 
-const webToken = (user = USER, version = 0) => jwt.sign({ user_id: user, token_type: "access", token_version: version }, process.env.DD_TEST_JWT, { expiresIn: "15m", audience: "davadesk-api" });
+// Web tokens carry a login session id, like a real browser sign-in (each test user has one live session)
+const webToken = (user = USER, version = 0) => jwt.sign({ user_id: user, token_type: "access", token_version: version, sid: `sess-${user}` }, process.env.DD_TEST_JWT, { expiresIn: "15m", audience: "davadesk-api" });
 const send = async (root, method, url, body, headers = {}) => {
   const res = await fetch(root + url, { method, headers: { ...(body !== undefined ? { "content-type": "application/json" } : {}), ...headers }, body: body !== undefined ? JSON.stringify(body) : undefined });
   const text = await res.text();
@@ -60,8 +61,8 @@ test.before(async () => {
     { id: "ph-other", name: "Other Shop", location: "Delhi", subscription: subscription(), created_at: new Date().toISOString() },
   ]);
   await cdb.collection("users").insertMany([
-    { id: USER, name: "Asha", email: "asha@example.test", mobile: "9000000000", password_hash: "$2a$12$secretsecretsecretsecret", otp: "123456", role: "ADMIN", pharmacy_id: PHARMACY, is_primary_admin: true, verified: true, token_version: 0, created_at: new Date().toISOString() },
-    { id: "user-other", name: "Other", email: "other@example.test", role: "ADMIN", pharmacy_id: "ph-other", verified: true, token_version: 0 },
+    { id: USER, active_session_id: `sess-${USER}`, name: "Asha", email: "asha@example.test", mobile: "9000000000", password_hash: "$2a$12$secretsecretsecretsecret", otp: "123456", role: "ADMIN", pharmacy_id: PHARMACY, is_primary_admin: true, verified: true, token_version: 0, created_at: new Date().toISOString() },
+    { id: "user-other", active_session_id: "sess-user-other", name: "Other", email: "other@example.test", role: "ADMIN", pharmacy_id: "ph-other", verified: true, token_version: 0 },
   ]);
   await cdb.collection("customers").insertMany([
     { id: "c-mine", pharmacy_id: PHARMACY, name: "Existing Customer", mobile: "9111111111" },
