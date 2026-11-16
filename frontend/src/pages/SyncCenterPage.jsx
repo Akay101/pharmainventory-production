@@ -1,10 +1,11 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { AlertTriangle, CheckCircle2, CloudOff, Cloud, Database, Loader2, LogOut, RefreshCw } from "lucide-react";
 import { API } from "../App";
 import { Button } from "../components/ui/button";
 import { signOutDesktop, useDesktopStatus } from "../lib/desktop";
+import { VersionCard } from "../components/DesktopVersion";
 
 const LABELS = {
   bills: "Bills", bill_drafts: "Bill drafts", purchases: "Purchases", purchase_drafts: "Purchase drafts", inventory: "Stock", products: "Products",
@@ -111,13 +112,6 @@ const Card = ({ title, children }) => (
 export default function SyncCenterPage() {
   const s = useDesktopStatus();
   const [busy, setBusy] = useState(false);
-  const [update, setUpdate] = useState(null);
-  useEffect(() => {
-    const read = () => window.davadeskDesktop?.updateState?.().then(setUpdate).catch(() => {});
-    read();
-    const t = setInterval(read, 5000);
-    return () => clearInterval(t);
-  }, []);
   if (!s) return <div className="p-8 flex items-center gap-2 text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> Loading…</div>;
 
   const syncNow = async () => {
@@ -223,14 +217,7 @@ export default function SyncCenterPage() {
         )}
       </Card>
 
-      {update && update.status !== "none" && (
-        <Card title="Update available">
-          <p className="text-sm text-muted-foreground">
-            {update.status === "ready" ? `Version ${update.latest} is ready. It installs by itself when you close DavaDesk or leave the computer idle for 10 minutes, or now if you restart.` : update.status === "downloading" ? `Downloading version ${update.latest}. You can keep working.` : `Version ${update.latest} is available. This copy of DavaDesk can't update itself because it isn't in your Applications folder. Download it and drag it there once; after that it updates by itself. Your data stays.`}
-          </p>
-          {update.status !== "downloading" && <Button onClick={() => window.davadeskDesktop?.applyUpdate()}>{update.status === "ready" ? "Restart to update" : "Download update"}</Button>}
-        </Card>
-      )}
+      <VersionCard />
 
       <Card title="This computer">
         <p className="text-sm text-muted-foreground">Works offline until {when(s.licence_valid_until)}. Connect to the internet before then to renew automatically. Version {s.version}.</p>

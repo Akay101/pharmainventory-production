@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld("davadeskDesktop", {
   signOut: (force) => call("signOut", { force }),
   updateState: () => call("updateState"),
   applyUpdate: () => call("applyUpdate"),
+  versionHistory: () => call("versionHistory"),
   platform: process.platform,
 });
 
