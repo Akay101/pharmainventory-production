@@ -5,6 +5,7 @@ const morgan = require("morgan");
 const { initConnections } = require("./db/connections");
 
 const app = express();
+app.disable("x-powered-by");
 const PORT = process.env.PORT || 8002;
 
 // Middleware
