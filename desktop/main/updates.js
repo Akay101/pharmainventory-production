@@ -17,7 +17,7 @@ const FIRST_CHECK_MS = 20 * 1000;
 // Installs on its own only when nobody has touched the computer for this long
 const IDLE_INSTALL_SECONDS = 10 * 60;
 
-let state = { current: app.getVersion(), latest: null, status: "none", required: false };
+let state = { current: app.getVersion(), latest: null, status: "none", required: false, previous: null };
 let options = null;
 let updater = null;
 let checking = false;
@@ -133,6 +133,34 @@ function swapMacOnExit(bundle, newApp, relaunch) {
   spawn("/bin/sh", ["-c", script, "davadesk-update", String(process.pid), bundle, newApp, relaunch ? "1" : "0"], { detached: true, stdio: "ignore" }).unref();
 }
 
+// ---- Version history --------------------------------------------------------------
+// Every publish adds an entry to history.json next to the installers
+let historyCache = { at: 0, items: null };
+async function history() {
+  if (historyCache.items && Date.now() - historyCache.at < 5 * 60 * 1000) return historyCache.items;
+  try {
+    const res = await net.fetch(`${releases()}/history.json`);
+    if (!res.ok) return historyCache.items || [];
+    const data = await res.json();
+    historyCache = { at: Date.now(), items: Array.isArray(data.releases) ? data.releases.slice(0, 100) : [] };
+  } catch (err) {
+    console.warn("[Update] history:", err.message);
+  }
+  return historyCache.items || [];
+}
+
+// Remembers the version that last ran, so the app can say "updated to X" once
+function noteVersion() {
+  const file = path.join(app.getPath("userData"), "last-version.txt");
+  try {
+    const before = fs.existsSync(file) ? fs.readFileSync(file, "utf8").trim() : null;
+    if (before && before !== state.current && older(before, state.current)) state.previous = before;
+    fs.writeFileSync(file, state.current);
+  } catch (err) {
+    console.warn("[Update] version note:", err.message);
+  }
+}
+
 // ---- Both ------------------------------------------------------------------------
 async function check() {
   if (checking) return;
@@ -201,6 +229,7 @@ function installWhenIdle() {
 
 function start(opts) {
   options = opts;
+  noteVersion();
   if (!app.isPackaged) return;
   fs.rmSync(updatesDir(), { recursive: true, force: true });
   setTimeout(check, FIRST_CHECK_MS).unref?.();
@@ -210,4 +239,4 @@ function start(opts) {
   powerMonitor.on("resume", () => setTimeout(check, FIRST_CHECK_MS));
 }
 
-module.exports = { start, apply, onQuit, state: () => state };
+module.exports = { start, apply, onQuit, history, state: () => state };

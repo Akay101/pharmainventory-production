@@ -318,6 +318,7 @@ export default function LoginPage() {
             >
               Register your pharmacy
             </Link>
+            <span className="block pt-1 text-xs font-medium">7-day free trial, then ₹3,999 a year plus GST.</span>
           </div>
         </div>
       </div>

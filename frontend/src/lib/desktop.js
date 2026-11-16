@@ -8,9 +8,9 @@ export const IS_DESKTOP = process.env.REACT_APP_DESKTOP === "true";
 export const openCounters = () => window.davadeskDesktop?.openCounters();
 export const signOutDesktop = (force) => window.davadeskDesktop?.signOut(force);
 
-// The download offer is on for dev only, until it's switched on for production here
-const IS_DEV_SITE = typeof window !== "undefined" && /^store-dev\./.test(window.location.hostname);
-export const DOWNLOADS_ENABLED = !IS_DESKTOP && (IS_DEV_SITE || process.env.REACT_APP_DESKTOP_DOWNLOADS === "true");
+// The download offer is on for both sites: production has its own release pipeline
+// (.github/workflows/desktop-prod.yml) since the official launch
+export const DOWNLOADS_ENABLED = !IS_DESKTOP && process.env.REACT_APP_DESKTOP_DOWNLOADS !== "false";
 
 // Installers are served by the API, which gives a short-lived link to the private bucket
 export const DOWNLOAD_BASE = process.env.REACT_APP_DESKTOP_DOWNLOAD_URL || `${process.env.REACT_APP_BACKEND_URL || ""}/api/desktop/releases`;

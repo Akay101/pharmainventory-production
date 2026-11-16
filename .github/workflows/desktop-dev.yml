@@ -130,6 +130,8 @@ jobs:
       - name: Cloud is answering
         run: curl -fsS --retry 10 --retry-delay 6 --retry-all-errors https://api-dev.davadesk.in/health
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
@@ -138,6 +140,14 @@ jobs:
           mkdir -p release/files
           find artifacts -type f -exec mv {} release/files/ \;
           cp desktop/config/release.json release/files/release.json
+          # What changed, for the version history shown in the app
+          BEFORE="${{ github.event.before }}"
+          if [ -n "$BEFORE" ] && git cat-file -e "$BEFORE" 2>/dev/null; then
+            git log --no-merges --pretty=%s "$BEFORE..${{ github.sha }}" > release/files/notes.txt
+          else
+            git log -1 --no-merges --pretty=%s > release/files/notes.txt
+          fi
+          cat release/files/notes.txt
           cp desktop/scripts/publish-release.js release/publish-release.js
           ls -la release/files
       - name: Copy to dev server

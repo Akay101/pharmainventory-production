@@ -28,10 +28,13 @@ export const getPageTitle = (pathname) => {
       return "Reports - DavaDesk";
     case "/settings":
       return "Settings - DavaDesk";
+    // Public pages keep the same titles as their search snippets (scripts/spa-fallback.js)
     case "/login":
-      return "Login - DavaDesk";
+      return "Login to DavaDesk – Pharmacy Billing & Management Software";
     case "/register":
-      return "Register - DavaDesk";
+      return "Register Your Pharmacy – 7-Day Free Trial | DavaDesk";
+    case "/download":
+      return "Download DavaDesk for Windows and Mac – Offline Pharmacy Billing";
     case "/upgrade":
       return "Upgrade - DavaDesk";
     case "/payment-success":

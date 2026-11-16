@@ -67,6 +67,7 @@ import { GuideOutlet, useGuide } from "./guide/GuideProvider";
 import { CreditsPill, CreditsSheet, useCredits } from "./assistant/Credits";
 import PharmacySwitcher from "./billing/PharmacySwitcher";
 import { PLAN_NAMES } from "../lib/checkout";
+import { DesktopUpdateNotices } from "./DesktopVersion";
 
 const navItems = [
   { path: "/dashboard", label: "Dashboard", icon: LayoutDashboard, shortcut: "alt+h" },
@@ -525,6 +526,7 @@ export default function DashboardLayout() {
 
               {onlineFeatures && <HeaderCredits />}
               {IS_DESKTOP && <DesktopSyncChip />}
+              {IS_DESKTOP && <DesktopUpdateNotices />}
 
               {/* Theme Toggle Button */}
               <Button

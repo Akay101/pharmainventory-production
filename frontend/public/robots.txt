@@ -1,0 +1,6 @@
+# store.davadesk.in: the DavaDesk app. Only the public sign-in, sign-up and
+# download pages are meant for search; app screens carry noindex.
+User-agent: *
+Allow: /
+
+Sitemap: https://store.davadesk.in/sitemap.xml

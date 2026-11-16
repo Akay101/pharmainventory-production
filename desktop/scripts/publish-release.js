@@ -4,7 +4,7 @@
 // hear about a version once all of its files are in place.
 const fs = require("fs");
 const path = require("path");
-const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
+const { S3Client, PutObjectCommand, GetObjectCommand } = require("@aws-sdk/client-s3");
 
 const [folder, channel, version] = process.argv.slice(2);
 if (!folder || !channel || !version) throw new Error("Usage: publish-release.js <folder> <channel> <version>");
@@ -33,7 +33,25 @@ const ALIASES = [
     console.log(`Uploaded ${name} (${Math.round(body.length / 1048576)} MB)`);
   }
   for (const name of fs.readdirSync(folder).filter((n) => /^latest.*\.yml$/.test(n))) await put(name, fs.readFileSync(path.join(folder, name)));
-  await put("latest.json", JSON.stringify({ version, min_version: release.min_version, published_at: new Date().toISOString(), commit: process.env.RELEASE_COMMIT || null }));
+  // Version history: newest first, what changed taken from the commits in this release
+  const publishedAt = new Date().toISOString();
+  const notesFile = path.join(folder, "notes.txt");
+  const notes = String(process.env.RELEASE_NOTES || (fs.existsSync(notesFile) ? fs.readFileSync(notesFile, "utf8") : ""))
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l && !/^(Merge |Production: |Revert ")/.test(l))
+    .slice(0, 30);
+  let past = [];
+  try {
+    const got = await client.send(new GetObjectCommand({ Bucket: bucket, Key: `desktop/${channel}/history.json` }));
+    past = JSON.parse(await got.Body.transformToString()).releases || [];
+  } catch (err) {
+    if (err.name !== "NoSuchKey") console.warn(`No earlier history (${err.name || err.message})`);
+  }
+  const entry = { version, published_at: publishedAt, commit: process.env.RELEASE_COMMIT || null, notes };
+  const releases = [entry, ...past.filter((r) => r.version !== version)].slice(0, 200);
+  await put("history.json", JSON.stringify({ channel, releases }));
+  await put("latest.json", JSON.stringify({ version, min_version: release.min_version, published_at: publishedAt, commit: process.env.RELEASE_COMMIT || null, notes }));
   console.log(`Published ${version} to desktop/${channel}`);
 })().catch((err) => {
   console.error(err.message);

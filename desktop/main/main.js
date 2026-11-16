@@ -403,7 +403,7 @@ const describeState = async () => {
   };
 };
 
-const APP_ACTIONS = new Set(["openCounters", "signOut", "updateState", "applyUpdate"]);
+const APP_ACTIONS = new Set(["openCounters", "signOut", "updateState", "applyUpdate", "versionHistory"]);
 const GATE_ACTIONS = new Set(["signIn", "submitCode", "gateState", "openCounters", "continueSetup", "applyUpdate"]);
 
 function registerIpc() {
@@ -427,6 +427,7 @@ function registerIpc() {
     await checkAccess();
   });
   handle("updateState", () => updates.state());
+  handle("versionHistory", () => updates.history());
   handle("applyUpdate", () => updates.apply());
   handle("signOut", async ({ force }) => {
     await callServer("signOut", { force: !!force });
