@@ -15,6 +15,11 @@
     <script>
       (function () {
         try {
+          // Direct links arrive as /billing/ (one index.html per route); drop the slash
+          var p = location.pathname;
+          if (p.length > 1 && p.charAt(p.length - 1) === "/") {
+            history.replaceState(null, "", p.replace(/\/+$/, "") + location.search + location.hash);
+          }
           // Light is the default; only an explicit "dark" keeps the dark theme
           var t = localStorage.getItem("theme");
           if (t === "dark") {
