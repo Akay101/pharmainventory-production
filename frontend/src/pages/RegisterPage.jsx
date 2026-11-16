@@ -339,7 +339,7 @@ export default function RegisterPage() {
               {step === 2 && "Verify Email"}
             </h2>
             <p className="text-muted-foreground text-sm font-semibold">
-              {step === 0 && "Enter your contact and administrator details."}
+              {step === 0 && "Start your 7-day free trial. Enter your contact and administrator details."}
               {step === 1 && "Enter your pharmacy name and location."}
               {step === 2 && `Enter the 6-digit OTP sent to ${formData.email}`}
             </p>
