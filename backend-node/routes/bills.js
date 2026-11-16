@@ -631,6 +631,9 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
     if (!items || items.length === 0) {
       return res.status(400).json({ detail: "At least one item is required" });
     }
+    if (!Array.isArray(items) || items.some((it) => !it || typeof it !== "object" || Array.isArray(it))) {
+      return res.status(400).json({ detail: "Each item must be a product line" });
+    }
 
     // Schedule H1 medicines are sold only against a prescription kept with the bill
     const rx = await prescriptions.checkBillPrescription(db, req.user.pharmacy_id, items, req.body.prescription_id);
@@ -1003,6 +1006,9 @@ router.put("/:bill_id", auth, requireSubscription(), async (req, res, next) => {
 
     if (!bill) {
       return res.status(404).json({ detail: "Bill not found" });
+    }
+    if (!Array.isArray(items) || items.length === 0 || items.some((it) => !it || typeof it !== "object" || Array.isArray(it))) {
+      return res.status(400).json({ detail: "A bill needs at least one product line" });
     }
 
     // Udhar "paid now" checks before any stock moves
