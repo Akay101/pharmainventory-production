@@ -935,7 +935,8 @@ async function commitStock(db, job, productIds, tick) {
       pack_quantity: round2(units / upp),
       scheme: null,
       units_per_pack: upp,
-      purchase_price: d.rate_pack ? round2(d.rate_pack / upp) : null,
+      // Landing cost per unit with GST, as purchases store it (the file's rate is before GST)
+      purchase_price: d.rate_pack ? Math.round(((d.rate_pack * (1 + gst / 100)) / upp) * 10000) / 10000 : null,
       mrp: d.mrp_pack ? round2(d.mrp_pack / upp) : null,
       pack_price: d.rate_pack || null,
       mrp_pack: d.mrp_pack || null,
@@ -1053,7 +1054,9 @@ async function commitPurchases(db, job, productIds, tick) {
       // The file's own line total (amount + its GST amount), to the paisa
       const itemTotal = d.gross ?? d.net * (1 + gst / 100);
       total += itemTotal;
-      const perUnit = d.units ? Math.round((d.net / d.units) * 10000) / 10000 : 0;
+      // Landing cost per unit, GST included and free units spread in: the same as a
+      // purchase entered in DavaDesk, so a sale's profit (its amount with GST, less this) comes out right
+      const perUnit = d.units ? Math.round((itemTotal / d.units) * 10000) / 10000 : 0;
       const mrpUnit = d.mrp_pack ? round2(d.mrp_pack / d.units_per_pack) : null;
       items.push({
         product_id: productId,
@@ -1253,7 +1256,13 @@ async function commitSales(db, job, productIds, tick) {
       const gst = d.gst_rate || 0;
       const upp = d.units_per_pack || 1;
       const unitPrice = d.rate_pack ? Math.round((d.rate_pack / upp) * 10000) / 10000 : 0;
-      const buy = inv?.purchase_price || 0;
+      // Cost for profit: the batch sold from, else the product's latest cost on another batch
+      // (a sale with no stock left still cost the pharmacy something)
+      let buy = inv?.purchase_price || 0;
+      if (!buy) {
+        const other = await db.collection("inventory").findOne({ pharmacy_id: job.pharmacy_id, product_id: productId, purchase_price: { $gt: 0 } }, { sort: { created_at: -1 }, projection: { _id: 0, purchase_price: 1 } });
+        buy = other?.purchase_price || 0;
+      }
       const itemTotal = round2(d.gross);
       total += itemTotal;
       cost += buy * d.units;
