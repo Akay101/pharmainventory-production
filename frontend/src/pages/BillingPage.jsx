@@ -306,6 +306,23 @@ const discountForTotal = (subtotal, target) => {
 const fmtPct = (v) => Number((parseFloat(v) || 0).toFixed(2));
 
 
+// Under a line's MRP per unit: the MRP of the whole pack ("₹151.80 / pack of 15").
+// A pack of one (a sachet, a bottle) has the same MRP either way, so it shows nothing.
+const unitsPerPackOf = (item) => {
+  const upp = parseInt(item.units_per_pack) || parseInt(item.batches?.find?.((b) => b.id === item.inventory_id)?.units_per_pack) || 0;
+  return upp > 1 ? upp : 0;
+};
+function PackMrp({ item, price, className = "" }) {
+  const upp = unitsPerPackOf(item);
+  const unit = parseFloat(price ?? item.unit_price) || 0;
+  if (!upp || !(unit > 0)) return null;
+  return (
+    <div data-testid="pack-mrp" title={`MRP of a full pack of ${upp}`} className={`mt-0.5 text-[9px] font-semibold leading-tight whitespace-nowrap text-muted-foreground font-sans ${className}`}>
+      ₹{(unit * upp).toFixed(2)} / pack of {upp}
+    </div>
+  );
+}
+
 // Under a line's price: the purchase margin that set it ("10% margin", amber
 // when cost + margin was above MRP). After a hand-typed price it offers the
 // margin price back.
@@ -3602,6 +3619,7 @@ export default function BillingPage() {
                                                   </TableCell>
                                                   <TableCell className="text-right text-xs py-1.5 font-mono text-amber-600 dark:text-amber-400 bg-amber-500/5 dark:bg-amber-500/10 font-bold">
                                                     ₹{unitPrice.toFixed(2)}
+                                                    <PackMrp item={item} price={unitPrice} />
                                                     {item.margin_percent !== undefined && item.margin_percent !== null && (
                                                       <div className={`text-[9px] font-bold font-sans ${item.margin_capped ? "text-amber-600 dark:text-amber-400" : "text-sky-600 dark:text-sky-400"}`}>{marginLabel(item)}</div>
                                                     )}
@@ -4377,6 +4395,7 @@ export default function BillingPage() {
                             className="h-8 text-xs text-center border-amber-500/30 bg-amber-500/5 dark:bg-amber-500/10 text-amber-600 dark:text-amber-400 font-bold focus-visible:ring-1 focus-visible:ring-amber-500 focus-visible:border-amber-500 rounded-lg transition-all duration-200 w-20"
                           />
                           <MarginTag item={item} onRestore={() => handleItemFieldChange(item.id, "unit_price", String(item.margin_price))} />
+                          <PackMrp item={item} />
                         </TableCell>
                         <TableCell>
                           <Input
@@ -5690,6 +5709,7 @@ export default function BillingPage() {
                             className="h-8 text-xs text-center border-amber-500/30 bg-amber-500/5 dark:bg-amber-500/10 text-amber-600 dark:text-amber-400 font-bold focus-visible:ring-1 focus-visible:ring-amber-500 focus-visible:border-amber-500 rounded-lg transition-all duration-200 w-24"
                           />
                           <MarginTag item={item} onRestore={() => handleEditItemFieldChange(item.id, "unit_price", String(item.margin_price))} />
+                          <PackMrp item={item} />
                         </TableCell>
                         <TableCell>
                           <Input
@@ -6913,6 +6933,7 @@ export default function BillingPage() {
                                             </TableCell>
                                             <TableCell className="text-sm font-mono text-right font-bold text-amber-600 dark:text-amber-400 bg-amber-500/5 dark:bg-amber-500/10">
                                               ₹{unitPrice.toFixed(2)}
+                                              <PackMrp item={item} price={unitPrice} />
                                               {item.margin_percent !== undefined && item.margin_percent !== null && (
                                                 <div className={`text-[9px] font-bold font-sans ${item.margin_capped ? "text-amber-600 dark:text-amber-400" : "text-sky-600 dark:text-sky-400"}`}>{marginLabel(item)}</div>
                                               )}
