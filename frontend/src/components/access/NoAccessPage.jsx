@@ -75,7 +75,7 @@ export default function NoAccessPage({ module, action = "read", path }) {
 
   return (
     <div className="relative mx-auto flex min-h-[70vh] max-w-2xl flex-col items-center justify-center px-4 py-10 text-center animate-fade-in" data-testid="no-access-page">
-      <div aria-hidden className="pointer-events-none absolute inset-x-0 top-6 mx-auto h-64 w-64 rounded-full bg-orange-500/10 blur-3xl" />
+      <div aria-hidden className="pointer-events-none absolute inset-x-0 top-6 mx-auto h-64 w-64 rounded-full bg-orange-500/10 soft-glow" />
       <div className="relative mb-6">
         <div className="flex h-24 w-24 items-center justify-center rounded-[2rem] text-primary-foreground shadow-xl rotate-3 bg-primary">
           <Lock className="h-10 w-10 -rotate-3" strokeWidth={2.4} />

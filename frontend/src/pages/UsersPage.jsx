@@ -205,7 +205,7 @@ export default function UsersPage() {
   if (!isAdmin) {
     return (
       <div className="flex items-center justify-center h-64">
-        <Card className="bg-card/50 backdrop-blur-sm border-white/5 p-8 text-center">
+        <Card className="bg-card/50 border-white/5 p-8 text-center">
           <Shield className="w-12 h-12 mx-auto mb-3 text-muted-foreground/50" />
           <p className="text-muted-foreground">Only administrators can access user management</p>
         </Card>

@@ -146,7 +146,7 @@ export default function AuthCarousel({ autoPlayInterval = 4500 }) {
       onMouseLeave={() => setIsPaused(false)}
     >
       {/* Full-bleed Showcase Card */}
-      <div className="relative rounded-3xl border border-border/80 dark:border-zinc-800/80 bg-card/60 dark:bg-zinc-950/80 backdrop-blur-2xl shadow-2xl overflow-hidden group transition-all duration-300 hover:border-orange-500/30">
+      <div className="relative rounded-3xl border border-border/80 dark:border-zinc-800/80 bg-card/60 dark:bg-zinc-950/80 shadow-2xl overflow-hidden group transition-all duration-300 hover:border-orange-500/30">
         {/* Top Glow Highlight */}
         <div className="absolute top-0 left-0 right-0 h-1 z-30 bg-brand" />
 
@@ -176,14 +176,14 @@ export default function AuthCarousel({ autoPlayInterval = 4500 }) {
 
           {/* Top Floating Badge & Navigation */}
           <div className="absolute top-3.5 left-4 right-4 z-30 flex items-center justify-between">
-            <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-zinc-950/80 border border-orange-500/30 backdrop-blur-md shadow-lg">
+            <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-zinc-950/80 border border-orange-500/30 shadow-lg">
               <IconComponent className="w-3.5 h-3.5 text-orange-500 animate-pulse" />
               <span className="text-[10px] font-mono font-extrabold text-orange-400 uppercase tracking-wider">
                 {current.category}
               </span>
             </div>
 
-            <div className="flex items-center gap-1 bg-zinc-950/80 border border-zinc-800 backdrop-blur-md rounded-full px-2 py-0.5 shadow-lg">
+            <div className="flex items-center gap-1 bg-zinc-950/80 border border-zinc-800 rounded-full px-2 py-0.5 shadow-lg">
               <button
                 type="button"
                 onClick={prevSlide}
@@ -207,7 +207,7 @@ export default function AuthCarousel({ autoPlayInterval = 4500 }) {
           </div>
 
           {/* Floating Metric Badge over image */}
-          <div className="absolute bottom-3 left-4 z-30 flex items-center gap-2 px-3 py-1 rounded-full bg-zinc-950/85 border border-zinc-800/80 backdrop-blur-md shadow-lg">
+          <div className="absolute bottom-3 left-4 z-30 flex items-center gap-2 px-3 py-1 rounded-full bg-zinc-950/85 border border-zinc-800/80 shadow-lg">
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
             <span className="text-[10px] font-bold text-zinc-200 font-mono">
               {current.statBadge}

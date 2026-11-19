@@ -662,7 +662,7 @@ export default function AssistantPage() {
   const firstName = (user?.name || "").split(" ")[0];
 
   const sidebar = (
-    <aside data-guide="ai-sidebar" className="flex h-full w-[280px] max-w-[85vw] flex-col border-r border-border bg-card md:bg-card/70 backdrop-blur-xl max-md:pt-[env(safe-area-inset-top)] max-md:pb-[env(safe-area-inset-bottom)] max-md:shadow-2xl">
+    <aside data-guide="ai-sidebar" className="flex h-full w-[280px] max-w-[85vw] flex-col border-r border-border bg-card md:bg-card/70 max-md:pt-[env(safe-area-inset-top)] max-md:pb-[env(safe-area-inset-bottom)] max-md:shadow-2xl">
       <div className="flex items-center gap-2.5 px-4 pb-3 pt-4">
         <img src={AI_LOGO_SRC} alt="" className="h-9 w-9 rounded-full ring-1 ring-indigo-500/20" />
         <div className="min-w-0 flex-1">
@@ -749,7 +749,7 @@ export default function AssistantPage() {
       )}
 
       <main className="flex min-w-0 flex-1 flex-col">
-        <header className="flex items-center gap-2 border-b border-border bg-background/70 px-3 py-2.5 backdrop-blur-xl sm:px-4 max-md:pt-[calc(0.625rem+env(safe-area-inset-top))]">
+        <header className="flex items-center gap-2 border-b border-border bg-background/70 px-3 py-2.5 sm:px-4 max-md:pt-[calc(0.625rem+env(safe-area-inset-top))]">
           <button type="button" onClick={() => setSidebarOpen(true)} className="flex h-9 w-9 items-center justify-center rounded-xl hover:bg-muted md:hidden" aria-label="Chats">
             <Menu className="h-5 w-5" />
           </button>
@@ -790,7 +790,7 @@ export default function AssistantPage() {
             ) : empty ? (
               <div className="flex flex-col items-center pt-6 text-center sm:pt-14">
                 <div className="relative">
-                  <div className="absolute inset-0 -z-10 animate-pulse rounded-full blur-2xl bg-orange-500/10" />
+                  <div className="absolute inset-0 -z-10 animate-pulse rounded-full soft-glow bg-orange-500/10" />
                   <img src={AI_LOGO_SRC} alt="" className="h-20 w-20 rounded-full sm:h-24 sm:w-24" />
                 </div>
                 <span className="eyebrow mt-6">DavaDesk AI</span>
@@ -868,7 +868,7 @@ export default function AssistantPage() {
           </div>
         </div>
 
-        <div className="border-t border-border bg-background/80 px-3 pb-[max(env(safe-area-inset-bottom),12px)] pt-3 backdrop-blur-xl sm:px-6">
+        <div className="border-t border-border bg-background/80 px-3 pb-[max(env(safe-area-inset-bottom),12px)] pt-3 sm:px-6">
           <div
             className="mx-auto w-full max-w-3xl lg:max-w-[900px] xl:max-w-[1000px] 2xl:max-w-[1150px]"
             onDragOver={(e) => e.preventDefault()}

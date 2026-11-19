@@ -186,7 +186,7 @@ export function BroadcastProvider({ children }) {
             // Clicks on the image zoom (portalled to <body>) aren't "outside" the details
             onPointerDownOutside={(e) => e.target?.closest?.("[data-bc-zoom]") && e.preventDefault()}
             onInteractOutside={(e) => e.target?.closest?.("[data-bc-zoom]") && e.preventDefault()}
-            className="max-w-xl gap-0 overflow-y-auto border-0 p-0 sm:rounded-3xl [&>button:last-child]:z-30 [&>button:last-child]:rounded-full [&>button:last-child]:bg-white/20 [&>button:last-child]:p-1.5 [&>button:last-child]:text-white [&>button:last-child]:opacity-100 [&>button:last-child]:backdrop-blur">
+            className="max-w-xl gap-0 overflow-y-auto border-0 p-0 sm:rounded-3xl [&>button:last-child]:z-30 [&>button:last-child]:rounded-full [&>button:last-child]:bg-white/20 [&>button:last-child]:p-1.5 [&>button:last-child]:text-white [&>button:last-child]:opacity-100 [&>button:last-child]:">
             <DialogTitle className="sr-only">{current.title}</DialogTitle>
             <DialogDescription className="sr-only">{current.summary}</DialogDescription>
             <BroadcastDetail b={current} assetUrl={assetUrl} dark={dark} onLink={onLink} />

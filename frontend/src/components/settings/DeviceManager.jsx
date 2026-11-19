@@ -112,7 +112,7 @@ export default function DeviceManager({ active }) {
 
   return (
     <div className="space-y-6" data-testid="device-manager">
-      <Card className="bg-card/50 backdrop-blur-sm border-white/5">
+      <Card className="bg-card/50 border-white/5">
         <CardHeader className="flex flex-row items-start justify-between gap-3 space-y-0">
           <div>
             <CardTitle className="flex items-center gap-2">
@@ -153,7 +153,7 @@ export default function DeviceManager({ active }) {
       </Card>
 
       {isAdmin && data && (
-        <Card className="bg-card/50 backdrop-blur-sm border-white/5">
+        <Card className="bg-card/50 border-white/5">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Users className="w-5 h-5 text-primary" /> Team sessions
@@ -173,7 +173,7 @@ export default function DeviceManager({ active }) {
       {!IS_DESKTOP && <DesktopDevicesCard />}
 
       {data && past.length > 0 && (
-        <Card className="bg-card/50 backdrop-blur-sm border-white/5">
+        <Card className="bg-card/50 border-white/5">
           <CardHeader>
             <CardTitle>Sign-in history</CardTitle>
             <CardDescription>Your past sessions on this account, newest first.</CardDescription>

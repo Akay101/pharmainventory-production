@@ -101,7 +101,7 @@ export default function BillingPlanSettings({ active }) {
 
   return (
     <div className="space-y-6" data-testid="billing-plan">
-      <Card className="bg-card/50 backdrop-blur-sm border-white/5">
+      <Card className="bg-card/50 border-white/5">
         <CardHeader className="flex flex-row items-start justify-between gap-3 space-y-0">
           <div>
             <CardTitle className="flex items-center gap-2">
@@ -124,7 +124,7 @@ export default function BillingPlanSettings({ active }) {
         </CardContent>
       </Card>
 
-      <Card className="bg-card/50 backdrop-blur-sm border-white/5">
+      <Card className="bg-card/50 border-white/5">
         <CardHeader className="flex flex-row items-start justify-between gap-3 space-y-0">
           <div>
             <CardTitle className="flex items-center gap-2">
@@ -161,7 +161,7 @@ export default function BillingPlanSettings({ active }) {
         </CardContent>
       </Card>
 
-      <Card className="bg-card/50 backdrop-blur-sm border-white/5">
+      <Card className="bg-card/50 border-white/5">
         <CardHeader className="flex flex-row items-start justify-between gap-3 space-y-0">
           <div>
             <CardTitle className="flex items-center gap-2">
@@ -193,7 +193,7 @@ export default function BillingPlanSettings({ active }) {
         </CardContent>
       </Card>
 
-      <Card className="bg-card/50 backdrop-blur-sm border-white/5">
+      <Card className="bg-card/50 border-white/5">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <FileText className="w-5 h-5 text-primary" /> Invoices

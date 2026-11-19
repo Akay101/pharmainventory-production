@@ -38,10 +38,10 @@ function LanguagePick({ tour, initial, onPick, onClose }) {
   const [hover, setHover] = useState(initial);
   return (
     <motion.div className="fixed inset-0 z-[2147483001] flex items-center justify-center p-4" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_50%_35%,rgba(58,22,0,0.9),rgba(6,6,6,0.95)_62%)] backdrop-blur-xl" onClick={onClose} />
+      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_50%_35%,rgba(58,22,0,0.9),rgba(6,6,6,0.95)_62%)]" onClick={onClose} />
       <div className="relative w-full max-w-lg text-center text-white">
         <motion.div className="mx-auto flex h-36 w-36 items-center justify-center" initial={{ scale: 0.3, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ type: "spring", stiffness: 140, damping: 14 }}>
-          <div className="absolute h-40 w-40 rounded-full bg-[radial-gradient(circle,rgba(255,107,0,0.35),transparent_65%)] blur-md" />
+          <div className="absolute h-40 w-40 rounded-full bg-[radial-gradient(circle,rgba(255,107,0,0.35),transparent_65%)] soft-glow" />
           <Orb size={130} count={90} />
         </motion.div>
         <motion.p className="mt-2 font-mono text-xs font-medium uppercase tracking-[0.4em] text-brand" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.3 }}>
@@ -213,7 +213,7 @@ function Outro({ tour, lang, onReplay, onClose, next }) {
   const t = T[lang];
   return (
     <motion.div data-guide-layer className="fixed inset-0 z-[2147483002] flex items-center justify-center p-4" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_50%_40%,rgba(58,22,0,0.9),rgba(6,6,6,0.95)_62%)] backdrop-blur-xl" />
+      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_50%_40%,rgba(58,22,0,0.9),rgba(6,6,6,0.95)_62%)]" />
       <div className="relative max-w-md text-center text-white">
         <motion.div className="mx-auto flex h-28 w-28 items-center justify-center" initial={{ scale: 0.4 }} animate={{ scale: 1 }} transition={{ type: "spring", stiffness: 160, damping: 12 }}>
           <Orb size={110} count={80} />

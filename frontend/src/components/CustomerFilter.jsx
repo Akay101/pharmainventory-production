@@ -89,7 +89,7 @@ export default function CustomerFilter({ value, onChange, className = "" }) {
       <PopoverTrigger asChild>
         <button
           type="button"
-          className={`h-9 w-44 px-3 inline-flex items-center justify-between gap-2 text-xs font-semibold border border-border/70 rounded-xl bg-card/60 backdrop-blur-md hover:bg-muted/50 transition-colors ${className}`}
+          className={`h-9 w-44 px-3 inline-flex items-center justify-between gap-2 text-xs font-semibold border border-border/70 rounded-xl bg-card/60 hover:bg-muted/50 transition-colors ${className}`}
           data-testid="customer-filter"
         >
           <span className="flex items-center gap-1.5 min-w-0">

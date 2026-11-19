@@ -385,7 +385,7 @@ export default function DashboardLayout() {
         data-testid="dashboard-layout"
       >
         {/* Fixed Glassy Top Header Navigation Bar */}
-        <header className="h-16 max-md:h-14 max-md:pt-[env(safe-area-inset-top)] max-md:box-content shrink-0 w-full z-50 border-b border-border/80 dark:border-border/50 bg-background/90 dark:bg-zinc-950/90 backdrop-blur-xl transition-colors duration-200">
+        <header className="h-16 max-md:h-14 max-md:pt-[env(safe-area-inset-top)] max-md:box-content shrink-0 w-full z-50 border-b border-border/80 dark:border-border/50 bg-background/90 dark:bg-zinc-950/90 transition-colors duration-200">
           <div className="w-full h-full px-4 sm:px-6 max-md:px-3 flex items-center justify-between gap-4 max-md:gap-2">
             {/* Left Brand Identifier */}
             <div className="flex items-center gap-3 min-w-0 shrink">
@@ -404,7 +404,7 @@ export default function DashboardLayout() {
                 </SheetTrigger>
                 <SheetContent
                   side="left"
-                  className="w-72 p-6 bg-background/95 backdrop-blur-xl border-r border-border/80 flex flex-col justify-between"
+                  className="w-72 p-6 bg-background/95 border-r border-border/80 flex flex-col justify-between"
                 >
                   <div className="space-y-6">
                     {/* Sheet Brand Logo */}
@@ -589,7 +589,7 @@ export default function DashboardLayout() {
                 </DropdownMenuTrigger>
                 <DropdownMenuContent
                   align="end"
-                  className="w-56 mt-1 border border-border/80 dark:border-border/50 shadow-xl rounded-2xl p-1.5 bg-background/95 backdrop-blur-xl animate-in fade-in-0 zoom-in-95 duration-200"
+                  className="w-56 mt-1 border border-border/80 dark:border-border/50 shadow-xl rounded-2xl p-1.5 bg-background/95 animate-in fade-in-0 zoom-in-95 duration-200"
                 >
                   <div className="px-3 py-2 min-w-0">
                     <p className="text-xs font-extrabold text-foreground truncate">{user?.name}</p>
@@ -673,7 +673,7 @@ export default function DashboardLayout() {
           {/* Activity Sidebar overlay backdrop */}
           {activityOpen && (
             <div
-              className="fixed inset-0 z-45 bg-black/40 backdrop-blur-xs transition-opacity duration-300 md:hidden"
+              className="fixed inset-0 z-45 bg-black/40 transition-opacity duration-300 md:hidden"
               onClick={closeActivity}
             />
           )}

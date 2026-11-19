@@ -152,7 +152,7 @@ export default function RecentActivitySidebar({ open, onClose }) {
   }, [filterModule]);
 
   return (
-    <div className="w-80 max-md:w-screen h-full bg-card/90 dark:bg-zinc-950/85 max-md:bg-card max-md:dark:bg-zinc-950 backdrop-blur-2xl border-l border-border/40 flex flex-col transition-all duration-300 max-md:pt-[env(safe-area-inset-top)] max-md:pb-[env(safe-area-inset-bottom)]">
+    <div className="w-80 max-md:w-screen h-full bg-card/90 dark:bg-zinc-950/85 max-md:bg-card max-md:dark:bg-zinc-950 border-l border-border/40 flex flex-col transition-all duration-300 max-md:pt-[env(safe-area-inset-top)] max-md:pb-[env(safe-area-inset-bottom)]">
       {/* Sidebar Header */}
       <div className="p-4 md:h-16 border-b border-border/40 flex items-center justify-between bg-card/30 shrink-0 z-10">
         <div className="flex items-center gap-2">
@@ -172,7 +172,7 @@ export default function RecentActivitySidebar({ open, onClose }) {
       </div>
 
       {/* Module Horizontal Filters */}
-      <div className="flex px-4 py-2.5 gap-2 overflow-x-auto shrink-0 border-b border-border/30 bg-card/15 backdrop-blur-xs select-none scrollbar-none">
+      <div className="flex px-4 py-2.5 gap-2 overflow-x-auto shrink-0 border-b border-border/30 bg-card/15 select-none scrollbar-none">
         {MODULE_OPTIONS.map((mod) => (
           <button
             key={mod}

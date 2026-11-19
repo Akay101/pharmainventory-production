@@ -292,13 +292,13 @@ export default function ReportsPage() {
 
         {/* Global Days Selector */}
         {activeTab === "financial" && (
-          <div data-panel className="flex items-center gap-3 bg-card/40 border border-white/5 rounded-xl px-3 py-1.5 backdrop-blur-sm self-start md:self-auto">
+          <div data-panel className="flex items-center gap-3 bg-card/40 border border-white/5 rounded-xl px-3 py-1.5 self-start md:self-auto">
             <Calendar className="w-4 h-4 text-primary" />
             <Select value={days} onValueChange={setDays}>
               <SelectTrigger className="w-40 border-0 bg-transparent focus:ring-0 focus:ring-offset-0 text-sm font-medium p-0 h-auto" data-testid="days-select">
                 <SelectValue />
               </SelectTrigger>
-              <SelectContent className="bg-card/95 border-white/5 backdrop-blur-md">
+              <SelectContent className="bg-card/95 border-white/5">
                 <SelectItem value="7">Last 7 days</SelectItem>
                 <SelectItem value="30">Last 30 days</SelectItem>
                 <SelectItem value="90">Last 90 days</SelectItem>
@@ -449,7 +449,6 @@ export default function ReportsPage() {
                         backgroundColor: "hsl(var(--card))",
                         border: "1px solid hsl(var(--border))",
                         borderRadius: "12px",
-                        backdropFilter: "blur(8px)",
                         boxShadow: "0 10px 15px -3px rgba(0,0,0,0.3)"
                       }}
                       formatter={(value, name) => [
@@ -520,8 +519,7 @@ export default function ReportsPage() {
                         contentStyle={{
                           backgroundColor: "hsl(var(--card))",
                           border: "1px solid hsl(var(--border))",
-                          borderRadius: "12px",
-                          backdropFilter: "blur(8px)"
+                          borderRadius: "12px"
                         }}
                         formatter={(value) => [<span className="font-mono font-bold text-primary">{formatCurrency(value)}</span>, "Revenue"]}
                       />
@@ -568,8 +566,7 @@ export default function ReportsPage() {
                           contentStyle={{
                             backgroundColor: "hsl(var(--card))",
                             border: "1px solid hsl(var(--border))",
-                            borderRadius: "12px",
-                            backdropFilter: "blur(8px)"
+                            borderRadius: "12px"
                           }}
                           formatter={(value) => [<span className="font-mono font-bold text-foreground">{formatCurrency(value)}</span>, "Purchases"]}
                         />
@@ -876,7 +873,7 @@ export default function ReportsPage() {
                   {showSuggestions && sourcingSuggestions.length > 0 && createPortal(
                     <div
                       data-suggestions-dropdown="true"
-                      className="bg-card/95 backdrop-blur-xl border border-border/80 rounded-xl shadow-2xl overflow-y-auto divide-y divide-white/5 z-[99999]"
+                      className="bg-card/95 border border-border/80 rounded-xl shadow-2xl overflow-y-auto divide-y divide-white/5 z-[99999]"
                       style={{
                         position: "fixed",
                         top: dropdownPosition.top,
@@ -1069,7 +1066,7 @@ export default function ReportsPage() {
 
               {/* Deal Comparison Alert Banner */}
               {sourcingComparePrice && (
-                <div className={`p-4 rounded-xl border flex items-start gap-3 backdrop-blur-sm ${
+                <div className={`p-4 rounded-xl border flex items-start gap-3 ${
                   sourcingResults.is_higher_than_history
                     ? "bg-rose-500/10 border-rose-500/20 text-rose-400"
                     : "bg-emerald-500/10 border-emerald-500/20 text-emerald-400"

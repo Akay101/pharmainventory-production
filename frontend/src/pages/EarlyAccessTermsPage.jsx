@@ -341,7 +341,7 @@ export default function EarlyAccessTermsPage() {
       </main>
 
       {!accepted && (
-        <div className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-background/95 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl">
+        <div className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-background/95 pb-[env(safe-area-inset-bottom)]">
           <div className="mx-auto flex max-w-5xl flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
             <label className="flex cursor-pointer items-start gap-3 text-sm font-semibold">
               <input

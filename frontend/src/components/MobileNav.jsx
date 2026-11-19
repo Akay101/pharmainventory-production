@@ -96,7 +96,7 @@ export function MobileBottomNav({ items, isActive, onLogout, onOpenActivity, pha
   return (
     <>
       <nav
-        className={`mobile-tabbar md:hidden shrink-0 border-t border-border/70 bg-background/95 backdrop-blur-xl pb-[env(safe-area-inset-bottom)] ${keyboardOpen ? "hidden" : ""}`}
+        className={`mobile-tabbar md:hidden shrink-0 border-t border-border/70 bg-background/95 pb-[env(safe-area-inset-bottom)] ${keyboardOpen ? "hidden" : ""}`}
         data-testid="mobile-bottom-nav"
         data-tour="mobile-nav"
       >

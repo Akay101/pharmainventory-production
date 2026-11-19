@@ -230,7 +230,7 @@ function ChartTooltip({ active, payload, label, metric }) {
   if (!active || !payload?.length) return null;
   const p = payload[0].payload;
   return (
-    <div className="rounded-xl border border-border bg-card/95 backdrop-blur px-3 py-2 shadow-xl space-y-0.5">
+    <div className="rounded-xl border border-border bg-card/95 px-3 py-2 shadow-xl space-y-0.5">
       <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{dayLabel(label)}</p>
       <p className="text-sm font-black text-foreground tabular-nums">
         {metric === "bills" ? `${p.bills} bills` : inr(p[metric], { decimals: 2 })}

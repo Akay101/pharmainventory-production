@@ -11,7 +11,7 @@ const path = require("path");
 const { auth } = require("../middleware/auth");
 const { normalizeName, normalizeExpiryDate } = require("../utils/helpers");
 const { parseMargin } = require("../utils/margin");
-const { h1Lines } = require("../utils/scheduleH1");
+const { scheduleLines } = require("../utils/scheduleH1");
 const { lineNet, schemeFields, packCount, stockUnits, unitsAreWhole } = require("../utils/purchaseLine");
 const { generatePurchasePDF } = require("../services/pdf");
 const { FORMATS, LEGACY_FORMAT } = require("../services/pdfFormats");
@@ -433,9 +433,13 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
       sort_order = "desc",
       highlight_id,
       payment_status,
+      without_bill,
     } = req.query;
 
     const query = { pharmacy_id: req.user.pharmacy_id };
+    // Bought without a bill from the supplier (or only those with one)
+    if (without_bill === "true") query.without_bill = true;
+    else if (without_bill === "false") query.without_bill = { $ne: true };
     // Paid, or Unpaid (anything not fully paid, part-paid included)
     if (payment_status === "Paid") query.payment_status = "Paid";
     else if (payment_status === "Unpaid") query.payment_status = { $ne: "Paid" };
@@ -514,10 +518,11 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
       }
     }
 
-    // Schedule H1 lines, worked out from today's catalog (marks can change)
+    // Scheduled lines (H1, H, X...), worked out from today's catalog (marks can change)
     await Promise.all(
       purchases.map(async (p) => {
-        p.schedule_h1_items = await h1Lines(db, req.user.pharmacy_id, p.items || []);
+        p.schedule_lines = await scheduleLines(db, req.user.pharmacy_id, p.items || []);
+        p.schedule_h1_items = p.schedule_lines.filter((l) => l.schedule === "H1").map((l) => l.product_name);
         p.has_schedule_h1 = p.schedule_h1_items.length > 0;
       })
     );
@@ -1097,6 +1102,7 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
       supplier_id: resolvedSupplierId,
       supplier_name: resolvedSupplierName,
       invoice_no: invoice_no || null,
+      without_bill: req.body.without_bill === true || req.body.without_bill === "true",
       purchase_date: purchase_date || new Date().toISOString().slice(0, 10),
       items: processedItems,
       total_amount: totalAmount,
@@ -1161,6 +1167,7 @@ const draftFields = (b) => ({
   supplier_name: b.supplier_name || "",
   supplier_data: b.supplier_data || null,
   invoice_no: b.invoice_no || "",
+  without_bill: b.without_bill === true,
   purchase_date: b.purchase_date || new Date().toISOString().slice(0, 10),
   payment_status: b.payment_status || "Unpaid",
   amount_paid: b.amount_paid || 0,
@@ -1706,6 +1713,7 @@ router.put(
         total_amount: totalAmount,
         purchase_date: purchase_date || purchase.purchase_date,
         invoice_no: invoice_no || purchase.invoice_no,
+        ...(req.body.without_bill !== undefined ? { without_bill: req.body.without_bill === true || req.body.without_bill === "true" } : {}),
         payment_status: finalStatus,
         amount_paid: finalAmountPaid,
         payment_mode: payment_mode || null,
@@ -1756,6 +1764,9 @@ router.put(
 
       compareField("supplier_name", "Supplier Name");
       compareField("invoice_no", "Invoice Number");
+      if (updatePayload.without_bill !== undefined && !!purchase.without_bill !== updatePayload.without_bill) {
+        changes.push({ field: "without_bill", old_value: purchase.without_bill ? "Yes" : "No", new_value: updatePayload.without_bill ? "Yes" : "No", description: updatePayload.without_bill ? "Tagged as bought without a supplier bill" : "Removed the without-bill tag" });
+      }
       compareField("purchase_date", "Purchase Date", (v) =>
         v ? new Date(v).toLocaleDateString() : ""
       );

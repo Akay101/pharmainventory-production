@@ -34,7 +34,7 @@ export default function RightSidebarDrawer({
     <div className="fixed inset-0 z-[80] flex justify-end">
       {/* Dark Backdrop */}
       <div
-        className="fixed inset-0 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200"
+        className="fixed inset-0 bg-black/60 animate-in fade-in duration-200"
         onClick={onClose}
       />
 

@@ -506,8 +506,8 @@ function WelcomeCard({ firstName, total, onStart, onSkip, isPhone }) {
   return (
     <div className="relative overflow-hidden rounded-3xl border border-border bg-card text-card-foreground shadow-2xl shadow-black/40">
       <div className="relative px-6 pb-7 pt-7 text-primary-foreground bg-primary">
-        <span aria-hidden="true" className="absolute -right-10 -top-12 h-40 w-40 rounded-full bg-white/15 blur-2xl" />
-        <span aria-hidden="true" className="absolute -bottom-16 -left-10 h-40 w-40 rounded-full bg-amber-300/30 blur-2xl" />
+        <span aria-hidden="true" className="absolute -right-10 -top-12 h-40 w-40 rounded-full bg-white/15 soft-glow" />
+        <span aria-hidden="true" className="absolute -bottom-16 -left-10 h-40 w-40 rounded-full bg-amber-300/30 soft-glow" />
         <div className="relative flex items-center gap-3">
           <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-white shadow-lg">
             <img src="/assets/svgs/logoBrand/logoOnlyWithoutBackground.svg" alt="" className="h-10 w-10 object-contain" />
@@ -560,7 +560,7 @@ const NEXT_STEPS = [
 function FinishCard({ onFinish, onBack, isPhone }) {
   return (
     <div className="relative overflow-hidden rounded-3xl border border-border bg-card p-6 text-card-foreground shadow-2xl shadow-black/40">
-      <span aria-hidden="true" className="absolute -right-16 -top-16 h-44 w-44 rounded-full blur-2xl bg-orange-500/10" />
+      <span aria-hidden="true" className="absolute -right-16 -top-16 h-44 w-44 rounded-full soft-glow bg-orange-500/10" />
       <div className="relative flex items-center gap-3">
         <span className="flex h-14 w-14 items-center justify-center rounded-2xl text-primary-foreground shadow-lg shadow-emerald-500/30 bg-primary">
           <Check className="h-7 w-7" strokeWidth={3} />

@@ -92,6 +92,7 @@ import {
   TrendingDown,
   PackagePlus,
   QrCode,
+  ReceiptText,
 } from "lucide-react";
 import { toast } from "sonner";
 import PlanBadge from "../components/PlanBadge";
@@ -100,10 +101,10 @@ import { formatDate, formatExpiry, formatExpiryInput, expiryToIso, openScanner }
 import CustomTooltip from "@/components/ui/CustomTooltip";
 import { formatCombo } from "../lib/shortcuts";
 import { parseMargin, marginPrice } from "../lib/margin";
-import { isScheduleH1 } from "../lib/scheduleH1";
+import { scheduleOf, recordScheduleLines, lineScheduleIn } from "../lib/scheduleH1";
 import { rowCatalogGaps } from "../lib/catalogDetails";
 import { GuideButton } from "../components/guide/GuideProvider";
-import ScheduleH1Badge, { H1_ROW_CLASS } from "../components/ScheduleH1Badge";
+import ScheduleBadge, { ScheduleBadges, scheduleRowClass, strictestSchedule } from "../components/ScheduleBadge";
 import SchemeDiscountField from "../components/purchases/SchemeDiscountField";
 import MatchChooser from "../components/purchases/MatchChooser";
 import NewProductsDialog from "../components/purchases/NewProductsDialog";
@@ -521,7 +522,7 @@ const SupplierSelector = ({
       </div>
 
       {isOpen && (
-        <div className="absolute z-[100] mt-2 max-h-72 w-full min-w-[320px] overflow-hidden rounded-xl border border-border/80 bg-card/95 backdrop-blur-xl text-popover-foreground shadow-2xl animate-in fade-in zoom-in-95 duration-200">
+        <div className="absolute z-[100] mt-2 max-h-72 w-full min-w-[320px] overflow-hidden rounded-xl border border-border/80 bg-card/95 text-popover-foreground shadow-2xl animate-in fade-in zoom-in-95 duration-200">
           <div className="flex items-center border-b border-border/40 px-3">
             <Search className="mr-2 h-4 w-4 shrink-0 opacity-50" />
             <input
@@ -1049,6 +1050,20 @@ const partPaymentError = (p, raw) => {
   return "";
 };
 
+// Purchase tagged as bought without a bill from the supplier
+function NoSupplierBillTag({ className = "" }) {
+  return (
+    <span
+      data-testid="no-supplier-bill-tag"
+      title="Bought without a bill from the supplier"
+      className={`inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-orange-500/40 bg-orange-500/10 px-1.5 py-[3px] text-[10px] font-bold leading-none text-orange-700 dark:text-orange-300 ${className}`}
+    >
+      <ReceiptText className="h-2.5 w-2.5" aria-hidden="true" />
+      Without bill
+    </span>
+  );
+}
+
 export default function PurchasesPage() {
   const onlineFeatures = useOnlineFeatures();
   // Data state
@@ -1068,6 +1083,8 @@ export default function PurchasesPage() {
   const [showNewPurchase, setShowNewPurchase] = useState(false);
   const [selectedSupplier, setSelectedSupplier] = useState("");
   const [invoiceNo, setInvoiceNo] = useState("");
+  // Bought without a bill from the supplier
+  const [withoutBill, setWithoutBill] = useState(false);
   const [purchaseDate, setPurchaseDate] = useState(
     new Date().toISOString().slice(0, 10)
   );
@@ -1183,6 +1200,8 @@ export default function PurchasesPage() {
               _selectedFromCatalog: false,
               _inventoryMeta: null,
               schedule_h1: undefined,
+              schedule_code: undefined,
+              drug_schedule: undefined,
               manufacturer: "",
               salt_composition: "",
               _mappedFrom: "",
@@ -1973,6 +1992,8 @@ export default function PurchasesPage() {
   );
   // All / Paid / Unpaid (Unpaid includes part-paid bills)
   const [filterPayment, setFilterPayment] = useState("all");
+  // Only purchases bought without a supplier bill
+  const [filterWithoutBill, setFilterWithoutBill] = useState(false);
   const [editCatalogProduct, setEditCatalogProduct] = useState(null); // catalog product being edited
   // Same medicine under different names, merged from here without going to Inventory
   const [dupFor, setDupFor] = useState(null); // null closed, "" all, or a product name
@@ -2088,6 +2109,7 @@ export default function PurchasesPage() {
     const data = {
       selectedSupplier: d.supplier_id || "",
       invoiceNo: d.invoice_no || "",
+      withoutBill: d.without_bill === true,
       purchaseDate: d.purchase_date || new Date().toISOString().slice(0, 10),
       purchaseItems: rows.length ? rows : [{ ...emptyItem, id: `temp-${Date.now()}` }],
       paymentStatus: d.payment_status || "Unpaid",
@@ -2099,6 +2121,7 @@ export default function PurchasesPage() {
     setActiveTabId(newId);
     setSelectedSupplier(data.selectedSupplier);
     setInvoiceNo(data.invoiceNo);
+    setWithoutBill(!!data.withoutBill);
     setPurchaseDate(data.purchaseDate);
     setPurchaseItems(data.purchaseItems);
     setPaymentStatus(data.paymentStatus);
@@ -2168,6 +2191,7 @@ export default function PurchasesPage() {
           setActiveTabId(active.id);
           setSelectedSupplier(active.data.selectedSupplier || "");
           setInvoiceNo(active.data.invoiceNo || "");
+          setWithoutBill(!!active.data.withoutBill);
           setPurchaseDate(
             active.data.purchaseDate || new Date().toISOString().slice(0, 10)
           );
@@ -2193,6 +2217,7 @@ export default function PurchasesPage() {
                 data: {
                   selectedSupplier,
                   invoiceNo,
+                  withoutBill,
                   purchaseDate,
                   purchaseItems,
                   paymentStatus,
@@ -2213,6 +2238,7 @@ export default function PurchasesPage() {
   }, [
     selectedSupplier,
     invoiceNo,
+    withoutBill,
     purchaseDate,
     purchaseItems,
     paymentStatus,
@@ -2353,6 +2379,7 @@ export default function PurchasesPage() {
     setActiveTabId(newId);
     setSelectedSupplier("");
     setInvoiceNo("");
+    setWithoutBill(false);
     setPurchaseDate(new Date().toISOString().slice(0, 10));
     setPurchaseItems([defaultRow]);
     setPaymentStatus(initialStatus);
@@ -2370,6 +2397,7 @@ export default function PurchasesPage() {
     setActiveTabId(tabId);
     setSelectedSupplier(target.data.selectedSupplier || "");
     setInvoiceNo(target.data.invoiceNo || "");
+    setWithoutBill(!!target.data.withoutBill);
     setPurchaseDate(
       target.data.purchaseDate || new Date().toISOString().slice(0, 10)
     );
@@ -2395,6 +2423,7 @@ export default function PurchasesPage() {
       setActiveTabId(null);
       setSelectedSupplier("");
       setInvoiceNo("");
+    setWithoutBill(false);
       setPurchaseDate(new Date().toISOString().slice(0, 10));
       setPurchaseItems([]);
       setPaymentStatus("Unpaid");
@@ -2476,6 +2505,7 @@ export default function PurchasesPage() {
         if (filterSupplier && filterSupplier !== "all")
           params.append("supplier_id", filterSupplier);
         if (filterPayment !== "all") params.append("payment_status", filterPayment);
+        if (filterWithoutBill) params.append("without_bill", "true");
         if (startDate) params.append("start_date", startDate);
         if (endDate) params.append("end_date", endDate);
         if (highlightId) params.append("highlight_id", highlightId);
@@ -2514,6 +2544,7 @@ export default function PurchasesPage() {
       searchQuery,
       filterSupplier,
       filterPayment,
+      filterWithoutBill,
       startDate,
       endDate,
       sortBy,
@@ -2537,7 +2568,7 @@ export default function PurchasesPage() {
       fetchPurchases(1);
     }, 300);
     return () => clearTimeout(debounce);
-  }, [searchQuery, filterSupplier, filterPayment, startDate, endDate, sortBy, sortOrder]);
+  }, [searchQuery, filterSupplier, filterPayment, filterWithoutBill, startDate, endDate, sortBy, sortOrder]);
 
   // Search medicines for suggestions with high-speed ranking & instant client cache
   useEffect(() => {
@@ -2730,6 +2761,7 @@ export default function PurchasesPage() {
     setPurchaseItems([]);
     setSelectedSupplier("");
     setInvoiceNo("");
+    setWithoutBill(false);
     setPurchaseDate(new Date().toISOString().slice(0, 10));
     setPaymentMode("");
     setNewItemRow(null);
@@ -3043,6 +3075,8 @@ export default function PurchasesPage() {
             _selectedFromCatalog: false,
             _inventoryMeta: null,
             schedule_h1: undefined,
+              schedule_code: undefined,
+              drug_schedule: undefined,
             manufacturer: "",
             salt_composition: "",
             hsn_no: "",
@@ -3452,6 +3486,8 @@ export default function PurchasesPage() {
           return {
             ...item,
             schedule_h1: medicine.schedule_h1,
+            schedule_code: medicine.schedule_code,
+            drug_schedule: medicine.drug_schedule,
             product_id:
               medicine.id || medicine.product_id || (medicine._id ? String(medicine._id) : `med-${Date.now()}`),
             product_name: medicine.product_name || medicine.name,
@@ -3695,6 +3731,7 @@ export default function PurchasesPage() {
         }
       : null,
     invoice_no: invoiceNo || null,
+    without_bill: withoutBill,
     purchase_date: purchaseDate,
     items: itemsToProcess.map((item) => ({
       product_id: item.product_id,
@@ -3968,6 +4005,7 @@ export default function PurchasesPage() {
 
     setSelectedSupplier(purchase.supplier_id);
     setInvoiceNo(purchase.invoice_no || "");
+    setWithoutBill(purchase.without_bill === true);
     setPurchaseDate(
       purchase.purchase_date ||
         purchase.created_at?.slice(0, 10) ||
@@ -4054,6 +4092,7 @@ export default function PurchasesPage() {
           supplier_id: editingPurchase.supplier_id,
           supplier_name: editingPurchase.supplier_name,
           invoice_no: editingPurchase.invoice_no,
+          without_bill: editingPurchase.without_bill === true,
           purchase_date: editingPurchase.purchase_date,
           items: editingPurchase.items.map(({ id, _editing, ...item }) => ({
             product_id: item.product_id || `prod-${Date.now()}`,
@@ -4753,7 +4792,7 @@ export default function PurchasesPage() {
           data-testid="new-purchase-form"
         >
           {isAiLoading && (
-            <div className="absolute inset-0 z-[100] flex flex-col items-center justify-center bg-card/85 backdrop-blur-md rounded-2xl transition-all duration-300 shadow-2xl">
+            <div className="absolute inset-0 z-[100] flex flex-col items-center justify-center bg-card/85 rounded-2xl transition-all duration-300 shadow-2xl">
               <AiLoader
                 size="lg"
                 text="Running AI Analysis & Extracting Properties..."
@@ -4762,7 +4801,7 @@ export default function PurchasesPage() {
           )}
 
           {/* Unified Single Control Toolbar for New Purchase Entry */}
-          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 bg-card border-2 border-border p-3 rounded-2xl backdrop-blur-xl shadow-md">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 bg-card border-2 border-border p-3 rounded-2xl shadow-md">
             {/* Left Fields Grid (Supplier, Invoice #, Date, Payment Status, Initial Amount Paid, Payment Mode) */}
             <div className="flex flex-wrap items-end gap-3 flex-1">
               <div className="space-y-1 w-full sm:w-[230px]">
@@ -4788,13 +4827,24 @@ export default function PurchasesPage() {
                   Invoice Number
                 </Label>
                 <Input
-                  placeholder="e.g. INV-001"
+                  placeholder={withoutBill ? "No supplier bill" : "e.g. INV-001"}
                   value={invoiceNo}
                   disabled={processingRowId !== null}
                   onChange={(e) => setInvoiceNo(e.target.value)}
                   className="h-9 text-xs font-semibold rounded-xl border-border bg-background text-foreground shadow-2xs focus-visible:ring-2 focus-visible:ring-orange-500/30 focus-visible:border-orange-500"
                   data-testid="invoice-no-input"
                 />
+                <label className="flex cursor-pointer items-center gap-1.5 pt-0.5 text-[10px] font-bold text-muted-foreground" title="Tag this purchase as bought from the supplier without a bill">
+                  <input
+                    type="checkbox"
+                    className="h-3.5 w-3.5 cursor-pointer accent-orange-600"
+                    checked={withoutBill}
+                    disabled={processingRowId !== null}
+                    onChange={(e) => setWithoutBill(e.target.checked)}
+                    data-testid="without-bill-toggle"
+                  />
+                  Bought without bill
+                </label>
               </div>
 
               <div className="space-y-1 w-[145px]">
@@ -5086,7 +5136,7 @@ export default function PurchasesPage() {
           {/* Items Table - Inline Editable with enhanced fields */}
           <div data-guide="purchase-items" className="border-2 border-border rounded-2xl relative overflow-hidden bg-card shadow-sm">
             <Table mobileCards className="table-fixed min-w-[1344px] w-full m-purchase-cards" wrapperClassName="h-[420px]">
-              <TableHeader className="sticky top-0 bg-muted/95 backdrop-blur z-[50] border-b-2 border-border shadow-xs">
+              <TableHeader className="sticky top-0 bg-muted/95 z-[50] border-b-2 border-border shadow-xs">
                 <TableRow className="hover:bg-transparent">
                   <TableHead data-card="title" className="py-2.5 font-extrabold text-foreground text-left">
                     Item Name
@@ -5415,8 +5465,8 @@ export default function PurchasesPage() {
                             item.hsn_no ||
                             item.salt_composition) && (
                             <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground flex-wrap leading-tight mt-0.5">
-                              {item.product_name && isScheduleH1(item) && (
-                                <ScheduleH1Badge testId="purchase-row-h1" label="S-H1" title="Schedule H1 medicine" />
+                              {item.product_name && scheduleOf(item) && (
+                                <ScheduleBadge schedule={scheduleOf(item)} short testId={scheduleOf(item) === "H1" ? "purchase-row-h1" : undefined} />
                               )}
                               {item.manufacturer ? (
                                 <span className="font-medium text-foreground/85">
@@ -5772,7 +5822,7 @@ export default function PurchasesPage() {
                             >
                               {loadingSuggestions &&
                                 medicineSuggestions.length === 0 && (
-                                  <div className="h-[140px] w-full flex flex-col items-center justify-center bg-card backdrop-blur-md">
+                                  <div className="h-[140px] w-full flex flex-col items-center justify-center bg-card">
                                     <Loader
                                       size="sm"
                                       text="Searching medicines & inventory..."
@@ -5891,8 +5941,8 @@ export default function PurchasesPage() {
                                         <span>
                                           {medicine.product_name || medicine.name}
                                         </span>
-                                        {isScheduleH1(medicine) && (
-                                          <ScheduleH1Badge testId="purchase-suggestion-h1" label="S-H1" title="Schedule H1: sold only on prescription" />
+                                        {scheduleOf(medicine) && (
+                                          <ScheduleBadge schedule={scheduleOf(medicine)} short testId={scheduleOf(medicine) === "H1" ? "purchase-suggestion-h1" : undefined} />
                                         )}
                                         {medicine.dosage_form && (
                                           <span className="text-[10px] px-2 py-0.5 bg-purple-500/10 text-purple-400 border border-purple-500/30 rounded-full font-semibold capitalize">
@@ -7087,6 +7137,16 @@ export default function PurchasesPage() {
                       }))
                     }
                   />
+                  <label className="flex cursor-pointer items-center gap-2 text-xs font-semibold text-muted-foreground">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 cursor-pointer accent-orange-600"
+                      checked={editingPurchase.without_bill === true}
+                      onChange={(e) => setEditingPurchase((prev) => ({ ...prev, without_bill: e.target.checked }))}
+                      data-testid="edit-without-bill-toggle"
+                    />
+                    Bought without bill from the supplier
+                  </label>
                 </div>
                 <div className="space-y-2">
                   <Label>Purchase Date</Label>
@@ -7105,7 +7165,7 @@ export default function PurchasesPage() {
 
               <div className="border border-border rounded-lg overflow-hidden">
                   <Table mobileCards wrapperClassName="h-[400px]">
-                    <TableHeader className="sticky top-0 bg-muted/95 backdrop-blur z-[50]">
+                    <TableHeader className="sticky top-0 bg-muted/95 z-[50]">
                       <TableRow>
                         <TableHead data-card="title">Product Name</TableHead>
                         <TableHead>Batch</TableHead>
@@ -7494,7 +7554,7 @@ export default function PurchasesPage() {
                   <Input
                     placeholder="Search purchases by supplier, invoice..."
                     data-shortcut="search"
-                    className="pl-9 h-9 text-xs font-medium rounded-xl border-border/70 bg-card/60 backdrop-blur-md"
+                    className="pl-9 h-9 text-xs font-medium rounded-xl border-border/70 bg-card/60"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                   />
@@ -7530,19 +7590,30 @@ export default function PurchasesPage() {
                     </button>
                   ))}
                 </div>
+                <button
+                  type="button"
+                  onClick={() => setFilterWithoutBill((v) => !v)}
+                  aria-pressed={filterWithoutBill}
+                  data-testid="filter-without-bill"
+                  title="Show only purchases bought without a bill from the supplier"
+                  className={`inline-flex h-9 items-center gap-1.5 rounded-xl border px-3 text-xs font-bold transition-colors ${filterWithoutBill ? "border-orange-600 bg-orange-600 text-white" : "border-border/70 bg-card/60 text-muted-foreground hover:text-foreground"}`}
+                >
+                  <ReceiptText className="h-3.5 w-3.5" />
+                  Without bill
+                </button>
                 <Input
                   type="date"
                   placeholder="Start date"
                   value={startDate}
                   onChange={(e) => setStartDate(e.target.value)}
-                  className="w-36 h-9 text-xs rounded-xl border-border/70 bg-card/60 backdrop-blur-md"
+                  className="w-36 h-9 text-xs rounded-xl border-border/70 bg-card/60"
                 />
                 <Input
                   type="date"
                   placeholder="End date"
                   value={endDate}
                   onChange={(e) => setEndDate(e.target.value)}
-                  className="w-36 h-9 text-xs rounded-xl border-border/70 bg-card/60 backdrop-blur-md"
+                  className="w-36 h-9 text-xs rounded-xl border-border/70 bg-card/60"
                 />
                 {dupCount > 0 && (
                   <Button
@@ -7559,6 +7630,7 @@ export default function PurchasesPage() {
                 {(searchQuery ||
                   (filterSupplier && filterSupplier !== "all") ||
                   filterPayment !== "all" ||
+                  filterWithoutBill ||
                   startDate ||
                   endDate) && (
                   <Button
@@ -7569,6 +7641,7 @@ export default function PurchasesPage() {
                       setSearchQuery("");
                       setFilterSupplier("all");
                       setFilterPayment("all");
+                      setFilterWithoutBill(false);
                       setStartDate("");
                       setEndDate("");
                     }}
@@ -7581,7 +7654,7 @@ export default function PurchasesPage() {
           </div>
 
           {/* Purchases Table */}
-          <Card className="glass bg-card/35 backdrop-blur-xl border border-border/70 shadow-lg rounded-2xl overflow-hidden">
+          <Card className="glass bg-card/35 border border-border/70 shadow-lg rounded-2xl overflow-hidden">
             <Table mobileCards>
               <TableHeader>
                 <TableRow>
@@ -7636,7 +7709,8 @@ export default function PurchasesPage() {
                       tabIndex={0}
                       aria-expanded={expandedPurchase === purchase.id}
                       data-h1={purchase.has_schedule_h1 ? "true" : undefined}
-                      className={`cursor-pointer ${purchase.has_schedule_h1 ? H1_ROW_CLASS : ""}`}
+                      data-without-bill={purchase.without_bill ? "true" : undefined}
+                      className={`cursor-pointer ${scheduleRowClass(strictestSchedule(recordScheduleLines(purchase).map((l) => l.schedule)))}`}
                       onClick={() =>
                         setExpandedPurchase(
                           expandedPurchase === purchase.id ? null : purchase.id
@@ -7656,8 +7730,9 @@ export default function PurchasesPage() {
                           {pagination.total -
                             ((pagination.page - 1) * pagination.limit +
                               index)}{" "}
-                          - {purchase.invoice_no || "-"}
+                          - {purchase.without_bill && !purchase.invoice_no ? "No bill" : purchase.invoice_no || "-"}
                         </div>
+                        {purchase.without_bill && <NoSupplierBillTag className="mt-1" />}
                         <RecordDates date={purchase.purchase_date} createdAt={purchase.created_at} dateLabel="Purchased" />
                       </TableCell>
                       <TableCell className="font-medium">
@@ -7671,6 +7746,7 @@ export default function PurchasesPage() {
                           <span className="whitespace-nowrap text-[11px] text-muted-foreground" data-testid="purchase-total-qty" title="Total quantity on this bill (packs, free packs included)">
                             · {+(purchase.items || []).reduce((t, it) => t + (Number(it.pack_quantity ?? it.quantity) || 0) + (Number(it.scheme) || 0), 0).toFixed(2)} qty
                           </span>
+                          <ScheduleBadges lines={recordScheduleLines(purchase)} />
                           {purchase.has_returns && (
                             <span
                               className="inline-flex items-center whitespace-nowrap rounded-md border border-blue-500/30 bg-blue-500/10 px-1.5 py-[3px] text-[10px] font-bold leading-none text-blue-600 dark:text-blue-400"
@@ -7838,7 +7914,7 @@ export default function PurchasesPage() {
                                       <TableCell className="font-medium">
                                         <div className="flex items-center gap-1.5 flex-wrap">
                                           <span>{item.product_name}</span>
-                                          {(purchase.schedule_h1_items || []).includes(item.product_name) && <ScheduleH1Badge label="S-H1" title="Schedule H1 medicine" />}
+                                          {lineScheduleIn(purchase, item.product_name) && <ScheduleBadge schedule={lineScheduleIn(purchase, item.product_name)} short />}
                                           {item.stock_removed && (
                                             <span
                                               className="inline-flex items-center rounded-md border border-rose-500/30 bg-rose-500/10 px-1.5 py-[3px] text-[10px] font-bold leading-none text-rose-600 dark:text-rose-400"
@@ -8700,7 +8776,7 @@ export default function PurchasesPage() {
       {/* TABS & ACTION NAVBAR */}
       {(showNewPurchase || editingPurchaseId) &&
         createPortal(
-          <div data-guide="purchase-bar" className="fixed bottom-0 left-0 right-0 z-[100] flex items-center justify-between bg-card/95 backdrop-blur-xl border-t-2 border-border shadow-2xl px-6 py-3.5 gap-4 overflow-x-auto scroller-hide overflow-y-hidden mb-0 transition-all duration-300 mobile-action-bar max-md:flex-wrap max-md:gap-2 max-md:px-3 max-md:pt-2.5 max-md:pb-[calc(0.625rem+env(safe-area-inset-bottom))]">
+          <div data-guide="purchase-bar" className="fixed bottom-0 left-0 right-0 z-[100] flex items-center justify-between bg-card/95 border-t-2 border-border shadow-2xl px-6 py-3.5 gap-4 overflow-x-auto scroller-hide overflow-y-hidden mb-0 transition-all duration-300 mobile-action-bar max-md:flex-wrap max-md:gap-2 max-md:px-3 max-md:pt-2.5 max-md:pb-[calc(0.625rem+env(safe-area-inset-bottom))]">
             <div className="flex items-center gap-2 overflow-x-auto scroller-hide max-md:w-full empty:hidden">
               {showNewPurchase &&
                 tabs.map((tab, idx) => {
@@ -8827,7 +8903,7 @@ export default function PurchasesPage() {
           <div className="fixed inset-0 z-[80] flex justify-end">
             {/* Backdrop */}
             <div
-              className="fixed inset-0 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200"
+              className="fixed inset-0 bg-black/60 animate-in fade-in duration-200"
               onClick={() =>
                 setProductSidebar((prev) => ({ ...prev, open: false }))
               }

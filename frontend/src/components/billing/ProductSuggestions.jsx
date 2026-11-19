@@ -6,8 +6,8 @@ import { API } from "../../App";
 import Loader from "../Loader";
 import { formatCombo } from "../../lib/shortcuts";
 import { marginPrice } from "../../lib/margin";
-import { isScheduleH1 } from "../../lib/scheduleH1";
-import ScheduleH1Badge from "../ScheduleH1Badge";
+import { isScheduleH1, scheduleOf } from "../../lib/scheduleH1";
+import ScheduleBadge from "../ScheduleBadge";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "../ui/sheet";
 
 // Product search suggestions for billing: filter chips (All / In stock / Near
@@ -115,7 +115,7 @@ export function SuggestionList({
   const manualIndex = suggestions.length;
   return (
     <>
-      <div className="sticky top-0 z-10 bg-muted/95 backdrop-blur-md border-b border-border">
+      <div className="sticky top-0 z-10 bg-muted/95 border-b border-border">
         <div className="px-3.5 py-1.5 text-xs font-semibold text-muted-foreground flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 min-w-0">
             <span className="truncate">Suggestions for "{search}"</span>
@@ -191,8 +191,12 @@ export function SuggestionList({
                         {invItem.category}
                       </span>
                     )}
-                    {isScheduleH1(invItem) && (
-                      <ScheduleH1Badge testId="suggestion-h1" title="Schedule H1: sell only on prescription; attach it to the bill" />
+                    {scheduleOf(invItem) && (
+                      <ScheduleBadge
+                        schedule={scheduleOf(invItem)}
+                        testId={scheduleOf(invItem) === "H1" ? "suggestion-h1" : undefined}
+                        title={scheduleOf(invItem) === "H1" ? "Schedule H1: prescription needed; attach it now or later" : undefined}
+                      />
                     )}
                     {near && (
                       <span className="text-[10px] px-2 py-0.5 bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30 rounded-full font-bold">
@@ -303,7 +307,7 @@ export function SuggestionList({
           {showManual && (
             <div
               id={`${idPrefix}-${manualIndex}`}
-              className={`sticky bottom-0 z-10 p-3 cursor-pointer border-t-2 border-amber-500/30 backdrop-blur-md transition-colors duration-150 ${
+              className={`sticky bottom-0 z-10 p-3 cursor-pointer border-t-2 border-amber-500/30 transition-colors duration-150 ${
                 highlighted === manualIndex ? "bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300" : "bg-amber-50/95 dark:bg-amber-950/80 hover:bg-amber-100 text-amber-600"
               }`}
               onMouseDown={(e) => {

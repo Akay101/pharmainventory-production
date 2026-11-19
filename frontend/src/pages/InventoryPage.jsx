@@ -49,7 +49,8 @@ import ProductCatalogModal from "../components/ProductCatalogModal";
 import DuplicateProductsDialog, { useDuplicateCount } from "../components/DuplicateProducts";
 import MissingDetailsDialog from "../components/MissingDetails";
 import { formatExpiry } from "./utils";
-import ScheduleH1Badge, { H1_ROW_CLASS } from "../components/ScheduleH1Badge";
+import ScheduleBadge, { SCHEDULE_STYLES, scheduleRowClass } from "../components/ScheduleBadge";
+import { scheduleOf } from "../lib/scheduleH1";
 
 export default function InventoryPage() {
   const navigate = useNavigate();
@@ -202,6 +203,7 @@ export default function InventoryPage() {
       salt_composition: productGroup.salt_composition,
       hsn_no: productGroup.hsn_no,
       schedule_h1: !!productGroup.schedule_h1,
+      schedule_code: scheduleOf(productGroup),
       category: productGroup.category || "medicine",
       low_stock_threshold: productGroup.threshold ?? productGroup.low_stock_threshold ?? 10,
       shortage_threshold: productGroup.threshold ?? productGroup.shortage_threshold,
@@ -693,7 +695,7 @@ export default function InventoryPage() {
             data-shortcut="search"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="pl-9 h-9 text-xs font-medium rounded-xl border-border/70 bg-card/60 backdrop-blur-md"
+            className="pl-9 h-9 text-xs font-medium rounded-xl border-border/70 bg-card/60"
             data-testid="inventory-search"
           />
         </div>
@@ -807,10 +809,10 @@ export default function InventoryPage() {
       </div>
 
       {/* Inventory Table Container (Single Product per Row) */}
-      <div className="border border-border/60 rounded-2xl relative overflow-hidden bg-card/60 backdrop-blur-md shadow-xs">
+      <div className="border border-border/60 rounded-2xl relative overflow-hidden bg-card/60 shadow-xs">
         <div className="relative overflow-x-auto" aria-busy={filtering}>
           {filtering && (
-            <div className="absolute inset-0 z-10 flex items-start justify-center bg-background/55 pt-16 backdrop-blur-[1px] animate-in fade-in duration-150" data-testid="inventory-filtering">
+            <div className="absolute inset-0 z-10 flex items-start justify-center bg-background/55 pt-16 animate-in fade-in duration-150" data-testid="inventory-filtering">
               <span className="flex items-center gap-2 rounded-xl border border-border bg-card px-3.5 py-2 text-xs font-bold shadow-lg">
                 <Loader2 className="h-4 w-4 animate-spin text-primary" /> Updating list…
               </span>
@@ -931,7 +933,7 @@ export default function InventoryPage() {
                       id={`record-${itemId}`} 
                       data-testid={`inventory-row-${itemId}`} 
                       onClick={() => handleOpenProductDetails(item)}
-                      className={`hover:bg-muted/20 border-b border-border/40 transition-colors cursor-pointer group ${item.schedule_h1 ? H1_ROW_CLASS : ""}`}
+                      className={`hover:bg-muted/20 border-b border-border/40 transition-colors cursor-pointer group ${scheduleRowClass(scheduleOf(item))}`}
                     >
                       <TableCell className="text-center py-2" onClick={(e) => e.stopPropagation()}>
                         <input
@@ -950,7 +952,7 @@ export default function InventoryPage() {
                       <TableCell className="py-2 font-bold text-xs text-foreground">
                         <div className="font-extrabold text-xs text-foreground group-hover:text-primary transition-colors flex items-center flex-wrap gap-1.5">
                           {item.product_name || item.name}
-                          {item.schedule_h1 && <ScheduleH1Badge testId="inventory-h1" title="Schedule H1: sold only on prescription" />}
+                          {scheduleOf(item) && <ScheduleBadge schedule={scheduleOf(item)} testId={scheduleOf(item) === "H1" ? "inventory-h1" : undefined} />}
                         </div>
                         <div className="text-[10px] text-muted-foreground font-semibold mt-0.5">
                           {item.manufacturer || "General"} {item.salt_composition ? `• ${item.salt_composition}` : ""}
@@ -1383,9 +1385,9 @@ export default function InventoryPage() {
         }}
         title={detailProduct?.name || "Product Details"}
         subtitle={
-          detailProduct?.schedule_h1 ? (
+          scheduleOf(detailProduct) ? (
             <span className="inline-flex items-center gap-2 flex-wrap">
-              <ScheduleH1Badge />
+              <ScheduleBadge schedule={scheduleOf(detailProduct)} />
               Inventory Batches & Product Details
             </span>
           ) : (
@@ -1649,10 +1651,14 @@ export default function InventoryPage() {
                   <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Category</p>
                   <p className="text-sm font-semibold text-foreground mt-0.5 capitalize">{detailProduct?.category || "Medicine"}</p>
                 </div>
-                {detailProduct?.schedule_h1 && (
-                  <div className="col-span-2 flex items-center gap-2 rounded-xl border border-violet-500/30 bg-violet-500/5 p-3" data-testid="inventory-detail-h1">
-                    <ScheduleH1Badge />
-                    <p className="text-xs font-semibold text-muted-foreground">Sold only on prescription. Billing asks for it to be attached.</p>
+                {scheduleOf(detailProduct) && (
+                  <div className="col-span-2 flex items-center gap-2 rounded-xl border border-border/60 bg-muted/20 p-3" data-testid={scheduleOf(detailProduct) === "H1" ? "inventory-detail-h1" : "inventory-detail-schedule"}>
+                    <ScheduleBadge schedule={scheduleOf(detailProduct)} />
+                    <p className="text-xs font-semibold text-muted-foreground">
+                      {scheduleOf(detailProduct) === "H1"
+                        ? "Sold on prescription. Billing reminds you to attach it (now or later)."
+                        : SCHEDULE_STYLES[scheduleOf(detailProduct)].title.split(": ")[1]}
+                    </p>
                   </div>
                 )}
                 <div className="col-span-2 rounded-xl border border-border/60 bg-muted/20 p-3" data-testid="threshold-editor">

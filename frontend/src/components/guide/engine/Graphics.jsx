@@ -93,8 +93,8 @@ function Placed({ fx, focusRect, vp, children, className = "" }) {
 }
 
 const pop = (i, base = 0) => ({
-  initial: { opacity: 0, y: 14, scale: 0.6, filter: "blur(6px)" },
-  animate: { opacity: 1, y: 0, scale: 1, filter: "blur(0px)" },
+  initial: { opacity: 0, y: 14, scale: 0.6 },
+  animate: { opacity: 1, y: 0, scale: 1 },
   transition: { type: "spring", stiffness: 340, damping: 20, delay: base + i * 0.28 },
 });
 
@@ -116,7 +116,7 @@ function Chips({ fx, ...p }) {
 function Equation({ fx, ...p }) {
   return (
     <Placed fx={fx} {...p}>
-      <div className="flex flex-wrap items-center gap-1.5 rounded-2xl bg-slate-950/90 px-4 py-3 shadow-[0_18px_50px_rgba(0,0,0,0.5)] ring-1 ring-white/15 backdrop-blur">
+      <div className="flex flex-wrap items-center gap-1.5 rounded-2xl bg-slate-950/90 px-4 py-3 shadow-[0_18px_50px_rgba(0,0,0,0.5)] ring-1 ring-white/15">
         {fx.parts.map((t, i) => {
           const op = /^[×x+\-−=÷%]$/.test(t);
           const last = i === fx.parts.length - 1;

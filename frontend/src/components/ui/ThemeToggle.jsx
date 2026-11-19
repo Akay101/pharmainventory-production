@@ -46,7 +46,7 @@ export default function ThemeToggle({ className = "" }) {
       variant="ghost"
       size="icon"
       onClick={toggleTheme}
-      className={`relative h-10 w-10 rounded-xl border border-border/80 dark:border-border/60 hover:bg-muted/80 backdrop-blur-md transition-all active:scale-95 shadow-sm ${className}`}
+      className={`relative h-10 w-10 rounded-xl border border-border/80 dark:border-border/60 hover:bg-muted/80 transition-all active:scale-95 shadow-sm ${className}`}
       title={isDark ? "Switch to Light Mode" : "Switch to Dark Mode"}
       data-testid="theme-toggle-btn"
     >

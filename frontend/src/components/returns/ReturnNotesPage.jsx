@@ -850,7 +850,7 @@ export default function ReturnNotesPage({ kind }) {
           </div>
 
           {selected.size > 0 && (
-            <div className="sticky top-2 z-10 flex flex-wrap items-center justify-between gap-2 p-2.5 rounded-2xl bg-orange-500/10 border border-orange-500/30 backdrop-blur-md">
+            <div className="sticky top-2 z-10 flex flex-wrap items-center justify-between gap-2 p-2.5 rounded-2xl bg-orange-500/10 border border-orange-500/30">
               <span className="text-xs font-black text-foreground pl-1">{selected.size} selected</span>
               <div className="flex flex-wrap gap-2">
                 {kind === "expiry" && selectedMovable.length > 0 && (

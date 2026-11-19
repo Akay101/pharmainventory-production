@@ -1001,7 +1001,7 @@ export default function SuppliersPage() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mobile-stat-grid">
         {/* Total Suppliers */}
         <Card className="glass bg-card/45 border-border/70 shadow-md rounded-2xl relative overflow-hidden group hover:border-primary/30 transition-all">
-          <div className="absolute top-0 right-0 w-24 h-24 bg-primary/5 rounded-full blur-2xl transform translate-x-4 -translate-y-4"></div>
+          <div className="absolute top-0 right-0 w-24 h-24 bg-primary/5 rounded-full soft-glow transform translate-x-4 -translate-y-4"></div>
           <CardContent className="p-6 flex items-center gap-4">
             <div className="w-12 h-12 rounded-xl bg-primary/10 text-primary flex items-center justify-center border border-primary/20 shrink-0">
               <Users className="w-6 h-6" />
@@ -1015,7 +1015,7 @@ export default function SuppliersPage() {
 
         {/* Outstanding Balance */}
         <Card className="glass bg-card/45 border-border/70 shadow-md rounded-2xl relative overflow-hidden group hover:border-red-500/30 transition-all">
-          <div className="absolute top-0 right-0 w-24 h-24 bg-red-500/5 rounded-full blur-2xl transform translate-x-4 -translate-y-4"></div>
+          <div className="absolute top-0 right-0 w-24 h-24 bg-red-500/5 rounded-full soft-glow transform translate-x-4 -translate-y-4"></div>
           <CardContent className="p-6 flex items-center gap-4">
             <div className={`w-12 h-12 rounded-xl flex items-center justify-center border shrink-0 ${
               totalDuesOnPage > 0 
@@ -1037,7 +1037,7 @@ export default function SuppliersPage() {
 
         {/* Consolidated Accounts */}
         <Card className="glass bg-card/45 border-border/70 shadow-md rounded-2xl relative overflow-hidden group hover:border-accent/30 transition-all">
-          <div className="absolute top-0 right-0 w-24 h-24 bg-accent/5 rounded-full blur-2xl transform translate-x-4 -translate-y-4"></div>
+          <div className="absolute top-0 right-0 w-24 h-24 bg-accent/5 rounded-full soft-glow transform translate-x-4 -translate-y-4"></div>
           <CardContent className="p-6 flex items-center gap-4">
             <div className="w-12 h-12 rounded-xl bg-accent/10 text-accent flex items-center justify-center border border-accent/20 shrink-0">
               <Layers className="w-6 h-6" />
@@ -1054,7 +1054,7 @@ export default function SuppliersPage() {
 
       {/* Supplier Details Modal */}
       <Dialog open={detailsDialog.open} onOpenChange={(open) => !open && setDetailsDialog({ open: false, data: null, loading: false })}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col p-0 border border-border/70 bg-background/95 backdrop-blur-xl rounded-2xl shadow-2xl w-11/12">
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col p-0 border border-border/70 bg-background/95 rounded-2xl shadow-2xl w-11/12">
           {detailsDialog.loading ? (
             <div className="flex items-center justify-center h-64 shrink-0">
               <Loader2 className="w-8 h-8 animate-spin text-primary" />
@@ -1127,7 +1127,7 @@ export default function SuppliersPage() {
                 {/* Merge Protocol Banner */}
                 {detailsDialog.data.supplier.merge_history && detailsDialog.data.supplier.merge_history.length > 0 && (
                   <div className="bg-accent/5 border border-accent/20 rounded-2xl p-5 shadow-sm relative overflow-hidden shrink-0">
-                    <div className="absolute top-0 right-0 w-24 h-24 bg-accent/10 rounded-full blur-2xl transform translate-x-1/2 -translate-y-1/2"></div>
+                    <div className="absolute top-0 right-0 w-24 h-24 bg-accent/10 rounded-full soft-glow transform translate-x-1/2 -translate-y-1/2"></div>
                     <h4 className="text-accent font-bold text-sm mb-2 flex items-center gap-2">
                       <ShieldCheck className="w-4.5 h-4.5" /> Consolidated Entity History
                     </h4>

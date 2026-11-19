@@ -18,7 +18,7 @@ const { logActivity } = require("../utils/activityLogger");
 const { parseMargin } = require("../utils/margin");
 const multer = require("multer");
 const prescriptions = require("../services/prescriptions");
-const { h1Lines } = require("../utils/scheduleH1");
+const { scheduleLines } = require("../utils/scheduleH1");
 const prescriptionUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: prescriptions.MAX_BYTES } });
 const { requireSubscription } = require("../middleware/subscription");
 const { catalogLimiter, GLOBAL_PAGE_SIZE, GLOBAL_MAX_PAGES, MIN_GLOBAL_QUERY } = require("../middleware/security");
@@ -85,6 +85,105 @@ const lineMargin = (item) => {
   return margin === null ? {} : { margin_percent: margin, margin_capped: item.margin_capped === true };
 };
 
+// Profit within ±₹0.50 of zero is "no profit, no loss"; below that, a loss
+const BREAK_EVEN_BAND = 0.5;
+const marginStatus = (profit) => {
+  const p = Number(profit) || 0;
+  if (p <= -BREAK_EVEN_BAND) return "loss";
+  if (p < BREAK_EVEN_BAND) return "break_even";
+  return "profit";
+};
+const MARGIN_QUERY = {
+  loss: { profit: { $lte: -BREAK_EVEN_BAND } },
+  break_even: { profit: { $gt: -BREAK_EVEN_BAND, $lt: BREAK_EVEN_BAND } },
+};
+const RX_PENDING_QUERY = { has_schedule_h1: true, $and: [{ $or: [{ prescription: null }, { prescription: { $exists: false } }] }] };
+
+// GET /api/bills/flags: how many bills wait on a prescription, and how many
+// sold at a loss / break-even (the filter chips' counts)
+router.get("/flags", auth, requireSubscription(), async (req, res, next) => {
+  try {
+    const db = mongoose.connection.db;
+    const base = { pharmacy_id: req.user.pharmacy_id };
+    const [rx_pending, loss, break_even] = await Promise.all([
+      db.collection("bills").countDocuments({ ...base, ...RX_PENDING_QUERY }),
+      db.collection("bills").countDocuments({ ...base, ...MARGIN_QUERY.loss }),
+      db.collection("bills").countDocuments({ ...base, ...MARGIN_QUERY.break_even }),
+    ]);
+    res.json({ rx_pending, loss, break_even });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// GET /api/bills/last-discount?customer_id=&mobile=: the customer's latest bill,
+// when it had a discount (a reminder while billing them again)
+router.get("/last-discount", auth, requireSubscription(), async (req, res, next) => {
+  try {
+    const db = mongoose.connection.db;
+    const { customer_id, mobile, exclude_bill_id } = req.query;
+    const digits = String(mobile || "").replace(/\D/g, "").slice(-10);
+    const or = [];
+    if (customer_id) or.push({ customer_id: String(customer_id) });
+    if (digits.length === 10) or.push({ customer_mobile: { $regex: `${digits}$` } });
+    if (!or.length) return res.json({ last: null });
+    const query = { pharmacy_id: req.user.pharmacy_id, $or: or };
+    if (exclude_bill_id) query.id = { $ne: String(exclude_bill_id) };
+    const last = await db
+      .collection("bills")
+      .find(query, { projection: { _id: 0, id: 1, bill_no: 1, billing_date: 1, created_at: 1, subtotal: 1, discount_percent: 1, discount_amount: 1, grand_total: 1, items: 1 } })
+      .sort({ billing_date: -1, created_at: -1 })
+      .limit(1)
+      .next();
+    if (!last) return res.json({ last: null });
+    const lineDiscount = (last.items || []).reduce((s, i) => s + (Number(i.line_discount) || 0), 0);
+    const billDiscount = Number(last.discount_amount) || 0;
+    const total = Math.round((lineDiscount + billDiscount) * 100) / 100;
+    if (total < 0.01) return res.json({ last: null });
+    const gross = (last.items || []).reduce((s, i) => s + (Number(i.quantity) || 0) * (Number(i.unit_price) || 0), 0);
+    res.json({
+      last: {
+        bill_id: last.id,
+        bill_no: last.bill_no,
+        billing_date: last.billing_date,
+        discount_total: total,
+        bill_discount_percent: Number(last.discount_percent) || 0,
+        line_discount: Math.round(lineDiscount * 100) / 100,
+        discount_share_percent: gross > 0 ? Math.round((total / gross) * 1000) / 10 : 0,
+        grand_total: last.grand_total,
+        discounted_lines: (last.items || [])
+          .filter((i) => Number(i.discount_percent) > 0)
+          .map((i) => ({ product_name: i.product_name, discount_percent: Number(i.discount_percent) }))
+          .slice(0, 8),
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// POST /api/bills/:bill_id/prescription { prescription_id }: attach a Schedule
+// H1 bill's prescription after it was saved (uploaded first via /prescriptions)
+router.post("/:bill_id/prescription", auth, requireSubscription(), async (req, res, next) => {
+  try {
+    const db = mongoose.connection.db;
+    const bill = await db.collection("bills").findOne({ id: req.params.bill_id, pharmacy_id: req.user.pharmacy_id }, { projection: { _id: 0, id: 1, bill_no: 1, prescription: 1 } });
+    if (!bill) return res.status(404).json({ detail: "Bill not found" });
+    const doc = await prescriptions.findOne(db, req.user.pharmacy_id, req.body.prescription_id);
+    if (!doc || (doc.bill_id && doc.bill_id !== bill.id)) return res.status(400).json({ detail: "Upload the prescription again" });
+    const prescription = prescriptions.meta(doc);
+    await db.collection("bills").updateOne({ id: bill.id, pharmacy_id: req.user.pharmacy_id }, { $set: { prescription, prescription_pending: false } });
+    await prescriptions.linkToBill(db, req.user.pharmacy_id, doc.id, bill.id);
+    if (bill.prescription?.id && bill.prescription.id !== doc.id) {
+      await prescriptions.removeById(db, req.user.pharmacy_id, bill.prescription.id).catch((err) => console.error("Prescription cleanup failed:", err.message));
+    }
+    await logActivity(db, req.user.pharmacy_id, req.user.id, req.user.name, "UPDATE", "BILLING", bill.id, `Prescription added to Bill ${bill.bill_no}`, `/billing`);
+    res.json({ prescription });
+  } catch (error) {
+    next(error);
+  }
+});
+
 // GET /api/bills
 router.get("/", auth, requireSubscription(), async (req, res, next) => {
   try {
@@ -104,9 +203,15 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
       highlight_id,
       overdue,
       missing_rate,
+      rx_pending,
+      margin,
     } = req.query;
 
     const query = { pharmacy_id: req.user.pharmacy_id };
+    // Schedule H1 bills saved without the prescription, to upload it later
+    if (rx_pending === "true") Object.assign(query, RX_PENDING_QUERY);
+    // Bills sold at no profit (break-even) or at a loss
+    if (margin === "loss" || margin === "break_even") Object.assign(query, MARGIN_QUERY[margin]);
     // Bills with a line saved without a rate (MRP 0), to fill in later
     if (missing_rate === "true") {
       query.items = { $elemMatch: { $or: [{ unit_price: { $lte: 0 } }, { unit_price: null }, { unit_price: { $exists: false } }] } };
@@ -187,13 +292,16 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
 
     const total = await db.collection("bills").countDocuments(query);
 
-    // Bills saved before Schedule H1 tracking: work out their H1 lines now
+    // Bills saved before schedule tracking: work out their scheduled lines now
     await Promise.all(
       bills
-        .filter((b) => b.schedule_h1_items === undefined)
+        .filter((b) => b.schedule_lines === undefined)
         .map(async (b) => {
-          b.schedule_h1_items = await h1Lines(db, req.user.pharmacy_id, b.items || []);
-          b.has_schedule_h1 = b.schedule_h1_items.length > 0;
+          b.schedule_lines = await scheduleLines(db, req.user.pharmacy_id, b.items || []);
+          if (b.schedule_h1_items === undefined) {
+            b.schedule_h1_items = b.schedule_lines.filter((l) => l.schedule === "H1").map((l) => l.product_name);
+            b.has_schedule_h1 = b.schedule_h1_items.length > 0;
+          }
         })
     );
 
@@ -202,6 +310,8 @@ router.get("/", auth, requireSubscription(), async (req, res, next) => {
       ...bill,
       grand_total: bill.grand_total || bill.total_amount || 0,
       total_amount: bill.total_amount || bill.grand_total || 0,
+      margin_status: marginStatus(bill.profit),
+      prescription_pending: !!bill.has_schedule_h1 && !bill.prescription,
     }));
 
     res.json({
@@ -808,6 +918,9 @@ router.post("/", auth, requireSubscription(), async (req, res, next) => {
       has_schedule_h1: rx.h1.length > 0,
       schedule_h1_items: rx.h1,
       prescription: rx.prescription,
+      prescription_pending: rx.h1.length > 0 && !rx.prescription,
+      schedule_lines: rx.schedules,
+      margin_status: marginStatus(totalProfit),
       pdf_url: null,
       created_by: req.user.id,
       created_at: new Date().toISOString(),
@@ -1270,6 +1383,7 @@ router.put("/:bill_id", auth, requireSubscription(), async (req, res, next) => {
       total_amount: totalAmount,
       total_cost: totalCost,
       profit: totalProfit,
+      margin_status: marginStatus(totalProfit),
       inventory_billed_qty: inventoryBilledQty,
       negative_billed_qty: negativeBilledQty,
       is_paid: finalIsPaid,
@@ -1420,6 +1534,8 @@ router.put("/:bill_id", auth, requireSubscription(), async (req, res, next) => {
     updates.schedule_h1_items = rx.h1;
     // A bill that no longer has H1 lines keeps the prescription it had
     if (rx.prescription) updates.prescription = rx.prescription;
+    updates.prescription_pending = rx.h1.length > 0 && !(rx.prescription || bill.prescription);
+    updates.schedule_lines = rx.schedules;
 
     await db
       .collection("bills")
@@ -1666,8 +1782,9 @@ router.post(
       if (format !== undefined && !FORMATS.includes(format)) {
         return res.status(400).json({ detail: "Unknown PDF format" });
       }
-      if (bill.schedule_h1_items === undefined) {
-        bill.schedule_h1_items = await h1Lines(db, req.user.pharmacy_id, bill.items || []);
+      if (bill.schedule_h1_items === undefined || bill.schedule_lines === undefined) {
+        bill.schedule_lines = await scheduleLines(db, req.user.pharmacy_id, bill.items || []);
+        if (bill.schedule_h1_items === undefined) bill.schedule_h1_items = bill.schedule_lines.filter((l) => l.schedule === "H1").map((l) => l.product_name);
       }
       const pdfBuffer = await generateBillPDF(invoicedView(bill), pharmacy, { upiQr, format });
 

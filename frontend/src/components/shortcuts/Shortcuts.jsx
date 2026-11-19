@@ -107,7 +107,7 @@ function HelpPanel({ open, onClose, sections }) {
     <aside
       role="complementary"
       aria-label="Keyboard shortcuts"
-      className="fixed bottom-24 right-4 top-20 z-[99980] flex w-[340px] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl border border-border bg-background/95 shadow-2xl backdrop-blur-xl animate-in fade-in slide-in-from-right-4 duration-200"
+      className="fixed bottom-24 right-4 top-20 z-[99980] flex w-[340px] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl border border-border bg-background/95 shadow-2xl animate-in fade-in slide-in-from-right-4 duration-200"
       onKeyDown={(e) => e.key === "Escape" && onClose()}
     >
       <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-3">

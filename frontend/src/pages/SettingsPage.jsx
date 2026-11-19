@@ -354,7 +354,7 @@ export default function SettingsPage() {
         {/* Preferences Tab */}
         <TabsContent value="preferences">
           {IS_DESKTOP && (
-            <Card className="bg-card/50 backdrop-blur-sm border-white/5 mb-6" data-testid="desktop-counters-card">
+            <Card className="bg-card/50 border-white/5 mb-6" data-testid="desktop-counters-card">
               <CardHeader>
                 <CardTitle>Counters and network</CardTitle>
                 <CardDescription>Optional. Connect other computers in the shop so all counters share the same stock and bills.</CardDescription>
@@ -364,7 +364,7 @@ export default function SettingsPage() {
               </CardContent>
             </Card>
           )}
-          <Card className="bg-card/50 backdrop-blur-sm border-white/5">
+          <Card className="bg-card/50 border-white/5">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Sliders className="w-5 h-5 text-primary" />
@@ -484,7 +484,7 @@ export default function SettingsPage() {
         {isAdmin && (
           <TabsContent value="data" className="space-y-6">
             {/* Medicine Database */}
-            <Card className="bg-card/50 backdrop-blur-sm border-white/5">
+            <Card className="bg-card/50 border-white/5">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <Database className="w-5 h-5 text-primary" />
@@ -517,7 +517,7 @@ export default function SettingsPage() {
             </Card>
 
             {/* Data Migration */}
-            <Card className="bg-card/50 backdrop-blur-sm border-white/5">
+            <Card className="bg-card/50 border-white/5">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <Upload className="w-5 h-5 text-primary" />

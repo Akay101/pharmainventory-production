@@ -107,7 +107,8 @@ function Iris({ rect, look, vp, focusKey, quality }) {
 
   const clip = useTransform([x, y, w, h], ([X, Y, W, H]) => `path(evenodd, "M0 0H${vp.w}V${vp.h}H0Z ${W > 1 ? roundedRect(X, Y, W, H, 14) : ""}")`);
   const blurClip = `path(evenodd, "M0 0H${vp.w}V${vp.h}H0Z ${settled.w > 1 ? roundedRect(settled.x, settled.y, settled.w, settled.h, 14) : ""}")`;
-  const blurred = quality === "full";
+  // No backdrop blur (it lagged the UI): the deeper dim keeps the focus contrast
+  const blurred = false;
   // Without the blur, a slightly deeper dim keeps the same focus contrast
   const dim = look === "stage" ? 0 : look === "wide" ? (blurred ? 0.38 : 0.46) : blurred ? 0.6 : 0.68;
   const blur = !blurred || look === "stage" ? 0 : look === "wide" ? 1.5 : 3;
@@ -298,7 +299,7 @@ function ChapterCard({ card }) {
         <motion.p className="text-xs font-black uppercase tracking-[0.5em] font-mono text-[#ff6b00]" initial={{ opacity: 0, letterSpacing: "1.2em" }} animate={{ opacity: 1, letterSpacing: "0.5em" }} transition={{ duration: 0.9, delay: 0.15 }}>
           {String(card.n).padStart(2, "0")}
         </motion.p>
-        <motion.h2 className="mt-3 text-3xl font-black tracking-tight sm:text-5xl" initial={{ opacity: 0, y: 18, filter: "blur(8px)" }} animate={{ opacity: 1, y: 0, filter: "blur(0px)" }} transition={{ duration: 0.7, delay: 0.3 }}>
+        <motion.h2 className="mt-3 text-3xl font-black tracking-tight sm:text-5xl" initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.7, delay: 0.3 }}>
           {card.title}
         </motion.h2>
         <motion.div className="mx-auto mt-5 h-[2px] bg-[#ff6b00]" initial={{ width: 0 }} animate={{ width: 260 }} transition={{ duration: 0.9, delay: 0.55, ease: "easeOut" }} />

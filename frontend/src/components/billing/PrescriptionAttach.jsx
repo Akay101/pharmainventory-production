@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { Eye, FileText, Loader2, Paperclip, ShieldAlert, X } from "lucide-react";
+import { Clock, Eye, FileText, Loader2, Paperclip, ShieldAlert, X } from "lucide-react";
 import { API } from "../../App";
 import { compressForScan } from "../scan/scanClient";
 
@@ -29,7 +29,26 @@ export async function openPrescription(id) {
   }
 }
 
-// Prescription for a bill with Schedule H1 medicines: required before saving.
+// Uploads a prescription file; returns its { id, name, mime, size } or null
+export async function uploadPrescriptionFile(file) {
+  if (!file) return null;
+  if (!/^(application\/pdf|image\/)/.test(file.type)) {
+    toast.error("Attach a PDF or a photo of the prescription");
+    return null;
+  }
+  try {
+    const body = new FormData();
+    body.append("file", file.type.startsWith("image/") ? await compressForScan(file, { maxSide: 2000, quality: 0.85 }) : file);
+    const res = await axios.post(`${API}/bills/prescriptions`, body);
+    return res.data.prescription;
+  } catch (err) {
+    toast.error(err.response?.data?.detail || "Couldn't upload the prescription");
+    return null;
+  }
+}
+
+// Prescription for a bill with Schedule H1 medicines. Needed, but the bill can
+// be saved without it: it then waits in Billing → "Rx pending" to be uploaded.
 // `value` is { id, name, mime, size } once uploaded.
 export default function PrescriptionAttach({ h1Items = [], value, onChange, inputId = "rx-attach" }) {
   const fileRef = useRef(null);
@@ -41,18 +60,12 @@ export default function PrescriptionAttach({ h1Items = [], value, onChange, inpu
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
-    if (!/^(application\/pdf|image\/)/.test(file.type)) return toast.error("Attach a PDF or a photo of the prescription");
     setUploading(true);
-    try {
-      const body = new FormData();
-      body.append("file", file.type.startsWith("image/") ? await compressForScan(file, { maxSide: 2000, quality: 0.85 }) : file);
-      const res = await axios.post(`${API}/bills/prescriptions`, body);
-      onChange(res.data.prescription);
+    const rx = await uploadPrescriptionFile(file);
+    setUploading(false);
+    if (rx) {
+      onChange(rx);
       toast.success("Prescription attached");
-    } catch (err) {
-      toast.error(err.response?.data?.detail || "Couldn't upload the prescription");
-    } finally {
-      setUploading(false);
     }
   };
 
@@ -65,7 +78,7 @@ export default function PrescriptionAttach({ h1Items = [], value, onChange, inpu
         <ShieldAlert className={`w-5 h-5 mt-0.5 shrink-0 ${missing ? "text-violet-600 dark:text-violet-400" : "text-emerald-500"}`} />
         <div className="min-w-0 flex-1">
           <p className="text-sm font-bold text-foreground">
-            Prescription {missing ? <span className="text-violet-700 dark:text-violet-300">required</span> : <span className="text-emerald-600 dark:text-emerald-400">attached</span>}
+            Prescription {missing ? <span className="text-violet-700 dark:text-violet-300">needed</span> : <span className="text-emerald-600 dark:text-emerald-400">attached</span>}
           </p>
           {h1Items.length > 0 && (
             <p className="text-xs text-muted-foreground mt-0.5">
@@ -90,17 +103,23 @@ export default function PrescriptionAttach({ h1Items = [], value, onChange, inpu
               </button>
             </div>
           ) : (
+            <div className="mt-2 space-y-1.5">
             <button
               id={inputId}
               type="button"
               data-testid="rx-attach"
               onClick={() => fileRef.current?.click()}
               disabled={uploading}
-              className="mt-2 inline-flex items-center gap-1.5 h-9 px-3 rounded-xl text-xs font-bold bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 focus-visible:ring-offset-2"
+              className="inline-flex items-center gap-1.5 h-9 px-3 rounded-xl text-xs font-bold bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 focus-visible:ring-offset-2"
             >
               {uploading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Paperclip className="w-3.5 h-3.5" />}
-              {uploading ? "Uploading…" : "Attach prescription (PDF or photo)"}
+              {uploading ? "Uploading…" : "Upload now (PDF or photo)"}
             </button>
+            <p className="flex items-start gap-1.5 text-[11px] font-medium text-muted-foreground" data-testid="rx-later-note">
+              <Clock className="mt-px h-3.5 w-3.5 shrink-0 text-violet-500" />
+              Best to upload it now. You can also save the bill and upload it later from Billing → Rx pending.
+            </p>
+            </div>
           )}
         </div>
       </div>

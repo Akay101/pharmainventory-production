@@ -4,7 +4,7 @@
 // to a bill within a day is swept by the cron job (purgeUnlinked).
 const { v4: uuidv4 } = require("uuid");
 const s3 = require("./s3");
-const { h1Lines } = require("../utils/scheduleH1");
+const { scheduleLines } = require("../utils/scheduleH1");
 
 const COLLECTION = "bill_prescriptions";
 const MAX_BYTES = 5 * 1024 * 1024;
@@ -55,24 +55,18 @@ const findOne = (db, pharmacyId, id) =>
   id ? db.collection(COLLECTION).findOne({ id: String(id), pharmacy_id: pharmacyId }, { projection: { data: 0, _id: 0 } }) : null;
 
 // Before a bill is saved: which lines are Schedule H1, and the prescription
-// that covers them. { status, body } when one is needed and missing.
+// that covers them. The prescription can be uploaded later: a bill with H1
+// lines and no prescription is saved as pending (prescription_pending).
+// { error } only when the id sent is someone else's or another bill's.
 async function checkBillPrescription(db, pharmacyId, items, prescriptionId, billId = null) {
-  const h1 = await h1Lines(db, pharmacyId, items || []);
-  if (!h1.length) return { h1, prescription: null };
+  const schedules = await scheduleLines(db, pharmacyId, items || []);
+  const h1 = schedules.filter((l) => l.schedule === "H1").map((l) => l.product_name);
+  if (!h1.length || !prescriptionId) return { h1, schedules, prescription: null };
   const doc = await findOne(db, pharmacyId, prescriptionId);
   if (!doc || (doc.bill_id && doc.bill_id !== billId)) {
-    return {
-      error: {
-        status: 400,
-        body: {
-          code: "PRESCRIPTION_REQUIRED",
-          detail: `Attach the prescription: ${h1.join(", ")} ${h1.length > 1 ? "are" : "is a"} Schedule H1 medicine${h1.length > 1 ? "s" : ""}`,
-          schedule_h1_items: h1,
-        },
-      },
-    };
+    return { error: { status: 400, body: { code: "PRESCRIPTION_INVALID", detail: "That prescription upload has expired or belongs to another bill. Upload it again.", schedule_h1_items: h1 } } };
   }
-  return { h1, prescription: meta(doc) };
+  return { h1, schedules, prescription: meta(doc) };
 }
 
 const linkToBill = (db, pharmacyId, prescriptionId, billId) =>

@@ -628,7 +628,7 @@ export default function ScannerPage() {
   return (
     <div className="relative isolate min-h-screen bg-background text-foreground pb-32" data-testid="scanner-page">
       <AiAmbient />
-      <header className="sticky top-0 z-40 border-b border-border bg-background/80 backdrop-blur-xl max-md:pt-[env(safe-area-inset-top)]">
+      <header className="sticky top-0 z-40 border-b border-border bg-background/80 max-md:pt-[env(safe-area-inset-top)]">
         <div className="mx-auto flex max-w-2xl items-center gap-3 px-4 py-3">
           <button type="button" onClick={() => navigate("/purchases")} className="h-9 w-9 rounded-xl hover:bg-muted flex items-center justify-center" aria-label="Back">
             <ArrowLeft className="h-5 w-5" />
@@ -716,12 +716,12 @@ export default function ScannerPage() {
       </main>
 
       {items.length > 0 && sheetOpen && (
-        <div className="fixed inset-0 z-30 bg-black/50 backdrop-blur-[2px] ai-pop-in" onClick={() => !submitting && setSheetOpen(false)} />
+        <div className="fixed inset-0 z-30 bg-black/50 ai-pop-in" onClick={() => !submitting && setSheetOpen(false)} />
       )}
       {items.length > 0 && (
         <div
           className={`fixed inset-x-0 bottom-0 z-40 border-t border-border pb-[env(safe-area-inset-bottom)] ${
-            sheetOpen ? "bg-background rounded-t-3xl shadow-2xl" : "bg-background/90 backdrop-blur-xl"
+            sheetOpen ? "bg-background rounded-t-3xl shadow-2xl" : "bg-background/90"
           }`}
         >
           <div className="mx-auto max-w-2xl px-4 py-3">

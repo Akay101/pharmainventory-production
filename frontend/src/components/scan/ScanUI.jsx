@@ -61,7 +61,7 @@ export function PhotoTray({ photos, onAdd, onRemove, max = 6, disabled = false, 
               <button
                 type="button"
                 onClick={() => onRemove(i)}
-                className="absolute right-1 top-1 flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-white backdrop-blur hover:bg-black/80"
+                className="absolute right-1 top-1 flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-white hover:bg-black/80"
                 aria-label="Remove photo"
               >
                 <X className="h-3.5 w-3.5" />

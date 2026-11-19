@@ -464,7 +464,7 @@ export default function CustomersPage() {
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mobile-stat-grid">
         {/* Total Customers */}
         <Card className="glass bg-card/45 border-border/70 shadow-md rounded-2xl relative overflow-hidden group hover:border-primary/30 transition-all">
-          <div className="absolute top-0 right-0 w-24 h-24 bg-primary/5 rounded-full blur-2xl transform translate-x-4 -translate-y-4"></div>
+          <div className="absolute top-0 right-0 w-24 h-24 bg-primary/5 rounded-full soft-glow transform translate-x-4 -translate-y-4"></div>
           <CardContent className="p-6 flex items-center gap-4">
             <div className="w-12 h-12 rounded-xl bg-primary/10 text-primary flex items-center justify-center border border-primary/20 shrink-0">
               <Users className="w-6 h-6" />
@@ -478,7 +478,7 @@ export default function CustomersPage() {
 
         {/* Outstanding Page Debt */}
         <Card className="glass bg-card/45 border-border/70 shadow-md rounded-2xl relative overflow-hidden group hover:border-yellow-500/30 transition-all">
-          <div className="absolute top-0 right-0 w-24 h-24 bg-yellow-500/5 rounded-full blur-2xl transform translate-x-4 -translate-y-4"></div>
+          <div className="absolute top-0 right-0 w-24 h-24 bg-yellow-500/5 rounded-full soft-glow transform translate-x-4 -translate-y-4"></div>
           <CardContent className="p-6 flex items-center gap-4">
             <div className={`w-12 h-12 rounded-xl flex items-center justify-center border shrink-0 ${
               totalDebtOnPage > 0 
@@ -500,7 +500,7 @@ export default function CustomersPage() {
 
         {/* Total Page Advance */}
         <Card className="glass bg-card/45 border-border/70 shadow-md rounded-2xl relative overflow-hidden group hover:border-emerald-500/30 transition-all">
-          <div className="absolute top-0 right-0 w-24 h-24 bg-emerald-500/5 rounded-full blur-2xl transform translate-x-4 -translate-y-4"></div>
+          <div className="absolute top-0 right-0 w-24 h-24 bg-emerald-500/5 rounded-full soft-glow transform translate-x-4 -translate-y-4"></div>
           <CardContent className="p-6 flex items-center gap-4">
             <div className={`w-12 h-12 rounded-xl flex items-center justify-center border shrink-0 ${
               totalAdvanceOnPage > 0 
@@ -522,7 +522,7 @@ export default function CustomersPage() {
 
         {/* Top Page Debtor */}
         <Card className="glass bg-card/45 border-border/70 shadow-md rounded-2xl relative overflow-hidden group hover:border-red-500/30 transition-all">
-          <div className="absolute top-0 right-0 w-24 h-24 bg-red-500/5 rounded-full blur-2xl transform translate-x-4 -translate-y-4"></div>
+          <div className="absolute top-0 right-0 w-24 h-24 bg-red-500/5 rounded-full soft-glow transform translate-x-4 -translate-y-4"></div>
           <CardContent className="p-6 flex items-center gap-4">
             <div className="w-12 h-12 rounded-xl bg-red-500/10 text-red-500 flex items-center justify-center border border-red-500/20 shrink-0">
               <AlertCircle className="w-6 h-6" />
@@ -545,7 +545,7 @@ export default function CustomersPage() {
       </div>
 
       {/* Search */}
-      <Card className="glass bg-card/45 border border-border/70 shadow-md rounded-2xl overflow-hidden max-md:border-0 max-md:bg-transparent max-md:shadow-none max-md:backdrop-blur-none max-md:overflow-visible">
+      <Card className="glass bg-card/45 border border-border/70 shadow-md rounded-2xl overflow-hidden max-md:border-0 max-md:bg-transparent max-md:shadow-none max-md: max-md:overflow-visible">
         <CardContent className="p-4 max-md:p-0">
           <div className="flex gap-4 max-md:gap-2">
             <div className="relative flex-1">
@@ -600,7 +600,7 @@ export default function CustomersPage() {
 
       {/* Customer Details Dialog */}
       <Dialog open={detailsOpen} onOpenChange={setDetailsOpen}>
-        <DialogContent className="max-w-3xl max-h-[88vh] overflow-hidden flex flex-col p-0 border border-border/70 bg-background/95 backdrop-blur-xl rounded-2xl shadow-2xl w-11/12">
+        <DialogContent className="max-w-3xl max-h-[88vh] overflow-hidden flex flex-col p-0 border border-border/70 bg-background/95 rounded-2xl shadow-2xl w-11/12">
           <DialogHeader className="p-5 pb-3 border-b border-border/40 shrink-0 flex flex-row items-center justify-between">
             <DialogTitle className="text-lg font-bold flex items-center gap-2">
               <Users className="w-5 h-5 text-primary" /> Customer Profile & History
@@ -1168,7 +1168,7 @@ export default function CustomersPage() {
         open={addReminderDialog.open}
         onOpenChange={(open) => setAddReminderDialog((prev) => ({ ...prev, open }))}
       >
-        <DialogContent className="max-w-md p-6 border border-border/70 bg-background/95 backdrop-blur-xl rounded-2xl shadow-2xl">
+        <DialogContent className="max-w-md p-6 border border-border/70 bg-background/95 rounded-2xl shadow-2xl">
           <DialogHeader className="pb-3 border-b border-border/40">
             <DialogTitle className="text-base font-bold flex items-center gap-2">
               <RotateCcw className="w-4 h-4 text-indigo-500" /> Add Refill Reminder
@@ -1339,7 +1339,7 @@ export default function CustomersPage() {
       </Dialog>
 
       {/* Customers Table */}
-      <Card className="glass bg-card/45 border border-border/40 backdrop-blur-sm shadow-sm rounded-xl overflow-hidden">
+      <Card className="glass bg-card/45 border border-border/40 shadow-sm rounded-xl overflow-hidden">
         <div className="overflow-x-auto">
           <Table mobileCards>
             <TableHeader className="border-b border-border/40 bg-muted/20">

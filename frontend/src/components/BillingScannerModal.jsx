@@ -38,7 +38,7 @@ export default function BillingScannerModal({ open, onOpenChange, onTransferToBi
           <BillingScanWorkspace key={session} onLinesChange={setLines} />
         </div>
 
-        <div className="flex items-center justify-between gap-3 border-t border-border bg-card/80 px-4 py-3 sm:px-5 backdrop-blur">
+        <div className="flex items-center justify-between gap-3 border-t border-border bg-card/80 px-4 py-3 sm:px-5">
           <div className="text-xs text-muted-foreground">
             <span className="font-semibold text-foreground">{lines.length}</span> ready · ₹{total.toFixed(2)}
           </div>

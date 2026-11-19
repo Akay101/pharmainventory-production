@@ -72,8 +72,8 @@ function Decor({ theme = {}, shine = false }) {
       {pattern && <div aria-hidden className="pointer-events-none absolute inset-0" style={pattern} />}
       {(theme.pattern === "glow" || !theme.pattern) && (
         <>
-          <div aria-hidden className="pointer-events-none absolute -right-10 -top-16 h-48 w-48 rounded-full" style={{ background: "rgba(255,255,255,.22)", filter: "blur(40px)" }} />
-          <div aria-hidden className="pointer-events-none absolute -bottom-20 left-1/3 h-44 w-44 rounded-full" style={{ background: "rgba(255,255,255,.14)", filter: "blur(46px)" }} />
+          <div aria-hidden className="pointer-events-none absolute -right-10 -top-16 h-48 w-48 rounded-full soft-glow" style={{ background: "rgba(255,255,255,.22)" }} />
+          <div aria-hidden className="pointer-events-none absolute -bottom-20 left-1/3 h-44 w-44 rounded-full soft-glow" style={{ background: "rgba(255,255,255,.14)" }} />
         </>
       )}
       {shine && <div aria-hidden className="bc-shine pointer-events-none absolute inset-y-0 -left-1/2 w-1/3" />}
@@ -96,13 +96,13 @@ const STYLE = `
 @keyframes bc-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 .bc-in { animation: bc-in .45s cubic-bezier(.2,.8,.2,1) both; }
 @keyframes bc-notif-in {
-  0% { opacity: 0; transform: translate3d(36px, -14px, 0) scale(.92); filter: blur(8px); }
-  55% { opacity: 1; transform: translate3d(-5px, 2px, 0) scale(1.012); filter: blur(0); }
+  0% { opacity: 0; transform: translate3d(36px, -14px, 0) scale(.92); }
+  55% { opacity: 1; transform: translate3d(-5px, 2px, 0) scale(1.012); }
   78% { transform: translate3d(2px, 0, 0) scale(.998); }
   100% { opacity: 1; transform: none; filter: none; }
 }
 .bc-notif-in { animation: bc-notif-in .75s cubic-bezier(.16,1,.3,1) both; }
-@keyframes bc-notif-out { to { opacity: 0; transform: translate3d(40px, 0, 0) scale(.94); filter: blur(4px); } }
+@keyframes bc-notif-out { to { opacity: 0; transform: translate3d(40px, 0, 0) scale(.94); } }
 .bc-notif-out { animation: bc-notif-out .28s cubic-bezier(.4,0,1,1) forwards; }
 @keyframes bc-border { 0% { background-position: 0% 50%; } 100% { background-position: 200% 50%; } }
 .bc-border { background-size: 200% 200%; animation: bc-border 6s linear infinite; }
@@ -408,7 +408,7 @@ function Chip({ b, light = true }) {
   return (
     <span
       className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-black uppercase tracking-wider"
-      style={light ? { background: "rgba(255,255,255,.2)", border: "1px solid rgba(255,255,255,.3)", backdropFilter: "blur(6px)" } : { background: "rgba(15,23,42,.08)" }}
+      style={light ? { background: "rgba(255,255,255,.2)", border: "1px solid rgba(255,255,255,.3)" } : { background: "rgba(15,23,42,.08)" }}
     >
       <meta.Icon className="h-3 w-3" />
       {meta.label}
@@ -420,7 +420,7 @@ function Chip({ b, light = true }) {
 function FullImage({ src, className = "", style, onClick, imgClass = "" }) {
   return (
     <div className={`relative overflow-hidden ${className}`} style={style} onClick={onClick}>
-      <img src={src} alt="" aria-hidden className="absolute inset-0 h-full w-full scale-125 object-cover opacity-70" style={{ filter: "blur(18px) saturate(1.2)" }} />
+      <img src={src} alt="" aria-hidden className="absolute inset-0 h-full w-full scale-125 object-cover opacity-70" style={{ filter: "saturate(1.2)", opacity: 0.35 }} />
       <img src={src} alt="" className={`relative h-full w-full object-contain ${imgClass}`} />
     </div>
   );
@@ -457,10 +457,10 @@ export function BroadcastBanner({ b, assetUrl, onExplore, onClose, pager, rotate
         </>
       )}
       {/* Soft coloured glow behind the card */}
-      <div aria-hidden className="bc-glow pointer-events-none absolute -inset-1 rounded-[22px]" style={{ background: gradient, filter: "blur(18px)", opacity: 0.5 }} />
+      <div aria-hidden className="bc-glow pointer-events-none absolute -inset-1 rounded-[22px]" style={{ background: gradient, opacity: 0.35 }} />
       {/* Moving gradient border */}
       <div className="bc-border relative rounded-[18px] p-[1.5px]" style={{ background: gradient, boxShadow: `0 18px 40px -18px ${rgba(p.via, 0.65)}` }}>
-        <div className="relative overflow-hidden rounded-[16.5px]" style={{ background: surface, color: fg, backdropFilter: "blur(16px)" }}>
+        <div className="relative overflow-hidden rounded-[16.5px]" style={{ background: surface, color: fg }}>
           {img ? (
             <button type="button" onClick={onExplore} className="group relative block w-full" aria-label={`Open ${b.title}`}>
               <FullImage src={img} className="h-36 w-full" imgClass="transition-transform duration-500 group-hover:scale-[1.03]" />
@@ -532,7 +532,7 @@ export function BroadcastBanner({ b, assetUrl, onExplore, onClose, pager, rotate
               type="button"
               onClick={close}
               aria-label="Dismiss"
-              className="absolute right-2.5 top-2.5 z-10 flex h-7 w-7 items-center justify-center rounded-full backdrop-blur transition-transform duration-150 hover:scale-110"
+              className="absolute right-2.5 top-2.5 z-10 flex h-7 w-7 items-center justify-center rounded-full transition-transform duration-150 hover:scale-110"
               style={img ? { background: "rgba(15,23,42,.45)", color: "#fff" } : { background: dark ? "rgba(255,255,255,.08)" : "rgba(15,23,42,.06)", color: muted, top: 14 }}
             >
               <X className="h-3.5 w-3.5" />
@@ -609,7 +609,7 @@ export function BroadcastDetail({ b, assetUrl, onLink, dark = false, footer = tr
       {zoom &&
         // Portal: the modal around this is transformed, which would trap a fixed overlay inside it
         createPortal(
-          <div data-bc-zoom className="bc-zoom-in fixed inset-0 z-[100000] flex items-center justify-center bg-black/85 p-4 backdrop-blur-sm" style={{ pointerEvents: "auto" }} onClick={() => setZoom(null)} role="dialog" aria-label="Image">
+          <div data-bc-zoom className="bc-zoom-in fixed inset-0 z-[100000] flex items-center justify-center bg-black/85 p-4" style={{ pointerEvents: "auto" }} onClick={() => setZoom(null)} role="dialog" aria-label="Image">
             <img src={zoom} alt="" className="max-h-[92vh] max-w-[94vw] rounded-xl object-contain shadow-2xl" />
             <button type="button" aria-label="Close image" className="absolute right-4 top-4 flex h-9 w-9 items-center justify-center rounded-full bg-white/15 text-white">
               <X className="h-5 w-5" />

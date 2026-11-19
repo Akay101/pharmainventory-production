@@ -313,7 +313,7 @@ export default function ChartBlock({ block: raw }) {
     return (
       <>
         <div className="h-24 rounded-2xl border border-dashed border-border" />
-        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-3 backdrop-blur-sm sm:p-8" onClick={() => setFull(false)}>
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-3 sm:p-8" onClick={() => setFull(false)}>
           <div className="w-full max-w-5xl" onClick={(e) => e.stopPropagation()}>
             {card}
           </div>

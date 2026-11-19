@@ -261,10 +261,10 @@ const tools = [
       const subtotal = draft.items.reduce((s, i) => s + i.total, 0);
       draft.total = round2(subtotal * (1 - (draft.bill_discount_percent || 0) / 100));
       draft.warnings = [];
-      // Schedule H1 needs a prescription attached, which is done on the Billing page
+      // Schedule H1: the prescription is needed; attached on the Billing page now or later
       draft.schedule_h1_items = await h1Lines(ctx.db, ctx.pharmacyId, draft.items);
       if (draft.schedule_h1_items.length) {
-        draft.warnings.push(`Schedule H1 (${draft.schedule_h1_items.join(", ")}): attach the prescription, so this bill is finished on the Billing page`);
+        draft.warnings.push(`Schedule H1 (${draft.schedule_h1_items.join(", ")}): prescription needed. Best to open it in Billing and upload it now; if saved here, upload it later from Billing → Rx pending`);
       }
       draft.items.forEach((i, idx) => {
         const n = `${idx + 1}. ${i.product_name}`;
@@ -282,7 +282,7 @@ const tools = [
         total: draft.total,
         warnings: draft.warnings,
         ...(draft.schedule_h1_items.length ? { schedule_h1_items: draft.schedule_h1_items } : {}),
-        note: (draft.schedule_h1_items.length ? "This bill has Schedule H1 medicines: it can't be saved from chat. The card's button opens it on the Billing page, where the prescription must be attached before saving; tell the user that. " : "") + "Bill card with Save button is shown. Lines with margin_percent sell at the purchase margin price (price_per_unit), not MRP; capped_at_mrp means the margin price was above MRP so MRP is used. Mention warnings briefly; for items not in stock you may suggest alternatives (inventory agent's find_alternatives is not available here, so just ask). Don't claim it's saved.",
+        note: (draft.schedule_h1_items.length ? "This bill has Schedule H1 medicines: a prescription is needed. It can be saved here (the bill then waits under Rx pending in Billing for the prescription upload) or opened in Billing to attach it now, which is better; tell the user that. " : "") + "Bill card with Save button is shown. Lines with margin_percent sell at the purchase margin price (price_per_unit), not MRP; capped_at_mrp means the margin price was above MRP so MRP is used. Mention warnings briefly; for items not in stock you may suggest alternatives (inventory agent's find_alternatives is not available here, so just ask). Don't claim it's saved.",
       };
     },
   },
@@ -379,9 +379,12 @@ function billDraftBlock(d) {
     totals: [{ label: "Total", value: d.total }],
     missing: d.warnings,
     actions: [
-      d.schedule_h1_items?.length
-        ? { label: "Open in Billing (attach prescription)", style: "primary", action: { type: "navigate", to: "/billing", state: billingHandOver(d) } }
-        : { label: "Save bill", style: "primary", action: { type: "commit", draft_id: d.id }, disabled: !d.items.length },
+      ...(d.schedule_h1_items?.length
+        ? [
+            { label: "Open in Billing (attach prescription)", style: "primary", action: { type: "navigate", to: "/billing", state: billingHandOver(d) } },
+            { label: "Save, upload Rx later", action: { type: "commit", draft_id: d.id }, disabled: !d.items.length },
+          ]
+        : [{ label: "Save bill", style: "primary", action: { type: "commit", draft_id: d.id }, disabled: !d.items.length }]),
       { label: "Discard", style: "ghost", action: { type: "discard", draft_id: d.id } },
     ],
   };
@@ -417,9 +420,6 @@ function billingHandOver(d) {
 }
 
 async function commitBill(draft, ctx) {
-  if (draft.schedule_h1_items?.length) {
-    throw new Error(`${draft.schedule_h1_items.join(", ")}: Schedule H1, attach the prescription on the Billing page to save this bill.`);
-  }
   const credit = draft.payment_mode === "Credit";
   const res = await S.api(ctx, "POST", "/bills", {
     customer_id: draft.customer.id || null,
@@ -452,7 +452,7 @@ async function commitBill(draft, ctx) {
       type: "result",
       tone: "success",
       title: `Bill ${b.bill_no} saved`,
-      text: `${b.customer_name} · ${inr(b.grand_total)} · ${credit ? "on credit" : `paid by ${draft.payment_mode}`}`,
+      text: `${b.customer_name} · ${inr(b.grand_total)} · ${credit ? "on credit" : `paid by ${draft.payment_mode}`}${b.prescription_pending ? " · prescription pending: upload it from Billing → Rx pending" : ""}`,
       actions: [
         { label: "Bill PDF", action: { type: "op", op: "bill_pdf", bill_id: b.id } },
         { label: "Open billing", action: { type: "navigate", to: "/billing", state: { highlightId: b.id } } },

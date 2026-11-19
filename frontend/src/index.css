@@ -1003,23 +1003,20 @@ input[type="month"]::-webkit-calendar-picker-indicator {
   -webkit-backdrop-filter: none !important;
 }
 
-/* 2. Selective high-performance blur only on true floating/modal/layout layers */
-header.sticky,
-aside.fixed,
-.activity-sidebar [class*="backdrop-blur"], /* Target child elements with backdrop-blur inside sidebar */
-.dialog-overlay,
-.DialogContent,
-.AlertDialogContent,
-[role="dialog"],
-[role="dialog"] .backdrop-blur-xl,
-[role="dialog"] .backdrop-blur-md,
-[role="dialog"] .backdrop-blur-sm,
-.fixed.z-\[9999\] [class*="backdrop-blur"], /* Target elements inside AgentWidget */
-.fixed.z-\[9999\], 
-.absolute.backdrop-blur-md {
-  /* Dropdowns & Auto-completes */
-  backdrop-filter: blur(12px) !important;
-  -webkit-backdrop-filter: blur(12px) !important;
+/* 2. No blur anywhere: backdrop and filter blurs re-render what is behind
+   them on every frame and made modals and scrolling lag. Overlays dim instead. */
+*,
+*::before,
+*::after {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+/* Decorative glows (were blur-xl / blur-2xl / blur-3xl): soft edges from a
+   mask, which costs nothing per frame */
+.soft-glow {
+  -webkit-mask-image: radial-gradient(closest-side, #000 20%, transparent);
+  mask-image: radial-gradient(closest-side, #000 20%, transparent);
 }
 
 /* 2b. GPU compositor layer promotion for non-animating layout layers (excludes animating sidebar container transform overrides) */
@@ -2438,11 +2435,7 @@ tbody tr {
   }
 }
 
-/* Dialog backdrops blur in together with the fade */
-.dd-overlay {
-  -webkit-backdrop-filter: blur(3px);
-  backdrop-filter: blur(3px);
-}
+
 
 /* Phone bottom sheets: a longer, softer arrival */
 @media (max-width: 767.98px) {

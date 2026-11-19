@@ -92,7 +92,7 @@ export function UpdateBar({ active, changes, blocked, status, error, onUpdate, o
     <div
       className={cn(
         pinned
-          ? "fixed bottom-0 left-0 right-0 z-[100] bg-card/95 backdrop-blur-xl border-t-2 border-border shadow-2xl px-6 py-3.5 mobile-action-bar max-md:px-3 max-md:pt-2.5 max-md:pb-[calc(0.625rem+env(safe-area-inset-bottom))]"
+          ? "fixed bottom-0 left-0 right-0 z-[100] bg-card/95 border-t-2 border-border shadow-2xl px-6 py-3.5 mobile-action-bar max-md:px-3 max-md:pt-2.5 max-md:pb-[calc(0.625rem+env(safe-area-inset-bottom))]"
           : "glass bg-card/45 border border-border/70 rounded-2xl px-5 py-3.5"
       )}
       data-testid={`${testId}-bar`}

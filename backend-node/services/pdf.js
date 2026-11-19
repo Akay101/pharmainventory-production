@@ -192,6 +192,8 @@ const generateBillPDF = async (bill, pharmacy, options = {}) => {
           ? "UNPAID"
           : "CREDIT";
         const h1Names = new Set((bill.schedule_h1_items || []).map((n) => String(n).toLowerCase()));
+        // Other schedules (H, X, G, C, NDPS) by line name
+        const schedByName = new Map((bill.schedule_lines || []).map((l) => [String(l.product_name).toLowerCase(), l.schedule]));
         const gstByRate = new Map();
         const rows = [];
         const receiptRows = [];
@@ -203,7 +205,8 @@ const generateBillPDF = async (bill, pharmacy, options = {}) => {
           const fullPacks = perPack > 1 && qty % perPack === 0 ? qty / perPack : 0;
           const packWord = fullPacks === 1 ? `1 ${packType}` : `${fullPacks} ${/(s|x|ch|sh)$/i.test(packType) ? `${packType}es` : `${packType}s`}`;
           const h1 = h1Names.has(String(item.product_name || "").toLowerCase());
-          const name = `${item.product_name || "-"}${h1 ? " (H1)" : ""}`;
+          const sched = h1 ? "H1" : schedByName.get(String(item.product_name || "").toLowerCase());
+          const name = `${item.product_name || "-"}${sched ? ` (${sched === "NDPS" ? "NDPS" : `Sch ${sched}`})` : ""}`;
           const expiry = shortExpiry(item.expiry_date);
           const hsn = item.hsn_no && item.hsn_no !== "-" ? item.hsn_no : "";
           const discCell = {
@@ -277,7 +280,7 @@ const generateBillPDF = async (bill, pharmacy, options = {}) => {
             meta: [
               ["Payment", paymentLabel, balance <= 0.004 ? "good" : "bad"],
               ["Doctor", bill.doctor],
-              ["Schedule H1", h1Names.size ? (bill.prescription ? "Prescription on record" : "Yes") : ""],
+              ["Schedule H1", h1Names.size ? (bill.prescription ? "Prescription on record" : "Prescription to follow") : ""],
             ],
             receiptPartyLabel: "Patient",
             receiptMeta: [

@@ -181,7 +181,7 @@ export default function ProductSearchDropdown({
 
       {/* Dropdown Panel */}
       {open && (
-        <div className="absolute left-0 right-0 top-full mt-1.5 bg-card/95 backdrop-blur-xl border border-border/80 shadow-2xl rounded-2xl z-[99999] overflow-hidden flex flex-col max-h-72 animate-in fade-in zoom-in-95 duration-150">
+        <div className="absolute left-0 right-0 top-full mt-1.5 bg-card/95 border border-border/80 shadow-2xl rounded-2xl z-[99999] overflow-hidden flex flex-col max-h-72 animate-in fade-in zoom-in-95 duration-150">
           {/* Search Input Bar */}
           <div className="p-2 border-b border-border/40 bg-muted/20 relative flex items-center">
             <Search className="w-4 h-4 text-muted-foreground absolute left-4" />

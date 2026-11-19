@@ -29,7 +29,7 @@ export default function DesktopDevicesCard() {
   };
 
   return (
-    <Card className="bg-card/50 backdrop-blur-sm border-white/5 mb-6" data-testid="desktop-devices-card">
+    <Card className="bg-card/50 border-white/5 mb-6" data-testid="desktop-devices-card">
       <CardHeader>
         <CardTitle>Desktop app</CardTitle>
         <CardDescription>Works without internet and stays in sync with this account.</CardDescription>

@@ -114,7 +114,7 @@ export default function Loader({
 
   if (fullScreen) {
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-md">
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80">
         {content}
       </div>
     );

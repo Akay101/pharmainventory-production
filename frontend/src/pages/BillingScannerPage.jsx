@@ -108,7 +108,7 @@ export default function BillingScannerPage() {
     <div className="relative isolate min-h-screen bg-background text-foreground pb-32">
       <AiAmbient />
 
-      <header className="sticky top-0 z-40 border-b border-border bg-background/80 backdrop-blur-xl max-md:pt-[env(safe-area-inset-top)]">
+      <header className="sticky top-0 z-40 border-b border-border bg-background/80 max-md:pt-[env(safe-area-inset-top)]">
         <div className="mx-auto flex max-w-2xl items-center gap-3 px-4 py-3">
           <button type="button" onClick={() => navigate("/billing")} className="h-9 w-9 rounded-xl hover:bg-muted flex items-center justify-center" aria-label="Back">
             <ArrowLeft className="h-5 w-5" />
@@ -219,7 +219,7 @@ export default function BillingScannerPage() {
       </main>
 
       {/* Sticky summary + actions, thumb-reachable on phones */}
-      <div className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background/90 backdrop-blur-xl pb-[env(safe-area-inset-bottom)]">
+      <div className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background/90 pb-[env(safe-area-inset-bottom)]">
         <div className="mx-auto flex max-w-2xl items-center gap-2 px-4 py-3">
           <div className="min-w-0 flex-1">
             <p className="text-lg font-bold leading-tight">₹{total.toFixed(2)}</p>

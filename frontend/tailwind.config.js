@@ -81,15 +81,15 @@ module.exports = {
   			// Windows (dialogs): rise out of a slightly smaller, softer self.
   			// No "to" frame, so the element's own centring transform is kept.
   			'dialog-in': {
-  				from: { opacity: '0', transform: 'translate(-50%, calc(-50% + 22px)) scale(0.9)', filter: 'blur(6px)' }
+  				from: { opacity: '0', transform: 'translate(-50%, calc(-50% + 22px)) scale(0.9)' }
   			},
   			'dialog-out': {
-  				to: { opacity: '0', transform: 'translate(-50%, calc(-50% + 14px)) scale(0.94)', filter: 'blur(4px)' }
+  				to: { opacity: '0', transform: 'translate(-50%, calc(-50% + 14px)) scale(0.94)' }
   			},
-  			'overlay-in': { from: { opacity: '0', backdropFilter: 'blur(0px)' } },
-  			'overlay-out': { to: { opacity: '0', backdropFilter: 'blur(0px)' } },
+  			'overlay-in': { from: { opacity: '0' } },
+  			'overlay-out': { to: { opacity: '0' } },
   			// Floating panels grow from the control that opened them (Radix sets the origin)
-  			'pop-in': { from: { opacity: '0', transform: 'translateY(var(--pop-y, -6px)) scale(0.94)', filter: 'blur(2px)' } },
+  			'pop-in': { from: { opacity: '0', transform: 'translateY(var(--pop-y, -6px)) scale(0.94)' } },
   			'pop-out': { to: { opacity: '0', transform: 'translateY(-2px) scale(0.97)' } },
   			'tip-in': { from: { opacity: '0', transform: 'translateY(var(--pop-y, -3px)) scale(0.92)' } },
   			// Content that replaces other content (tab panels, wizard steps)
