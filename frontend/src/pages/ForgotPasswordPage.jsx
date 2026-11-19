@@ -94,7 +94,7 @@ export default function ForgotPasswordPage() {
       data-testid="forgot-password-page"
     >
       <div className="hidden md:block md:col-span-6 lg:col-span-7 relative overflow-hidden">
-        <AuthLeftPanel />
+        <AuthLeftPanel autoPlayInterval={4500} />
       </div>
 
       <div className="col-span-12 md:col-span-6 lg:col-span-5 flex items-center justify-center p-6 sm:p-12 bg-background relative overflow-y-auto">
