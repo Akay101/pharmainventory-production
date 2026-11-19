@@ -120,6 +120,14 @@ const MOUNTS = {
       R("POST", /^\/(move-batch|restore-batch)\/?$/, [["returns", "create"]]),
     ],
   },
+  "/api/sales-returns": {
+    module: "returns",
+    rules: [
+      R("GET", ALL, [["returns", "read"], ["billing", "update"]]),
+      R("POST", /^\/?$/, [["returns", "create"], ["billing", "update"]]),
+      R("POST", /^\/[^/]+\/cancel\/?$/, [["returns", "delete"], ["billing", "delete"]]),
+    ],
+  },
   "/api/expiry": {
     module: "expiry",
     rules: [

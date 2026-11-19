@@ -6,6 +6,7 @@ const { queueGlobalCheck } = require("../services/globalReview");
 const { v4: uuidv4 } = require("uuid");
 const { auth } = require("../middleware/auth");
 const { takeFromStock, returnToStock } = require("../services/stock");
+const { invoicedView } = require("../services/salesReturns");
 const { acceptImages, scanForBilling } = require("../services/ai/scanService");
 const { matchForBilling } = require("../services/ai/inventoryMatch");
 const { generateBillPDF } = require("../services/pdf");
@@ -26,6 +27,9 @@ const {
   getCached,
   setCached,
 } = require("../utils/globalDb");
+
+const RETURNED_LOCK = "Items on this bill have been returned, so it can't be changed. Cancel its sales returns (in Returns) to change it.";
+const hasReturns = (bill) => !!bill?.has_returns || (bill?.sales_returns || []).length > 0;
 
 const escapeRegex = (str) => {
   if (!str) return "";
@@ -1007,6 +1011,7 @@ router.put("/:bill_id", auth, requireSubscription(), async (req, res, next) => {
     if (!bill) {
       return res.status(404).json({ detail: "Bill not found" });
     }
+    if (hasReturns(bill)) return res.status(409).json({ detail: RETURNED_LOCK, code: "BILL_HAS_RETURNS" });
     if (!Array.isArray(items) || items.length === 0 || items.some((it) => !it || typeof it !== "object" || Array.isArray(it))) {
       return res.status(400).json({ detail: "A bill needs at least one product line" });
     }
@@ -1478,6 +1483,9 @@ router.delete(
       }
       const rule = checkBill(req.access, null, bill);
       if (rule) return res.status(rule.status).json(rule.body);
+      if (hasReturns(bill)) {
+        return res.status(409).json({ detail: "Items on this bill have been returned, so it can't be deleted. Cancel its sales returns (in Returns) first.", code: "BILL_HAS_RETURNS" });
+      }
 
       // Restore inventory if requested
       if (restore_inventory === "true") {
@@ -1661,7 +1669,7 @@ router.post(
       if (bill.schedule_h1_items === undefined) {
         bill.schedule_h1_items = await h1Lines(db, req.user.pharmacy_id, bill.items || []);
       }
-      const pdfBuffer = await generateBillPDF(bill, pharmacy, { upiQr, format });
+      const pdfBuffer = await generateBillPDF(invoicedView(bill), pharmacy, { upiQr, format });
 
       // Upload to R2
       const key = `bills/${req.user.pharmacy_id}/${bill.bill_no}${format && format !== LEGACY_FORMAT ? `-${format}` : ""}.pdf`;
@@ -1783,7 +1791,7 @@ router.post(
           gst_no: ""
         };
 
-        const pdfBuffer = await generateBillPDF(bill, pharmacy);
+        const pdfBuffer = await generateBillPDF(invoicedView(bill), pharmacy);
         const key = `bills/${req.user.pharmacy_id}/${bill.bill_no}.pdf`;
         pdfUrl = await uploadToR2(key, pdfBuffer, "application/pdf");
 
@@ -1975,6 +1983,7 @@ router.post(
       if (!bill) {
         return res.status(404).json({ detail: "Bill not found" });
       }
+      if (hasReturns(bill)) return res.status(409).json({ detail: RETURNED_LOCK, code: "BILL_HAS_RETURNS" });
 
       const grandTotal = bill.grand_total || bill.total_amount || 0;
       const currentPaid = bill.total_paid !== undefined ? bill.total_paid : (bill.is_paid ? grandTotal : (bill.advance_amount || 0));

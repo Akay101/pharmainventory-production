@@ -306,6 +306,7 @@ async function startServer({ dataDir, backendDir, webDir, dbKey, catalogKey, win
     "/api/settings": "routes/settings",
     "/api/expiry": "routes/expiry",
     "/api/returns": "routes/returns",
+    "/api/sales-returns": "routes/salesReturns",
     "/api/reminders": "routes/reminders",
     "/api/notifications": "routes/notifications",
     "/api/broadcasts": "routes/broadcasts",
