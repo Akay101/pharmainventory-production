@@ -20,6 +20,7 @@ const TWO_WAY = [
   "bill_prescriptions",
   "return_bundles",
   "expiry_bundles",
+  "sales_returns",
 ];
 
 // Copied down only. A device can never change these: they hold plans, roles and logins.

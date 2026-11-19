@@ -4,6 +4,7 @@ const express = require("express");
 const mongoose = require("mongoose");
 const billShare = require("../services/billShare");
 const { generateBillPDF } = require("../services/pdf");
+const { invoicedView } = require("../services/salesReturns");
 
 const router = express.Router();
 
@@ -28,7 +29,7 @@ router.get("/bill/:token", async (req, res, next) => {
     const bill = await db.collection("bills").findOne({ id: share.bill_id, pharmacy_id: share.pharmacy_id }, { projection: { _id: 0 } });
     if (!bill) return res.status(410).type("html").send(page("This bill is no longer available", "Please contact the pharmacy."));
     const pharmacy = await db.collection("pharmacies").findOne({ id: share.pharmacy_id }, { projection: { _id: 0 } });
-    const pdf = await generateBillPDF(bill, billShare.pdfPharmacy(pharmacy));
+    const pdf = await generateBillPDF(invoicedView(bill), billShare.pdfPharmacy(pharmacy));
     const name = String(bill.bill_no || "bill").replace(/[^A-Za-z0-9_-]/g, "");
     res.set("Content-Type", "application/pdf");
     res.set("Content-Disposition", `inline; filename="${name}.pdf"`);

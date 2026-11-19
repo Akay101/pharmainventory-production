@@ -314,7 +314,7 @@ function changedSince(current, was) {
 // device as something for the shop to decide; the rest of the change still applies.
 // Pharmacist access applies to what a desktop app sends too, so a changed
 // copy of the app can't do more than the user may on the web.
-const COLL_MODULE = { inventory: "inventory", products: "inventory", suppliers: "suppliers", customers: "customers", bills: "billing", bill_drafts: "billing", bill_prescriptions: "billing", doctors: "billing", purchases: "purchases", purchase_drafts: "purchases", reminders: "restock", short_book: "short_book", return_bundles: "returns", expiry_bundles: "expiry" };
+const COLL_MODULE = { inventory: "inventory", products: "inventory", suppliers: "suppliers", customers: "customers", bills: "billing", bill_drafts: "billing", bill_prescriptions: "billing", doctors: "billing", purchases: "purchases", purchase_drafts: "purchases", reminders: "restock", short_book: "short_book", return_bundles: "returns", expiry_bundles: "expiry", sales_returns: "returns" };
 const MAKERS = {
   inventory: [["purchases", "create"], ["purchases", "update"], ["billing", "create"], ["billing", "update"], ["returns", "create"], ["expiry", "create"]],
   products: [["purchases", "create"]],

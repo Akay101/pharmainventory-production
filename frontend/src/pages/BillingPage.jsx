@@ -94,6 +94,7 @@ import {
   AlertTriangle,
   Sparkles,
   QrCode,
+  Undo2,
 } from "lucide-react";
 import { toast } from "sonner";
 import CustomerFilter from "../components/CustomerFilter";
@@ -117,6 +118,7 @@ import PrescriptionAttach, { openPrescription } from "../components/billing/Pres
 import PdfFormatPicker, { usePdfFormat } from "../components/PdfFormatPicker";
 import { SuggestionList, ProductDetailsSheet, SUGGESTION_FILTERS, filterSuggestions } from "../components/billing/ProductSuggestions";
 import { GuideButton } from "../components/guide/GuideProvider";
+import SalesReturnDialog from "../components/returns/SalesReturnDialog";
 
 const LOCAL_STORAGE_KEY_BILL = "pharmalogy_bill_draft";
 
@@ -365,6 +367,8 @@ export default function BillingPage() {
   const billAcc = useAccess("billing");
   const reportsAcc = useAccess("dashboard"); // Reports pages sit under the "dashboard" permission
   const canTakePayments = billAcc.update && !rule("no_customer_debt_clear");
+  const returnsAcc = useAccess("returns");
+  const canReturn = billAcc.update || returnsAcc.create;
   const [tabs, setTabs] = useState([]);
   const [activeTabId, setActiveTabId] = useState(null);
   const [submitting, setSubmitting] = useState(false);
@@ -499,6 +503,8 @@ export default function BillingPage() {
 
   // Delete dialog
   const [deleteDialog, setDeleteDialog] = useState({ open: false, bill: null });
+  // Sales return against a bill: { id, mode: "pick" | "full" }
+  const [returnBill, setReturnBill] = useState(null);
 
   // High-performance search cache & abort controllers
   const invSearchCacheRef = useRef(new Map());
@@ -6701,6 +6707,19 @@ export default function BillingPage() {
                           </TableCell>
                           <TableCell className="text-right font-mono text-foreground font-extrabold">
                             ₹{billTotal.toFixed(2)}
+                            {bill.return_status && (
+                              <div className="mt-1 flex flex-col items-end gap-0.5 font-sans" data-testid={`bill-returned-${bill.id}`}>
+                                <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-black ${bill.return_status === "Returned" ? "border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400" : "border-teal-500/30 bg-teal-500/10 text-teal-600 dark:text-teal-400"}`}>
+                                  <Undo2 className="w-3 h-3" />
+                                  {bill.return_status === "Returned" ? "Returned" : "Part returned"}
+                                </span>
+                                {bill.original_grand_total !== undefined && (
+                                  <span className="text-[10px] font-mono text-muted-foreground line-through" title={`Billed ₹${Number(bill.original_grand_total).toFixed(2)}, ₹${(Number(bill.returned_amount) || 0).toFixed(2)} returned`}>
+                                    ₹{Number(bill.original_grand_total).toFixed(2)}
+                                  </span>
+                                )}
+                              </div>
+                            )}
                           </TableCell>
                           <TableCell
                             className={`text-right font-mono font-bold ${
@@ -6768,7 +6787,8 @@ export default function BillingPage() {
                                 size="icon"
                                 onClick={() => handleStartEditBill(bill)}
                                 hidden={!billAcc.update}
-                                title="Edit Bill (E)"
+                                disabled={!!bill.return_status}
+                                title={bill.return_status ? "Items on this bill were returned, so it can't be edited. Cancel the return in Returns to edit." : "Edit Bill (E)"}
                                 data-row-key="e"
                                 className="h-8 w-8 rounded-xl hover:bg-amber-500/10 text-muted-foreground hover:text-amber-600 transition-all duration-200"
                                 data-testid={`edit-bill-${bill.id}`}
@@ -6799,6 +6819,20 @@ export default function BillingPage() {
                               >
                                 {whatsApp.busyId === bill.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <WhatsAppIcon className="w-4 h-4" />}
                               </Button>
+                              {canReturn && bill.return_status !== "Returned" && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => setReturnBill({ id: bill.id, mode: "pick" })}
+                                  title="Sales return: return items or the whole bill (R)"
+                                  data-row-key="r"
+                                  aria-label="Return items from this bill"
+                                  className="h-8 w-8 rounded-xl hover:bg-teal-500/10 text-muted-foreground hover:text-teal-600 transition-all duration-200"
+                                  data-testid={`return-bill-${bill.id}`}
+                                >
+                                  <Undo2 className="w-4 h-4" />
+                                </Button>
+                              )}
                               {!bill.is_paid && (() => {
                                 const paid = bill.total_paid !== undefined ? Number(bill.total_paid) || 0 : Number(bill.advance_amount) || 0;
                                 const due = Math.max(0, Math.round((billTotal - paid) * 100) / 100);
@@ -6837,7 +6871,8 @@ export default function BillingPage() {
                                   setDeleteDialog({ open: true, bill })
                                 }
                                 hidden={!billAcc.delete}
-                                title="Delete Bill (Del)"
+                                disabled={!!bill.return_status}
+                                title={bill.return_status ? "Items on this bill were returned, so it can't be deleted. Cancel the return in Returns first." : "Delete Bill (Del)"}
                                 data-row-key="delete"
                                 className="h-8 w-8 rounded-xl hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-all duration-200"
                                 data-testid={`delete-bill-btn-${bill.id}`}
@@ -6900,14 +6935,18 @@ export default function BillingPage() {
                                       {bill.items.map((item, idx) => {
                                         const unitPrice =
                                           item.unit_price || item.mrp_per_unit || 0;
-                                        const qty =
-                                          item.quantity || item.sold_units || 1;
+                                        // Fully returned lines keep 0 units and ₹0
+                                        const wasReturned = Number(item.returned_qty) > 0;
+                                        const qty = wasReturned
+                                          ? Number(item.quantity) || 0
+                                          : item.quantity || item.sold_units || 1;
                                         const discPercent =
                                           item.discount_percent || 0;
-                                        const itemTotal =
-                                          item.total ||
-                                          item.item_total ||
-                                          qty * unitPrice * (1 - discPercent / 100);
+                                        const itemTotal = wasReturned
+                                          ? Number(item.item_total) || 0
+                                          : item.total ||
+                                            item.item_total ||
+                                            qty * unitPrice * (1 - discPercent / 100);
                                         return (
                                           <TableRow
                                             key={`${bill.id}-item-${idx}`}
@@ -6930,6 +6969,11 @@ export default function BillingPage() {
                                             </TableCell>
                                             <TableCell className="text-sm font-bold text-center text-foreground">
                                               {qty}
+                                              {wasReturned && (
+                                                <div className="text-[10px] font-bold text-teal-600 dark:text-teal-400 whitespace-nowrap" title={`Sold ${item.original_quantity ?? qty + Number(item.returned_qty)}, ${item.returned_qty} returned`}>
+                                                  {item.returned_qty} returned
+                                                </div>
+                                              )}
                                             </TableCell>
                                             <TableCell className="text-sm font-mono text-right font-bold text-amber-600 dark:text-amber-400 bg-amber-500/5 dark:bg-amber-500/10">
                                               ₹{unitPrice.toFixed(2)}
@@ -7400,6 +7444,14 @@ export default function BillingPage() {
           )}
         </Card>
       )}
+
+      <SalesReturnDialog
+        billId={returnBill?.id}
+        mode={returnBill?.mode}
+        open={!!returnBill}
+        onClose={() => setReturnBill(null)}
+        onDone={() => fetchData()}
+      />
 
       {/* Delete Dialog */}
       <AlertDialog
