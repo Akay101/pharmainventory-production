@@ -177,9 +177,9 @@ export default function LoginPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      {/* Left Panel: Full Background Image Slideshow with Simple Copy */}
+      {/* Left Panel: tilted feature-card showcase */}
       <div className="hidden md:block md:col-span-6 lg:col-span-7 relative overflow-hidden">
-        <AuthLeftPanel autoPlayInterval={4500} />
+        <AuthLeftPanel />
       </div>
 
       {/* Right Panel: Clean Light Subtle Pattern & Modern Borderless Form */}

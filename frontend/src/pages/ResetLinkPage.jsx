@@ -89,7 +89,7 @@ export default function ResetLinkPage() {
   return (
     <div className="min-h-screen w-full grid grid-cols-1 md:grid-cols-12 bg-background select-none overflow-hidden relative" data-testid="reset-link-page">
       <div className="hidden md:block md:col-span-6 lg:col-span-7 relative overflow-hidden">
-        <AuthLeftPanel autoPlayInterval={4500} />
+        <AuthLeftPanel />
       </div>
 
       <div className="col-span-12 md:col-span-6 lg:col-span-5 flex items-center justify-center p-6 sm:p-12 bg-background relative overflow-y-auto">

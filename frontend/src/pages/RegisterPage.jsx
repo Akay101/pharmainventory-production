@@ -291,12 +291,11 @@ export default function RegisterPage() {
       className="min-h-screen w-full grid grid-cols-1 md:grid-cols-12 bg-background select-none overflow-hidden relative"
       data-testid="register-page"
     >
-      {/* Left Panel: Full Background Image Slideshow with Step Progress */}
+      {/* Left Panel: tilted feature-card showcase */}
       <div className="hidden md:block md:col-span-5 relative overflow-hidden">
         <AuthLeftPanel
           steps={STEPS}
           currentStep={step}
-          autoPlayInterval={5000}
         />
       </div>
 
