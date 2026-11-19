@@ -4822,29 +4822,34 @@ export default function PurchasesPage() {
                 />
               </div>
 
-              <div className="space-y-1 w-[145px]">
-                <Label className="text-[11px] font-extrabold text-foreground/80">
-                  Invoice Number
-                </Label>
+              <div className="space-y-1 w-[180px]">
+                <div className="flex items-center justify-between gap-2">
+                  <Label className="text-[11px] font-extrabold text-foreground/80 whitespace-nowrap">
+                    Invoice Number
+                  </Label>
+                  <label
+                    className={`inline-flex shrink-0 cursor-pointer items-center gap-1 rounded-md px-1 text-[10px] font-bold leading-none whitespace-nowrap ${withoutBill ? "text-orange-600 dark:text-orange-400" : "text-muted-foreground hover:text-foreground"}`}
+                    title="Tag this purchase as bought from the supplier without a bill"
+                  >
+                    <input
+                      type="checkbox"
+                      className="h-3 w-3 cursor-pointer accent-orange-600"
+                      checked={withoutBill}
+                      disabled={processingRowId !== null}
+                      onChange={(e) => setWithoutBill(e.target.checked)}
+                      data-testid="without-bill-toggle"
+                    />
+                    No bill
+                  </label>
+                </div>
                 <Input
-                  placeholder={withoutBill ? "No supplier bill" : "e.g. INV-001"}
+                  placeholder={withoutBill ? "Bought without bill" : "e.g. INV-001"}
                   value={invoiceNo}
                   disabled={processingRowId !== null}
                   onChange={(e) => setInvoiceNo(e.target.value)}
                   className="h-9 text-xs font-semibold rounded-xl border-border bg-background text-foreground shadow-2xs focus-visible:ring-2 focus-visible:ring-orange-500/30 focus-visible:border-orange-500"
                   data-testid="invoice-no-input"
                 />
-                <label className="flex cursor-pointer items-center gap-1.5 pt-0.5 text-[10px] font-bold text-muted-foreground" title="Tag this purchase as bought from the supplier without a bill">
-                  <input
-                    type="checkbox"
-                    className="h-3.5 w-3.5 cursor-pointer accent-orange-600"
-                    checked={withoutBill}
-                    disabled={processingRowId !== null}
-                    onChange={(e) => setWithoutBill(e.target.checked)}
-                    data-testid="without-bill-toggle"
-                  />
-                  Bought without bill
-                </label>
               </div>
 
               <div className="space-y-1 w-[145px]">
